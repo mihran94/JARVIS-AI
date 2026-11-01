@@ -20,10 +20,9 @@ function refresh(){cancelAnimationFrame(frame);draw(performance.now());}
 motion.addEventListener("change",refresh);saving.addEventListener("change",refresh);
 reduced.addEventListener?.("change",refresh);
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)refresh();else cancelAnimationFrame(frame);});
-mode.addEventListener("change",()=>{const cloud=mode.value==="gemini";
- document.getElementById("engine").textContent=cloud?"Gemini · Gateway":"Local Ollama · Gateway";
- document.getElementById("modeNotice").textContent=cloud?"Gemini uses your private gateway and cloud AI.":"Ollama needs your private gateway connected securely to your Windows laptop.";
-});
+const modeDescriptions={gemini:["Gemini · Gateway","Gemini uses your private gateway and cloud AI."],openai:["ChatGPT · Gateway","ChatGPT requires an OpenAI API key stored only as a Worker secret."],ollama:["Ollama · Gateway","Ollama requires a private authenticated connection to your Windows laptop."]};
+function updateMode(){const [name,description]=modeDescriptions[mode.value];document.getElementById("engine").textContent=name;document.getElementById("modeNotice").textContent=description;}
+mode.addEventListener("change",updateMode);updateMode();
 const chatForm=document.getElementById("chatForm"),chat=document.getElementById("chat");
 chatForm.addEventListener("submit",async event=>{
  event.preventDefault();
