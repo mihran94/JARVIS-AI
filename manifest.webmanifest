@@ -1,0 +1,9 @@
+{
+  "name": "JARVIS Blue NEXUS Mobile Beta",
+  "short_name": "JARVIS Beta",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#071321",
+  "theme_color": "#071321",
+  "description": "Offline privacy-first mobile interface test"
+}
