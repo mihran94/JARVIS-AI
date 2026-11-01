@@ -21,9 +21,29 @@ motion.addEventListener("change",refresh);saving.addEventListener("change",refre
 reduced.addEventListener?.("change",refresh);
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)refresh();else cancelAnimationFrame(frame);});
 mode.addEventListener("change",()=>{const cloud=mode.value==="gemini";
- document.getElementById("engine").textContent=cloud?"Gemini · Demo":"Local Ollama · Demo";
- document.getElementById("modeNotice").textContent=cloud?"Gemini selected for UI preview only. No cloud connection or API key.":"Local Ollama selected for UI preview only. No backend connected.";
+ document.getElementById("engine").textContent=cloud?"Gemini · Gateway":"Local Ollama · Gateway";
+ document.getElementById("modeNotice").textContent=cloud?"Gemini uses your private gateway and cloud AI.":"Ollama needs your private gateway connected securely to your Windows laptop.";
 });
-document.getElementById("chatForm").addEventListener("submit",event=>{event.preventDefault();const input=document.getElementById("prompt"),value=input.value.trim();if(!value)return;
- const chat=document.getElementById("chat");chat.textContent+="\n\nYOU: "+value+"\nJARVIS: செய்தி கிடைத்தது. இது UI Demo மட்டுமே; AI பதில் இல்லை.";input.value="";chat.scrollTop=chat.scrollHeight;});
+const chatForm=document.getElementById("chatForm"),chat=document.getElementById("chat");
+chatForm.addEventListener("submit",async event=>{
+ event.preventDefault();
+ const input=document.getElementById("prompt"),message=input.value.trim();
+ if(!message)return;
+ const gateway=document.getElementById("gateway").value.trim();
+ const token=document.getElementById("accessToken").value.trim();
+ if(!gateway||!token){chat.textContent+="\\nJARVIS: முதலில் Secure HTTPS Gateway மற்றும் Access Token அமைக்கவும்.";return;}
+ let url;
+ try{url=new URL(gateway);if(url.protocol!=="https:"||url.username||url.password||url.search||url.hash)throw Error("Invalid gateway");}
+ catch{chat.textContent+="\\nJARVIS: செல்லுபடியான HTTPS Gateway URL தேவை.";return;}
+ chat.textContent+="\\n\\nYOU: "+message+"\\nJARVIS: Connecting securely...";
+ const button=chatForm.querySelector("button");button.disabled=true;
+ const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),30000);
+ try{
+  const response=await fetch(url.href.replace(/\\/$/,"")+"/chat",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+token},body:JSON.stringify({mode:mode.value,message}),signal:controller.signal,cache:"no-store"});
+  if(!response.ok)throw Error("Gateway returned "+response.status);
+  const data=await response.json();if(typeof data.reply!=="string")throw Error("Invalid gateway response");
+  chat.textContent=chat.textContent.replace(/JARVIS: Connecting securely\.\.\.$/,"JARVIS: "+data.reply.slice(0,8000));input.value="";
+ }catch(e){chat.textContent=chat.textContent.replace(/JARVIS: Connecting securely\.\.\.$/,"JARVIS: Connection failed ("+String(e.message||"network error").slice(0,100)+").");}
+ finally{clearTimeout(timeout);button.disabled=false;chat.scrollTop=chat.scrollHeight;}
+});
 refresh();
