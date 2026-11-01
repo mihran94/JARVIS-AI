@@ -28,12 +28,15 @@ footer{text-align:center;color:#789ab3;font-size:11px;padding:16px}
 <div class="metric">AI Engine<strong id="engine">Local Ollama · Demo</strong></div><div class="metric">Microphone<strong>OFF · Not requested</strong></div>
 <div class="metric">Connection<strong>No backend connected</strong></div><div class="metric">Storage<strong>Session only</strong></div></div>
 <label for="mode">AI Mode (visual selection only)</label><select id="mode"><option value="ollama">Local Ollama — preview</option><option value="gemini">Gemini Cloud — preview</option></select>
-<div class="notice" id="modeNotice">This demo never contacts Ollama or Gemini. No API key is requested.</div>
+<div class="notice" id="modeNotice">AI requires a private HTTPS gateway. No API key is embedded in this site.</div>
+<label for="gateway">Secure AI gateway (HTTPS)</label><input id="gateway" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://your-worker.workers.dev">
+<label for="accessToken">Gateway access token (session only)</label><input id="accessToken" type="password" autocomplete="off" placeholder="Private access token">
+<div class="notice">Do not enter a Gemini API key here. Use only the separate gateway access token. Never expose Ollama directly to the internet.</div>
 <label class="switch"><input id="motion" type="checkbox" checked> Balanced orb animation</label>
 <label class="switch"><input id="saving" type="checkbox"> Battery saver · reduced animation</label>
 </section>
-<section class="card"><h2>TAMIL TEXT CHAT · UI TEST</h2><div id="chat" class="chat" aria-live="polite">JARVIS: வணக்கம்! இது Mobile UI Test. உண்மையான AI பதில் இன்னும் இணைக்கப்படவில்லை.</div>
+<section class="card"><h2>TAMIL TEXT CHAT · UI TEST</h2><div id="chat" class="chat" aria-live="polite">JARVIS: வணக்கம்! Secure Gateway அமைத்தால் Gemini அல்லது Ollama-வுடன் பேசலாம்.</div>
 <form id="chatForm" class="controls"><input id="prompt" maxlength="1000" autocomplete="off" aria-label="Tamil message" placeholder="தமிழில் எழுதுங்கள்..." required><button type="submit">SEND</button></form>
-<p class="muted">உங்கள் Text எந்த Server-க்கும் அனுப்பப்படாது. Page Refresh செய்தால் Chat மறையும்.</p></section>
-<footer>JARVIS BLUE · Privacy-first UI prototype · No voice recording · No cloud requests</footer>
+<p class="muted">Gateway அமைக்காத வரை செய்திகள் அனுப்பப்படாது. Connect செய்தால் உங்கள் Message தேர்ந்தெடுத்த AI சேவைக்கு அனுப்பப்படும். Page Refresh செய்தால் Chat மறையும்.</p></section>
+<footer>JARVIS BLUE · Privacy-first Mobile Beta · No microphone · AI requires your explicit gateway setup</footer>
 </main><script src="./app.js" defer></script></body></html>
