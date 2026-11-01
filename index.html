@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ta"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#071321"><meta name="description" content="JARVIS Blue NEXUS Mobile Beta — offline UI preview">
+<title>JARVIS Blue · Mobile Beta</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<style>
+:root{color-scheme:dark;font-family:Inter,"Noto Sans Tamil",system-ui,sans-serif;background:#071321;color:#f1f8ff}
+*{box-sizing:border-box}body{margin:0;min-height:100dvh;background:radial-gradient(ellipse at 50% 18%,#103450,#071321 65%);padding:env(safe-area-inset-top) 16px env(safe-area-inset-bottom)}
+main{max-width:520px;margin:auto}header{display:flex;justify-content:space-between;align-items:center;padding:22px 0 10px}
+.brand{font-family:"Space Grotesk",sans-serif;font-size:21px;font-weight:750;letter-spacing:.04em}.brand span{color:#57e4ff}
+small,.muted{color:#98b5c9}.chip{font:11px "JetBrains Mono",monospace;color:#57e4ff;border:1px solid #285775;border-radius:20px;padding:8px}
+.card{background:#10283dcc;border:1px solid #24455a;border-radius:18px;padding:16px;margin:13px 0}
+.orb-wrap{text-align:center;padding:8px 0}canvas{width:min(70vw,250px);height:min(70vw,250px);max-width:250px;display:block;margin:auto}
+h1{font-size:20px;margin:5px 0}h2{font-size:14px;margin:0 0 12px;color:#57e4ff}p{line-height:1.6;font-size:13px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.metric{padding:11px;background:#0a2033;border-radius:12px;font-size:12px}
+.metric strong{display:block;color:#f1f8ff;margin-top:5px}label{display:block;font-size:12px;color:#a9c6d8;margin:8px 0}
+select,input,button{font:inherit;border-radius:11px;border:1px solid #37607a;background:#173750;color:#f1f8ff;padding:12px;width:100%}
+button{cursor:pointer;background:#096b94;font-weight:650}button:disabled{opacity:.45;cursor:not-allowed}
+.chat{height:175px;overflow:auto;background:#081a2a;border-radius:12px;padding:12px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:1.7}
+.controls{display:flex;gap:8px;margin-top:10px}.controls input{flex:1;min-width:0}.controls button{width:85px}
+.switch{display:flex;align-items:center;gap:10px;margin:10px 0}.switch input{width:auto;accent-color:#00bfff}
+.notice{border-left:3px solid #57e4ff;padding:9px 12px;background:#0b2537;font-size:12px;color:#bcd5e7}
+footer{text-align:center;color:#789ab3;font-size:11px;padding:16px}
+</style></head><body><main>
+<header><div class="brand">JARVIS <span>BLUE</span></div><span class="chip">MOBILE BETA · 0.1</span></header>
+<section class="card orb-wrap"><small>NEURAL CORE · MIDNIGHT BLUE</small><canvas id="orb" width="300" height="300" role="img" aria-label="Animated blue neural orb"></canvas><h1>வணக்கம் நண்பா!</h1><p class="muted" id="state" role="status">UI DEMO · OFFLINE · MIC OFF</p></section>
+<section class="card"><h2>COMMAND CENTER</h2><div class="grid">
+<div class="metric">AI Engine<strong id="engine">Local Ollama · Demo</strong></div><div class="metric">Microphone<strong>OFF · Not requested</strong></div>
+<div class="metric">Connection<strong>No backend connected</strong></div><div class="metric">Storage<strong>Session only</strong></div></div>
+<label for="mode">AI Mode (visual selection only)</label><select id="mode"><option value="ollama">Local Ollama — preview</option><option value="gemini">Gemini Cloud — preview</option></select>
+<div class="notice" id="modeNotice">This demo never contacts Ollama or Gemini. No API key is requested.</div>
+<label class="switch"><input id="motion" type="checkbox" checked> Balanced orb animation</label>
+<label class="switch"><input id="saving" type="checkbox"> Battery saver · reduced animation</label>
+</section>
+<section class="card"><h2>TAMIL TEXT CHAT · UI TEST</h2><div id="chat" class="chat" aria-live="polite">JARVIS: வணக்கம்! இது Mobile UI Test. உண்மையான AI பதில் இன்னும் இணைக்கப்படவில்லை.</div>
+<form id="chatForm" class="controls"><input id="prompt" maxlength="1000" autocomplete="off" aria-label="Tamil message" placeholder="தமிழில் எழுதுங்கள்..." required><button type="submit">SEND</button></form>
+<p class="muted">உங்கள் Text எந்த Server-க்கும் அனுப்பப்படாது. Page Refresh செய்தால் Chat மறையும்.</p></section>
+<footer>JARVIS BLUE · Privacy-first UI prototype · No voice recording · No cloud requests</footer>
+</main><script src="./app.js" defer></script></body></html>
