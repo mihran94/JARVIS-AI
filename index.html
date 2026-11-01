@@ -22,12 +22,12 @@ button{cursor:pointer;background:#096b94;font-weight:650}button:disabled{opacity
 .notice{border-left:3px solid #57e4ff;padding:9px 12px;background:#0b2537;font-size:12px;color:#bcd5e7}
 footer{text-align:center;color:#789ab3;font-size:11px;padding:16px}
 </style></head><body><main>
-<header><div class="brand">JARVIS <span>BLUE</span></div><span class="chip">MOBILE BETA · 0.1</span></header>
+<header><div class="brand">JARVIS <span>BLUE</span></div><span class="chip">MOBILE BETA · 0.2</span></header>
 <section class="card orb-wrap"><small>NEURAL CORE · MIDNIGHT BLUE</small><canvas id="orb" width="300" height="300" role="img" aria-label="Animated blue neural orb"></canvas><h1>வணக்கம் நண்பா!</h1><p class="muted" id="state" role="status">UI DEMO · OFFLINE · MIC OFF</p></section>
 <section class="card"><h2>COMMAND CENTER</h2><div class="grid">
-<div class="metric">AI Engine<strong id="engine">Local Ollama · Demo</strong></div><div class="metric">Microphone<strong>OFF · Not requested</strong></div>
-<div class="metric">Connection<strong>No backend connected</strong></div><div class="metric">Storage<strong>Session only</strong></div></div>
-<label for="mode">AI Mode (visual selection only)</label><select id="mode"><option value="ollama">Local Ollama — preview</option><option value="gemini">Gemini Cloud — preview</option></select>
+<div class="metric">AI Engine<strong id="engine">Gemini · Gateway</strong></div><div class="metric">Microphone<strong>OFF · Not requested</strong></div>
+<div class="metric">Connection<strong>Setup required</strong></div><div class="metric">Storage<strong>Session only</strong></div></div>
+<label for="mode">AI Engine (requires configured gateway)</label><select id="mode"><option value="gemini">Gemini Cloud</option><option value="openai">ChatGPT / OpenAI</option><option value="ollama">Local Ollama</option></select>
 <div class="notice" id="modeNotice">AI requires a private HTTPS gateway. No API key is embedded in this site.</div>
 <label for="gateway">Secure AI gateway (HTTPS)</label><input id="gateway" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://your-worker.workers.dev">
 <label for="accessToken">Gateway access token (session only)</label><input id="accessToken" type="password" autocomplete="off" placeholder="Private access token">
@@ -35,7 +35,7 @@ footer{text-align:center;color:#789ab3;font-size:11px;padding:16px}
 <label class="switch"><input id="motion" type="checkbox" checked> Balanced orb animation</label>
 <label class="switch"><input id="saving" type="checkbox"> Battery saver · reduced animation</label>
 </section>
-<section class="card"><h2>TAMIL TEXT CHAT · UI TEST</h2><div id="chat" class="chat" aria-live="polite">JARVIS: வணக்கம்! Secure Gateway அமைத்தால் Gemini அல்லது Ollama-வுடன் பேசலாம்.</div>
+<section class="card"><h2>TAMIL AI CHAT · SECURE GATEWAY</h2><div id="chat" class="chat" aria-live="polite">JARVIS: வணக்கம்! Secure Gateway அமைத்தால் Gemini, ChatGPT அல்லது Ollama-வுடன் பேசலாம்.</div>
 <form id="chatForm" class="controls"><input id="prompt" maxlength="1000" autocomplete="off" aria-label="Tamil message" placeholder="தமிழில் எழுதுங்கள்..." required><button type="submit">SEND</button></form>
 <p class="muted">Gateway அமைக்காத வரை செய்திகள் அனுப்பப்படாது. Connect செய்தால் உங்கள் Message தேர்ந்தெடுத்த AI சேவைக்கு அனுப்பப்படும். Page Refresh செய்தால் Chat மறையும்.</p></section>
 <footer>JARVIS BLUE · Privacy-first Mobile Beta · No microphone · AI requires your explicit gateway setup</footer>
