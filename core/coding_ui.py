@@ -50,6 +50,9 @@ class CodingPanel(QWidget):
         self.codex_button = QPushButton('Codex review…')
         self.codex_button.clicked.connect(self._codex)
         connections.addWidget(self.codex_button)
+        updater = QPushButton("Update project ZIP…")
+        updater.clicked.connect(self._update_zip)
+        connections.addWidget(updater)
         layout.addLayout(connections)
         self.status = QLabel('No project selected')
         self.status.setWordWrap(True)
@@ -76,6 +79,10 @@ class CodingPanel(QWidget):
         self.diagnosis.setReadOnly(True)
         self.diagnosis.setAccessibleName('Error guidance')
         layout.addWidget(self.diagnosis, 1)
+
+    def _update_zip(self):
+        from core.project_update_ui import ProjectUpdateDialog
+        ProjectUpdateDialog(self).exec()
 
     def _codex(self):
         if self.workspace is None:

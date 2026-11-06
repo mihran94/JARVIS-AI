@@ -93,3 +93,6 @@ Official references checked 2026-11-06:
 - https://learn.chatgpt.com/docs/developer-commands?surface=cli
 
 Validation: 46 unit/widget tests and 99 provider regression checks pass using mocks and local processes. No live API/Codex review, Windows test or executable build performed. Provider-specific advanced tool loops (including reasoning metadata), account access, real latency and native Windows sandbox behavior still need acceptance testing.
+
+## ZIP update increment
+Coding → Update project ZIP imports a separate working copy. Select an existing UTF-8 source file, edit manually or request an AI draft using configured provider routing, preview diff, apply with backup, undo and export a new ZIP. AI sends only the selected editor text and request after confirmation. No automatic multi-file edits. Common credential/environment entries are excluded and counted. Python syntax checks do not run tests or builds. Backups remain alongside the working copy; undo history lasts for the dialog session. Imported archives are limited to 5000 entries/100 MiB. Windows acceptance and live AI drafts remain unverified.
