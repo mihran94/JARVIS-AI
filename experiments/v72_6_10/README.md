@@ -1,7 +1,28 @@
-# JARVIS Blue V72.6.10 — Trace Verifier (staging)
+# V72.6.10 offline trace verifier
 
-This branch stages the offline trace-verifier source from the locally tested V72.6.10 package. The complete package passed 101/101 Python unittest tests in a Linux environment on 2026-11-06.
+Recovered from JARVIS_BLUE_V72_6_10_Trace_Verifier.zip. The original staging
+branch omitted the six modules required to import the verifier. This directory
+now contains that dependency closure, with its seven original test modules in
+root tests/test_v72_*.py (imports adjusted to this namespace).
 
-**Important:** This staged module depends on `windows_native_adapter.py` and `windows_native_simulator.py` from the V72.6.10 package; these dependencies are not yet committed in this staging folder. The 101 tests were run on the complete local package, **not** on this GitHub branch. No Windows native integration tests have been run.
+Run from the repository root:
 
-This is a simulation-only component. It is not a Windows sandbox or execution-permission system. Do not merge into main until all dependencies, repository CI, and Windows VM integration tests are reviewed.
+```sh
+python -m unittest discover -s tests -p 'test_v72_*.py' -v
+```
+
+This is an offline recording model, not a Windows native backend or sandbox.
+execute_native always raises NativeExecutionUnavailable. A valid assessment
+means a simulated trace is internally consistent; it does not establish that
+cleanup succeeded, a process ran, or VM isolation exists. Caller-provided
+capability flags are not independent attestation.
+
+The desktop application does not call this experiment. Windows VM testing,
+real handle ownership/cleanup, process-tree termination and independently
+verified isolation remain prerequisites for any future native implementation.
+No Windows build or native execution test is included in this merge.
+
+Validation (Linux, Python 3.12): 61 recovered offline tests passed; combined
+root suite including desktop regression tests: 121 passed with Qt offscreen.
+V73.1 early-access suite: 15 passed separately. Provider calls were mocked;
+these results do not establish native Windows or live-provider readiness.

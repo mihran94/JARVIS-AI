@@ -26,6 +26,7 @@ def assess_trace(result: SimulationResult) -> TraceAssessment:
     resumed = Operation.RESUME.value in ops
     cleaned = Operation.CLOSE_JOB.value in ops
     if not ops or len(ops) > len(_ORDER) or ops != _ORDER[:len(ops)]:
+        # Failure traces may skip directly to cleanup after any prefix.
         if not (len(ops) >= 2 and ops[-1] == _ORDER[-1] and
                 ops[:-1] == _ORDER[:len(ops)-1] and
                 _ORDER[-1] not in ops[:-1]):
