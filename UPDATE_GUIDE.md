@@ -1,5 +1,9 @@
 # Jarvis-Blue Updates
 
+## Signature activation
+
+Updates now require a valid Ed25519 signature and an owner-pinned public key. Unsigned feeds are rejected. See SIGNING_GUIDE.md for owner key setup and Windows publisher signing.
+
 ## Available in this development package
 Open the gear/settings drawer → Updates.
 - Current source version: 0.1.0 (development baseline, not a published release).
@@ -24,7 +28,7 @@ This is a source updater, not a Windows EXE/MSI installer. Packaged-app installa
 
 Settings, JSON databases, secrets and the virtual environment are not included in update backups. Existing custom plugins with the same filename as a release plugin can be overwritten and are included in that update's backup. Do not run multiple instances or move the app directory while updating. Enough disk space is required for download, staging and backup. A backup can be restored once; the next update replaces it.
 
-HTTPS plus SHA-256 detects download corruption; it is not an independent publisher signature. Trust and secure the feed's hosting account. Signed manifests, unattended installation, dependency migration, installer support, startup health checks and periodic checks are future work.
+HTTPS and archive SHA-256 remain required. Signed manifests now establish authenticity against the bundled owner public key and enforce expiry. Unattended installation, dependency migration, installer support, startup health checks and periodic checks remain future work.
 
 ## Validation for this change
-Six isolated updater tests pass: install/restore with private-data preservation, checksum rejection, unsafe/private-path rejection, simulated copy failure rollback, manifest/version validation and symlink rejection. All Python source parses. No real feed was contacted, no release was published and no build was run. PyQt6 is unavailable in this environment, so dialog rendering, app shutdown/restart, Windows process waiting and the Windows GUI still require target-machine testing.
+The original six updater tests were expanded to thirteen signature and updater tests (see SIGNING_GUIDE.md). Original checks include: install/restore with private-data preservation, checksum rejection, unsafe/private-path rejection, simulated copy failure rollback, manifest/version validation and symlink rejection. All Python source parses. No real feed was contacted, no release was published and no build was run. PyQt6 is unavailable in this environment, so dialog rendering, app shutdown/restart, Windows process waiting and the Windows GUI still require target-machine testing.

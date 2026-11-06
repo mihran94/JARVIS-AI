@@ -21,7 +21,7 @@ def main():
     archive = out / f'Jarvis-Blue-{release_version}.zip'
     # Explicit managed roots, never traverse user data, environment or backups.
     candidates = [ROOT / name for name in ('main.py', 'ui.py', 'setup.py',
-        'requirements.txt', 'readme.md', 'LICENSE', 'AGENTS.md', 'UPDATE_PLAN.md', 'UPDATE_GUIDE.md')]
+        'requirements.txt', 'README.md', 'readme.md', 'LICENSE', 'AGENTS.md', 'UPDATE_PLAN.md', 'UPDATE_GUIDE.md')]
     for directory in ('core', 'actions', 'providers', 'plugins', 'dashboard', 'memory', 'config'):
         candidates.extend((ROOT / directory).rglob('*'))
     with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as z:
@@ -32,7 +32,7 @@ def main():
                 'url': download_url, 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
                 'notes': 'Describe this release before publishing.'}
     (out / 'latest.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
-    print('Source update archive and latest.json prepared. Review release notes before publishing.')
+    print('Unsigned source archive and latest.json prepared. Edit notes, then run tools/sign_update.py before publishing.')
 
 if __name__ == '__main__':
     main()

@@ -20,6 +20,13 @@ class UpdateDialog(QDialog):
         self.setFont(QFont('Courier New', 9))
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel(f'Current version: {updater.installed(root)} · Source edition'))
+        from core.release_security import trusted_keys
+        try:
+            activated = bool(trusted_keys())
+        except (ValueError, OSError):
+            activated = False
+        layout.addWidget(QLabel('Update signatures: ' +
+            ('owner public key configured' if activated else 'setup required — owner public key not pinned')))
         self.mode = QComboBox()
         self.mode.addItems(['Notify Only', 'Off'])
         settings = get_update_settings()

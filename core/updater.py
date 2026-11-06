@@ -17,7 +17,7 @@ VERSION = '0.1.0'
 MAX_ARCHIVE = 64 * 1024 * 1024
 MAX_EXPANDED = 128 * 1024 * 1024
 # Only application-owned source/assets. Runtime data is deliberately excluded.
-ROOT_FILES = {'main.py', 'ui.py', 'setup.py', 'requirements.txt', 'readme.md',
+ROOT_FILES = {'main.py', 'ui.py', 'setup.py', 'requirements.txt', 'README.md', 'readme.md',
               'LICENSE', 'AGENTS.md', 'UPDATE_PLAN.md', 'UPDATE_GUIDE.md'}
 CODE_DIRS = {'core', 'actions', 'providers', 'plugins', 'dashboard'}
 
@@ -43,6 +43,8 @@ def fetch(url, limit):
 
 def check(url, current=VERSION):
     manifest = json.loads(fetch(url, 256 * 1024))
+    from core.release_security import verify
+    verify(manifest)
     version(manifest['version'])
     https(manifest['url'])
     if not re.fullmatch(r'[a-fA-F0-9]{64}', manifest.get('sha256', '')):
@@ -50,7 +52,7 @@ def check(url, current=VERSION):
     if manifest.get('format') != 'jarvis-blue-source-v1':
         raise ValueError('Unsupported release format.')
     manifest['available'] = version(manifest['version']) > version(current)
-    manifest['notes'] = str(manifest.get('notes', ''))[:20000]
+    manifest['notes'] = manifest['notes']
     return manifest
 
 def managed(name):
@@ -68,6 +70,8 @@ def managed(name):
         return len(p.parts) == 2 and p.suffix == '.py'
     if p.parts[0] == 'config':
         return name in {'config/__init__.py', 'config/jarvis.ico'}
+    if name == 'core/update_trust.json':
+        return True
     if p.parts[0] not in CODE_DIRS:
         return False
     return p.suffix.lower() in {'.py', '.html', '.js', '.css', '.obj', '.txt', '.svg', '.png', '.ico'}
@@ -98,7 +102,15 @@ def unpack(archive, target):
         raise ValueError('Release is missing required application files.')
 
 def stage(root, manifest):
-    if not manifest.get('available'):
+    from core.release_security import verify
+    verify(manifest)
+    version(manifest['version'])
+    https(manifest['url'])
+    if not re.fullmatch(r'[a-fA-F0-9]{64}', manifest['sha256']):
+        raise ValueError('Invalid release checksum.')
+    if manifest.get('format') != 'jarvis-blue-source-v1':
+        raise ValueError('Unsupported release format.')
+    if version(manifest['version']) <= version(installed(root)):
         raise ValueError('No newer release selected.')
     state = root / '.updates'
     state.mkdir(exist_ok=True)
@@ -110,8 +122,9 @@ def stage(root, manifest):
     staged = Path(tempfile.mkdtemp(prefix='release-', dir=state))
     try:
         unpack(archive, staged)
-        (state / 'pending.json').write_text(json.dumps({'directory': staged.name,
-            'version': manifest['version']}), encoding='utf-8')
+        archive.replace(staged / 'verified.zip')
+        atomic_json(state / 'pending.json', {'directory': staged.name,
+            'version': manifest['version'], 'manifest': manifest})
     except Exception:
         shutil.rmtree(staged)
         raise
@@ -174,10 +187,27 @@ def install(root):
     if not re.fullmatch(r'release-[a-zA-Z0-9_]+', directory):
         raise ValueError('Invalid staged release.')
     staged = state / directory
-    files = [p for p in staged.rglob('*') if p.is_file()]
+    if state.is_symlink() or staged.is_symlink():
+        raise ValueError('Symlink update directory rejected.')
+    from core.release_security import verify
+    manifest = pending['manifest']
+    verify(manifest)
+    if manifest['version'] != pending['version'] or version(manifest['version']) <= version(installed(root)):
+        raise ValueError('Stale or inconsistent pending update.')
+    archive = staged / 'verified.zip'
+    if archive.is_symlink() or hashlib.sha256(archive.read_bytes()).hexdigest() != manifest['sha256'].lower():
+        raise ValueError('Staged release checksum mismatch.')
+    # Re-extract the signed archive at install time; never execute loose staged edits.
+    payload = staged / 'payload'
+    if payload.exists():
+        shutil.rmtree(payload)
+    payload.mkdir()
+    unpack(archive, payload)
+    staged_source = payload
+    files = [p for p in staged_source.rglob('*') if p.is_file()]
     if not files or any(p.is_symlink() for p in staged.rglob('*')):
         raise ValueError('Invalid staged files.')
-    names = [p.relative_to(staged).as_posix() for p in files]
+    names = [p.relative_to(staged_source).as_posix() for p in files]
     for name in names:
         safe_target(root, name)
     # Keep previous backup until a complete replacement backup is ready.
@@ -198,7 +228,7 @@ def install(root):
             for name in names:
                 dest = root / name
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(staged / name, dest)
+                shutil.copy2(staged_source / name, dest)
             atomic_json(state / 'installed.json', {'version': pending['version']})
             record(root, {'action': 'installed', 'version': pending['version']})
             (state / 'pending.json').unlink()
@@ -257,6 +287,7 @@ def wait_for_parent(pid):
 
 if __name__ == '__main__':
     app_root = Path(sys.argv[1]).resolve()
+    sys.path.insert(0, str(app_root))
     try:
         wait_for_parent(int(sys.argv[2]))
         (restore if sys.argv[3] == 'restore' else install)(app_root)

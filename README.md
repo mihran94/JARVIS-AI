@@ -7,6 +7,10 @@ A real-time voice AI that can hear, see, speak, and control your computer — on
 
 ---
 
+## Digital signatures
+
+See [SIGNING_GUIDE.md](SIGNING_GUIDE.md) for update signing and Windows publisher signing. Owner key setup and a real publisher certificate are required before production activation.
+
 ## Jarvis-Blue development
 
 See [UPDATE_PLAN.md](UPDATE_PLAN.md) for the proposed section-by-section roadmap. This source derives from Mark LVI by FatihMakes; original attribution and license remain in place. New feature proposals are not implemented by this branding update. Existing saved assistant names are preserved.

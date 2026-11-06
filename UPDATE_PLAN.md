@@ -58,3 +58,6 @@ All Python files were parsed after the branding edits. Expected branding strings
 
 ## Updater implementation — 6 November 2026
 Added Settings → Updates, optional startup notification, HTTPS source feed checks, notes, verified staging, restart helper, code backup, history and manual restore. See UPDATE_GUIDE.md for publication setup, source-only limits and validation. No feed is configured, no automatic installation is enabled, and no build or GitHub publication was performed.
+
+## Digital signatures — 6 November 2026
+Added Ed25519 manifest signing/verification, encrypted owner-side key setup, pinned public trust, expiry and downgrade checks, install-time archive verification, and a Windows Authenticode signing/verification script. Thirteen tests pass. Production keys and trusted Windows publisher certificate remain owner activation steps; no build, actual Authenticode signing or release was performed. See SIGNING_GUIDE.md.

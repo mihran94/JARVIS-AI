@@ -52,3 +52,10 @@ screenshots/
 # Source updater runtime data and generated release archives
 .updates/
 release-output/
+
+# Never commit publisher private keys or certificate bundles
+*.pfx
+*.p12
+*.key
+*private*.pem
+signing-secrets/
