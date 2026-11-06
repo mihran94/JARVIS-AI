@@ -62,6 +62,42 @@ class StartupWidgets(unittest.TestCase):
         self.player._app.processEvents()
         self.assertIsNone(self.window._video_audio)
 
+    def test_navigation_switches_pages_without_losing_home_content(self):
+        self.window._show_content('Saved result', 'Keep this result')
+        self.window._navigate('Quantum Lab')
+        self.assertEqual(self.window._main_pages.currentIndex(), 2)
+        self.assertTrue(self.window._nav_buttons['Quantum Lab'].isChecked())
+        self.window._navigate('Tasks')
+        self.assertEqual(self.window._main_pages.currentIndex(), 1)
+        self.window._navigate('Home')
+        self.assertEqual(self.window._main_pages.currentIndex(), 0)
+        self.assertIn('Keep this result', self.window._content_display.toPlainText())
+
+    def test_activity_and_arriving_results_follow_real_output(self):
+        self.window._navigate('Tasks')
+        self.window._refresh_activity()
+        self.assertEqual(self.window._activity_text.toPlainText(),
+                         self.window._log.toPlainText() or 'No activity yet.')
+        self.window._show_content('New result', 'Actual tool result')
+        self.assertEqual(self.window._main_pages.currentIndex(), 0)
+        self.assertIn('Actual tool result', self.window._content_display.toPlainText())
+
+    def test_status_reflects_engine_state(self):
+        for state, label in [('THINKING', 'Thinking'), ('SPEAKING', 'Speaking'),
+                             ('ERROR', 'Error'), ('MUTED', 'Muted')]:
+            self.window._apply_state(state)
+            self.assertEqual(self.window._session_status.text(), label)
+        self.window._apply_state('IDLE')
+
+    def test_navigation_opens_existing_memory_and_settings(self):
+        self.window._navigate('Memory')
+        self.assertTrue(self.window._memory_overlay.isVisible())
+        self.window._memory_overlay.hide()
+        self.window._navigate('Settings')
+        self.assertTrue(self.window._quick_drawer.isVisible())
+        self.window._navigate('Home')
+        self.assertFalse(self.window._quick_drawer.isVisible())
+
     def test_unavailable_video_keeps_window_usable(self):
         with patch.object(self.ui, 'HAVE_VIDEO', False), patch.object(self.window._log, 'append_log', wraps=self.window._log.append_log) as log:
             self.window._on_video_open('not-played.mp4', 'Unavailable', True)

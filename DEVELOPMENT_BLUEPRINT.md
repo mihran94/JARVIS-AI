@@ -13,7 +13,7 @@ The supplied Mark LVI source forms the foundation. Jarvis-Blue branding, source-
 | Phase | Deliverable | Implementation scope | Exit criterion | Status |
 |---|---|---|---|---|
 | 1 | Windows foundation | Python 3.12-first setup; project .venv; setup/start commands; import/DLL diagnosis; visible failures | Fresh and existing installs launch; mic/speaker and restart checked on user's laptop | Launcher development implemented; Windows acceptance pending |
-| 2 | Main UI | Home/chat/task state; simple Settings; blue theme; keyboard navigation; reduced motion | Readable resize/scaling; state accurately follows listening, thinking, speaking and errors | Proposed |
+| 2 | Main UI | Home/chat/task state; simple Settings; blue theme; keyboard navigation; reduced motion | Readable resize/scaling; state accurately follows listening, thinking, speaking and errors | Navigation/status developed; accessibility and motion refinements pending |
 | 3 | Tamil–English voice | Auto language detection; same-language reply; interruption; silence handling; device recovery | Tamil, English and mixed-script conversation with headset and speakers | Proposed |
 | 4 | AI engine reliability | Local/cloud selection; capabilities/readiness; bounded timeouts; no silent cloud fallback | Offline local scenario and provider failure recover without crashing | Proposed |
 | 5 | Memory and documents | Editable facts; expiry/delete/export; selected-folder document index and file references | Restart persistence, actual deletion and grounded answers | Proposed |
@@ -64,3 +64,8 @@ Windows EXE and installer, Authenticode signature, uninstall behavior and instal
 
 ## Phase 1 follow-up: UI startup
 The full UI now opens in the isolated Linux/offscreen test environment after deferring optional video audio initialization until playback. Settings → Updates, mute and resize have regression coverage. Windows/device acceptance remains pending; Quantum Lab remains proposed. See QA_REPORT.md for the precise native-backend limitation.
+
+## Phase 2 increment: main navigation and session state
+Added Home, Tasks, Memory, Quantum Lab and Settings navigation with Alt+1 through Alt+5 shortcuts and accessible names. Home preserves current result content across navigation; arriving tool results return to Home. Tasks shows the existing activity log and existing interrupt action; it does not claim a persistent task queue. Memory and Settings open the existing panels. Quantum Lab is explicitly labelled planned, with no simulator/hardware claim. A visible status label follows engine state signals. Activity refresh runs once a second only while the Tasks page is selected.
+
+Twenty-eight launcher/updater/widget tests and 99 provider checks pass in isolated Linux/offscreen testing. Full Windows testing and builds remain deferred by user request. Reduced motion, broader accessibility review and the later voice/provider phases remain open.

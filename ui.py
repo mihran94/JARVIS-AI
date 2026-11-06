@@ -4465,6 +4465,7 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
         root.addWidget(self._build_header())
+        root.addWidget(self._build_navigation())
 
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
@@ -4599,7 +4600,11 @@ class MainWindow(QMainWindow):
         self._center_split.setStretchFactor(0, 3)
         self._center_split.setStretchFactor(1, 1)
         self._center_split.setCollapsible(0, False)
-        body.addWidget(self._center_split, stretch=5)
+        self._main_pages = QStackedWidget()
+        self._main_pages.addWidget(self._center_split)
+        self._main_pages.addWidget(self._build_activity_page())
+        self._main_pages.addWidget(self._build_quantum_page())
+        body.addWidget(self._main_pages, stretch=5)
 
         self._right_panel = self._build_right_panel()
         body.addWidget(self._right_panel, stretch=0)
@@ -4615,6 +4620,10 @@ class MainWindow(QMainWindow):
         from memory.config_manager import get_brief_enabled as _gbe
         self._update_brief_btn(_gbe())
 
+        self._activity_timer = QTimer(self)
+        self._activity_timer.setInterval(1000)
+        self._activity_timer.timeout.connect(self._refresh_activity)
+        self._activity_timer.start()
         self._clock_tmr = QTimer(self)
         self._clock_tmr.timeout.connect(self._tick_clock)
         self._clock_tmr.start(1000)
@@ -5422,6 +5431,118 @@ class MainWindow(QMainWindow):
             self._proc_lbl.setText("PROC  --")
 
 
+    def _build_navigation(self) -> QWidget:
+        bar = QWidget()
+        bar.setStyleSheet(f"background: {C.DARK}; border-bottom: 1px solid {C.BORDER};")
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(12, 5, 12, 5)
+        row.setSpacing(6)
+        self._nav_buttons = {}
+        for index, name in enumerate(("Home", "Tasks", "Memory", "Quantum Lab", "Settings"), 1):
+            button = QPushButton(name)
+            button.setFont(QFont("Courier New", 8))
+            button.setMinimumHeight(30)
+            button.setAccessibleName(name)
+            button.setToolTip(f"{name} · Alt+{index}")
+            button.setCheckable(name in ("Home", "Tasks", "Quantum Lab"))
+            button.setStyleSheet(f"QPushButton {{ background: {C.PANEL}; color: {C.TEXT_MED}; "
+                                f"border: 1px solid {C.BORDER}; padding: 4px 8px; }} "
+                                f"QPushButton:hover, QPushButton:focus {{ border: 1px solid {C.PRI}; }} "
+                                f"QPushButton:checked {{ color: {C.PRI}; border: 1px solid {C.PRI}; }}")
+            button.clicked.connect(lambda checked=False, target=name: self._navigate(target))
+            row.addWidget(button)
+            self._nav_buttons[name] = button
+            shortcut = QShortcut(QKeySequence(f"Alt+{index}"), self)
+            shortcut.activated.connect(lambda target=name: self._navigate(target))
+        self._nav_buttons['Home'].setChecked(True)
+        row.addStretch()
+        self._session_status = QLabel("Initialising")
+        self._session_status.setAccessibleName("Assistant status")
+        self._session_status.setFont(QFont("Courier New", 8))
+        self._session_status.setStyleSheet(f"color: {C.TEXT_MED}; border: none;")
+        row.addWidget(self._session_status)
+        return bar
+
+    def _page_layout(self, title: str, description: str):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(20, 18, 20, 18)
+        heading = QLabel(title)
+        heading.setFont(QFont("Courier New", 15, QFont.Weight.Bold))
+        heading.setStyleSheet(f"color: {C.PRI};")
+        layout.addWidget(heading)
+        note = QLabel(description)
+        note.setFont(QFont("Courier New", 9))
+        note.setWordWrap(True)
+        note.setStyleSheet(f"color: {C.TEXT_MED};")
+        layout.addWidget(note)
+        return page, layout
+
+    def _build_activity_page(self) -> QWidget:
+        page, layout = self._page_layout("TASKS", "Recent assistant activity. A persistent task queue is planned for a later phase.")
+        self._activity_text = QTextEdit()
+        self._activity_text.setReadOnly(True)
+        self._activity_text.setAccessibleName("Recent task activity")
+        self._activity_text.setFont(QFont("Courier New", 9))
+        self._activity_text.setStyleSheet(f"background: {C.PANEL}; color: {C.TEXT}; border: 1px solid {C.BORDER};")
+        layout.addWidget(self._activity_text, 1)
+        interrupt = QPushButton("Interrupt current response · Esc")
+        interrupt.setFont(QFont("Courier New", 9))
+        interrupt.setStyleSheet(self._nav_buttons['Home'].styleSheet())
+        interrupt.clicked.connect(self._do_interrupt)
+        layout.addWidget(interrupt)
+        self._activity_snapshot = None
+        return page
+
+    def _build_quantum_page(self) -> QWidget:
+        page, layout = self._page_layout("QUANTUM LAB", "Planned · Local circuit simulation and learning")
+        description = QLabel(
+            "Development sequence\n\n"
+            "1. Qubit states and measurement probabilities\n"
+            "2. H, X and Z gate playground\n"
+            "3. CNOT and Bell-state simulation\n"
+            "4. Reproducible measurement experiments\n\n"
+            "The simulator is not implemented yet. No quantum hardware is connected.")
+        description.setWordWrap(True)
+        description.setFont(QFont("Courier New", 10))
+        description.setStyleSheet(f"color: {C.TEXT_MED};")
+        layout.addWidget(description)
+        layout.addStretch()
+        return page
+
+    def _navigate(self, target: str):
+        if target == 'Memory':
+            self._open_memory_panel()
+            return
+        if target == 'Settings':
+            self._drawer_btn.setChecked(True)
+            self._toggle_drawer(True)
+            return
+        pages = {'Home': 0, 'Tasks': 1, 'Quantum Lab': 2}
+        if target not in pages:
+            return
+        self._main_pages.setCurrentIndex(pages[target])
+        for name in pages:
+            self._nav_buttons[name].setChecked(name == target)
+        self._close_setup()
+        self._close_controls()
+        if target == 'Tasks':
+            self._refresh_activity()
+        elif target == 'Home':
+            self._input.setFocus()
+
+    def _refresh_activity(self):
+        if self._main_pages.currentIndex() != 1:
+            return
+        text = self._log.toPlainText()
+        if text != self._activity_snapshot:
+            scroll = self._activity_text.verticalScrollBar()
+            at_end = scroll.value() >= scroll.maximum()
+            position = scroll.value()
+            self._activity_text.setPlainText(text or "No activity yet.")
+            scroll.setValue(scroll.maximum() if at_end else position)
+            self._activity_snapshot = text
+
     def _build_header(self) -> QWidget:
         w = QWidget()
         w.setFixedHeight(54)
@@ -6022,6 +6143,7 @@ class MainWindow(QMainWindow):
 
     def _show_content(self, title: str, text: str):
         """Slot — runs on Qt main thread. Updates and shows the content panel."""
+        self._navigate("Home")
         import time as _time
         # The panel opens below the head, so the head looks down at it. It is a
         # tiny thing that answers "did that land?" before you read a word.
@@ -6053,6 +6175,7 @@ class MainWindow(QMainWindow):
 
     def _show_code_job(self, job: dict):
         """Slot — Qt main thread. Draws the coding agent's progress."""
+        self._navigate("Home")
         import time as _time
         if not job:
             return
@@ -6145,6 +6268,7 @@ class MainWindow(QMainWindow):
 
     def _show_review(self, title: str, summary: str, findings, unclear):
         """Slot — Qt main thread. Lays a document review into the content panel."""
+        self._navigate("Home")
         e = self._esc
         parts = [f'<div style="color:{C.TEXT}; font-family:Courier New;">']
 
@@ -6318,6 +6442,7 @@ class MainWindow(QMainWindow):
 
     def _show_quiz(self, topic: str, questions, grader=None):
         """Slot — Qt main thread. Puts a fresh quiz on the board."""
+        self._navigate("Home")
         if not questions:
             return
         self._quiz = {
@@ -7204,6 +7329,11 @@ class MainWindow(QMainWindow):
             threading.Thread(target=self.on_text_command, args=(txt,), daemon=True).start()
 
     def _apply_state(self, state: str):
+        labels = {'INITIALISING': 'Initialising', 'LISTENING': 'Listening',
+                  'THINKING': 'Thinking', 'SPEAKING': 'Speaking', 'MUTED': 'Muted',
+                  'SLEEPING': 'Sleeping', 'ERROR': 'Error', 'CONNECTING': 'Connecting',
+                  'RECONNECTING': 'Reconnecting', 'IDLE': 'Idle'}
+        self._session_status.setText(labels.get(state.upper(), state.replace('_', ' ').title()))
         self.hud.state    = state
         self.hud.speaking = (state == "SPEAKING")
 
