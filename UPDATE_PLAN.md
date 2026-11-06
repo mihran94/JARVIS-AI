@@ -61,3 +61,6 @@ Added Settings → Updates, optional startup notification, HTTPS source feed che
 
 ## Digital signatures — 6 November 2026
 Added Ed25519 manifest signing/verification, encrypted owner-side key setup, pinned public trust, expiry and downgrade checks, install-time archive verification, and a Windows Authenticode signing/verification script. Thirteen tests pass. Production keys and trusted Windows publisher certificate remain owner activation steps; no build, actual Authenticode signing or release was performed. See SIGNING_GUIDE.md.
+
+## Quantum direction and Phase 1 startup — 6 November 2026
+Added DEVELOPMENT_BLUEPRINT.md, Windows setup/start entry points, isolated startup import checks and working-directory-safe setup. Phase 1 Windows GUI/audio acceptance remains pending. Quantum Lab remains proposed. No build or release.

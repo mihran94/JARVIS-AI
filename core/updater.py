@@ -18,7 +18,9 @@ MAX_ARCHIVE = 64 * 1024 * 1024
 MAX_EXPANDED = 128 * 1024 * 1024
 # Only application-owned source/assets. Runtime data is deliberately excluded.
 ROOT_FILES = {'main.py', 'ui.py', 'setup.py', 'requirements.txt', 'README.md', 'readme.md',
-              'LICENSE', 'AGENTS.md', 'UPDATE_PLAN.md', 'UPDATE_GUIDE.md'}
+              'LICENSE', 'AGENTS.md', 'UPDATE_PLAN.md', 'UPDATE_GUIDE.md',
+              'SIGNING_GUIDE.md', 'DEVELOPMENT_BLUEPRINT.md', 'launcher.py',
+              'SETUP_JARVIS.cmd', 'START_JARVIS.cmd'}
 CODE_DIRS = {'core', 'actions', 'providers', 'plugins', 'dashboard'}
 
 def version(value):
@@ -70,7 +72,7 @@ def managed(name):
         return len(p.parts) == 2 and p.suffix == '.py'
     if p.parts[0] == 'config':
         return name in {'config/__init__.py', 'config/jarvis.ico'}
-    if name == 'core/update_trust.json':
+    if name in {'core/update_trust.json', 'tools/setup_environment.py'}:
         return True
     if p.parts[0] not in CODE_DIRS:
         return False

@@ -21,7 +21,8 @@ def main():
     archive = out / f'Jarvis-Blue-{release_version}.zip'
     # Explicit managed roots, never traverse user data, environment or backups.
     candidates = [ROOT / name for name in ('main.py', 'ui.py', 'setup.py',
-        'requirements.txt', 'README.md', 'readme.md', 'LICENSE', 'AGENTS.md', 'UPDATE_PLAN.md', 'UPDATE_GUIDE.md')]
+        'requirements.txt', 'README.md', 'readme.md', 'LICENSE', 'AGENTS.md', 'UPDATE_PLAN.md', 'UPDATE_GUIDE.md', 'SIGNING_GUIDE.md', 'DEVELOPMENT_BLUEPRINT.md',
+        'launcher.py', 'SETUP_JARVIS.cmd', 'START_JARVIS.cmd', 'tools/setup_environment.py')]
     for directory in ('core', 'actions', 'providers', 'plugins', 'dashboard', 'memory', 'config'):
         candidates.extend((ROOT / directory).rglob('*'))
     with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as z:

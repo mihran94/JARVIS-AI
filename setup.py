@@ -26,7 +26,7 @@ MAX_PY = (3, 13)        # highest version this is actually tested on
 
 def _run(label: str, args: list[str]) -> None:
     print(f"\n▶ {label}")
-    subprocess.run(args, check=True)
+    subprocess.run(args, check=True, cwd=HERE)
 
 
 def _check_python() -> None:
@@ -73,7 +73,7 @@ def main() -> None:
 
     # requirements.txt filters OS-specific extras by itself via pip markers.
     _run("Installing Python dependencies (OS-specific extras auto-filtered)…",
-         [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
+         [sys.executable, "-m", "pip", "install", "-r", str(HERE / "requirements.txt")])
 
     # Chromium covers Chrome/Edge/Opera/Brave/Vivaldi; Firefox for Firefox.
     # (Safari automation additionally needs: python -m playwright install webkit)
@@ -96,7 +96,7 @@ def main() -> None:
         try:
             import win32com.client  # noqa: F401
         except ImportError:
-            postinstall = Path(sys.executable).parent / "Scripts" / "pywin32_postinstall.py"
+            postinstall = Path(sys.executable).parent / "pywin32_postinstall.py"
             print(
                 "\n⚠️  pywin32 did not register correctly — desktop-shortcut "
                 "creation will use a slower fallback. To fix it, run:\n"
@@ -120,7 +120,7 @@ def main() -> None:
         )
 
     print("\n✅ Setup complete!")
-    print("   1) Launch it:  python main.py")
+    print("   1) Windows: double-click START_JARVIS.cmd (or run python launcher.py).")
     print("   2) Paste your free Gemini API key when the setup screen appears.")
     print("   3) (Optional) Enable 'Hey Jarvis' from ⚙ → WAKE WORD.")
 

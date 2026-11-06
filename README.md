@@ -1,4 +1,9 @@
 # Jarvis-Blue
+
+## Windows quick start (Python 3.12 preferred)
+Extract the complete project ZIP. Double-click **SETUP_JARVIS.cmd** once, then **START_JARVIS.cmd** to open Jarvis. Setup installs dependencies; normal startup never installs anything. Import-only diagnosis: `.venv\Scripts\python.exe launcher.py --check`. These scripts have not yet passed Windows acceptance testing.
+
+See [DEVELOPMENT_BLUEPRINT.md](DEVELOPMENT_BLUEPRINT.md) for the phased Jarvis-Blue Quantum direction and current Phase 1 checklist. Quantum Lab is proposed simulator work, not implemented hardware functionality.
 ### The Ultimate Cross-Platform Personal AI Assistant — By FatihMakes
 
 > 📺 **[Watch the full setup video on YouTube](https://www.youtube.com/@FatihMakes)**
