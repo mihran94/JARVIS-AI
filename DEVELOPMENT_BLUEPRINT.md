@@ -69,3 +69,10 @@ The full UI now opens in the isolated Linux/offscreen test environment after def
 Added Home, Tasks, Memory, Quantum Lab and Settings navigation with Alt+1 through Alt+5 shortcuts and accessible names. Home preserves current result content across navigation; arriving tool results return to Home. Tasks shows the existing activity log and existing interrupt action; it does not claim a persistent task queue. Memory and Settings open the existing panels. Quantum Lab is explicitly labelled planned, with no simulator/hardware claim. A visible status label follows engine state signals. Activity refresh runs once a second only while the Tasks page is selected.
 
 Twenty-eight launcher/updater/widget tests and 99 provider checks pass in isolated Linux/offscreen testing. Full Windows testing and builds remain deferred by user request. Reduced motion, broader accessibility review and the later voice/provider phases remain open.
+
+## Coding skills increment: Project Explorer and Error Doctor
+Coding (Alt+6) provides a user-selected, read-only project browser with background directory/file reads and UTF-8 source previews. Parent navigation stays within the selected root; ordinary symlinks, common credential filenames and generated/environment directories are excluded. Preview limit is 128 KiB; directory results are capped at 500 visible entries. These filters are convenience protections, not a sandbox against another process changing the filesystem or a comprehensive secret detector.
+
+Error Doctor analyzes pasted Python exception text locally using built-in guidance, including missing modules, syntax, names, permissions and file paths. It makes no model calls and neither runs nor edits code. Suggestions are not verified fixes. Diff editing, test execution, Git actions inside the app, Work Mode routines and automation scheduling remain future increments. Existing external development tools remain separate.
+
+Validation: 37 unit/widget tests pass on Linux with Qt offscreen, including a real project-selection/preview/error-guidance flow. Windows testing and builds remain deferred.

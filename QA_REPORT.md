@@ -29,3 +29,10 @@ Video playback is deferred, not certified safe on the broken native backend: req
 
 ## Phase 2 navigation increment
 Actual Qt widget coverage now includes Home/Tasks/Quantum Lab navigation, retained Home results, live activity snapshots, automatic return to Home for arriving tool content, existing Memory/Settings panels and engine-driven status labels. All 28 tests pass and the existing provider suite reports 99 passed, 0 failed (127 checks total). Home and Quantum Lab rendered successfully at 1280×800 in the isolated Qt offscreen environment. Physical audio/video and Windows tests remain deferred. No build, release, persistent task queue or quantum simulator was produced.
+
+## Coding workspace increment
+- 37 tests pass (`python -m unittest discover -s tests -q`) in the isolated Linux/Qt-offscreen environment: previous 28 plus 8 workspace/diagnostic cases and 1 real-widget integration case.
+- Verified project selection, preview, background result delivery, missing-folder recovery, root traversal rejection, symlink rejection, common credential exclusions, 128 KiB/UTF-8/binary preview limits and 500-entry directory cap.
+- Rendered and visually inspected the real Coding panel at 1280×800. No production provider request, build, installer or Windows test was performed. The previously passing 99 provider checks were not rerun for this independent read-only feature.
+- Error guidance is heuristic and requires developer review. Project code is never imported/executed by these new tools. Other existing app coding actions are unchanged.
+- Scope checks do not defend against concurrent malicious filesystem replacement; secret filename filtering is intentionally not represented as complete secret detection.

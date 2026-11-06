@@ -98,6 +98,35 @@ class StartupWidgets(unittest.TestCase):
         self.window._navigate('Home')
         self.assertFalse(self.window._quick_drawer.isVisible())
 
+    def test_coding_project_preview_and_error_guidance(self):
+        import tempfile
+        import time
+        from PyQt6.QtCore import Qt
+        panel = self.window._coding_panel
+        self.window._navigate('Coding')
+        self.assertEqual(self.window._main_pages.currentIndex(), 3)
+        def wait_read():
+            deadline = time.monotonic() + 5
+            while panel._busy and time.monotonic() < deadline:
+                self.player._app.processEvents()
+                time.sleep(0.005)
+            self.assertFalse(panel._busy, 'Background project read did not finish')
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, 'demo.py').write_text('print("demo")', encoding='utf-8')
+            panel.select_project(directory)
+            wait_read()
+            self.assertEqual(panel.files.count(), 1)
+            panel.files.itemDoubleClicked.emit(panel.files.item(0))
+            wait_read()
+            self.assertEqual(panel.preview.toPlainText(), 'print("demo")')
+            panel.error_input.setPlainText('NameError: name x is not defined')
+            panel._diagnose()
+            self.assertIn('defined or imported', panel.diagnosis.toPlainText())
+            panel.select_project(str(Path(directory, 'missing')))
+            wait_read()
+            self.assertIn('Could not read', panel.status.text())
+        self.window._navigate('Home')
+
     def test_unavailable_video_keeps_window_usable(self):
         with patch.object(self.ui, 'HAVE_VIDEO', False), patch.object(self.window._log, 'append_log', wraps=self.window._log.append_log) as log:
             self.window._on_video_open('not-played.mp4', 'Unavailable', True)

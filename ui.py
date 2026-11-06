@@ -4604,6 +4604,9 @@ class MainWindow(QMainWindow):
         self._main_pages.addWidget(self._center_split)
         self._main_pages.addWidget(self._build_activity_page())
         self._main_pages.addWidget(self._build_quantum_page())
+        from core.coding_ui import CodingPanel
+        self._coding_panel = CodingPanel(C, self)
+        self._main_pages.addWidget(self._coding_panel)
         body.addWidget(self._main_pages, stretch=5)
 
         self._right_panel = self._build_right_panel()
@@ -5438,13 +5441,13 @@ class MainWindow(QMainWindow):
         row.setContentsMargins(12, 5, 12, 5)
         row.setSpacing(6)
         self._nav_buttons = {}
-        for index, name in enumerate(("Home", "Tasks", "Memory", "Quantum Lab", "Settings"), 1):
+        for index, name in enumerate(("Home", "Tasks", "Memory", "Quantum Lab", "Settings", "Coding"), 1):
             button = QPushButton(name)
             button.setFont(QFont("Courier New", 8))
             button.setMinimumHeight(30)
             button.setAccessibleName(name)
             button.setToolTip(f"{name} · Alt+{index}")
-            button.setCheckable(name in ("Home", "Tasks", "Quantum Lab"))
+            button.setCheckable(name in ("Home", "Tasks", "Quantum Lab", "Coding"))
             button.setStyleSheet(f"QPushButton {{ background: {C.PANEL}; color: {C.TEXT_MED}; "
                                 f"border: 1px solid {C.BORDER}; padding: 4px 8px; }} "
                                 f"QPushButton:hover, QPushButton:focus {{ border: 1px solid {C.PRI}; }} "
@@ -5518,7 +5521,7 @@ class MainWindow(QMainWindow):
             self._drawer_btn.setChecked(True)
             self._toggle_drawer(True)
             return
-        pages = {'Home': 0, 'Tasks': 1, 'Quantum Lab': 2}
+        pages = {'Home': 0, 'Tasks': 1, 'Quantum Lab': 2, 'Coding': 3}
         if target not in pages:
             return
         self._main_pages.setCurrentIndex(pages[target])
