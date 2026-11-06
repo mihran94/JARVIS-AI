@@ -14,7 +14,7 @@ class _Results(QObject):
 
 
 class CodingPanel(QWidget):
-    def __init__(self, palette, parent=None):
+    def __init__(self, palette, parent=None, open_providers=None):
         super().__init__(parent)
         self.workspace = None
         self.relative = Path('.')
@@ -41,6 +41,16 @@ class CodingPanel(QWidget):
         self.up.clicked.connect(self._up)
         row.addWidget(self.up)
         layout.addLayout(row)
+        connections = QHBoxLayout()
+        self.providers_button = QPushButton('AI connections: Gemini / OpenAI / MiniMax')
+        self.providers_button.setEnabled(open_providers is not None)
+        if open_providers is not None:
+            self.providers_button.clicked.connect(open_providers)
+        connections.addWidget(self.providers_button)
+        self.codex_button = QPushButton('Codex review…')
+        self.codex_button.clicked.connect(self._codex)
+        connections.addWidget(self.codex_button)
+        layout.addLayout(connections)
         self.status = QLabel('No project selected')
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
@@ -66,6 +76,14 @@ class CodingPanel(QWidget):
         self.diagnosis.setReadOnly(True)
         self.diagnosis.setAccessibleName('Error guidance')
         layout.addWidget(self.diagnosis, 1)
+
+    def _codex(self):
+        if self.workspace is None:
+            self.status.setText('Choose a project folder before opening Codex.')
+            return
+        from core.codex_ui import CodexReviewDialog
+        dialog = CodexReviewDialog(self.workspace.root, self)
+        dialog.exec()
 
     def _diagnose(self):
         self.diagnosis.setPlainText(diagnose_traceback(self.error_input.toPlainText()))

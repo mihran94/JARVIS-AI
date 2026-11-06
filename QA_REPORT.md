@@ -36,3 +36,8 @@ Actual Qt widget coverage now includes Home/Tasks/Quantum Lab navigation, retain
 - Rendered and visually inspected the real Coding panel at 1280×800. No production provider request, build, installer or Windows test was performed. The previously passing 99 provider checks were not rerun for this independent read-only feature.
 - Error guidance is heuristic and requires developer review. Project code is never imported/executed by these new tools. Other existing app coding actions are unchanged.
 - Scope checks do not defend against concurrent malicious filesystem replacement; secret filename filtering is intentionally not represented as complete secret detection.
+
+## AI connections / Codex review
+46 unit/widget tests and 99 provider checks pass in isolated Linux/offscreen runs. New HTTP mock coverage checks Gemini/OpenAI/MiniMax endpoint, bearer key and model separation; no real key is used. Command tests cover read-only policy, stdin, missing CLI and Windows npm entry-point resolution. Real QProcess widget tests use harmless Python subprocesses to verify output, nonzero exit and cancellation; they do not execute Codex model requests.
+
+Codex CLI help was inspected locally without logging in or calling a model. Windows execution, real provider authentication and provider-specific tool/reasoning compatibility remain unverified. No new API key was created, no credentials committed, no build run.

@@ -76,3 +76,20 @@ Coding (Alt+6) provides a user-selected, read-only project browser with backgrou
 Error Doctor analyzes pasted Python exception text locally using built-in guidance, including missing modules, syntax, names, permissions and file paths. It makes no model calls and neither runs nor edits code. Suggestions are not verified fixes. Diff editing, test execution, Git actions inside the app, Work Mode routines and automation scheduling remain future increments. Existing external development tools remain separate.
 
 Validation: 37 unit/widget tests pass on Linux with Qt offscreen, including a real project-selection/preview/error-guidance flow. Windows testing and builds remain deferred.
+
+## AI connections and Codex review increment
+Gemini Live remains the native voice engine. The existing OpenAI and MiniMax Chat Completions connections are retained; Gemini's official OpenAI-compatible endpoint is now also available for background/coding and pipeline use. Each service uses its own saved settings through config_manager. Choose a model supported by the account; this does not imply support for every model or API modality (Responses-only models are not supported by this adapter).
+
+Setup: Coding → AI connections (or Settings → ENGINE & PROVIDERS) → choose a service under CODING or BACKGROUND REQUESTS → enter its own API key and model → TEST → SAVE & APPLY. TEST sends a real provider request and may incur usage; model discovery can also contact the selected service. Gemini-compatible settings are separate from the existing Gemini Live key. Existing local configuration is ignored by git but is not an encrypted credential vault.
+
+Coding → select project → Codex review opens a dedicated dialog. Only Run Codex review starts a process. This uses an installed, signed-in Codex CLI, not the Jarvis provider key fields, and may send project context to OpenAI. It requests a read-only sandbox, never approvals, ephemeral session, and ignored user config/rules. Prompt travels over stdin; commands use argument arrays without a shell. Windows npm shims resolve via Node.js. Unsupported CLI flags or sandbox/authentication errors fail visibly rather than retrying with weaker permissions.
+
+Codex review is analysis/suggestions only; code application, builds and releases are not added. A five-minute deadline, 256 KiB output cap and Stop terminate the CLI process. Subprocess descendants may require separate cleanup; sandbox enforcement and credentials remain the CLI's responsibility. This is not a hard read boundary around the selected folder, and the Explorer's filename filters do not govern Codex reads. Review only projects appropriate to share.
+
+Official references checked 2026-11-06:
+- https://ai.google.dev/gemini-api/docs/openai
+- https://platform.minimax.io/docs/api-reference/text-openai-api
+- https://learn.chatgpt.com/docs/non-interactive-mode
+- https://learn.chatgpt.com/docs/developer-commands?surface=cli
+
+Validation: 46 unit/widget tests and 99 provider regression checks pass using mocks and local processes. No live API/Codex review, Windows test or executable build performed. Provider-specific advanced tool loops (including reasoning metadata), account access, real latency and native Windows sandbox behavior still need acceptance testing.

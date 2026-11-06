@@ -127,6 +127,53 @@ class StartupWidgets(unittest.TestCase):
             self.assertIn('Could not read', panel.status.text())
         self.window._navigate('Home')
 
+    def test_codex_dialog_process_success_and_failure(self):
+        import sys
+        import time
+        import tempfile
+        from core.codex_ui import CodexReviewDialog
+        with tempfile.TemporaryDirectory() as root:
+            dialog = CodexReviewDialog(root, self.window)
+            for code, expected in [(0, 'completed'), (2, 'failed')]:
+                command = [sys.executable, '-c',
+                           f'import sys; sys.stdin.read(); print("mock review"); sys.exit({code})']
+                with patch('core.codex_ui.review_command', return_value=command):
+                    dialog._run()
+                    deadline = time.monotonic() + 5
+                    while not dialog.run_button.isEnabled() and time.monotonic() < deadline:
+                        self.player._app.processEvents()
+                        time.sleep(0.005)
+                self.assertIn(expected, dialog.status.text())
+                self.assertIn('mock review', dialog.output.toPlainText())
+            dialog.reject()
+
+    def test_codex_stop_terminates_running_cli(self):
+        import sys
+        import time
+        from core.codex_ui import CodexReviewDialog
+        dialog = CodexReviewDialog('.', self.window)
+        with patch('core.codex_ui.review_command', return_value=[sys.executable, '-c',
+                   'import sys,time; sys.stdin.read(); time.sleep(30)']):
+            dialog._run()
+            self.assertTrue(dialog.process.waitForStarted(2000))
+            dialog._stop()
+            deadline = time.monotonic() + 3
+            while not dialog.run_button.isEnabled() and time.monotonic() < deadline:
+                self.player._app.processEvents()
+                time.sleep(0.005)
+        self.assertTrue(dialog.run_button.isEnabled())
+        self.assertEqual(dialog.status.text(), 'Review stopped.')
+        dialog.reject()
+
+    def test_codex_missing_install_is_visible(self):
+        from core.codex_ui import CodexReviewDialog
+        dialog = CodexReviewDialog('.', self.window)
+        with patch('core.codex_ui.review_command', side_effect=ValueError('Codex CLI is not installed')):
+            dialog._run()
+        self.assertIn('not installed', dialog.status.text())
+        self.assertTrue(dialog.run_button.isEnabled())
+        dialog.reject()
+
     def test_unavailable_video_keeps_window_usable(self):
         with patch.object(self.ui, 'HAVE_VIDEO', False), patch.object(self.window._log, 'append_log', wraps=self.window._log.append_log) as log:
             self.window._on_video_open('not-played.mp4', 'Unavailable', True)

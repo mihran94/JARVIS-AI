@@ -52,6 +52,7 @@ PRESETS: dict[str, str] = {
     "vLLM":                 "http://127.0.0.1:8000/v1",
     "Jan":                  "http://127.0.0.1:1337/v1",
     "OpenAI":               "https://api.openai.com/v1",
+    "Gemini":               "https://generativelanguage.googleapis.com/v1beta/openai",
     "Groq":                 "https://api.groq.com/openai/v1",
     "DeepSeek":             "https://api.deepseek.com/v1",
     "Mistral":              "https://api.mistral.ai/v1",
@@ -108,6 +109,9 @@ _LOCAL = {"model": "", **_LOCAL_BUDGET}
 _CLOUD = {"model": "", "max_tools": "", "max_tool_chars": ""}
 
 CATALOG = (
+    {"id": "gemini", "label": "Gemini",
+     "note": "cloud · Gemini API key · text/coding", "local": False,
+     "values": {"base_url": PRESETS["Gemini"], **_CLOUD}},
     {"id": "ollama",     "label": "Ollama",
      "note": "on this computer · free", "local": True,
      "values": {"base_url": PRESETS["Ollama"], **_LOCAL}},

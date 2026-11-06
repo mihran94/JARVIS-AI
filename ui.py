@@ -3524,8 +3524,7 @@ class ProvidersOverlay(_HudOverlay):
         def fmt(entry, _decl):
             mark = "🖥" if entry.get("local") else (
                 "☁" if entry.get("local") is False else "  ")
-            star = "   ★ recommended" if entry.get("id") == "minimax" else ""
-            return f"{mark}  Code with {entry['label']}{star}"
+            return f"{mark}  Code with {entry['label']}"
 
         self._coding_combo = self._service_combo(
             "llm", ("Same as background requests", ""), fmt)
@@ -4605,7 +4604,7 @@ class MainWindow(QMainWindow):
         self._main_pages.addWidget(self._build_activity_page())
         self._main_pages.addWidget(self._build_quantum_page())
         from core.coding_ui import CodingPanel
-        self._coding_panel = CodingPanel(C, self)
+        self._coding_panel = CodingPanel(C, self, open_providers=self._open_providers)
         self._main_pages.addWidget(self._coding_panel)
         body.addWidget(self._main_pages, stretch=5)
 
