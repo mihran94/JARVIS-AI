@@ -198,6 +198,25 @@ class StartupWidgets(unittest.TestCase):
             self.assertEqual((dialog.session.root / 'a.py').read_text(), 'a=1\n')
             dialog.reject()
 
+    def test_prompt_template_and_ai_result_stage_without_writing(self):
+        import tempfile, zipfile
+        from core.project_update import UpdateSession
+        from core.project_update_ui import ProjectUpdateDialog
+        with tempfile.TemporaryDirectory() as folder:
+            source=Path(folder)/'input.zip'
+            with zipfile.ZipFile(source,'w') as archive: archive.writestr('main.py','x=1\n')
+            dialog=ProjectUpdateDialog(self.window)
+            dialog.session=UpdateSession(source,folder)
+            dialog.files.addItem('main.py')
+            dialog.prompt_choice.setCurrentText('Fix a bug')
+            self.assertIn('expected behavior',dialog.instruction.toPlainText())
+            dialog._generated('x=2\n','')
+            self.assertIn('main.py',dialog.staged)
+            self.assertEqual((dialog.session.root/'main.py').read_text(),'x=1\n')
+            dialog._generated('def !!!','')
+            self.assertNotIn('main.py',dialog.staged)
+            dialog.reject()
+
     def test_unavailable_video_keeps_window_usable(self):
         with patch.object(self.ui, 'HAVE_VIDEO', False), patch.object(self.window._log, 'append_log', wraps=self.window._log.append_log) as log:
             self.window._on_video_open('not-played.mp4', 'Unavailable', True)
