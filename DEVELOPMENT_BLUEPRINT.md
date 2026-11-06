@@ -61,3 +61,6 @@ For each bounded change: inspect source and AGENTS.md → implement → run rele
 
 ## Later packaging
 Windows EXE and installer, Authenticode signature, uninstall behavior and installer-compatible updates remain separate work. Source launch scripts are convenience entry points, not an installer and not a build. No release timetable or hosted-service cost is assumed.
+
+## Phase 1 follow-up: UI startup
+The full UI now opens in the isolated Linux/offscreen test environment after deferring optional video audio initialization until playback. Settings → Updates, mute and resize have regression coverage. Windows/device acceptance remains pending; Quantum Lab remains proposed. See QA_REPORT.md for the precise native-backend limitation.

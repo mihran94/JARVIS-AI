@@ -252,9 +252,9 @@ class _SysMetrics:
     def __init__(self):
         self.cpu  = 0.0
         self.mem  = 0.0
-        self.net  = 0.0   
-        self.gpu  = -1.0  
-        self.tmp  = -1.0  
+        self.net  = 0.0
+        self.gpu  = -1.0
+        self.tmp  = -1.0
         self._lock = threading.Lock()
         self._last_net = psutil.net_io_counters()
         self._last_net_t = time.time()
@@ -4563,72 +4563,19 @@ class MainWindow(QMainWindow):
         _vid_hdr.addWidget(_vid_x)
         _vid_v.addLayout(_vid_hdr)
 
-        if HAVE_VIDEO:
-            # A GRAPHICS ITEM, NOT A QVideoWidget.
-            #
-            # QVideoWidget gets a native window of its own, and a native window
-            # is painted by the compositor above every ordinary widget that
-            # shares the screen with it — so the settings drawer opened
-            # *underneath* the video and raise_() could not help, because the
-            # two are not in the same painting order at all. A video item drawn
-            # into a QGraphicsView goes through Qt's own painter like any other
-            # widget, and anything laid over it stays over it.
-            self._video_scene = QGraphicsScene(self)
-            self._video_item = QGraphicsVideoItem()
-            self._video_scene.addItem(self._video_item)
-            self._video_widget = QGraphicsView(self._video_scene)
-            self._video_widget.setStyleSheet("background: #000; border: none;")
-            self._video_widget.setFrameShape(QGraphicsView.Shape.NoFrame)
-            self._video_widget.setHorizontalScrollBarPolicy(
-                Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            self._video_widget.setVerticalScrollBarPolicy(
-                Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            self._video_widget.setSizePolicy(
-                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
-            )
-            _vid_v.addWidget(self._video_widget, stretch=1)
-
-            self._video_audio = QAudioOutput()
-            self._video_audio.setMuted(True)
-            self._video_player = QMediaPlayer()
-            self._video_player.setVideoOutput(self._video_item)
-            # Keep the picture filling the view as the window is resized.
-            self._video_item.nativeSizeChanged.connect(self._fit_video)
-            self._video_player.setAudioOutput(self._video_audio)
-            self._video_player.errorOccurred.connect(self._on_video_error)
-
-            # A SECOND player, for sound that arrives separately.
-            #
-            # YouTube no longer serves a single stream carrying both picture and
-            # sound — not for new uploads and not for old ones; checked against
-            # three videos including the oldest on the site, and every one of
-            # them offered zero combined formats. Picture and sound are two
-            # URLs, so they are two players, started together and nudged back
-            # into line by the timer below.
-            #
-            # A local file or a direct video URL still uses the first player
-            # alone: one stream, one player, nothing to synchronise.
-            self._video_sound = QMediaPlayer()
-            self._video_sound_out = QAudioOutput()
-            self._video_sound_out.setMuted(True)
-            self._video_sound.setAudioOutput(self._video_sound_out)
-
-            self._video_sync = QTimer(self)
-            self._video_sync.setInterval(1000)
-            self._video_sync.timeout.connect(self._sync_video_sound)
-        else:
-            self._video_scene = None
-            self._video_item = None
-            self._video_widget = None
-            self._video_player = None
-            self._video_audio = None
-            self._video_sound = None
-            self._video_sound_out = None
-            self._video_sync = None
-            _miss = QLabel("Video playback is not available in this Qt install.")
-            _miss.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            _miss.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
-            _vid_v.addWidget(_miss, stretch=1)
+        # Video is optional. Opening the assistant must not initialize an OS
+        # multimedia/audio backend before the user requests media playback.
+        self._video_layout = _vid_v
+        self._video_scene = self._video_item = self._video_widget = None
+        self._video_player = self._video_audio = self._video_sound = None
+        self._video_sound_out = self._video_sync = None
+        self._video_backend_failed = False
+        self._video_placeholder = QLabel(
+            "Video loads when requested." if HAVE_VIDEO else
+            "Video playback is not available in this Qt install.")
+        self._video_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._video_placeholder.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        _vid_v.addWidget(self._video_placeholder, stretch=1)
 
         # Stack: 0 = animated HUD, 1 = live camera, 2 = video
         self._hud_cam_stack = QStackedWidget()
@@ -4821,10 +4768,77 @@ class MainWindow(QMainWindow):
     # Everything below runs on the Qt thread. Plugins and the assistant reach it
     # through the signals above, the same way every other panel is driven, so a
     # background thread never touches a widget.
+    def _ensure_video_backend(self) -> bool:
+        """Initialize optional multimedia on the Qt thread, on first playback."""
+        if self._video_player is not None and not self._video_backend_failed:
+            return True
+        if not HAVE_VIDEO or self._video_backend_failed:
+            return False
+        try:
+            # A GRAPHICS ITEM, NOT A QVideoWidget.
+            #
+            # QVideoWidget gets a native window of its own, and a native window
+            # is painted by the compositor above every ordinary widget that
+            # shares the screen with it — so the settings drawer opened
+            # *underneath* the video and raise_() could not help, because the
+            # two are not in the same painting order at all. A video item drawn
+            # into a QGraphicsView goes through Qt's own painter like any other
+            # widget, and anything laid over it stays over it.
+            self._video_scene = QGraphicsScene(self)
+            self._video_item = QGraphicsVideoItem()
+            self._video_scene.addItem(self._video_item)
+            self._video_widget = QGraphicsView(self._video_scene)
+            self._video_widget.setStyleSheet("background: #000; border: none;")
+            self._video_widget.setFrameShape(QGraphicsView.Shape.NoFrame)
+            self._video_widget.setHorizontalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            self._video_widget.setVerticalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            self._video_widget.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+            )
+            self._video_layout.addWidget(self._video_widget, stretch=1)
+
+            self._video_audio = QAudioOutput(self)
+            self._video_audio.setMuted(True)
+            self._video_player = QMediaPlayer(self)
+            self._video_player.setVideoOutput(self._video_item)
+            # Keep the picture filling the view as the window is resized.
+            self._video_item.nativeSizeChanged.connect(self._fit_video)
+            self._video_player.setAudioOutput(self._video_audio)
+            self._video_player.errorOccurred.connect(self._on_video_error)
+
+            # A SECOND player, for sound that arrives separately.
+            #
+            # YouTube no longer serves a single stream carrying both picture and
+            # sound — not for new uploads and not for old ones; checked against
+            # three videos including the oldest on the site, and every one of
+            # them offered zero combined formats. Picture and sound are two
+            # URLs, so they are two players, started together and nudged back
+            # into line by the timer below.
+            #
+            # A local file or a direct video URL still uses the first player
+            # alone: one stream, one player, nothing to synchronise.
+            self._video_sound = QMediaPlayer(self)
+            self._video_sound_out = QAudioOutput(self)
+            self._video_sound_out.setMuted(True)
+            self._video_sound.setAudioOutput(self._video_sound_out)
+
+            self._video_sync = QTimer(self)
+            self._video_sync.setInterval(1000)
+            self._video_sync.timeout.connect(self._sync_video_sound)
+            self._video_placeholder.hide()
+            return True
+        except Exception as error:
+            self._video_backend_failed = True
+            self._log.append_log(f"SYS: Video initialization failed ({type(error).__name__}). "
+                           "Chat remains available; restart before retrying video.")
+            return False
+
     def _on_video_open(self, source: str, title: str, muted: bool,
                        audio_source: str = "") -> None:
-        if not HAVE_VIDEO or not self._video_player:
-            self.write_log("SYS: Video playback is not available in this Qt "
+        if not self._ensure_video_backend():
+            self._log.append_log("SYS: Video playback is not available in this Qt "
                            "install.")
             return
         # A video and the live camera cannot share the centre of the HUD.
@@ -4955,7 +4969,7 @@ class MainWindow(QMainWindow):
             err = self._video_player.errorString()
         except Exception:
             pass
-        self.write_log(f"SYS: The video could not be played{(' — ' + err) if err else ''}.")
+        self._log.append_log(f"SYS: The video could not be played{(' — ' + err) if err else ''}.")
         self._on_video_close()
 
     def stop_video(self) -> None:

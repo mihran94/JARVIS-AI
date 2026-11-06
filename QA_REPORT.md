@@ -17,3 +17,12 @@ Additional dependencies were installed into a separate scratch test directory, n
 The standalone dialog check used an actual QApplication and actual UpdateDialog, without mocking widgets. It does not verify the main window integration, visual behavior on Windows, restart helper or physical devices. The full UI crash remains an unresolved environment/native-backend investigation; no application fix is claimed.
 
 Phase 1 remains open until Windows setup/start and audio acceptance checks pass. Next useful checks are reproducing the native startup crash with an available supported audio backend and running the existing acceptance checklist on a Windows test host. Do not treat the 118 automated checks as certification of all application features.
+
+## Follow-up: startup isolation fix
+The native crash was reproduced with Python faulthandler: the active main-thread frame was MainWindow.__init__ at QAudioOutput() for optional video playback. This identifies the triggering call; the underlying Qt/PipeWire native defect has not been fixed.
+
+Changed video backend initialization to happen on the Qt thread only when video playback is requested. Main-window construction now leaves QAudioOutput and QMediaPlayer uninitialized. The actual full JarvisUI now constructs, displays and processes events successfully in the same Linux/offscreen environment. No multimedia factory was mocked for that reproduction check.
+
+Added five real-widget regression tests covering startup without eager media factories, mute/resize, the Settings button opening the actual Updates dialog, unavailable-video handling, and a simulated Python multimedia-constructor error. Tests use one QApplication, no model credentials, and mock only the multimedia error/factory probes and first-run credential gate. All 24 launcher/updater/UI tests pass using cryptography 49.0.0. The existing provider self-test was rerun with the changed UI: 99 passed, 0 failed. Total: 123 passing checks across the 24-test suite and 99 provider checks.
+
+Video playback is deferred, not certified safe on the broken native backend: requesting video there may still cause a native crash. A Python exception is reported in the activity log, but a native segmentation fault cannot be caught this way. Actual playback, sound devices, Windows setup/CMD execution, Windows UI and production model calls remain unverified. Phase 1 remains open for Windows acceptance. No build or release.
