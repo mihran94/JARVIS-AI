@@ -104,3 +104,6 @@ ZIP updater preserves per-file drafts while switching files. Stage each edited e
 
 ## Coding task prompts
 ZIP updater now includes editable bug-fix, feature, refactor, test and validation prompts. AI drafts automatically enter validation and diff staging; they never auto-apply or execute. Invalid Python drafts remain editable and are not staged. This remains selected-file generation with multi-file manual staging, not unrestricted autonomous programming control. 54 unit/widget tests pass with mocked AI output. Live credentials, Windows launch and builds remain untested/deferred.
+
+## Bounded project-agent drafting
+AI task across project files sends one request with all editable files in a small imported project (1–10 files, 128 KiB combined context). The model returns replacements for existing supplied paths only. All returned changes must pass validation before the UI stages any. Review and Apply remain explicit; grouped backup/undo remains available. No new/deleted files, autonomous runtime execution, dependency installation, test-repair loop, build or deployment is implemented. Provider routing uses the existing SMART ladder. 55 tests pass using mocked AI output; real multi-file model quality and Windows UI remain unverified.
