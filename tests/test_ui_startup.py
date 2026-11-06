@@ -174,6 +174,30 @@ class StartupWidgets(unittest.TestCase):
         self.assertTrue(dialog.run_button.isEnabled())
         dialog.reject()
 
+    def test_zip_multi_file_stage_apply_and_undo(self):
+        import tempfile, zipfile
+        from core.project_update import UpdateSession
+        from core.project_update_ui import ProjectUpdateDialog
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / 'source.zip'
+            with zipfile.ZipFile(source, 'w') as archive:
+                archive.writestr('a.py', 'a=1\n')
+                archive.writestr('b.py', 'b=1\n')
+            dialog = ProjectUpdateDialog(self.window)
+            dialog.session = UpdateSession(source, folder)
+            dialog.files.addItems(['a.py', 'b.py'])
+            dialog.editor.setPlainText('a=2\n'); dialog.preview()
+            dialog.files.setCurrentText('b.py')
+            dialog.editor.setPlainText('b=2\n'); dialog.preview()
+            self.assertEqual(len(dialog.staged), 2)
+            dialog.files.setCurrentText('a.py')
+            self.assertEqual(dialog.editor.toPlainText(), 'a=2\n')
+            dialog.apply()
+            self.assertEqual((dialog.session.root / 'b.py').read_text(), 'b=2\n')
+            dialog.undo()
+            self.assertEqual((dialog.session.root / 'a.py').read_text(), 'a=1\n')
+            dialog.reject()
+
     def test_unavailable_video_keeps_window_usable(self):
         with patch.object(self.ui, 'HAVE_VIDEO', False), patch.object(self.window._log, 'append_log', wraps=self.window._log.append_log) as log:
             self.window._on_video_open('not-played.mp4', 'Unavailable', True)

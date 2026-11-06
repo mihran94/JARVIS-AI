@@ -96,3 +96,8 @@ Validation: 46 unit/widget tests and 99 provider regression checks pass using mo
 
 ## ZIP update increment
 Coding → Update project ZIP imports a separate working copy. Select an existing UTF-8 source file, edit manually or request an AI draft using configured provider routing, preview diff, apply with backup, undo and export a new ZIP. AI sends only the selected editor text and request after confirmation. No automatic multi-file edits. Common credential/environment entries are excluded and counted. Python syntax checks do not run tests or builds. Backups remain alongside the working copy; undo history lasts for the dialog session. Imported archives are limited to 5000 entries/100 MiB. Windows acceptance and live AI drafts remain unverified.
+
+## Multi-file staging increment
+ZIP updater preserves per-file drafts while switching files. Stage each edited existing file to review the combined diff, then Apply all staged files (maximum 50). All file snapshots and replacements are validated before writing; grouped backups support one-step undo. Ordinary write failures attempt restoration of earlier writes. This is not crash-atomic across multiple files: power loss or failed rollback requires recovery from the retained backup directory. No automatic multi-file AI planning, file creation/deletion, runtime test runner or self-install is introduced. AI drafting still operates on one selected file at a time.
+
+51 isolated unit/widget tests pass, including real-widget staging/navigation/apply/undo, stale-file rejection and simulated write failure rollback. Windows and live API acceptance remain deferred.

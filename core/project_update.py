@@ -53,14 +53,38 @@ class UpdateSession:
         return (str(name), raw, replacement.encode('utf-8'), diff)
 
     def apply(self, proposal):
-        name, before, after, diff = proposal
-        path = self.workspace._path(name)
-        if path.read_bytes() != before:
-            raise ValueError('File changed after preview. Preview again.')
-        backup = self.home / f'backup-{len(self.history)}.bin'
-        backup.write_bytes(before)
-        self._write(path, after)
-        self.history.append((name, backup, after))
+        self.apply_batch([proposal])
+
+    def apply_batch(self, proposals):
+        proposals = list(proposals)
+        if not proposals or len(proposals) > 50:
+            raise ValueError('Stage between 1 and 50 files.')
+        paths, records, seen = [], [], set()
+        for name, before, after, diff in proposals:
+            path = self.workspace._path(name)
+            if str(path).casefold() in seen:
+                raise ValueError('Duplicate file in change set.')
+            seen.add(str(path).casefold())
+            if path.read_bytes() != before:
+                raise ValueError('File changed after preview. Preview again.')
+            # Revalidate replacements at the write boundary.
+            self.preview(name, after.decode('utf-8'))
+            paths.append(path)
+        backup_dir = Path(tempfile.mkdtemp(prefix='change-', dir=self.home))
+        for index, (name, before, after, diff) in enumerate(proposals):
+            backup = backup_dir / str(index)
+            backup.write_bytes(before)
+            records.append((name, backup, after))
+        written = []
+        try:
+            for path, proposal in zip(paths, proposals):
+                self._write(path, proposal[2])
+                written.append((path, proposal[1]))
+        except Exception:
+            for path, original in reversed(written):
+                self._write(path, original)
+            raise
+        self.history.append(records)
 
     def _write(self, path, data):
         fd, tmp = tempfile.mkstemp(dir=path.parent)
@@ -73,10 +97,20 @@ class UpdateSession:
 
     def undo(self):
         if not self.history: raise ValueError('No change to undo in this session.')
-        name, backup, after = self.history[-1]
-        path = self.workspace._path(name)
-        if path.read_bytes() != after: raise ValueError('File changed externally; undo refused.')
-        self._write(path, backup.read_bytes())
+        records = self.history[-1]
+        for name, backup, after in records:
+            if self.workspace._path(name).read_bytes() != after:
+                raise ValueError('File changed externally; undo refused.')
+            backup.read_bytes()  # Validate all backups before restoring any file.
+        restored = []
+        try:
+            for name, backup, after in records:
+                path = self.workspace._path(name)
+                self._write(path, backup.read_bytes())
+                restored.append((path, after))
+        except Exception:
+            for path, after in reversed(restored): self._write(path, after)
+            raise
         self.history.pop()
 
     def check(self):

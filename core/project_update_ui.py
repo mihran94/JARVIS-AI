@@ -13,6 +13,9 @@ class ProjectUpdateDialog(QDialog):
         self.generated.connect(self._generated)
         self.session = None
         self.proposal = None
+        self.staged = {}
+        self.drafts = {}
+        self.loaded_name = ""
         layout = QVBoxLayout(self)
         self.status = QLabel('Import ZIP → select file → edit → preview → apply → export. Original ZIP stays unchanged.')
         self.status.setWordWrap(True)
@@ -29,13 +32,25 @@ class ProjectUpdateDialog(QDialog):
         self.instruction.setPlaceholderText('Describe the change for the selected file')
         self.instruction.setMaximumHeight(70)
         layout.addWidget(self.instruction)
-        for text, callback in [('AI draft for selected file', self.generate), ('Preview changes', self.preview), ('Apply preview', self.apply), ('Undo last change', self.undo), ('Check Python syntax', self.check), ('Export updated ZIP', self.export)]:
+        for text, callback in [('AI draft for selected file', self.generate), ('Stage file + preview all', self.preview), ('Apply all staged files', self.apply), ('Discard drafts', self.discard), ('Undo last change', self.undo), ('Check Python syntax', self.check), ('Export updated ZIP', self.export)]:
             button = QPushButton(text); button.clicked.connect(lambda _, fn=callback: self.perform(fn)); layout.addWidget(button)
         self.files.currentTextChanged.connect(lambda _: self.perform(self.load))
         self.editor.textChanged.connect(self.invalidate)
 
     def invalidate(self):
         self.proposal = None
+        if self.loaded_name:
+            self.drafts[self.loaded_name] = self.editor.toPlainText()
+            self.staged.pop(self.loaded_name, None)
+            self.show_diff()
+
+    def show_diff(self):
+        self.diff.setPlainText('\n'.join(p[3] for p in self.staged.values()) or 'No staged changes.')
+
+    def discard(self):
+        self.staged.clear(); self.drafts.clear(); self.loaded_name = ''
+        self.load()
+
 
     def perform(self, action):
         try: action()
@@ -47,6 +62,7 @@ class ProjectUpdateDialog(QDialog):
         destination = QFileDialog.getExistingDirectory(self, 'Folder for working copy and backups')
         if not destination: return
         session = UpdateSession(source, destination)
+        self.staged.clear(); self.drafts.clear(); self.loaded_name = ""
         self.session = session
         self.files.blockSignals(True); self.files.clear()
         for path in session.root.rglob('*'):
@@ -59,21 +75,37 @@ class ProjectUpdateDialog(QDialog):
         self.status.setText(f'Working copy: {session.home}. Excluded {len(session.skipped)} credential/environment entries. Backups stay here.')
 
     def load(self):
-        self.invalidate(); self.diff.clear()
-        if self.session and self.files.currentText(): self.editor.setPlainText(self.session.workspace.read_text(self.files.currentText()))
+        self.loaded_name = self.files.currentText()
+        self.editor.blockSignals(True)
+        try:
+            text = ''
+            if self.session and self.loaded_name:
+                text = self.drafts.get(self.loaded_name)
+                if text is None: text = self.session.workspace.read_text(self.loaded_name)
+            self.editor.setPlainText(text)
+        finally:
+            self.editor.blockSignals(False)
+        self.show_diff()
 
     def preview(self):
         if not self.session: raise ValueError('Import a ZIP first.')
-        self.proposal = self.session.preview(self.files.currentText(), self.editor.toPlainText())
-        self.diff.setPlainText(self.proposal[3] or 'No changes.')
-        self.status.setText('Review the diff, then Apply preview. Python replacements must pass syntax checks.')
+        proposal = self.session.preview(self.files.currentText(), self.editor.toPlainText())
+        self.staged[proposal[0]] = proposal
+        self.show_diff()
+        self.status.setText(f'{len(self.staged)} files staged. Review all diffs before applying.')
 
     def apply(self):
-        if not self.proposal: raise ValueError('Preview changes first.')
-        self.session.apply(self.proposal); self.load(); self.status.setText('Applied to working copy; backup saved.')
+        if not self.staged: raise ValueError('Stage changes first.')
+        for name, text in self.drafts.items():
+            if name not in self.staged and text != self.session.workspace.read_text(name):
+                raise ValueError('Stage or discard every edited file before applying.')
+        self.session.apply_batch(self.staged.values())
+        self.discard()
+        self.status.setText('All staged files applied; grouped backup saved.')
 
     def undo(self):
         if not self.session: return
+        if self.staged or self.drafts: raise ValueError("Discard drafts before undo.")
         self.session.undo(); self.load(); self.status.setText('Last change restored.')
 
     def check(self):
@@ -81,7 +113,7 @@ class ProjectUpdateDialog(QDialog):
 
     def export(self):
         if not self.session: return
-        if self.proposal or self.editor.toPlainText() != self.session.workspace.read_text(self.files.currentText()):
+        if self.staged or any(text != self.session.workspace.read_text(name) for name, text in self.drafts.items()):
             raise ValueError('Apply or discard the current edit before export.')
         destination, _ = QFileDialog.getSaveFileName(self, 'Save new ZIP (choose a new filename)', 'updated-project.zip', 'ZIP (*.zip)')
         if destination:
