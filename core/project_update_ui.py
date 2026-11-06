@@ -40,7 +40,7 @@ class ProjectUpdateDialog(QDialog):
         self.prompt_choice.currentTextChanged.connect(lambda name: self.instruction.setPlainText(PROMPTS[name]))
         layout.addWidget(self.prompt_choice)
         layout.addWidget(self.instruction)
-        for text, callback in [('AI task across project files', self.generate_batch), ('AI draft for selected file', self.generate), ('Stage file + preview all', self.preview), ('Apply all staged files', self.apply), ('Discard drafts', self.discard), ('Undo last change', self.undo), ('Check Python syntax', self.check), ('Export updated ZIP', self.export)]:
+        for text, callback in [('AI task across project files', self.generate_batch), ('AI draft for selected file', self.generate), ('Stage file + preview all', self.preview), ('Apply all staged files', self.apply), ('Discard drafts', self.discard), ('Undo last change', self.undo), ('Check Python syntax', self.check), ('Run project unit tests…', self.run_tests), ('Export updated ZIP', self.export)]:
             button = QPushButton(text); button.clicked.connect(lambda _, fn=callback: self.perform(fn)); layout.addWidget(button)
         self.files.currentTextChanged.connect(lambda _: self.perform(self.load))
         self.editor.textChanged.connect(self.invalidate)
@@ -199,3 +199,9 @@ class ProjectUpdateDialog(QDialog):
         self.drafts = {proposal[0]: proposal[2].decode('utf-8') for proposal in proposals}
         self.load()
         self.status.setText(f'Project task produced {len(proposals)} validated file drafts. Review all diffs, then Apply all staged files.')
+
+    def run_tests(self):
+        if not self.session: raise ValueError('Import a project first.')
+        if self.staged or self.drafts: raise ValueError('Apply or discard drafts before testing.')
+        from core.project_tests_ui import ProjectTestsDialog
+        ProjectTestsDialog(self.session.root, self).exec()

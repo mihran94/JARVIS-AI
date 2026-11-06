@@ -217,6 +217,22 @@ class StartupWidgets(unittest.TestCase):
             self.assertNotIn('main.py',dialog.staged)
             dialog.reject()
 
+    def test_project_test_dialog_runs_real_fixture(self):
+        import tempfile, time
+        from core.project_tests_ui import ProjectTestsDialog, QMessageBox
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder); (root/'tests').mkdir()
+            (root/'tests/test_ok.py').write_text('import unittest\nclass Demo(unittest.TestCase):\n def test_ok(self): self.assertTrue(True)\n')
+            dialog=ProjectTestsDialog(root,self.window)
+            with patch.object(QMessageBox,'question',return_value=QMessageBox.StandardButton.Yes):
+                dialog._run()
+            deadline=time.monotonic()+5
+            while not dialog.run_button.isEnabled() and time.monotonic()<deadline:
+                self.player._app.processEvents(); time.sleep(0.005)
+            self.assertIn('Tests passed',dialog.status.text())
+            self.assertIn('Ran 1 test',dialog.output.toPlainText())
+            dialog.reject()
+
     def test_unavailable_video_keeps_window_usable(self):
         with patch.object(self.ui, 'HAVE_VIDEO', False), patch.object(self.window._log, 'append_log', wraps=self.window._log.append_log) as log:
             self.window._on_video_open('not-played.mp4', 'Unavailable', True)

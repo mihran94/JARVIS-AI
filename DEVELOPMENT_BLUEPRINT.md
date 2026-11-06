@@ -107,3 +107,8 @@ ZIP updater now includes editable bug-fix, feature, refactor, test and validatio
 
 ## Bounded project-agent drafting
 AI task across project files sends one request with all editable files in a small imported project (1–10 files, 128 KiB combined context). The model returns replacements for existing supplied paths only. All returned changes must pass validation before the UI stages any. Review and Apply remain explicit; grouped backup/undo remains available. No new/deleted files, autonomous runtime execution, dependency installation, test-repair loop, build or deployment is implemented. Provider routing uses the existing SMART ladder. 55 tests pass using mocked AI output; real multi-file model quality and Windows UI remain unverified.
+
+## Explicit project unit-test runner
+ZIP updater now opens a Python unittest runner for an imported project containing tests/test*.py. Run requires explicit trust confirmation because tests execute arbitrary project code with user permissions; the working copy is not a sandbox. No shell or dependency installation is used. Python isolated mode and a small environment allowlist reduce inherited credentials but do not prevent filesystem/network access. Uses the app Python environment; missing dependencies fail visibly. Exit 5 means no tests discovered, not success. Output is capped at 256 KiB; Stop and a five-minute timeout terminate the runner process (descendant cleanup is not guaranteed). No automatic repair loop, build or deployment.
+
+58 tests pass on Linux/offscreen, including real fixture pass/fail/empty discovery and actual test-dialog execution. Windows and live API acceptance remain deferred.
