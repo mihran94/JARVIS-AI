@@ -233,6 +233,32 @@ class StartupWidgets(unittest.TestCase):
             self.assertIn('Ran 1 test',dialog.output.toPlainText())
             dialog.reject()
 
+    def test_failed_tests_offer_reviewed_repair_context(self):
+        import tempfile, time
+        from core.project_tests_ui import ProjectTestsDialog, QMessageBox, QInputDialog
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder); (root/'tests').mkdir()
+            test=root/'tests/test_fail.py'
+            test.write_text('import unittest\nclass Demo(unittest.TestCase):\n def test_bad(self): self.assertEqual(1,2)\n')
+            dialog=ProjectTestsDialog(root,self.window)
+            self.assertFalse(dialog.repair_button.isEnabled())
+            with patch.object(QMessageBox,'question',return_value=QMessageBox.StandardButton.Yes):
+                dialog._run()
+            deadline=time.monotonic()+5
+            while not dialog.run_button.isEnabled() and time.monotonic()<deadline:
+                self.player._app.processEvents(); time.sleep(0.005)
+            self.assertTrue(dialog.repair_button.isEnabled())
+            requests=[]
+            dialog.repair_requested.connect(requests.append)
+            with patch.object(QInputDialog,'getMultiLineText',return_value=('AssertionError: 1 != 2',False)):
+                dialog._repair()
+            self.assertEqual(requests,[])
+            with patch.object(QInputDialog,'getMultiLineText',return_value=('AssertionError: 1 != 2',True)):
+                dialog._repair()
+            self.assertIn('1 != 2',requests[0])
+            self.assertIn('Preserve test expectations',requests[0])
+            dialog.reject()
+
     def test_unavailable_video_keeps_window_usable(self):
         with patch.object(self.ui, 'HAVE_VIDEO', False), patch.object(self.window._log, 'append_log', wraps=self.window._log.append_log) as log:
             self.window._on_video_open('not-played.mp4', 'Unavailable', True)

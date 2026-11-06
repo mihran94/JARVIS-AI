@@ -204,4 +204,10 @@ class ProjectUpdateDialog(QDialog):
         if not self.session: raise ValueError('Import a project first.')
         if self.staged or self.drafts: raise ValueError('Apply or discard drafts before testing.')
         from core.project_tests_ui import ProjectTestsDialog
-        ProjectTestsDialog(self.session.root, self).exec()
+        dialog = ProjectTestsDialog(self.session.root, self)
+        requests = []
+        dialog.repair_requested.connect(requests.append)
+        dialog.exec()
+        if requests:
+            self.instruction.setPlainText(requests[-1])
+            self.generate_batch()

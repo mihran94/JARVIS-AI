@@ -1,14 +1,15 @@
 """Non-blocking Project tests dialog. No shell, no credential copying."""
-from PyQt6.QtCore import QProcess, QTimer
+from PyQt6.QtCore import QProcess, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QLabel, QTextEdit,
                             QPushButton, QHBoxLayout)
 from core.project_tests import test_command
 from PyQt6.QtCore import QProcessEnvironment
-from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtWidgets import QMessageBox, QInputDialog
 
 
 class ProjectTestsDialog(QDialog):
+    repair_requested = pyqtSignal(str)
     def __init__(self, root, parent=None):
         super().__init__(parent)
         self.root = root
@@ -35,6 +36,10 @@ class ProjectTestsDialog(QDialog):
         self.stop_button.setEnabled(False)
         self.stop_button.clicked.connect(self._stop)
         row.addWidget(self.stop_button)
+        self.repair_button = QPushButton('Draft fix for failed tests…')
+        self.repair_button.setEnabled(False)
+        self.repair_button.clicked.connect(self._repair)
+        row.addWidget(self.repair_button)
         layout.addLayout(row)
         self.status = QLabel('Ready — no request sent')
         layout.addWidget(self.status)
@@ -69,6 +74,7 @@ class ProjectTestsDialog(QDialog):
         for key in ('PATH', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'HOME', 'USERPROFILE', 'LANG'):
             if system.contains(key): environment.insert(key, system.value(key))
         self.process.setProcessEnvironment(environment)
+        self.repair_button.setEnabled(False)
         self._stopped = False
         self._bytes.clear()
         self.output.clear()
@@ -93,6 +99,7 @@ class ProjectTestsDialog(QDialog):
             self._stop('Output limit reached; tests stopped.')
 
     def _stop(self, reason=False):
+        self.repair_button.setEnabled(False)
         self._stopped = True
         self.status.setText(reason if isinstance(reason, str) else 'Tests stopped.')
         self.process.kill()
@@ -110,6 +117,7 @@ class ProjectTestsDialog(QDialog):
         self._read()
         self._idle()
         if not self._stopped:
+            self.repair_button.setEnabled(code not in (0, 5) and exit_status == QProcess.ExitStatus.NormalExit and bool(self._bytes))
             success = code == 0 and exit_status == QProcess.ExitStatus.NormalExit
             self.status.setText('Tests passed — inspect the output.' if success else
                                 ('No tests discovered.' if code == 5 else f'Tests failed (exit {code}). Inspect the output.'))
@@ -128,3 +136,19 @@ class ProjectTestsDialog(QDialog):
     def closeEvent(self, event):
         self.reject()
         event.accept()
+
+    def _repair(self):
+        if not self.repair_button.isEnabled() or self.process.state() != QProcess.ProcessState.NotRunning:
+            return
+        output, accepted = QInputDialog.getMultiLineText(
+            self, 'Review failure context',
+            'Remove secrets and unrelated output before sending this context to your AI provider.\nLast 12,000 characters shown; edit as needed.',
+            self.output.toPlainText()[-12000:])
+        if not accepted: return
+        try:
+            from core.test_repair import repair_instruction
+            instruction = repair_instruction(output)
+        except ValueError as error:
+            self.status.setText(str(error)); return
+        self.repair_requested.emit(instruction)
+        self.accept()
