@@ -1,2 +1,96 @@
-# JARVIS-AI
-Windows AI assistant with approved automation, provider chat, persistent task queue and owner-controlled permissions.
+# JARVIS AI — Windows foundation v0.2.0
+
+Independent source release for Mihran. Real PySide6 desktop and working provider request code; no API keys included. This is the second increment, **not the complete autonomous system**.
+
+## Start on Windows 10 / 11
+
+1. Install **Python 3.12, 64-bit**, including its Python launcher, from https://www.python.org/downloads/windows/.
+2. Extract this entire ZIP to a normal folder (for example Documents/JarvisAI). Do not run from inside the ZIP.
+3. Double-click **setup.cmd**. It creates a local virtual environment and installs pinned direct dependencies. Internet access is needed.
+4. Double-click **START_JARVIS.cmd**.
+5. Open **API Providers**. Select MiniMax, OpenAI or Gemini, enter your own key locally, review the model ID, and click **Save provider configuration**.
+6. Open **Chat**, choose that provider, type a message and click **Send to selected provider**. API usage can cost money.
+7. Open **Windows Automation** to approve one Notepad or Calculator launch.
+
+No administrator rights are required. Do not run JARVIS as administrator. A Python dependency install error stays visible in the command window. If Python cannot be found, confirm that the Python 3.12 launcher is installed.
+
+A ChatGPT subscription is separate from provider API access. No keys are provisioned by this project. Credentials belong in the application's masked field, never in chat, source files or screenshots.
+
+## Implemented
+
+- Native Qt interface with command center, chat, app launcher, task queue, editor, history, provider manager, usage and permissions.
+- Real streaming HTTPS chat adapter for OpenAI, MiniMax and Gemini's compatible chat endpoints. Configurable model IDs; no automatic fallback or hidden retries.
+- Windows Credential Manager key save/read/delete. Fixed provider endpoints and TLS verification; no plaintext key-storage fallback.
+- Manual per-action confirmation for app launches and workspace saves; consumed approvals tied to exact arguments/content hash.
+- Fixed Notepad/Calculator launch allowlist using the Windows system directory, with no shell.
+- UTF-8 editor with Python syntax checking (no code execution), confined paths, atomic save and old-content backups.
+- SQLite conversations/configuration/task history; recovery marks interrupted tasks; single-instance lock.
+- Emergency stop and explicit resume; stale worker output remains cancelled after resume.
+- Conversation deletion from the UI. New chat preserves old conversations in SQLite; the latest 100 saved conversations can be reopened from Chat.
+
+## New in v0.2.0
+
+- **Agent Task Queue:** add Notepad/Calculator jobs, select a job, then Review and run selected. Each launch needs approval. Waiting jobs survive restart; started/interrupted jobs are never replayed. Cancel selected or Emergency Stop cancels waiting jobs.
+- **Test saved provider connection:** in API Providers, save your settings and click the test button. Confirm the short prompt and possible API charge. The test verifies a complete text response from the configured model; it does not send conversation history.
+- **Usage & Health:** provider-reported input/output/total tokens, elapsed request time and outcome. Missing counts are shown as Unknown, including many interrupted requests. No currency estimates or billing guarantees.
+- **Saved conversations:** choose one from the Chat dropdown and click Open saved chat.
+- **Safe upgrade:** the old database is backed up automatically before adding the new tables. Existing history and Windows credentials are retained.
+- **CI recipe:** .github/workflows/tests.yml runs tests on Windows and Linux when this source root is placed in a GitHub repository. It has not been run on GitHub here.
+
+### Upgrade from v0.1.0
+
+Close JARVIS first. Extract v0.2.0 into a new folder and run setup.cmd, then START_JARVIS.cmd. Do not merge Python environments. Both versions use %LOCALAPPDATA%/JarvisAI; the existing credential-vault service name remains JARVIS-AI-0.1 deliberately.
+
+The first v0.2 startup backs up the original SQLite database as history-pre-v02-unique-id.sqlite3. Keep that file. To roll back user data, close JARVIS, back up the whole data folder, move the current history.sqlite3 and its -wal/-shm companions aside, and copy the pre-upgrade backup to history.sqlite3 before opening v0.1. Changes since the backup will not be present.
+
+## Limits and security
+
+This release has **manual mode only**. It does not implement autonomous planning, arbitrary computer control, shell execution, builds, voice, offline inference, RAG, quantum tools, cybersecurity scanning, phone remote control, self-updates or executable plugins. Future directories contain boundary documentation, not mock features.
+
+Key storage works only on Windows. Chat UI and core were exercised on Linux with Qt offscreen. **No live provider request, Windows Credential Manager operation, Windows application launch or packaged EXE was tested here.** See docs/TEST_RESULTS.md for actual results and docs/WINDOWS_ACCEPTANCE.md for the remaining checks.
+
+The selected conversation is sent to the selected provider when you click Send; sending the same conversation to another provider shares it with that provider. No system files or editor contents are automatically attached. Model responses are untrusted text and cannot launch tools.
+
+Local chat/history/code are plaintext under **%LOCALAPPDATA%/JarvisAI**. Protect your Windows account and disk. The database contains task descriptions and conversation content, but never stores keys from the settings field. Do not type secrets into ordinary chat messages.
+
+Emergency stop blocks new actions and invalidates approvals. It stops accepting streamed output and requests cancellation, but an in-flight network read may need up to 30 seconds to finish (total stream budget 180 seconds, checked between events). Already-sent requests may be billed. Already-launched applications remain open. It is not an OS-wide kill switch. Ctrl+Alt+J is an application shortcut while JARVIS has focus; other software may reserve this chord, so use the visible red button if necessary.
+
+Editor confinement protects against accidental traversal and ordinary symlink escapes. It is not a sandbox against another process running as your Windows user racing filesystem changes. No unfamiliar code is executed by this release. History is not a tamper-proof enterprise audit log.
+
+Chat input is limited to approximately 90,000 content characters; oversized serialized requests are rejected at 100,000 characters. There is no summarization yet. Output cap: 200,000 characters. Incomplete or filtered streams are reported as errors; partial output is not used as assistant context.
+
+## Coding workspace and recovery
+
+Workspace: **%LOCALAPPDATA%/JarvisAI/workspace**. Enter a relative filename such as src/main.py, then Open or Save. Editing supports text in any language; syntax checking is Python only. Existing contents are copied to .revisions/unique-id.bak before replacement. Revision filenames are opaque; inspect backup contents to select a revision.
+
+To restore a file, close JARVIS, inspect the backup, and manually copy its contents to the intended workspace file. To back up all user data, close JARVIS and copy the JarvisAI data directory. API keys remain in Windows Credential Manager and are not included. For code rollback, retain the previous source folder before replacing it.
+
+## Tests and packaging
+
+Run scripts/test.cmd on Windows. Or:
+    python -m pip install -r requirements-dev.txt
+    python -m pytest -q
+
+Provider protocol tests use httpx.MockTransport with synthetic responses; they do not prove account/model access. Desktop smoke/integration tests use real Qt widgets and worker threads, with synthetic network responses.
+
+Optional: installers/build.cmd builds an **unsigned PyInstaller folder** on Windows. Distribute the entire dist/JarvisAI folder. This is a build recipe, not a prebuilt installer, signed release, or claim of Windows verification. Direct dependencies are pinned; a full Windows transitive lock, SBOM and supply-chain review remain release-engineering work. Review Qt/PySide licensing before redistribution.
+
+## Architecture and next phase
+
+Read docs/ARCHITECTURE.md for trust boundaries and the complete prioritized 12-phase roadmap.
+
+**Next phase:** validate on Windows 10/11 and with your configured provider, execute the supplied Windows CI/acceptance checks, then introduce accessibility-based inspection and bounded multi-step workflows. Supervised/trusted modes must wait for policy and recovery tests.
+
+## Official references checked while implementing
+
+- Qt setup: https://doc.qt.io/qtforpython-6/gettingstarted.html
+- OpenAI chat reference: https://developers.openai.com/api/reference/typescript/resources/chat
+- MiniMax compatibility: https://platform.minimax.io/docs/api-reference/text-openai-api
+- Gemini compatibility: https://ai.google.dev/gemini-api/docs/openai
+
+Provider defaults are editable suggestions, not a guarantee of model availability. The request adapter uses the documented compatible chat format; native advanced provider capabilities are not included.
+
+Provider usage references:
+- https://developers.openai.com/api/reference/resources/chat/subresources/completions/streaming-events
+- https://ai.google.dev/gemini-api/docs/openai?hl=fr
+- https://platform.minimax.io/docs/api-reference/text-openai-api
