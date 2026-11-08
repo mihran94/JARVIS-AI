@@ -10,8 +10,8 @@ def test_desktop_navigation_stop_and_editor(tmp_path):
     window = Window(tmp_path)
     window.show()
     app.processEvents()
-    assert window.pages.count() == 9
-    for index in range(9):
+    assert window.pages.count() == 10
+    for index in range(10):
         window.nav.setCurrentRow(index)
         app.processEvents()
         assert window.pages.currentIndex() == index
@@ -125,4 +125,17 @@ def test_stop_cancels_desktop_queue(tmp_path):
     window.stop()
     window.resume()
     assert window.queue.rows()[0]['status'] == 'cancelled'
+    window.close()
+
+def test_workflow_desktop_create_and_emergency_cancel(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
+    window.workflow_apps.setText('Notepad, Calculator')
+    window.add_workflow()
+    assert window.workflows.rows()[0]['status'] == 'queued'
+    assert [step['app'] for step in window.workflows.steps(window.workflows.rows()[0]['id'])] == [
+        'Notepad', 'Calculator']
+    window.stop()
+    assert window.workflows.rows()[0]['status'] == 'cancelled'
+    window.resume()
     window.close()

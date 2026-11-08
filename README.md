@@ -1,6 +1,6 @@
-# JARVIS AI — Windows foundation v0.2.0
+# JARVIS AI — Windows foundation v0.3.0
 
-Independent source release for Mihran. Real PySide6 desktop and working provider request code; no API keys included. This is the second increment, **not the complete autonomous system**.
+Independent source release for Mihran. Real PySide6 desktop and working provider request code; no API keys included. This is the third increment, **not the complete autonomous system**.
 
 ## Start on Windows 10 / 11
 
@@ -27,6 +27,14 @@ A ChatGPT subscription is separate from provider API access. No keys are provisi
 - SQLite conversations/configuration/task history; recovery marks interrupted tasks; single-instance lock.
 - Emergency stop and explicit resume; stale worker output remains cancelled after resume.
 - Conversation deletion from the UI. New chat preserves old conversations in SQLite; the latest 100 saved conversations can be reopened from Chat.
+
+## New in v0.3.0
+
+- **Step Workflows:** enter 1–10 comma-separated actions from the fixed Notepad/Calculator allowlist. Each step shows a fresh, explicit approval prompt. Runs stop on denial, error or Emergency Stop; no automatic replay of failed/interrupted work.
+- **Read-only window inventory:** click the inspection button under Windows Automation, approve access, then view up to 12 of the top-level visible Windows window titles and PIDs (the inspector caps collection at 30). Inspection runs in a separate subprocess with a three-second timeout and does not click/type into windows. Window titles may reveal private information and action results are logged locally.
+- **Database migration v3:** on first upgrade from v0.2, a history-pre-v03-*.sqlite3 backup is created before adding workflow records. Existing provider keys remain in the original Windows vault namespace.
+- **Manual safety only:** model responses cannot create workflows. Remote phone control, wake words, arbitrary app automation and autonomous planning are still not implemented.
+- **Validation:** nine local workflow/inspection tests passed using the shared v0.2 gateway, policy and store interfaces; full suite and live Windows behavior still require validation.
 
 ## New in v0.2.0
 
@@ -65,6 +73,14 @@ Workspace: **%LOCALAPPDATA%/JarvisAI/workspace**. Enter a relative filename such
 
 To restore a file, close JARVIS, inspect the backup, and manually copy its contents to the intended workspace file. To back up all user data, close JARVIS and copy the JarvisAI data directory. API keys remain in Windows Credential Manager and are not included. For code rollback, retain the previous source folder before replacing it.
 
+## v0.3 workflow usage and upgrade
+
+Close JARVIS before upgrading. Save a copy of your existing source directory, extract the new v0.3 source to a separate directory, run setup.cmd and then START_JARVIS.cmd. The local SQLite database is upgraded in-place with an automatic v0.3 migration backup. Do not copy an old Python virtual environment into the new source.
+
+Open **Step Workflows**. Enter a sequence such as `Notepad, Calculator`, click **Create workflow**, select the row, then click **Review and run selected**. Every launch gets its own confirmation; clicking No ends the whole workflow. Already launched apps are not closed on cancellation. This is a supervised sequence, not autonomous planning.
+
+Under **Windows Automation**, use **Review visible window titles (read only)** to inspect visible top-level window titles and process IDs. Titles may include document names; approve only when comfortable. It does not type, click, record screens or inspect window contents.
+
 ## Tests and packaging
 
 Run scripts/test.cmd on Windows. Or:
@@ -79,7 +95,7 @@ Optional: installers/build.cmd builds an **unsigned PyInstaller folder** on Wind
 
 Read docs/ARCHITECTURE.md for trust boundaries and the complete prioritized 12-phase roadmap.
 
-**Next phase:** validate on Windows 10/11 and with your configured provider, execute the supplied Windows CI/acceptance checks, then introduce accessibility-based inspection and bounded multi-step workflows. Supervised/trusted modes must wait for policy and recovery tests.
+**Next phase:** validate v0.3 on Windows 10/11 and with your configured provider, execute Windows CI/acceptance checks, then add permissioned accessibility-based inspection and carefully scoped UI actions. Supervised/trusted modes must wait for policy and recovery tests.
 
 ## Official references checked while implementing
 

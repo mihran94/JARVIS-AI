@@ -18,9 +18,11 @@ from security.policy import Policy, Action, Stopped
 from security.vault import Vault
 from providers.chat import PROVIDERS, stream_chat, ProviderError
 from automation.windows import APPS, launch_app
+from automation.inspection import inspect_windows
 from developer_studio.workspace import Workspace
 from agents.gateway import Gateway
 from agents.queue import TaskQueue
+from agents.workflows import WorkflowQueue
 
 STYLE = """
 QWidget { background:#0a101c; color:#dce9f9; font-family:'Segoe UI'; font-size:14px; }
@@ -77,7 +79,7 @@ class ChatWorker(QThread):
 class Window(QMainWindow):
     def __init__(self, data_root):
         super().__init__()
-        self.setWindowTitle('JARVIS AI • 0.2.0')
+        self.setWindowTitle('JARVIS AI • 0.3.0')
         self.resize(1180, 790)
         self.root = Path(data_root)
         self.store = Store(self.root / 'history.sqlite3')
@@ -85,6 +87,7 @@ class Window(QMainWindow):
         self.vault = Vault()
         self.gateway = Gateway(self.policy, self.store)
         self.queue = TaskQueue(self.store, self.gateway)
+        self.workflows = WorkflowQueue(self.store, self.gateway)
         self.worker_kind = "chat"
         self.active_provider = None
         self.active_model = None
@@ -116,7 +119,7 @@ class Window(QMainWindow):
         stop.clicked.connect(self.stop)
         header.addWidget(stop)
         outer.addLayout(header)
-        subtitle = QLabel('WINDOWS ASSISTANT    /    FOUNDATION RELEASE 0.2    /    OWNER CONTROLLED')
+        subtitle = QLabel('WINDOWS ASSISTANT    /    FOUNDATION RELEASE 0.3    /    OWNER CONTROLLED')
         subtitle.setObjectName('subtitle')
         outer.addWidget(subtitle)
         body = QHBoxLayout()
@@ -130,6 +133,7 @@ class Window(QMainWindow):
         self.add_page('Chat', self.chat_page())
         self.add_page('Windows Automation', self.automation_page())
         self.add_page('Agent Task Queue', self.queue_page())
+        self.add_page('Step Workflows', self.workflow_page())
         self.add_page('Developer Studio', self.editor_page())
         self.add_page('Task History', self.history_page())
         self.add_page('API Providers', self.provider_page())
@@ -219,6 +223,7 @@ class Window(QMainWindow):
         self.app_choice.addItems(APPS)
         layout.addWidget(self.app_choice)
         self.button(layout, 'Review and launch', self.launch)
+        self.button(layout, 'Review visible window titles (read only)', self.inspect_visible_windows)
         layout.addStretch()
         return page
 
@@ -301,6 +306,68 @@ class Window(QMainWindow):
         self.jobs_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.jobs_table)
         return page
+
+
+    def workflow_page(self):
+        page, layout = self.page('Step Workflows',
+            'Create 1–10 manual Notepad/Calculator steps separated by commas. '
+            'Every step requires a new approval. Failed or interrupted runs never restart.')
+        row = QHBoxLayout()
+        self.workflow_apps = QLineEdit()
+        self.workflow_apps.setPlaceholderText('Notepad, Calculator, Notepad')
+        row.addWidget(self.workflow_apps, 1)
+        self.button(row, 'Create workflow', self.add_workflow)
+        layout.addLayout(row)
+        actions = QHBoxLayout()
+        self.button(actions, 'Review and run selected', self.run_workflow)
+        self.button(actions, 'Cancel selected', self.cancel_workflow)
+        layout.addLayout(actions)
+        self.workflow_table = QTableWidget(0, 4)
+        self.workflow_table.setHorizontalHeaderLabels(['Created (UTC)', 'Steps', 'Status', 'Details'])
+        self.workflow_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.workflow_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.workflow_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.workflow_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self.workflow_table)
+        return page
+
+    def selected_workflow(self):
+        row = self.workflow_table.currentRow()
+        item = self.workflow_table.item(row, 0) if row >= 0 else None
+        if item is None:
+            raise ValueError('Select a workflow first.')
+        return item.data(Qt.ItemDataRole.UserRole)
+
+    def add_workflow(self):
+        def operation():
+            items = [item.strip() for item in self.workflow_apps.text().split(',')]
+            ident = self.workflows.add(items)
+            self.workflow_apps.clear()
+            return 'Workflow created: ' + ident[:8] + '. It will not start without approval.'
+        self.notify(operation)
+
+    def run_workflow(self):
+        self.notify(lambda: self.workflows.run(self.selected_workflow(), self.confirm))
+
+    def cancel_workflow(self):
+        self.notify(lambda: 'Workflow cancelled.' if self.workflows.cancel(self.selected_workflow())
+                    else 'Only waiting/reviewing workflows can be cancelled.')
+
+    def inspect_visible_windows(self):
+        def operation():
+            def observation():
+                windows = inspect_windows()
+                visible = windows[:12]
+                lines = [f"{item['title']} (PID {item['pid']})" for item in visible]
+                if len(windows) > len(visible):
+                    lines.append(f'...and {len(windows) - len(visible)} more windows')
+                return '\n'.join(lines) or 'No visible titled windows were found.'
+            details = self.gateway.run(
+                Action('inspect_visible_windows', 'Read visible window titles and process IDs'),
+                self.confirm, observation)
+            QMessageBox.information(self, 'Visible windows (read only)', details)
+            return 'Window inspection completed. No windows were controlled.'
+        self.notify(operation)
 
     def selected_job(self):
         row = self.jobs_table.currentRow()
@@ -403,10 +470,10 @@ class Window(QMainWindow):
         text.setReadOnly(True)
         text.setPlainText(
             'ACTIVE MODE: MANUAL\n\n'
-            'App launches and file saves require a fresh, one-use confirmation.\n'
+            'App launches, workflow steps, inspection and file saves require confirmation.\n'
             'Send is explicit approval to transmit this chat to the chosen provider.\n'
             'Model output and stored memory cannot grant permissions.\n'
-            'No shell execution, privileged actions, remote listener or plugin auto-loading.\n\n'
+            'No arbitrary shell execution, remote listener or plugin auto-loading.\n\n'
             'EMERGENCY STOP\n'
             'Click the red button or press Ctrl+Alt+J while JARVIS has focus.\n'
             'Blocks new actions, invalidates approvals and cancels accepting chat output.\n'
@@ -420,7 +487,7 @@ class Window(QMainWindow):
             'Assisted/supervised/trusted automation, planner/scheduler, voice, RAG,\n'
             'quantum lab, cybersecurity scans, remote phone access, self-updates,\n'
             'Claude/other providers and isolated code execution.\n\n'
-            'NEXT: Windows acceptance tests, live provider checks, then scoped automation.\n'
+            'CURRENT: Manual workflows and read-only window title inspection.\n'\n            'NEXT: Windows acceptance tests and live provider checks.\n'
             'See docs/ARCHITECTURE.md and docs/WINDOWS_ACCEPTANCE.md.'
         )
         layout.addWidget(text)
@@ -608,6 +675,7 @@ class Window(QMainWindow):
     def stop(self):
         self.policy.stop()
         self.queue.cancel_pending()
+        self.workflows.cancel_pending()
         if self.worker:
             self.worker.requestInterruption()
         self.state.setText('● STOPPED')
@@ -648,6 +716,20 @@ class Window(QMainWindow):
                 self.jobs_table.setItem(index, column, item)
             if job['id'] == selected:
                 self.jobs_table.selectRow(index)
+        workflow_selected = None
+        current = self.workflow_table.currentRow()
+        if current >= 0 and self.workflow_table.item(current, 0):
+            workflow_selected = self.workflow_table.item(current, 0).data(Qt.ItemDataRole.UserRole)
+        workflows = self.workflows.rows()
+        self.workflow_table.setRowCount(len(workflows))
+        for index, workflow in enumerate(workflows):
+            for column, key in enumerate(('created', 'summary', 'status', 'detail')):
+                item = QTableWidgetItem(str(workflow[key]))
+                if column == 0:
+                    item.setData(Qt.ItemDataRole.UserRole, workflow['id'])
+                self.workflow_table.setItem(index, column, item)
+            if workflow['id'] == workflow_selected:
+                self.workflow_table.selectRow(index)
         attempts = self.store.usage_rows()
         self.usage_table.setRowCount(len(attempts))
         for index, attempt in enumerate(attempts):

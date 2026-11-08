@@ -30,3 +30,11 @@ API key-ஐ இந்த ChatGPT உரையாடலுக்கு அனு�
 - Chat: முன்பு சேமித்த உரையாடலை மீண்டும் திறக்கலாம்.
 
 பழைய version இருந்தால் அதை மூடி, புதிய ZIP-ஐ தனி folder-ல் extract செய்யுங்கள். setup.cmd மீண்டும் இயக்கவும். பழைய history மற்றும் keys இருக்கும். முதல் startup-ல் database backup உருவாகும்.
+
+## v0.3 புதிதாக சேர்த்தவை
+
+- **Step Workflows:** `Notepad, Calculator` என்று கொடுத்து Create Workflow தேர்வு செய்யுங்கள். ஒவ்வொரு படிக்கும் தனியாக உங்கள் அனுமதி அவசியம் (அதிகபட்சம் 10).
+- **Window inspection:** Windows Automation → Review visible window titles (read only). நீங்கள் ஒப்புதல் அளித்த பின்னரே திறந்துள்ள Windows தலைப்புகளையும் process ID-களையும் பார்க்கலாம். எந்த window-வையும் கட்டுப்படுத்தாது.
+- **Emergency Stop:** காத்திருக்கும் workflows-ஐ நிறுத்தும். ஏற்கெனவே திறந்த app-களை மூடாது.
+- API keys இப்போது தேவையில்லை; பின்னர் உங்கள் Windows PC-யில் மட்டும் சேர்க்கலாம்.
+- இது முழு autonomous AI அல்லது mobile remote-control final version அல்ல.

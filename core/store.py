@@ -13,11 +13,12 @@ class Store:
         if self.path.exists():
             with self.connect() as source:
                 version = source.execute('PRAGMA user_version').fetchone()[0]
-                if version > 2:
+                if version > 3:
                     raise RuntimeError('Database belongs to a newer JARVIS version.')
-                if version < 2 and source.execute(
+                if version < 3 and source.execute(
                         "SELECT name FROM sqlite_master WHERE type='table' AND name='messages'").fetchone():
-                    backup_path = self.path.with_name('history-pre-v02-' + uuid.uuid4().hex + '.sqlite3')
+                    prefix = 'history-pre-v02-' if version < 2 else 'history-pre-v03-'
+                    backup_path = self.path.with_name(prefix + uuid.uuid4().hex + '.sqlite3')
                     backup = sqlite3.connect(backup_path)
                     try:
                         source.backup(backup)
@@ -39,11 +40,27 @@ class Store:
                     task_id TEXT PRIMARY KEY, created TEXT DEFAULT CURRENT_TIMESTAMP,
                     provider TEXT, model TEXT, status TEXT, duration_ms INTEGER,
                     prompt_tokens INTEGER, completion_tokens INTEGER, total_tokens INTEGER);
-                PRAGMA user_version=2;
+                CREATE TABLE IF NOT EXISTS workflows(
+                    id TEXT PRIMARY KEY, created TEXT DEFAULT CURRENT_TIMESTAMP,
+                    status TEXT NOT NULL, summary TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '');
+                CREATE TABLE IF NOT EXISTS workflow_steps(
+                    workflow_id TEXT NOT NULL REFERENCES workflows(id),
+                    position INTEGER NOT NULL, app TEXT NOT NULL, status TEXT NOT NULL,
+                    detail TEXT NOT NULL DEFAULT '',
+                    PRIMARY KEY(workflow_id, position));
+                PRAGMA user_version=3;
             ''')
             db.execute("UPDATE tasks SET status='interrupted' WHERE status IN ('running','pending')")
             db.execute("UPDATE jobs SET status='interrupted', detail='Interrupted; not replayed automatically' "
                        "WHERE status IN ('reviewing','running')")
+            db.execute("UPDATE workflows SET status='interrupted', "
+                       "detail='Interrupted; workflow will not be replayed' "
+                       "WHERE status IN ('reviewing','running')")
+            db.execute("UPDATE workflow_steps SET status='interrupted' "
+                       "WHERE status IN ('reviewing','running')")
+            db.execute("UPDATE workflow_steps SET status='cancelled' "
+                       "WHERE status='pending' AND workflow_id IN "
+                       "(SELECT id FROM workflows WHERE status='interrupted')")
 
     @contextmanager
     def connect(self):
