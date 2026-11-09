@@ -277,11 +277,12 @@ class Window(QMainWindow):
     def provider_page(self):
         page, layout = self.page('API Provider Manager',
             'Keys are stored only in Windows Credential Manager. Leave the key blank to retain it. '
-            'Model availability depends on your provider account; change the suggested model ID if necessary.')
+            'Model availability depends on your account. OpenRouter requires an explicit model ID and routes requests to downstream providers.')
         form = QFormLayout()
         self.provider = QComboBox()
         self.provider.addItems(PROVIDERS)
         self.model = QLineEdit()
+        self.model.setPlaceholderText("Enter the exact model ID from your provider account")
         self.secret = QLineEdit()
         self.secret.setEchoMode(QLineEdit.EchoMode.Password)
         self.secret.setPlaceholderText('Enter key locally; never paste it in chat')
