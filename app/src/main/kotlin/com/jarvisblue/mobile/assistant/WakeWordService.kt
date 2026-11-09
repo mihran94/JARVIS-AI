@@ -43,7 +43,8 @@ class WakeWordService : Service() {
 
     @Inject lateinit var matcher: WakePhraseMatcher
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // SpeechRecognizer methods must run on Android's main thread.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var listenJob: Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -87,13 +88,28 @@ class WakeWordService : Service() {
         listenJob = scope.launch {
             while (true) {
                 try {
-                    recognizer.listen(Language.ENGLISH).collect { recognition ->
-                        if (recognition.error != null || !recognition.isFinal) return@collect
+                    var failed = false
+                    recognizer.listen(
+                        Language.ENGLISH,
+                        SpeechRecognizerController.EngineMode.ON_DEVICE_ONLY,
+                    ).collect { recognition ->
+                        if (recognition.error != null) {
+                            failed = true
+                            return@collect
+                        }
+                        if (!recognition.isFinal) return@collect
                         val match = matcher.match(recognition.transcript, Language.ENGLISH)
                         if (match.isWakeCall) {
                             launchAssistant()
                         }
                     }
+                    if (failed) {
+                        stopSelf()
+                        break
+                    }
+                    kotlinx.coroutines.delay(500)
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
                 } catch (t: Throwable) {
                     kotlinx.coroutines.delay(1500)
                 }
@@ -106,7 +122,8 @@ class WakeWordService : Service() {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             putExtra(JarvisVoiceInteractionSession.EXTRA_FROM_ASSISTANT, true)
         }
-        startActivity(intent)
+        runCatching { startActivity(intent) }
+            // Android may block an activity launch from a background service.
     }
 
     private fun stopListening() {
