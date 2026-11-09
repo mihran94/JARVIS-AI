@@ -1,6 +1,11 @@
 package com.jarvisblue.feature.assistant
 
 import androidx.compose.foundation.layout.Arrangement
+import android.content.Intent
+import android.provider.Settings
+import android.speech.tts.TextToSpeech
+import androidx.core.content.ContextCompat
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -55,6 +60,7 @@ fun AssistantRoute(
     viewModel: AssistantViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val appContext = LocalContext.current
     AssistantScreen(
         state = state,
         onRequestMicrophone = onRequestMicrophone,
@@ -62,7 +68,20 @@ fun AssistantRoute(
         onLanguageChange = viewModel::setLanguage,
         onStartListening = viewModel::startListening,
         onStopListening = viewModel::stopListening,
-        onWakeWordToggle = viewModel::setWakeWordEnabled,
+        onWakeWordToggle = { enabled ->
+            val service = Intent().setClassName(
+                appContext.packageName, "com.jarvisblue.mobile.assistant.WakeWordService",
+            )
+            if (enabled && microphoneGranted && state.onDeviceAvailable) {
+                runCatching { ContextCompat.startForegroundService(appContext, service) }
+                    .onSuccess { viewModel.setWakeWordEnabled(true) }
+                    .onFailure { viewModel.setWakeWordEnabled(false) }
+            } else {
+                service.action = "com.jarvisblue.mobile.wake.STOP"
+                runCatching { appContext.startService(service) }
+                viewModel.setWakeWordEnabled(false)
+            }
+        },
         onConfirm = { approved -> viewModel.respondToConfirmation(approved) },
         modifier = modifier,
     )
@@ -80,6 +99,7 @@ fun AssistantScreen(
     onConfirm: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
     JarvisScaffold(
         title = "Assistant",
         subtitle = state.statusLine,
@@ -153,8 +173,11 @@ fun AssistantScreen(
                         },
                     )
                 }
-                OutlinedButton(onClick = {}, enabled = false) {
-                    Text("Push to talk is the accessible alternative")
+                OutlinedButton(onClick = {
+                    runCatching { context.startActivity(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS)) }
+                        .onFailure { runCatching { context.startActivity(Intent(Settings.ACTION_SETTINGS)) } }
+                }) {
+                    Text("Voice settings")
                 }
             }
 
@@ -164,7 +187,11 @@ fun AssistantScreen(
                 title = "Wake word",
                 subtitle = "“${state.wakePhrase}”",
                 trailing = {
-                    Switch(checked = state.wakeWordEnabled, onCheckedChange = onWakeWordToggle)
+                    Switch(
+                        checked = state.wakeWordEnabled,
+                        enabled = state.onDeviceAvailable && state.recognitionAvailable && microphoneGranted,
+                        onCheckedChange = onWakeWordToggle,
+                    )
                 },
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -177,8 +204,12 @@ fun AssistantScreen(
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         StatusPill(
-                            text = if (state.onDeviceRecognition) "On-device ASR" else "Cloud ASR",
-                            color = if (state.onDeviceRecognition) GreenOk else AmberWarn,
+                            text = when {
+                                !state.recognitionAvailable -> "ASR unavailable"
+                                state.onDeviceRecognition -> "On-device ASR"
+                                else -> "System ASR"
+                            },
+                            color = if (state.recognitionAvailable && state.onDeviceRecognition) GreenOk else AmberWarn,
                         )
                         StatusPill(
                             text = if (state.ttsAvailableFor.contains(state.language)) {
@@ -189,6 +220,35 @@ fun AssistantScreen(
                             color = if (state.ttsAvailableFor.contains(state.language)) GreenOk else AmberWarn,
                         )
                     }
+                    if (!state.onDeviceAvailable && state.recognitionAvailable) {
+                        NoticeBanner(
+                            text = "Push-to-talk may use a cloud speech service. " +
+                                "Wake word requires an on-device recognizer.",
+                            accent = AmberWarn,
+                        )
+                    }
+                    if (!state.recognitionAvailable) {
+                        NoticeBanner(
+                            text = "No Android speech service detected. Install or enable a " +
+                                "speech recognition service, then select it in Voice settings.",
+                            accent = AmberWarn,
+                        )
+                    }
+                    if (!state.ttsAvailableFor.contains(state.language)) {
+                        OutlinedButton(onClick = {
+                            runCatching { context.startActivity(Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA)) }
+                                .onFailure { runCatching { context.startActivity(Intent(Settings.ACTION_SETTINGS)) } }
+                        }) {
+                            Text("Install ${state.language.nativeName} voice")
+                        }
+                    }
+                }
+            }
+
+            if (state.response.isNotBlank()) {
+                Spacer(Modifier.height(8.dp))
+                GlowCard(title = "JARVIS response", accent = GreenOk) {
+                    Text(state.response, style = MaterialTheme.typography.bodyLarge)
                 }
             }
 
