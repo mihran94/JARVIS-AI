@@ -5,6 +5,8 @@ import com.jarvisblue.core.model.ToolSpec
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonPrimitive
+import java.util.Locale
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -50,7 +52,32 @@ object ToolSchema {
     fun toGeminiDeclaration(spec: ToolSpec): JsonObject = buildJsonObject {
         put("name", spec.name)
         put("description", spec.description)
-        put("parameters", toJsonSchema(spec))
+        put("parameters", toGeminiParameters(toJsonSchema(spec)))
+    }
+
+    /**
+     * Gemini's functionDeclarations[].parameters is the Google Schema type,
+     * not generic OpenAI JSON Schema. Strip unknown fields recursively.
+     * Keep strict OpenAI additionalProperties validation unchanged.
+     */
+    fun toGeminiParameters(openAiSchema: JsonObject): JsonObject = buildJsonObject {
+        openAiSchema.forEach { (field, value) ->
+            when (field) {
+                "type" -> put("type", value.jsonPrimitive.content.uppercase(Locale.ROOT))
+                "properties" -> if (value is JsonObject) {
+                    put("properties", buildJsonObject {
+                        value.forEach { (name, child) ->
+                            if (child is JsonObject) put(name, toGeminiParameters(child))
+                        }
+                    })
+                }
+                "items" -> if (value is JsonObject) put("items", toGeminiParameters(value))
+                "additionalProperties", "default" -> Unit
+                "maxLength" -> put("maxLength", value.jsonPrimitive.content)
+                "description", "enum", "required", "format", "nullable",
+                "minimum", "maximum", "minItems", "maxItems" -> put(field, value)
+            }
+        }
     }
 
     private fun parameterSchema(param: com.jarvisblue.core.model.ToolParameter): JsonObject =
