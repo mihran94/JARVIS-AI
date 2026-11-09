@@ -19,3 +19,24 @@ keystore/
 dist/
 *.apk
 *.aab
+
+# Broker API credentials, local environments and tokens (never commit)
+.env
+.env.*
+*.secret
+*.pem
+*.key
+*.p12
+*.jks
+exness-credentials*
+**/secrets.properties
+**/private-keys/
+.venv/
+__pycache__/
+*.pyc
+
+# GitHub Releases should publish APK artifacts, not commit them
+*.apk
+*.aab
+dist/
+release-output/
