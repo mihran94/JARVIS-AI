@@ -1,0 +1,27 @@
+--- a/jarvis/automation/system_monitor.py
++++ b/jarvis/automation/system_monitor.py
+@@ -140,6 +140,24 @@
+                 "percent": float(usage.percent),
+             }
+         )
++    if not partitions:
++        # Some containers hide mounted volumes from disk_partitions(all=False).
++        # Report only the explicitly requested path's real filesystem usage.
++        resolved_path = os.path.abspath(path)
++        try:
++            usage = psutil.disk_usage(resolved_path)
++        except (PermissionError, OSError):
++            pass
++        else:
++            partitions.append({
++                "device": "",
++                "mountpoint": resolved_path,
++                "fstype": "",
++                "total": int(usage.total),
++                "used": int(usage.used),
++                "free": int(usage.free),
++                "percent": float(usage.percent),
++            })
+     total_free = sum(int(p["free"]) for p in partitions)
+     total_size = sum(int(p["total"]) for p in partitions)
+     return {
