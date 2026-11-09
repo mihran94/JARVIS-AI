@@ -47,7 +47,7 @@ class WakeWordEngine(
      * Emits the instruction that followed the wake phrase, if any.
      */
     fun wakeCommands(language: Language): Flow<String> = recognizer
-        .listen(language = language, engineMode = SpeechRecognizerController.EngineMode.PREFER_ON_DEVICE)
+        .listen(language = language, engineMode = SpeechRecognizerController.EngineMode.ON_DEVICE_ONLY)
         .filterNotNull()
         .map { recognition ->
             _status.value = _status.value.copy(
