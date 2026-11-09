@@ -21,6 +21,7 @@ from providers.stream_fallback import StreamTarget, stream_with_fallback, Fallba
 from automation.windows import APPS, launch_app
 from automation.inspection import inspect_windows
 from developer_studio.workspace import Workspace
+from developer_studio.generation import messages_for_goal, prepare_draft
 from agents.gateway import Gateway
 from agents.queue import TaskQueue
 from agents.workflows import WorkflowQueue
@@ -249,6 +250,18 @@ class Window(QMainWindow):
     def editor_page(self):
         page, layout = self.page('Developer Studio',
             'Local UTF-8 editor. Code is never executed. Saves need approval; overwritten contents are retained in .revisions.')
+        self.code_goal = QLineEdit()
+        self.code_goal.setPlaceholderText('Describe the Python program you want to create…')
+        layout.addWidget(self.code_goal)
+        self.generate_button = self.button(layout, 'Generate Python draft with selected chat provider', self.generate_code)
+        self.code_status = QLabel('Only the task description is sent after approval. Existing files stay local.')
+        self.code_status.setWordWrap(True)
+        layout.addWidget(self.code_status)
+        self.code_preview = QPlainTextEdit()
+        self.code_preview.setReadOnly(True)
+        self.code_preview.setMaximumHeight(160)
+        layout.addWidget(self.code_preview)
+        self.button(layout, 'Review and copy draft to editor', self.apply_code_draft)
         self.filename = QLineEdit('hello.py')
         layout.addWidget(self.filename)
         row = QHBoxLayout()
@@ -264,6 +277,37 @@ class Window(QMainWindow):
         location.setWordWrap(True)
         layout.addWidget(location)
         return page
+
+    def generate_code(self):
+        if self.worker is not None:
+            return
+        def operation():
+            ticket = self.policy.ticket()
+            messages = messages_for_goal(self.code_goal.text())
+            provider = self.chat_provider.currentText()
+            model = self.store.get('model:' + provider) or PROVIDERS[provider].default_model
+            key = self.get_key(provider)
+            if not self.confirm(Action('send_coding_goal', provider + ' / ' + model + ' (API charges may apply)')):
+                return
+            self.policy.check(ticket)
+            self.chat_ticket = ticket
+            self.code_preview.clear()
+            self.code_status.setText('Generating draft… Emergency stop cancels this request.')
+            self.start_worker(provider, model, key, messages, 'code_generation')
+        self.notify(operation)
+
+    def apply_code_draft(self):
+        def operation():
+            draft = self.code_preview.toPlainText()
+            if not draft:
+                raise ValueError('Generate a complete draft first.')
+            action = Action('replace_editor_with_draft', self.filename.text(), Workspace.digest(draft))
+            def apply():
+                self.editor.setPlainText(draft)
+                self.editor.document().setModified(True)
+                return 'Draft copied to editor. Review and save separately.'
+            return self.gateway.run(action, self.confirm, apply)
+        self.notify(operation)
 
     def history_page(self):
         page, layout = self.page('Task History', 'Latest 200 actions. Full history is retained in the local SQLite database.')
@@ -488,7 +532,7 @@ class Window(QMainWindow):
         self.worker.result.connect(self.on_result)
         self.worker.finished.connect(self.on_finished)
         for button in (self.send_button, self.new_chat_button, self.clear_button,
-                       self.archive_button, self.probe_button):
+                       self.archive_button, self.probe_button, self.generate_button):
             button.setEnabled(False)
         self.chat_provider.setEnabled(False)
         self.backup_provider.setEnabled(False)
@@ -684,7 +728,18 @@ class Window(QMainWindow):
             self.policy.check(self.chat_ticket)
         except Stopped:
             status, text = 'cancelled', 'Cancelled by emergency stop.'
-        if self.worker_kind == 'chat':
+        if self.worker_kind == 'code_generation':
+            if status == 'completed':
+                try:
+                    draft, report = prepare_draft(text)
+                    self.code_preview.setPlainText(draft)
+                    self.code_status.setText(report)
+                except ValueError:
+                    status = 'failed'
+                    self.code_status.setText('Invalid code draft. Nothing was changed.')
+            else:
+                self.code_status.setText(status + ': ' + text)
+        elif self.worker_kind == 'chat':
             if status == 'completed':
                 self.store.message(self.session, 'assistant', text)
             else:
@@ -712,7 +767,7 @@ class Window(QMainWindow):
         self.worker.deleteLater()
         self.worker = None
         for button in (self.send_button, self.new_chat_button, self.clear_button,
-                       self.archive_button, self.probe_button):
+                       self.archive_button, self.probe_button, self.generate_button):
             button.setEnabled(not self.policy.stopped)
         self.chat_provider.setEnabled(True)
         self.backup_provider.setEnabled(True)
@@ -740,7 +795,7 @@ class Window(QMainWindow):
         self.state.setText('● READY · MANUAL APPROVAL')
         if self.worker is None:
             for button in (self.send_button, self.new_chat_button, self.clear_button,
-                       self.archive_button, self.probe_button):
+                       self.archive_button, self.probe_button, self.generate_button):
                 button.setEnabled(True)
 
     def refresh_history(self):
