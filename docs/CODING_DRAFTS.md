@@ -11,3 +11,13 @@ Not yet implemented: isolated code execution, automatic debugging, test executio
 Validation: 130 local tests passed, including refusal, cancellation, no implicit execution or file writes, and explicit editor replacement. Compilation passed. Live API and native Windows checks remain pending.
 
 தமிழ்: Developer Studio → செய்ய வேண்டிய Python வேலையை எழுதுங்கள் → Generate Python draft → அனுமதி கொடுங்கள் → preview பாருங்கள் → Review and copy draft to editor → Review and save. Code தானாக run ஆகாது.
+
+## Repair an existing Python draft
+
+Paste the failing source into the editor and paste the error into the error box. Review and request code repair asks permission to share the current editor contents and error with the selected chat provider. Remove credentials and private data before approving. No files, conversation history or logs are discovered or attached automatically. The captured payload is bounded and its digest is shown in the approval.
+
+The complete corrected source appears in the same draft preview with a syntax check. The editor remains unchanged until Review and copy draft to editor is approved; saving still requires a separate approval. Emergency stop invalidates pending approval and discards late responses. A failed repair does not populate the preview. Repairs use one provider and do not use backup routing.
+
+This is AI-assisted repair from an error supplied by the user, not automatic execution or verified debugging. Code execution and behavioral tests remain pending. Current validation: 139 local tests pass, including repair payload limits, rejection, stop during approval, late cancellation, and failed responses. Live API testing remains pending.
+
+தமிழ்: Editor-ல் code வையுங்கள் → error box-ல் பிழையை paste செய்யுங்கள் → Review and request code repair → அனுமதி → திருத்தப்பட்ட preview → review செய்து editor-க்கு மாற்றுங்கள். Code தானாக run அல்லது save ஆகாது.

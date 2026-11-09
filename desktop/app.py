@@ -21,7 +21,7 @@ from providers.stream_fallback import StreamTarget, stream_with_fallback, Fallba
 from automation.windows import APPS, launch_app
 from automation.inspection import inspect_windows
 from developer_studio.workspace import Workspace
-from developer_studio.generation import messages_for_goal, prepare_draft
+from developer_studio.generation import messages_for_goal, messages_for_repair, prepare_draft
 from agents.gateway import Gateway
 from agents.queue import TaskQueue
 from agents.workflows import WorkflowQueue
@@ -254,9 +254,14 @@ class Window(QMainWindow):
         self.code_goal.setPlaceholderText('Describe the Python program you want to create…')
         layout.addWidget(self.code_goal)
         self.generate_button = self.button(layout, 'Generate Python draft with selected chat provider', self.generate_code)
-        self.code_status = QLabel('Only the task description is sent after approval. Existing files stay local.')
+        self.code_status = QLabel('Generate sends your task. Repair sends editor code and pasted error after approval.')
         self.code_status.setWordWrap(True)
         layout.addWidget(self.code_status)
+        self.code_error = QPlainTextEdit()
+        self.code_error.setPlaceholderText('Paste the Python error here. Remove keys and private data before sharing.')
+        self.code_error.setMaximumHeight(70)
+        layout.addWidget(self.code_error)
+        self.repair_button = self.button(layout, 'Review and request code repair', self.repair_code)
         self.code_preview = QPlainTextEdit()
         self.code_preview.setReadOnly(True)
         self.code_preview.setMaximumHeight(160)
@@ -294,6 +299,27 @@ class Window(QMainWindow):
             self.code_preview.clear()
             self.code_status.setText('Generating draft… Emergency stop cancels this request.')
             self.start_worker(provider, model, key, messages, 'code_generation')
+        self.notify(operation)
+
+    def repair_code(self):
+        if self.worker is not None:
+            return
+        def operation():
+            ticket = self.policy.ticket()
+            messages = messages_for_repair(self.editor.toPlainText(), self.code_error.toPlainText())
+            provider = self.chat_provider.currentText()
+            model = self.store.get('model:' + provider) or PROVIDERS[provider].default_model
+            key = self.get_key(provider)
+            action = Action('send_editor_code_and_error',
+                            provider + ' / ' + model + ' (shares editor code and pasted error; API charges may apply)',
+                            Workspace.digest(messages[-1]['content']))
+            if not self.confirm(action):
+                return
+            self.policy.check(ticket)
+            self.chat_ticket = ticket
+            self.code_preview.clear()
+            self.code_status.setText('Requesting repair… Editor remains unchanged until you approve replacement.')
+            self.start_worker(provider, model, key, messages, 'code_repair')
         self.notify(operation)
 
     def apply_code_draft(self):
@@ -532,7 +558,7 @@ class Window(QMainWindow):
         self.worker.result.connect(self.on_result)
         self.worker.finished.connect(self.on_finished)
         for button in (self.send_button, self.new_chat_button, self.clear_button,
-                       self.archive_button, self.probe_button, self.generate_button):
+                       self.archive_button, self.probe_button, self.generate_button, self.repair_button):
             button.setEnabled(False)
         self.chat_provider.setEnabled(False)
         self.backup_provider.setEnabled(False)
@@ -728,7 +754,7 @@ class Window(QMainWindow):
             self.policy.check(self.chat_ticket)
         except Stopped:
             status, text = 'cancelled', 'Cancelled by emergency stop.'
-        if self.worker_kind == 'code_generation':
+        if self.worker_kind in ('code_generation', 'code_repair'):
             if status == 'completed':
                 try:
                     draft, report = prepare_draft(text)
@@ -767,7 +793,7 @@ class Window(QMainWindow):
         self.worker.deleteLater()
         self.worker = None
         for button in (self.send_button, self.new_chat_button, self.clear_button,
-                       self.archive_button, self.probe_button, self.generate_button):
+                       self.archive_button, self.probe_button, self.generate_button, self.repair_button):
             button.setEnabled(not self.policy.stopped)
         self.chat_provider.setEnabled(True)
         self.backup_provider.setEnabled(True)
@@ -795,7 +821,7 @@ class Window(QMainWindow):
         self.state.setText('● READY · MANUAL APPROVAL')
         if self.worker is None:
             for button in (self.send_button, self.new_chat_button, self.clear_button,
-                       self.archive_button, self.probe_button, self.generate_button):
+                       self.archive_button, self.probe_button, self.generate_button, self.repair_button):
                 button.setEnabled(True)
 
     def refresh_history(self):
