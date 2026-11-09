@@ -7,6 +7,7 @@ import com.jarvisblue.core.model.ProviderHealth
 import com.jarvisblue.core.model.ProviderHealthState
 import com.jarvisblue.core.model.ProviderId
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
@@ -83,6 +84,7 @@ class AiRouter(
                 budgetTracker.record(candidate.provider, response.usage.promptTokens, response.usage.completionTokens)
                 return response
             } catch (t: Throwable) {
+                if (t is CancellationException) throw t
                 lastError = t
                 healthCache[candidate.provider] = ProviderHealth(
                     providerId = candidate.provider,
