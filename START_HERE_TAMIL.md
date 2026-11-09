@@ -45,3 +45,11 @@ API key-ஐ இந்த ChatGPT உரையாடலுக்கு அனு�
 `DIAGNOSE_JARVIS.cmd`-ஐ double-click செய்யுங்கள். Python 3.12, 64-bit, package versions மற்றும் Qt imports ஆகியவை சரிபார்க்கப்படும். Missing package அல்லது version mismatch இருந்தால் `setup.cmd` மீண்டும் இயக்குங்கள்.
 
 API key, chat history எதையும் இந்தச் சோதனை படிக்காது; internet request அனுப்பாது. இது installation check மட்டுமே; உண்மையான Windows automation அல்லது provider connection வெற்றியை உறுதிப்படுத்தாது.
+
+## அடுத்த updates: app மூலமாக
+
+முதல் installation-க்குப் பிறகு புதிய GitHub ZIP-ஐ பழைய folder மீது extract செய்ய வேண்டாம். App-ல் **Permissions & Roadmap → Updates & rollback → Select GitHub ZIP** செல்லுங்கள். மாற்றங்களைப் பார்த்து approve செய்யுங்கள். App-ஐ மூடி, பழைய installation folder-ல் இருக்கும் `START_JARVIS.cmd` மூலம் மீண்டும் திறக்கவும்.
+
+பழைய code பாதுகாக்கப்படும்; history database backup எடுக்கப்படும். பிரச்சினை வந்தால் `ROLLBACK_JARVIS.cmd` இயக்கி YES கொடுத்து பழைய code-க்கு திரும்பலாம். Dependencies அல்லது database code மாறிய update-ஐ இது ஏற்காது; அந்த release-ஐ தனியாக install செய்ய வேண்டும்.
+
+இது signed auto-update அல்ல. நீங்கள் நம்பும் GitHub ZIP மட்டும் தேர்வு செய்யுங்கள். Update தானாக download/install ஆகாது. Windows PC சோதனை இன்னும் நிலுவையில் உள்ளது.

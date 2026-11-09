@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QHeaderView, QCheckBox,
 )
 from core.store import Store
+from desktop.update_dialog import open_updates
 from security.policy import Policy, Action, Stopped
 from security.vault import Vault
 from providers.chat import PROVIDERS, stream_chat, ProviderError, TransientProviderError
@@ -567,6 +568,7 @@ class Window(QMainWindow):
 
     def permissions_page(self):
         page, layout = self.page('Permissions & release boundaries')
+        self.button(layout, 'Updates & rollback', lambda: open_updates(self))
         text = QPlainTextEdit()
         text.setReadOnly(True)
         text.setPlainText(

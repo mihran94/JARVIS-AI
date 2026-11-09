@@ -6,5 +6,5 @@ if not exist ".venv\Scripts\python.exe" (
  pause
  exit /b 1
 )
-.venv\Scripts\python.exe main.py
+.venv\Scripts\python.exe scripts\launch.py
 if errorlevel 1 pause
