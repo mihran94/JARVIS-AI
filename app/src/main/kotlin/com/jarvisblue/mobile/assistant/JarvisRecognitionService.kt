@@ -5,6 +5,7 @@ import android.speech.SpeechRecognizer
 import android.speech.RecognitionListener
 import android.os.Bundle
 import android.content.Intent
+import android.content.ComponentName
 
 /**
  * The system's [RecognitionService] entry point.
@@ -23,7 +24,20 @@ class JarvisRecognitionService : RecognitionService() {
         val target = callback ?: return
         activeCallback = target
 
-        val instance = recognizer ?: SpeechRecognizer.createSpeechRecognizer(this).also { created ->
+        // Do not proxy recognition to our own service; it causes recursion
+        // when JARVIS BLUE is the system-selected recognition provider.
+        val external = packageManager.queryIntentServices(
+            Intent(RecognitionService.SERVICE_INTERFACE), 0,
+        ).firstNotNullOfOrNull { info ->
+            val service = info.serviceInfo
+            if (service == null || service.packageName == packageName) null
+            else ComponentName(service.packageName, service.name)
+        }
+        if (external == null) {
+            runCatching { target.error(SpeechRecognizer.ERROR_CLIENT) }
+            return
+        }
+        val instance = recognizer ?: SpeechRecognizer.createSpeechRecognizer(this, external).also { created ->
             recognizer = created
             created.setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) {
