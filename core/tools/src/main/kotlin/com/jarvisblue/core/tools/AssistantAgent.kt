@@ -122,6 +122,7 @@ class AssistantAgent(
                     preferredModel = preferredModel,
                 )
             } catch (t: Throwable) {
+                if (t is kotlinx.coroutines.CancellationException) throw t
                 failure = t.message ?: "The AI provider could not be reached"
                 onEvent(AgentEvent.Notice(failure))
                 finalContent = "I could not reach an AI provider: ${t.message}"
