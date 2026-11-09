@@ -11,12 +11,13 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QListWidget, QStackedWidget, QPlainTextEdit, QLineEdit,
     QComboBox, QMessageBox, QFormLayout, QTableWidget, QTableWidgetItem,
-    QHeaderView,
+    QHeaderView, QCheckBox,
 )
 from core.store import Store
 from security.policy import Policy, Action, Stopped
 from security.vault import Vault
-from providers.chat import PROVIDERS, stream_chat, ProviderError
+from providers.chat import PROVIDERS, stream_chat, ProviderError, TransientProviderError
+from providers.stream_fallback import StreamTarget, stream_with_fallback, FallbackBlocked
 from automation.windows import APPS, launch_app
 from automation.inspection import inspect_windows
 from developer_studio.workspace import Workspace
@@ -47,10 +48,11 @@ class ChatWorker(QThread):
     chunk = Signal(str)
     result = Signal(str, str, object)
 
-    def __init__(self, provider, model, key, messages, policy, ticket):
+    def __init__(self, provider, model, key, messages, policy, ticket, backup=None):
         super().__init__()
         self.provider, self.model, self.key = provider, model, key
         self.messages, self.policy, self.ticket = messages, policy, ticket
+        self.backup = backup
 
     def check(self):
         self.policy.check(self.ticket)
@@ -58,20 +60,31 @@ class ChatWorker(QThread):
             raise Stopped('Chat cancelled.')
 
     def run(self):
-        metrics = {}
+        metrics = {'provider': self.provider, 'model': self.model}
         started = time.monotonic()
         try:
-            answer = stream_chat(self.provider, self.model, self.key, self.messages,
-                                 self.check, self.chunk.emit, metrics=metrics)
+            def attempt(provider, model, key, messages, check, emit):
+                metrics.clear()
+                metrics.update(provider=provider, model=model)
+                return stream_chat(provider, model, key, messages, check, emit, metrics=metrics)
+            if self.backup is None:
+                answer = attempt(self.provider, self.model, self.key, self.messages,
+                                 self.check, self.chunk.emit)
+            else:
+                _, answer = stream_with_fallback(
+                    StreamTarget(self.provider, self.model, self.key), self.backup,
+                    self.messages, self.check, self.chunk.emit, attempt,
+                    consent_to_backup=True, retryable_errors=(TransientProviderError,))
             status, text = 'completed', answer
         except Stopped:
             status, text = 'cancelled', 'Chat cancelled. Partial output was not added to model context.'
-        except ProviderError as error:
+        except (ProviderError, FallbackBlocked) as error:
             status, text = 'failed', str(error)
         except Exception:
             status, text = 'failed', 'Unexpected provider failure. No credentials were logged.'
         finally:
             self.key = ''
+            self.backup = None
         metrics['duration_ms'] = round((time.monotonic() - started) * 1000)
         self.result.emit(status, text, metrics)
 
@@ -200,6 +213,12 @@ class Window(QMainWindow):
         self.new_chat_button = self.button(row, 'New chat', self.new_chat)
         self.clear_button = self.button(row, 'Delete this conversation', self.clear_chat)
         layout.addLayout(row)
+        self.backup_consent = QCheckBox('Allow one backup attempt for this message (shares full conversation; charges may apply)')
+        layout.addWidget(self.backup_consent)
+        self.backup_provider = QComboBox()
+        self.backup_provider.addItems(PROVIDERS)
+        self.backup_provider.setCurrentIndex(1)
+        layout.addWidget(self.backup_provider)
         archives = QHBoxLayout()
         self.archives = QComboBox()
         archives.addWidget(self.archives, 1)
@@ -449,12 +468,13 @@ class Window(QMainWindow):
             raise ValueError('Add your key in API Providers first.')
         return key
 
-    def start_worker(self, provider, model, key, messages, kind):
+    def start_worker(self, provider, model, key, messages, kind, backup=None):
         self.worker_kind = kind
         self.active_provider, self.active_model = provider, model
         self.chat_task = self.store.task(kind, provider + ' / ' + model)
         self.store.finish(self.chat_task, 'running')
-        self.worker = ChatWorker(provider, model, key, messages, self.policy, self.chat_ticket)
+        self.worker = ChatWorker(provider, model, key, messages, self.policy, self.chat_ticket,
+                                 backup=backup if kind == "chat" else None)
         self.worker.chunk.connect(self.on_chunk)
         self.worker.result.connect(self.on_result)
         self.worker.finished.connect(self.on_finished)
@@ -462,6 +482,8 @@ class Window(QMainWindow):
                        self.archive_button, self.probe_button):
             button.setEnabled(False)
         self.chat_provider.setEnabled(False)
+        self.backup_provider.setEnabled(False)
+        self.backup_consent.setEnabled(False)
         self.worker.start()
 
     def permissions_page(self):
@@ -614,6 +636,13 @@ class Window(QMainWindow):
             provider = self.chat_provider.currentText()
             key = self.get_key(provider)
             model = self.store.get('model:' + provider, PROVIDERS[provider].default_model)
+            backup = None
+            if self.backup_consent.isChecked():
+                name = self.backup_provider.currentText()
+                if name == provider:
+                    raise ValueError('Choose a different backup provider.')
+                backup = StreamTarget(name, self.store.get('model:' + name, PROVIDERS[name].default_model),
+                                      self.get_key(name))
             prompt = self.prompt.toPlainText().strip()
             messages = self.store.messages(self.session) + [{'role': 'user', 'content': prompt}]
             if sum(len(m['content']) for m in messages) > 90000:
@@ -625,7 +654,8 @@ class Window(QMainWindow):
             system = {'role': 'system', 'content':
                 'You are JARVIS, a helpful assistant. Reply in the user language. '
                 'You cannot execute tools or control this computer. Never claim actions were executed.'}
-            self.start_worker(provider, model, key, [system] + messages, 'chat')
+            self.start_worker(provider, model, key, [system] + messages, 'chat', backup=backup)
+            self.backup_consent.setChecked(False)
         self.notify(operation)
 
     def on_chunk(self, text):
@@ -659,7 +689,11 @@ class Window(QMainWindow):
             self.statusBar().showMessage(summary, 20000)
         self.store.finish(self.chat_task, status)
         if self.active_provider:
-            self.store.record_usage(self.chat_task, self.active_provider, self.active_model,
+            actual_provider = (metrics or {}).get('provider', self.active_provider)
+            actual_model = (metrics or {}).get('model', self.active_model)
+            if actual_provider != self.active_provider:
+                self.transcript.appendPlainText('\n[Backup attempted: ' + actual_provider + ' / ' + actual_model + ']')
+            self.store.record_usage(self.chat_task, actual_provider, actual_model,
                                     status, metrics or {})
         self.refresh_history()
 
@@ -670,6 +704,8 @@ class Window(QMainWindow):
                        self.archive_button, self.probe_button):
             button.setEnabled(not self.policy.stopped)
         self.chat_provider.setEnabled(True)
+        self.backup_provider.setEnabled(True)
+        self.backup_consent.setEnabled(True)
         if self.close_when_done:
             self.close()
 

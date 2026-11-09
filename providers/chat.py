@@ -24,6 +24,10 @@ class ProviderError(RuntimeError):
     pass
 
 
+class TransientProviderError(ProviderError):
+    """A connection failure or temporary server failure; excludes auth and quota."""
+
+
 def stream_chat(provider, model, key, messages, check, emit, transport=None, metrics=None):
     """Fixed trusted endpoints; no redirects, retry, or silent provider fallback."""
     if provider not in PROVIDERS:
@@ -44,6 +48,8 @@ def stream_chat(provider, model, key, messages, check, emit, transport=None, met
                           transport=transport) as client:
             with client.stream('POST', PROVIDERS[provider].endpoint,
                                headers={'Authorization': f'Bearer {key}'}, json=payload) as response:
+                if response.status_code in (502, 503, 504):
+                    raise TransientProviderError(f'{provider} temporarily unavailable (HTTP {response.status_code}).')
                 if response.status_code != 200:
                     raise ProviderError(f'{provider} HTTP {response.status_code}. Check key, model, quota and access.')
                 for line in response.iter_lines():
@@ -91,7 +97,9 @@ def stream_chat(provider, model, key, messages, check, emit, transport=None, met
     except (Stopped, ProviderError):
         raise
     except httpx.TimeoutException:
-        raise ProviderError('Provider timed out. Check connectivity and try again.') from None
+        raise TransientProviderError('Provider timed out. Check connectivity and try again.') from None
+    except httpx.ConnectError:
+        raise TransientProviderError('Provider connection failed.') from None
     except httpx.HTTPError:
         raise ProviderError('Secure provider connection failed.') from None
     except (ValueError, KeyError, TypeError, IndexError, AttributeError):
