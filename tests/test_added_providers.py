@@ -32,8 +32,8 @@ def test_provider_auth_error_never_contains_body(name):
     assert 'private-secret' not in str(error.value)
 
 
-def test_openrouter_requires_explicit_model():
-    assert PROVIDERS['OpenRouter'].default_model==''
+def test_openrouter_default_and_empty_request_validation():
+    assert PROVIDERS['OpenRouter'].default_model=='openai/gpt-4.1-mini'
     with pytest.raises(ProviderError,match='Configure'):
         stream_chat('OpenRouter','','fake',[],lambda:None,lambda _:None)
 

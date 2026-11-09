@@ -277,7 +277,7 @@ class Window(QMainWindow):
     def provider_page(self):
         page, layout = self.page('API Provider Manager',
             'Keys are stored only in Windows Credential Manager. Leave the key blank to retain it. '
-            'Model availability depends on your account. OpenRouter requires an explicit model ID and routes requests to downstream providers.')
+            'Choose a provider and enter only your key. A model is preselected; Advanced settings are optional. OpenRouter routes requests to downstream providers.')
         form = QFormLayout()
         self.provider = QComboBox()
         self.provider.addItems(PROVIDERS)
@@ -290,12 +290,20 @@ class Window(QMainWindow):
         self.endpoint.setWordWrap(True)
         self.key_status = QLabel()
         form.addRow('Provider', self.provider)
-        form.addRow('Model ID', self.model)
         form.addRow('API key', self.secret)
-        form.addRow('HTTPS endpoint', self.endpoint)
         form.addRow('Credential status', self.key_status)
         layout.addLayout(form)
-        self.button(layout, 'Save provider configuration', self.save_provider)
+        self.advanced_provider = QCheckBox('Advanced settings (optional)')
+        layout.addWidget(self.advanced_provider)
+        self.provider_advanced_panel = QWidget()
+        advanced_form = QFormLayout(self.provider_advanced_panel)
+        advanced_form.addRow('Model ID', self.model)
+        advanced_form.addRow('HTTPS endpoint', self.endpoint)
+        self.button(advanced_form, 'Use recommended model', self.reset_provider_model)
+        layout.addWidget(self.provider_advanced_panel)
+        self.provider_advanced_panel.hide()
+        self.advanced_provider.toggled.connect(self.provider_advanced_panel.setVisible)
+        self.button(layout, 'Save API key', self.save_provider)
         self.button(layout, 'Remove stored key', self.remove_key)
         self.probe_button = self.button(layout, 'Test saved provider connection (uses API)', self.test_connection)
         self.provider_health = QLabel()
@@ -564,9 +572,12 @@ class Window(QMainWindow):
             return Workspace.check_python(self.editor.toPlainText())
         self.notify(operation)
 
+    def reset_provider_model(self):
+        self.model.setText(PROVIDERS[self.provider.currentText()].default_model)
+
     def load_provider(self):
         provider = self.provider.currentText()
-        self.model.setText(self.store.get('model:' + provider, PROVIDERS[provider].default_model))
+        self.model.setText(self.store.get('model:' + provider) or PROVIDERS[provider].default_model)
         self.endpoint.setText(PROVIDERS[provider].endpoint)
         self.secret.clear()
         health = self.store.get('health:' + provider + ':' + self.model.text())
@@ -580,9 +591,7 @@ class Window(QMainWindow):
         def operation():
             self.policy.ticket()
             provider = self.provider.currentText()
-            model = self.model.text().strip()
-            if not model:
-                raise ValueError('Model ID is required.')
+            model = self.model.text().strip() or PROVIDERS[provider].default_model
             if self.secret.text():
                 try:
                     self.vault.put(provider, self.secret.text())
@@ -592,7 +601,8 @@ class Window(QMainWindow):
                     self.secret.clear()
             self.store.set('model:' + provider, model)
             self.load_provider()
-            return 'Provider configuration saved.'
+            self.chat_provider.setCurrentText(provider)
+            return 'Provider saved. Ready for chat; connection has not been tested.'
         self.notify(operation)
 
     def remove_key(self):

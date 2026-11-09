@@ -17,7 +17,7 @@ PROVIDERS = {
     'MiniMax': Provider('https://api.minimax.io/v1/chat/completions', 'MiniMax-M3'),
     'DeepSeek': Provider('https://api.deepseek.com/chat/completions', 'deepseek-flash'),
     'Groq': Provider('https://api.groq.com/openai/v1/chat/completions', 'openai/gpt-oss-120b'),
-    'OpenRouter': Provider('https://openrouter.ai/api/v1/chat/completions', ''),
+    'OpenRouter': Provider('https://openrouter.ai/api/v1/chat/completions', 'openai/gpt-4.1-mini'),
     'Gemini': Provider('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
                        'gemini-2.5-flash'),
 }
