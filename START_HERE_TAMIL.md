@@ -38,3 +38,10 @@ API key-ஐ இந்த ChatGPT உரையாடலுக்கு அனு�
 - **Emergency Stop:** காத்திருக்கும் workflows-ஐ நிறுத்தும். ஏற்கெனவே திறந்த app-களை மூடாது.
 - API keys இப்போது தேவையில்லை; பின்னர் உங்கள் Windows PC-யில் மட்டும் சேர்க்கலாம்.
 - இது முழு autonomous AI அல்லது mobile remote-control final version அல்ல.
+
+
+## Installation பிரச்சினைகளைச் சோதிக்க
+
+`DIAGNOSE_JARVIS.cmd`-ஐ double-click செய்யுங்கள். Python 3.12, 64-bit, package versions மற்றும் Qt imports ஆகியவை சரிபார்க்கப்படும். Missing package அல்லது version mismatch இருந்தால் `setup.cmd` மீண்டும் இயக்குங்கள்.
+
+API key, chat history எதையும் இந்தச் சோதனை படிக்காது; internet request அனுப்பாது. இது installation check மட்டுமே; உண்மையான Windows automation அல்லது provider connection வெற்றியை உறுதிப்படுத்தாது.
