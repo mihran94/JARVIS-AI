@@ -487,7 +487,8 @@ class Window(QMainWindow):
             'Assisted/supervised/trusted automation, planner/scheduler, voice, RAG,\n'
             'quantum lab, cybersecurity scans, remote phone access, self-updates,\n'
             'Claude/other providers and isolated code execution.\n\n'
-            'CURRENT: Manual workflows and read-only window title inspection.\n'\n            'NEXT: Windows acceptance tests and live provider checks.\n'
+            'CURRENT: Manual workflows and read-only window title inspection.\n'
+            'NEXT: Windows acceptance tests and live provider checks.\n'
             'See docs/ARCHITECTURE.md and docs/WINDOWS_ACCEPTANCE.md.'
         )
         layout.addWidget(text)

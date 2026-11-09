@@ -2,7 +2,8 @@
 
 Never automatically sends a prompt to another provider.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from security.policy import Stopped
 from typing import Callable
 
 
@@ -14,7 +15,7 @@ class FallbackBlocked(RuntimeError):
 class StreamTarget:
     name: str
     model: str
-    key: str
+    key: str = field(repr=False)
 
 
 def stream_with_fallback(primary: StreamTarget, backup: StreamTarget | None,
@@ -63,10 +64,13 @@ def stream_with_fallback(primary: StreamTarget, backup: StreamTarget | None,
             raise CallbackFailure(exc) from exc
 
     try:
+        safe_check()
         return primary.name, stream(primary.name, primary.model, primary.key,
                                     messages, safe_check, safe_emit)
     except CallbackFailure as exc:
         raise exc.original
+    except Stopped:
+        raise
     except retryable_errors as exc:
         if emitted:
             raise FallbackBlocked('Partial response already displayed; retry manually') from exc
