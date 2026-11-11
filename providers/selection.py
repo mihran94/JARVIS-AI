@@ -2,6 +2,14 @@
 
 This module does not implement provider APIs. It only chooses a configured,
 healthy provider subject to explicit owner consent and a local-only policy.
+
+The rules are deliberately strict:
+
+- the preferred provider must exist, so a typo never silently falls through to
+  another service;
+- fallback happens only when the caller explicitly allows it;
+- offline mode can only select a local provider, so an offline request never
+  reaches a paid cloud endpoint.
 """
 from dataclasses import dataclass
 from typing import Iterable

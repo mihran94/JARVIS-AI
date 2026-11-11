@@ -34,3 +34,47 @@ This document is the first non-runtime integration artifact. The existing JARVIS
 - Repository README and requirements for four projects were inspected through GitHub access.
 - JARVIS-AI base commit: `7c18e83f66caae4e15be7c6580fa9c65e31fd228`.
 - No runtime integration, automated tests, Windows execution or Android build has been verified for this document.
+
+### Progress recorded on the integration branch
+
+Step 2 and step 3 of the MVP sequence now have a first implementation. The
+work is additive and does not change the existing desktop chat flow.
+
+Step 2, provider router:
+
+- `providers/registry.py` lists the eight agreed providers. The six cloud
+  providers already used by the desktop are taken from `providers.chat`, so the
+  existing behaviour is unchanged. Claude and Ollama are added because they
+  need a different request shape or a different trust level.
+- `providers/selection.py` holds the selection policy. It used to live in the
+  repository root as `unified_provider_policy.py`, where `pytest.ini` never
+  collected its test. The module and its test now live in `providers/` and
+  `tests/`, so the policy is covered by the normal suite.
+- `providers/claude.py` is the native Anthropic Messages API adapter, and
+  `providers/ollama.py` is the loopback only local adapter.
+- `providers/router.py` selects one provider and dispatches to the adapter
+  that matches its shape. Offline mode can only select a local provider, so an
+  offline request cannot reach a paid endpoint.
+- The router is not wired into the desktop interface yet. The desktop still
+  uses `providers.chat` directly.
+
+Step 3, desktop/mobile protocol:
+
+- `remote/` implements the desktop half of the bridge protocol: the canonical
+  signing scheme, replay protection, pairing with revocation, the job records
+  and the request handler. `docs/BRIDGE_PROTOCOL.md` is the shared contract.
+- The cross implementation vectors are pinned on both sides, so the desktop and
+  the Android client cannot drift apart silently.
+- Nothing binds a socket and the desktop interface does not expose the bridge,
+  so no phone can reach a JARVIS installation yet.
+
+Validation performed for the work above:
+
+    QT_QPA_PLATFORM=offscreen python -m pytest -q
+    239 passed, 3 skipped in 6.06s
+
+The baseline before the change was 175 passed, 3 skipped; the skipped tests are
+the Windows only ones. The suite uses synthetic HTTP transports and real Qt
+widgets in offscreen mode. No API key was used, no provider was called and no
+Android build was made. Windows behaviour, live provider access and the APK
+remain unverified.
