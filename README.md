@@ -55,6 +55,8 @@ The first v0.2 startup backs up the original SQLite database as history-pre-v02-
 
 This release has **manual mode only**. It does not implement autonomous planning, arbitrary computer control, shell execution, builds, voice, offline inference, RAG, quantum tools, cybersecurity scanning, phone remote control, self-updates or executable plugins. Future directories contain boundary documentation, not mock features.
 
+On the integration branch the protocol work is ahead of the product: `remote/` implements the desktop half of the versioned mobile bridge and `providers/` holds a provider registry and router that covers Claude and the local Ollama model next to the existing cloud services. Both are covered by local tests only. No socket is bound, the desktop interface does not use the router yet, and no phone can reach a JARVIS installation. See docs/BRIDGE_PROTOCOL.md and docs/UNIFIED_INTEGRATION.md.
+
 Key storage works only on Windows. Chat UI and core were exercised on Linux with Qt offscreen. **No live provider request, Windows Credential Manager operation, Windows application launch or packaged EXE was tested here.** See docs/TEST_RESULTS.md for actual results and docs/WINDOWS_ACCEPTANCE.md for the remaining checks.
 
 The selected conversation is sent to the selected provider when you click Send; sending the same conversation to another provider shares it with that provider. No system files or editor contents are automatically attached. Model responses are untrusted text and cannot launch tools.
