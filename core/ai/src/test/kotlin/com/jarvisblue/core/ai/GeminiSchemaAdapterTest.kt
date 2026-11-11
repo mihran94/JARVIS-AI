@@ -1,6 +1,8 @@
 package com.jarvisblue.core.ai
 
 import com.jarvisblue.core.model.ParamType
+import com.jarvisblue.core.model.RiskLevel
+import com.jarvisblue.core.model.ToolCategory
 import com.jarvisblue.core.model.ToolParameter
 import com.jarvisblue.core.model.ToolSpec
 import kotlinx.serialization.json.JsonObject
@@ -15,10 +17,15 @@ import org.junit.Test
 class GeminiSchemaAdapterTest {
     @Test fun preservesOpenAiSchemaButConvertsGemini() {
         val spec = ToolSpec(
-            name = "test_tool", description = "A safe test tool",
+            name = "test_tool",
+            displayName = "Test tool",
+            description = "A safe test tool",
+            category = ToolCategory.INFORMATION,
             parameters = listOf(
                 ToolParameter("text", ParamType.STRING, "Text", required = true, maxLength = 40),
             ),
+            riskLevel = RiskLevel.NONE,
+            requiredPermissions = emptySet(),
         )
         val openAi = ToolSchema.toJsonSchema(spec)
         assertTrue(openAi.containsKey("additionalProperties"))
