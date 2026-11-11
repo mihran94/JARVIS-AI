@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased — 12 November 2026
+- Release readiness record and a SHA-256 source integrity manifest for the branch, so the owner can verify the exact tree before building on Windows.
 - Versioned desktop/mobile bridge protocol: canonical HMAC-SHA256 signing shared with the JARVIS BLUE Android client, replay protection, pairing with revocation, job records and a request handler. No socket is bound and the desktop interface does not expose it yet.
 - Provider registry and router covering OpenAI, Gemini, Claude, MiniMax, DeepSeek, Groq, OpenRouter and Ollama, with no implicit paid fallback and offline mode restricted to the local provider.
 - Native Anthropic Messages API adapter and a loopback only local Ollama adapter.
