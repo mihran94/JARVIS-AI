@@ -150,6 +150,19 @@ without the `workflows` permission is refused when it writes a file under
 This is the one part that still needs the owner, because a new workflow file
 is needed and the connected GitHub App cannot write one.
 
+**The shortest way to get there**: the repository
+`mihran94/jarvis-unified-builds` holds both workflow files, ready to copy.
+Copy them into that repository's own `.github/workflows/` and push:
+
+```
+cp windows-release.yml .github/workflows/windows-release.yml
+cp android-debug-apk.yml .github/workflows/android-debug-apk.yml
+git add .github/workflows && git commit -m "Add the JARVIS Unified AI build workflows" && git push
+```
+
+The push starts both builds. The source repositories are not touched by this
+route, because the workflows check them out.
+
 Once the workflows are in place, the artefacts are available from the run
 pages:
 

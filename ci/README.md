@@ -10,6 +10,13 @@ them with the prepared patches.
 | `windows-release.yml` | `.github/workflows/windows-release.yml` | `mihran94/JARVIS-AI` |
 | `android-debug-apk.yml` | `.github/workflows/android-debug-apk.yml` | `mihran94/jarvis-blue-android` |
 
+## The shortest route
+
+The repository `mihran94/jarvis-unified-builds` holds both workflow files in
+their final form, and they build the two source repositories without touching
+them. Copying the two files into that repository's `.github/workflows/` and
+pushing starts both builds. The files there are the ones listed above.
+
 ## Applying them
 
 In `mihran94/JARVIS-AI`, the patch fixes the failing runner and adds the
