@@ -16,13 +16,21 @@ Nothing here grants a permission by itself:
 import platform
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QPixmap
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
-    QCheckBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-    QPlainTextEdit, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout,
-    QWidget,
+    QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
+    QLineEdit, QPlainTextEdit, QPushButton, QTableWidget, QTableWidgetItem,
+    QVBoxLayout, QWidget,
 )
 
 from agents.gateway import Gateway
+from desktop.bridge_chat import BridgeChatService
+from desktop.bridge_pairing import (
+    DEFAULT_LIFETIME_SECONDS, PairingCodeError, expires_at, pairing_payload, pairing_svg,
+)
+from desktop.bridge_status import PlatformMetrics
+from providers.registry import specs
 from remote.listener import BridgeListener, ListenerConfig, ListenerError
 from remote.pairing import PairingStore
 from remote.protocol import KEY_ID
@@ -30,12 +38,16 @@ from remote.secrets import VaultSecrets
 from remote.server import BridgeServer
 from security.policy import Action
 
+#: The key id an iPhone uses. It is different from the Android one, so that
+#: revoking one phone does not affect the other.
+IPHONE_KEY_ID = 'jarvis-iphone-v1'
+
 
 class BridgePanel(QWidget):
     """Owns the bridge listener, the paired devices and the remote jobs."""
 
     def __init__(self, policy, store, vault, confirm, notify, *, pairing=None, bridge=None,
-                 listener=None):
+                 listener=None, router=None):
         super().__init__()
         self.policy, self.store = policy, store
         self.confirm, self.notify = confirm, notify
@@ -43,8 +55,13 @@ class BridgePanel(QWidget):
         self.pairing = pairing if pairing is not None else PairingStore(VaultSecrets(vault))
         self.bridge = bridge if bridge is not None else BridgeServer(
             self.pairing, peer_id=platform.node() or 'windows',
-            agent_version='0.3.0', allowed_hosts=('127.0.0.1', '::1'))
+            agent_version='0.3.0', allowed_hosts=('127.0.0.1', '::1'),
+            status_provider=PlatformMetrics().snapshot)
         self.listener = listener if listener is not None else BridgeListener(self.bridge)
+        self.chat = BridgeChatService(router, store, vault, policy=policy) if router else None
+        if self.chat is not None:
+            self.bridge.set_chat(self.chat.answer)
+            self.bridge.set_memory_allowed(lambda: self.chat.memory_sync)
         self._build()
         self.refresh()
 
@@ -115,6 +132,60 @@ class BridgePanel(QWidget):
         pairing_layout.addWidget(self.revoke_button)
         layout.addWidget(pairing_box)
 
+        code_box = QGroupBox('Pairing code for the iPhone')
+        code_layout = QFormLayout(code_box)
+        self.phone_address = QLineEdit()
+        self.phone_address.setPlaceholderText(
+            'The HTTPS address the phone reaches this PC on, for example '
+            'https://pc.example.lan:8765')
+        code_layout.addRow('Address for the phone', self.phone_address)
+        self.phone_key = QLineEdit(IPHONE_KEY_ID)
+        code_layout.addRow('Device key id', self.phone_key)
+        code_row = QHBoxLayout()
+        self.pair_iphone_button = QPushButton('Pair this iPhone')
+        self.pair_iphone_button.clicked.connect(self.pair_iphone)
+        code_row.addWidget(self.pair_iphone_button)
+        self.code_button = QPushButton('Show the pairing code')
+        self.code_button.clicked.connect(self.show_pairing_code)
+        code_row.addWidget(self.code_button)
+        code_layout.addRow(code_row)
+        self.code_qr = QLabel()
+        self.code_qr.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.code_qr.setMinimumHeight(180)
+        code_layout.addRow(self.code_qr)
+        self.code_text = QPlainTextEdit()
+        self.code_text.setReadOnly(True)
+        self.code_text.setMaximumHeight(110)
+        self.code_text.setPlaceholderText(
+            'The pairing code appears here. It holds a one time secret, so it '
+            'is shown only once.')
+        code_layout.addRow(self.code_text)
+        layout.addWidget(code_box)
+
+        chat_box = QGroupBox('Chat and memory for paired devices')
+        chat_layout = QFormLayout(chat_box)
+        self.chat_provider = QComboBox()
+        for name, spec in specs().items():
+            self.chat_provider.addItem(name + (' (local)' if spec.local else ''), name)
+        chat_layout.addRow('Provider for the phone', self.chat_provider)
+        self.chat_paid = QCheckBox(
+            'Allow a paid provider to answer for a paired phone. Charges may apply.')
+        chat_layout.addRow(self.chat_paid)
+        self.chat_memory = QCheckBox('Allow a paired phone to synchronise memory.')
+        chat_layout.addRow(self.chat_memory)
+        chat_row = QHBoxLayout()
+        self.chat_save_button = QPushButton('Save the bridge settings')
+        self.chat_save_button.clicked.connect(self.save_chat_settings)
+        chat_row.addWidget(self.chat_save_button)
+        chat_layout.addRow(chat_row)
+        chat_note = QLabel(
+            'A paired phone sends a message to this PC and the PC answers with '
+            'the provider key it already holds. The phone never holds a key. '
+            'A paid provider also needs the consent of the phone.')
+        chat_note.setWordWrap(True)
+        chat_layout.addRow(chat_note)
+        layout.addWidget(chat_box)
+
         jobs_box = QGroupBox('Jobs from a phone')
         jobs_layout = QVBoxLayout(jobs_box)
         self.jobs = QTableWidget(0, 4)
@@ -172,6 +243,62 @@ class BridgePanel(QWidget):
                     'It is shown once and stored only in the Windows vault.')
         self.notify(operation)
 
+    def pair_iphone(self):
+        """Pair an iPhone under its own key id and show its pairing code."""
+        def operation():
+            key_id = self.phone_key.text().strip() or IPHONE_KEY_ID
+            pairing = self.pairing.pair(key_id=key_id, label='iphone')
+            self.secret_display.setPlainText(pairing.secret)
+            self.refresh()
+            return ('iPhone paired as ' + key_id + '. Show the pairing code and '
+                    'scan it with the phone.')
+        self.notify(operation)
+
+    def show_pairing_code(self):
+        """Build the pairing code and draw it as a QR code."""
+        def operation():
+            address = self.phone_address.text().strip()
+            key_id = self.phone_key.text().strip() or IPHONE_KEY_ID
+            secret = self.pairing.secret_for(key_id)
+            if not secret:
+                raise ValueError('Pair this phone first, then show the pairing code.')
+            payload = pairing_payload(address, key_id, secret,
+                                      expires_at(lifetime_seconds=DEFAULT_LIFETIME_SECONDS))
+            self.code_text.setPlainText(payload)
+            self._draw_qr(payload)
+            if self.chat is not None:
+                self.chat.configure(self.chat_provider.currentData(),
+                                    paid_consent=self.chat_paid.isChecked(),
+                                    memory_sync=self.chat_memory.isChecked())
+            return ('Pairing code ready. Scan it with the iPhone, or copy the '
+                    'text. The secret in it stops working in '
+                    f'{DEFAULT_LIFETIME_SECONDS // 60} minutes.')
+        self.notify(operation)
+
+    def _draw_qr(self, payload):
+        """Draw the pairing code as a picture."""
+        try:
+            svg = pairing_svg(payload)
+        except Exception as error:
+            self.code_qr.setText('The pairing code could not be drawn: ' + str(error))
+            return
+        renderer = QSvgRenderer(bytearray(svg.encode('utf-8')))
+        picture = QPixmap(240, 240)
+        picture.fill()
+        renderer.render(picture)
+        self.code_qr.setPixmap(picture)
+
+    def save_chat_settings(self):
+        """Record what the owner allowed for the paired devices."""
+        def operation():
+            if self.chat is None:
+                raise ValueError('No provider router is available for the bridge.')
+            self.chat.configure(self.chat_provider.currentData(),
+                                paid_consent=self.chat_paid.isChecked(),
+                                memory_sync=self.chat_memory.isChecked())
+            return 'The bridge settings were saved.'
+        self.notify(operation)
+
     def revoke_device(self):
         def operation():
             row = self.devices.currentRow()
@@ -222,6 +349,14 @@ class BridgePanel(QWidget):
     # --------------------------------------------------------------- refresh
 
     def refresh(self):
+        if self.chat is not None:
+            provider = self.chat.provider
+            if provider:
+                index = self.chat_provider.findData(provider)
+                if index >= 0:
+                    self.chat_provider.setCurrentIndex(index)
+            self.chat_paid.setChecked(self.chat.paid_consent)
+            self.chat_memory.setChecked(self.chat.memory_sync)
         running = self.listener.running
         self.start_button.setEnabled(not running)
         self.stop_button.setEnabled(running)

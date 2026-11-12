@@ -15,6 +15,11 @@
 - The Windows application build and the Android debug APK build as workflow sources in `ci/`, with the matching patches in `patches/`. The Android build uses the automatic debug key and never the exposed release key.
 - A release manifest writer that records the SHA-256 of every built file, so a distributed artefact can be verified.
 - The Qt runtime preparation for Linux: `scripts/qt_runtime.py` installs `libEGL.so.1` when the machine does not have it, and the repository `conftest.py` calls it before the test modules are imported. This is what the GitHub Actions Linux runner was missing.
+- The iPhone PWA is a full companion now: pairing by QR code, live status with the machine numbers, chat through the PC's provider in Tamil and English, voice input and output, task submission with the approval flow, memory synchronisation, notifications, an offline shell and an outbox for a phone that is out of reach. The JavaScript has 64 tests, and they run inside the Python suite so the GitHub Actions recipe covers them.
+- The bridge grew the endpoints the phone needs: one job, chat, memory and notifications. Chat is answered by the desktop, so a phone never holds a provider key, and a paid provider needs the consent of the owner and of the request.
+- Every bridge request is now audited, with the body digest and never the body itself.
+- The Mobile Bridge page shows a pairing code as a QR code for the iPhone, and the settings for the bridge chat and for memory synchronisation.
+- The desktop reports the real CPU, memory and disk numbers in the status call, with no new dependency.
 - The Windows build script now writes a release manifest with the SHA-256 of every built file and the source revision, next to the build folder.
 - Two test fixes that only fail on Windows: the update archive test now writes the member name unchanged, because the zip module turns a backslash into a path separator there, and the oversized input tests now carry short names, because pytest puts the test name in an environment variable and Windows refuses a value longer than 32767 characters.
 - 286 local tests pass, 3 skipped.
