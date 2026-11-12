@@ -37,8 +37,8 @@ This document is the first non-runtime integration artifact. The existing JARVIS
 
 ### Progress recorded on the integration branch
 
-Step 2 and step 3 of the MVP sequence now have a first implementation. The
-work is additive and does not change the existing desktop chat flow.
+Steps 2 and 3 of the MVP sequence now have working implementations, and both
+are wired into the desktop application rather than sitting beside it.
 
 Step 2, provider router:
 
@@ -55,26 +55,43 @@ Step 2, provider router:
 - `providers/router.py` selects one provider and dispatches to the adapter
   that matches its shape. Offline mode can only select a local provider, so an
   offline request cannot reach a paid endpoint.
-- The router is not wired into the desktop interface yet. The desktop still
-  uses `providers.chat` directly.
+- The desktop now uses the router. The provider manager and the chat list are
+  served from the registry, so Claude and the local model are selectable. A
+  local model never receives a key and never falls back to a paid endpoint.
 
 Step 3, desktop/mobile protocol:
 
 - `remote/` implements the desktop half of the bridge protocol: the canonical
   signing scheme, replay protection, pairing with revocation, the job records
   and the request handler. `docs/BRIDGE_PROTOCOL.md` is the shared contract.
+- `remote/listener.py` serves it. The listener refuses to start without TLS
+  unless the owner confirms that a private tunnel terminates TLS, and it
+  refuses a non loopback address unless the owner allows it explicitly.
 - The cross implementation vectors are pinned on both sides, so the desktop and
   the Android client cannot drift apart silently.
-- Nothing binds a socket and the desktop interface does not expose the bridge,
-  so no phone can reach a JARVIS installation yet.
+- The **Mobile Bridge** page in the desktop starts and stops the listener, pairs
+  a phone, revokes a phone, lists the remote jobs and approves or rejects them
+  through the same one-use policy gateway that guards every other action.
+
+Step 4, voice, has a first implementation:
+
+- `voice/text_tools.py` and `voice/wake.py` are a faithful port of the Android
+  normalisation, scoring and wake phrase rules, so a transcript is judged the
+  same way on both platforms.
+- `voice/consent.py` holds the microphone permission and the stop control. The
+  microphone is never opened without an explicit grant.
+- `voice/windows_tts.py` and `voice/windows_stt.py` are written against the
+  Windows SAPI and System.Speech interfaces. They need Windows and optional
+  packages, and **they have not been executed yet**.
 
 Validation performed for the work above:
 
     QT_QPA_PLATFORM=offscreen python -m pytest -q
-    239 passed, 3 skipped in 6.06s
+    286 passed, 3 skipped in 14.89s
 
-The baseline before the change was 175 passed, 3 skipped; the skipped tests are
+The baseline before the work was 175 passed, 3 skipped; the skipped tests are
 the Windows only ones. The suite uses synthetic HTTP transports and real Qt
-widgets in offscreen mode. No API key was used, no provider was called and no
-Android build was made. Windows behaviour, live provider access and the APK
-remain unverified.
+widgets in offscreen mode. No API key was used, no provider was called, no
+phone was paired, no public listener was opened and no Android build was
+made. Windows behaviour, live provider access, the Windows speech adapters and
+the APK remain unverified.

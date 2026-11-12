@@ -10,8 +10,8 @@ def test_desktop_navigation_stop_and_editor(tmp_path):
     window = Window(tmp_path)
     window.show()
     app.processEvents()
-    assert window.pages.count() == 10
-    for index in range(10):
+    assert window.pages.count() == 11
+    for index in range(11):
         window.nav.setCurrentRow(index)
         app.processEvents()
         assert window.pages.currentIndex() == index
@@ -28,11 +28,10 @@ def test_desktop_navigation_stop_and_editor(tmp_path):
     app.processEvents()
 
 
-def test_chat_worker_to_ui_persists_result(tmp_path, monkeypatch):
+def test_chat_worker_to_ui_persists_result(tmp_path):
     import time
     import httpx
-    import desktop.app as module
-    from providers.chat import stream_chat
+    from providers.router import ProviderRouter
     app = QApplication.instance() or QApplication([])
     window = Window(tmp_path)
     class TestVault:
@@ -41,7 +40,7 @@ def test_chat_worker_to_ui_persists_result(tmp_path, monkeypatch):
     window.vault = TestVault()
     body = 'data: {"choices":[{"delta":{"content":"Hello from transport test"}}]}\n\ndata: [DONE]\n\n'
     transport = httpx.MockTransport(lambda _: httpx.Response(200, text=body))
-    monkeypatch.setattr(module, 'stream_chat', lambda *args, **kwargs: stream_chat(*args, transport=transport, **kwargs))
+    window.router = ProviderRouter(transport=transport)
     window.prompt.setPlainText('Hello')
     window.send()
     deadline = time.monotonic() + 5
@@ -85,11 +84,10 @@ def test_saved_chat_reopens(tmp_path):
     window.close()
 
 
-def test_provider_check_records_health_without_chat(tmp_path, monkeypatch):
+def test_provider_check_records_health_without_chat(tmp_path):
     import time
     import httpx
-    import desktop.app as module
-    from providers.chat import stream_chat
+    from providers.router import ProviderRouter
     app = QApplication.instance() or QApplication([])
     window = Window(tmp_path)
     class TestVault:
@@ -101,8 +99,7 @@ def test_provider_check_records_health_without_chat(tmp_path, monkeypatch):
             'data: {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":1,"total_tokens":6}}\n\n'
             'data: [DONE]\n\n')
     transport = httpx.MockTransport(lambda _: httpx.Response(200, text=body))
-    monkeypatch.setattr(module, 'stream_chat',
-                        lambda *args, **kwargs: stream_chat(*args, transport=transport, **kwargs))
+    window.router = ProviderRouter(transport=transport)
     window.test_connection()
     deadline = time.monotonic() + 5
     while window.worker is not None and time.monotonic() < deadline:

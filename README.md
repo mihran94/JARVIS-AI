@@ -19,7 +19,7 @@ A ChatGPT subscription is separate from provider API access. No keys are provisi
 ## Implemented
 
 - Native Qt interface with command center, chat, app launcher, task queue, editor, history, provider manager, usage and permissions.
-- Real streaming HTTPS chat adapter for OpenAI, MiniMax and Gemini's compatible chat endpoints. Configurable model IDs; no automatic fallback or hidden retries.
+- Real streaming HTTPS chat adapter for OpenAI, MiniMax, DeepSeek, Groq, OpenRouter and Gemini's compatible chat endpoints, plus a native Anthropic Messages adapter for Claude and a loopback-only local adapter for Ollama. Configurable model IDs; no automatic fallback or hidden retries. A local model never receives a key and never leaves the computer.
 - Windows Credential Manager key save/read/delete. Fixed provider endpoints and TLS verification; no plaintext key-storage fallback.
 - Manual per-action confirmation for app launches and workspace saves; consumed approvals tied to exact arguments/content hash.
 - Fixed Notepad/Calculator launch allowlist using the Windows system directory, with no shell.
@@ -53,9 +53,9 @@ The first v0.2 startup backs up the original SQLite database as history-pre-v02-
 
 ## Limits and security
 
-This release has **manual mode only**. It does not implement autonomous planning, arbitrary computer control, shell execution, builds, voice, offline inference, RAG, quantum tools, cybersecurity scanning, phone remote control, self-updates or executable plugins. Future directories contain boundary documentation, not mock features.
+This release has **manual mode only**. It does not implement autonomous planning, arbitrary computer control, shell execution, builds, RAG, quantum tools, cybersecurity scanning, self-updates or executable plugins. Voice is present as a permissioned adapter that still needs Windows acceptance, and the phone bridge is a supervised channel rather than remote control. Future directories contain boundary documentation, not mock features.
 
-On the integration branch the protocol work is ahead of the product: `remote/` implements the desktop half of the versioned mobile bridge and `providers/` holds a provider registry and router that covers Claude and the local Ollama model next to the existing cloud services. Both are covered by local tests only. No socket is bound, the desktop interface does not use the router yet, and no phone can reach a JARVIS installation. See docs/BRIDGE_PROTOCOL.md and docs/UNIFIED_INTEGRATION.md.
+The **Mobile Bridge** page starts a listener for a paired phone. It refuses to start without TLS, refuses a non loopback address, authenticates every request with a signed HMAC, and keeps every job waiting for your approval in the desktop interface. The provider list, including Claude and the local Ollama model, is served by the unified router in `providers/`. The voice layer in `voice/` matches the wake phrase with the same rules as the Android client and holds the microphone behind an explicit permission and a stop control. All of this is covered by local tests; the Windows speech adapters still need to be exercised on your machine. See docs/BRIDGE_PROTOCOL.md and docs/UNIFIED_INTEGRATION.md.
 
 Key storage works only on Windows. Chat UI and core were exercised on Linux with Qt offscreen. **No live provider request, Windows Credential Manager operation, Windows application launch or packaged EXE was tested here.** See docs/TEST_RESULTS.md for actual results and docs/WINDOWS_ACCEPTANCE.md for the remaining checks.
 
