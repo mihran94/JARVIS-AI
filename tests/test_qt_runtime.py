@@ -20,10 +20,10 @@ def test_the_availability_check_follows_the_loader(monkeypatch):
 
 def test_the_install_runs_the_package_manager(monkeypatch):
     monkeypatch.setattr(qt_runtime.ctypes, 'CDLL', lambda name: object())
+    monkeypatch.setattr(qt_runtime.shutil, 'which', lambda name: '/usr/bin/sudo')
     commands = []
     code = qt_runtime.install_egl_runtime(
-        run=lambda command: commands.append(command) or 0,
-        which=lambda name: '/usr/bin/sudo')
+        run=lambda command: commands.append(command) or 0)
     assert code is True
     assert commands[0][:3] == ['sudo', '-n', 'apt-get']
     assert 'libegl1' in commands[1]
@@ -31,22 +31,35 @@ def test_the_install_runs_the_package_manager(monkeypatch):
 
 def test_a_failing_command_stops_the_installation(monkeypatch):
     monkeypatch.setattr(qt_runtime.ctypes, 'CDLL', lambda name: object())
+    monkeypatch.setattr(qt_runtime.shutil, 'which', lambda name: '/usr/bin/sudo')
     commands = []
     code = qt_runtime.install_egl_runtime(
-        run=lambda command: commands.append(command) or 1,
-        which=lambda name: '/usr/bin/sudo')
+        run=lambda command: commands.append(command) or 1)
     assert code is False
     assert len(commands) == 1
 
 
 def test_without_sudo_nothing_is_installed(monkeypatch):
     monkeypatch.setattr(qt_runtime.ctypes, 'CDLL', lambda name: object())
+    monkeypatch.setattr(qt_runtime.shutil, 'which', lambda name: None)
+    monkeypatch.setattr(qt_runtime.os, 'geteuid', lambda: 1000)
     commands = []
     code = qt_runtime.install_egl_runtime(
-        run=lambda command: commands.append(command) or 0,
-        which=lambda name: None)
+        run=lambda command: commands.append(command) or 0)
     assert code is False
     assert commands == []
+
+
+def test_a_root_account_installs_without_sudo(monkeypatch):
+    monkeypatch.setattr(qt_runtime.ctypes, 'CDLL', lambda name: object())
+    monkeypatch.setattr(qt_runtime.shutil, 'which', lambda name: None)
+    monkeypatch.setattr(qt_runtime.os, 'geteuid', lambda: 0)
+    commands = []
+    code = qt_runtime.install_egl_runtime(
+        run=lambda command: commands.append(command) or 0)
+    assert code is True
+    assert commands[0][0] == 'apt-get'
+    assert 'libegl1' in commands[1]
 
 
 def test_a_windows_machine_needs_nothing(monkeypatch):
