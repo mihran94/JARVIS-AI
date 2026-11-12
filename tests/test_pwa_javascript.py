@@ -34,7 +34,9 @@ def test_the_phone_javascript_suite_passes():
                                text=True, timeout=TIMEOUT_SECONDS)
     output = completed.stdout + completed.stderr
     assert completed.returncode == 0, output[-6000:]
-    passed = re.search(r'^# pass (\d+)$', output, re.M)
+    # Newer node prints "pass 64" with a different prefix than the older
+    # "# pass 64", so both forms are accepted.
+    passed = re.search(r'(?:^#|^\u2139)\s*pass (\d+)$', output, re.M)
     assert passed is not None, output[-2000:]
     assert int(passed.group(1)) >= EXPECTED_TESTS, output[-2000:]
 
