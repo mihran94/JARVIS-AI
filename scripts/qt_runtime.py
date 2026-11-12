@@ -34,11 +34,28 @@ def egl_is_available():
         return False
 
 
+def apt_prefix():
+    """How the package manager is reached.
+
+    A normal machine needs `sudo`, because the runner account is not root. A
+    container that already runs as root has no `sudo` at all, so the command
+    is run directly there.
+    """
+    if shutil.which('sudo') is not None:
+        return ['sudo', '-n']
+    if hasattr(os, 'geteuid') and os.geteuid() == 0:
+        return []
+    return None
+
+
 def apt_commands():
     """The commands that install the EGL runtime library."""
+    prefix = apt_prefix()
+    if prefix is None:
+        return []
     return [
-        ['sudo', '-n', 'apt-get', 'update', '-qq'],
-        ['sudo', '-n', 'apt-get', 'install', '-y', '-qq', EGL_PACKAGE],
+        prefix + ['apt-get', 'update', '-qq'],
+        prefix + ['apt-get', 'install', '-y', '-qq', EGL_PACKAGE],
     ]
 
 
@@ -66,10 +83,12 @@ def install_egl_runtime(run=None, which=None):
         run = _run_command
     if which is None:
         which = shutil.which
-    if which('sudo') is None:
-        print('sudo is not available, so the EGL runtime cannot be installed.')
+    commands = apt_commands()
+    if not commands:
+        print('Neither sudo nor a root account is available, so the EGL runtime '
+              'cannot be installed.')
         return False
-    for command in apt_commands():
+    for command in commands:
         code = run(command)
         if code != 0:
             print('%s failed with exit code %s' % (' '.join(command), code))

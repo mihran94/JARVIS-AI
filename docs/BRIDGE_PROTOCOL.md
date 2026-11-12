@@ -89,8 +89,16 @@ device is rejected. Revocation is not a soft flag that a request can race.
 | --- | --- | --- |
 | `GET` | `/api/status` | PC status object |
 | `GET` | `/api/jobs` | `{"jobs": [...]}` |
+| `GET` | `/api/jobs/<id>` | one job record |
 | `POST` | `/api/jobs` | one job record |
 | `POST` | `/api/jobs/<id>/cancel` | `{"ok": true\|false}` |
+| `POST` | `/api/chat` | the answer of the desktop |
+| `GET` | `/api/memory` | `{"memory": [...]}` |
+| `POST` | `/api/memory` | one memory entry |
+| `GET` | `/api/notifications` | `{"notifications": [...]}` |
+| `POST` | `/api/notifications/<id>/ack` | `{"ok": true\|false}` |
+
+The Android client uses the first four. The iPhone PWA uses all of them.
 
 The status object is snake case: `peer_id`, `state`, `hostname`, `platform`,
 `agent_version`, `heartbeat`, `queued_jobs`, `running_jobs`, `cpu_percent`,
@@ -109,12 +117,78 @@ and when the request asked for approval it stays `QUEUED` until the owner
 approves it in the desktop interface. That keeps the existing one-use,
 per-action confirmation boundary in force for remote requests as well.
 
+## Chat
+
+`POST /api/chat` is answered by the desktop, not by the bridge. The request
+body is:
+
+```json
+{"message": "what is running?", "consent": false}
+```
+
+The answer is:
+
+```json
+{"text": "...", "provider": "ollama", "model": "llama3", "duration_ms": 812, "local": true}
+```
+
+The rules:
+
+- the owner chooses a provider for the bridge in the Mobile Bridge page, and
+  the choice is remembered;
+- a **local** provider answers without a key and without any consent, because
+  it never leaves the computer;
+- a **paid** provider needs the permission of the owner *and* the `consent`
+  flag in the request, so a phone cannot spend money by accident;
+- the provider key is read from the Windows vault on the PC and never travels
+  to the phone;
+- the emergency stop of the desktop stops the bridge as well.
+
+The desktop keeps the last few turns so an answer can refer to them.
+
+## Memory and notifications
+
+`GET` and `POST /api/memory` carry the memory that the owner allowed to be
+synchronised. An entry is `{"id", "text", "source", "created_at"}`. The store
+is bounded, it is not written to disk by the bridge, and a desktop that has
+not allowed memory synchronisation refuses the request with `403`.
+
+`GET /api/notifications` returns the notifications that were not acknowledged
+yet, and `POST /api/notifications/<id>/ack` marks one as seen. A notification
+is `{"id", "title", "body", "level", "created_at", "acknowledged"}`.
+
+## The audit log
+
+Every request is recorded: the key id, the method, the path, the result and a
+short digest of the body. The body itself is never recorded, because a chat
+message and a memory entry are private content. The log is in memory and
+bounded.
+
+## The iPhone pairing code
+
+The desktop can show a pairing code that the iPhone scans:
+
+```
+JARVIS-BRIDGE-v1
+bridge=https://pc.example.lan:8765
+key=jarvis-iphone-v1
+secret=<the one time secret>
+expires=1764000000
+```
+
+The code expires, the secret is shown once, and the phone holds it in memory
+only. The iPhone has its own key id, so revoking the Android phone does not
+revoke the iPhone.
+
 ## Status
 
 Implemented and unit tested on the desktop side: the signing scheme, replay
-protection, pairing and revocation, the four endpoints and the job state
-machine. 33 bridge tests pass locally.
+protection, pairing and revocation, the ten endpoints and the job state
+machine. The iPhone PWA signs the same way, and the pinned vector in
+`tests/test_bridge_protocol.py` is repeated in `iphone-pwa/tests/bridge.test.mjs`
+so the two halves cannot drift apart.
 
-Not implemented and therefore not available to a user today: a bound listener,
-TLS configuration, a tunnel, desktop UI wiring, and job execution. A phone
-cannot reach a JARVIS installation with this code as it stands.
+Not implemented and therefore not available to a user today: a tunnel, a
+public HTTPS address for the bridge, and the execution of the queued jobs.
+A phone still needs the owner to pair it and to reach the PC over a private
+network.

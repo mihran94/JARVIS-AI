@@ -244,7 +244,8 @@ class Window(QMainWindow):
         return page
 
     def bridge_page(self):
-        self.bridge = BridgePanel(self.policy, self.store, self.vault, self.confirm, self.notify)
+        self.bridge = BridgePanel(self.policy, self.store, self.vault, self.confirm, self.notify,
+                                  router=self.router)
         return self.bridge
 
     def automation_page(self):

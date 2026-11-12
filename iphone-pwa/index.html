@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#091326">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="JARVIS">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="description" content="Secure JARVIS companion for the iPhone: PC status, chat, tasks and memory.">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="stylesheet" href="./style.css">
+<link rel="apple-touch-icon" href="./icons/icon-180.png">
+<title>JARVIS iPhone</title>
+</head>
+<body>
+<main>
+  <header class="bar">
+    <div class="logo" aria-hidden="true">J</div>
+    <div class="titles">
+      <h1>JARVIS</h1>
+      <small>iPhone companion</small>
+    </div>
+    <button id="install" class="ghost" hidden>Add to Home Screen</button>
+  </header>
+
+  <p id="banner" class="banner" role="status" aria-live="polite" hidden></p>
+
+  <section class="panel" id="pairing">
+    <h2>1 · Pair with the PC</h2>
+    <p class="hint">The PC shows a pairing code. Scan it, or paste the code as
+      text. The secret is held in this page's memory only: reloading the page
+      clears it, and it is never written to storage.</p>
+    <label>Bridge URL
+      <input id="url" type="url" inputmode="url" autocomplete="off" spellcheck="false"
+             placeholder="https://pc.example.lan">
+    </label>
+    <label>Device key id
+      <input id="key" autocomplete="off" spellcheck="false" placeholder="iphone-mihran-01">
+    </label>
+    <label>Pairing secret
+      <input id="secret" type="password" autocomplete="off" spellcheck="false"
+             placeholder="Paste the approved device secret">
+    </label>
+    <div class="row">
+      <button id="scan">Scan pairing code</button>
+      <input id="scanFile" type="file" accept="image/*" capture="environment" hidden>
+      <button id="paste" class="ghost">Paste code</button>
+    </div>
+    <label>Or paste the whole code
+      <textarea id="pairingText" rows="3" spellcheck="false"
+                placeholder="JARVIS-BRIDGE-v1"></textarea>
+    </label>
+    <div class="row">
+      <button id="connect" class="primary">Connect</button>
+      <button id="disconnect" class="ghost">Forget secret</button>
+    </div>
+    <p id="pairStatus" class="status" role="status" aria-live="polite">Not connected</p>
+  </section>
+
+  <section class="panel" id="statusPanel">
+    <h2>2 · PC status</h2>
+    <div class="row">
+      <button id="refresh" class="primary">Refresh</button>
+      <label class="inline"><input id="autoRefresh" type="checkbox" checked> Keep watching</label>
+    </div>
+    <dl id="status" class="stats">
+      <div><dt>State</dt><dd data-field="state">—</dd></div>
+      <div><dt>PC</dt><dd data-field="hostname">—</dd></div>
+      <div><dt>Platform</dt><dd data-field="platform">—</dd></div>
+      <div><dt>CPU</dt><dd data-field="cpu_percent">—</dd></div>
+      <div><dt>Memory</dt><dd data-field="memory_percent">—</dd></div>
+      <div><dt>GPU</dt><dd data-field="gpu_percent">—</dd></div>
+      <div><dt>Disk free</dt><dd data-field="disk_free_gb">—</dd></div>
+      <div><dt>Jobs</dt><dd data-field="jobs">—</dd></div>
+    </dl>
+    <p class="hint">A number that the PC cannot read is shown as unknown.
+      Nothing here is guessed.</p>
+  </section>
+
+  <section class="panel" id="chatPanel">
+    <h2>3 · Chat</h2>
+    <p class="hint">The message goes to your PC. The provider key stays on the
+      PC and is never sent to the phone.</p>
+    <div id="transcript" class="transcript" aria-live="polite"></div>
+    <div class="row">
+      <input id="message" type="text" autocomplete="off" placeholder="Ask JARVIS" enterkeyhint="send">
+      <button id="send" class="primary">Send</button>
+    </div>
+    <div class="row">
+      <button id="listen" class="ghost">Listen</button>
+      <button id="speak" class="ghost">Speak answers</button>
+      <label class="inline"><input id="consent" type="checkbox"> Allow a paid provider</label>
+    </div>
+    <p id="chatStatus" class="status" role="status" aria-live="polite"></p>
+  </section>
+
+  <section class="panel" id="taskPanel">
+    <h2>4 · Tasks</h2>
+    <p class="hint">A task sent from here is queued on the PC. It runs only
+      after you approve it there.</p>
+    <label>What to do
+      <input id="taskTitle" type="text" autocomplete="off" placeholder="Nightly backup">
+    </label>
+    <label>Details
+      <textarea id="taskPayload" rows="2" spellcheck="false" placeholder="Optional details"></textarea>
+    </label>
+    <div class="row">
+      <button id="submitTask" class="primary">Send for approval</button>
+      <button id="refreshJobs" class="ghost">Refresh tasks</button>
+    </div>
+    <ul id="jobs" class="jobs"></ul>
+  </section>
+
+  <section class="panel" id="memoryPanel">
+    <h2>5 · Memory</h2>
+    <p class="hint">Only what you allow is synchronised. The desktop decides
+      whether to keep it.</p>
+    <div class="row">
+      <input id="memoryText" type="text" autocomplete="off" placeholder="Remember this">
+      <button id="remember" class="primary">Remember</button>
+      <button id="refreshMemory" class="ghost">Refresh</button>
+    </div>
+    <ul id="memory" class="memory"></ul>
+  </section>
+
+  <section class="panel" id="notificationPanel">
+    <h2>6 · Notifications</h2>
+    <div class="row">
+      <button id="refreshNotifications" class="ghost">Refresh</button>
+      <label class="inline"><input id="allowNotifications" type="checkbox"> Allow notifications</label>
+    </div>
+    <ul id="notifications" class="notifications"></ul>
+  </section>
+
+  <footer>
+    <p>JARVIS Unified AI · iOS Safari PWA</p>
+    <p class="hint">An installed web app cannot run in the background and
+      cannot control the phone. Voice needs the app to be open. The PC must
+      be on a private network with an approved bridge.</p>
+  </footer>
+</main>
+<script type="module" src="./app.js"></script>
+</body>
+</html>

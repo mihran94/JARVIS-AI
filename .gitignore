@@ -8,3 +8,8 @@ dist/
 *.sqlite3*
 
 .updates/
+
+# The PWA icons are pictures, so they travel as base64 sidecars and are
+# written again by iphone-pwa/icons/restore-icons.py.
+iphone-pwa/icons/*.png
+iphone-pwa/node_modules/
