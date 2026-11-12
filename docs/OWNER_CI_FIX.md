@@ -23,8 +23,17 @@ https://github.com/mihran94/JARVIS-AI/actions/runs/43122781774
 ## Why it was not fixed here
 
 The connected GitHub App does not hold the `workflows` permission, so every
-write to a file under `.github/workflows/` is rejected. The fix is prepared,
-tested locally and shipped as a patch in `patches/`.
+write to a file under `.github/workflows/` is rejected. It does not hold the
+`actions` permission either, so the agent cannot re-run a workflow run.
+
+Two permissions unblock everything:
+
+| Permission | What it allows |
+| --- | --- |
+| **Workflows: write** | writing `.github/workflows/*` |
+| **Actions: write** | re-running and cancelling workflow runs |
+
+The fix is prepared, checked with `git apply --check` and shipped as a patch.
 
 ## The fix
 
@@ -36,15 +45,37 @@ Two changes to `.github/workflows/tests.yml`:
 
 ### Option A — apply the patch (recommended)
 
+In `mihran94/JARVIS-AI`:
+
 ```
 git checkout integration/unified-foundation
-git apply patches/ci-libegl-failfast.patch
+git apply patches/github-actions-green.patch
 git commit -m "Install the Qt runtime libraries on the Linux runner and report both operating systems"
 git push
 ```
 
-The patch was verified with `git apply --check` against the current workflow
-file, and the result was compared with the intended fixed file.
+That one patch does three things:
+
+1. installs the Qt runtime libraries on the Linux runner,
+2. sets `fail-fast: false` so the Windows job is reported instead of
+   cancelled,
+3. adds `.github/workflows/windows-release.yml`, which builds the Windows
+   application and uploads it as an artifact.
+
+In `mihran94/jarvis-blue-android`:
+
+```
+git apply patches/android-debug-apk.patch
+git commit -m "Add the Android debug APK build"
+git push
+```
+
+That patch adds `.github/workflows/android-debug-apk.yml`, which builds the
+debug APK with the automatic debug key and uploads it as an artifact. The
+release signing key is never used by it.
+
+Both patches were verified with `git apply --check` against the current
+workflow files.
 
 ### Option B — edit the file by hand
 
@@ -72,9 +103,25 @@ and add one step before the pip install:
 
 ### Option C — let the agent push it
 
-Grant the connected GitHub App the **Workflows: write** permission, then ask
-for the change to be applied. The App will then be able to write
-`.github/workflows/tests.yml` directly.
+Grant the connected GitHub App **Workflows: write** and **Actions: write**,
+then ask for the change to be applied and the workflows to be re-run. The App
+can then write `.github/workflows/*` directly and re-run the failed run.
+
+## The artefacts
+
+After the workflows are in place and green, the artefacts are available from
+the run pages:
+
+| Artefact | Workflow | Name |
+| --- | --- | --- |
+| Windows application folder | `windows-release.yml` | `JarvisAI-windows-x64` |
+| Windows release manifest | `windows-release.yml` | inside the same artifact |
+| Android debug APK | `android-debug-apk.yml` | `JarvisBlue-android-debug-apk` |
+| APK SHA-256 | `android-debug-apk.yml` | inside the same artifact |
+
+Both are downloadable from the workflow run page and from the repository
+Actions tab. The Windows build is an **unsigned** PyInstaller folder, not a
+signed installer.
 
 ## What to expect afterwards
 
