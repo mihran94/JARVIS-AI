@@ -73,8 +73,27 @@ Notes that matter for a release decision:
 
 ### Android client
 
-The Android application is a separate repository and is not built by this
-branch. In `mihran94/jarvis-blue-android`:
+The Android application is a separate repository. The debug APK of
+`mihran94/jarvis-blue-android`, branch
+`fix/gemini-voice-android12-v118-20261109`, was built and verified:
+
+| | |
+| --- | --- |
+| Package | `com.jarvisblue.mobile.debug` |
+| Version | `1.0.0-debug`, versionCode 1 |
+| Size | 79 746 471 bytes |
+| SHA-256 | `3d994d0b522a35661e65a11770cfd96496b4adcefc5136425bd006c116126f8b` |
+| Signer | `C=US, O=Android, CN=Android Debug`, the automatic debug key |
+| Signature scheme | v2 verified, `zipalign -c 4` passes |
+
+The build of that repository needed a fix first: the project could not be
+configured without the release keystore, because the build script handed an
+empty path to `rootProject.file()`. That is fixed in pull request #2, and a
+release build is now refused with a clear message when no keystore is
+configured. The exposed release key is used by nothing.
+
+The remaining steps for the owner are in
+`mihran94/jarvis-blue-android`:
 
 ```
 bash gradle/wrapper/restore-wrapper.sh
