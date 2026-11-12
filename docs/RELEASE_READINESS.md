@@ -1,18 +1,34 @@
-# Release readiness — integration branch
+# Release readiness
 
-This file records what has been verified for the `integration/unified-foundation`
-branch and what the owner still has to run on a real machine. Nothing here is
-a claim that an artefact was built: no Windows executable, no APK and no
-installer were produced in the environment used for this work.
+This file records what has been verified and what the owner still has to run
+on a real machine. Nothing here is a claim that an artefact was built: no
+Windows executable, no APK and no installer were produced in the environment
+used for this work.
+
+The verified state below is the state of `main` after the integration was
+merged.
 
 ## Verified in the integration environment
 
 | Check | Result |
 | --- | --- |
-| Test suite | `286 passed, 3 skipped` |
+| Test suite | `301 passed, 3 skipped` |
 | Baseline before the branch work | `175 passed, 3 skipped` |
 | Byte compilation | `python -m compileall -q .` exit code 0 |
 | Pushed file contents | Every pushed file read back from the branch and compared with the locally validated copy |
+| GitHub Actions on Linux | run 43128880431, success |
+| GitHub Actions on Windows | run 43128880431, job `test (windows-latest)`, success |
+
+The GitHub Actions recipe is green on `main`. Run 43128880431 has two jobs and
+no failed job: the Ubuntu runner and the Windows runner both pass the whole
+suite. The Linux runner needed the Qt runtime library, which is now provided
+by the repository itself; see `docs/OWNER_CI_FIX.md`.
+
+Two faults were found by the Windows job and fixed: an update archive member
+whose written name contains a backslash was accepted on Windows, because the
+zip module turns a backslash into a path separator while it reads an archive
+there, and three tests carried a test name longer than Windows allows in an
+environment variable.
 
 Environment: Linux, Python 3.11.2, PySide6 6.8.3, httpx 0.28.1, keyring 25.6.0,
 pytest 8.3.5, Qt offscreen platform. The repository targets Python 3.12.
@@ -28,6 +44,9 @@ request, refused; a revoked device, refused.
 
 The 3 skipped tests are the Windows only ones. See `docs/TEST_RESULTS.md` for
 the full record.
+
+The Windows runner reports 5 skipped tests, because two more of them are
+skipped outside Linux.
 
 ## Still to be done on the owner's Windows PC
 
