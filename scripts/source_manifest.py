@@ -78,6 +78,29 @@ def build(root: str) -> str:
     return ''.join(lines)
 
 
+def difference(current: str, expected: str) -> list[str]:
+    """The files that make the two manifests different."""
+    def read(text):
+        entries = {}
+        for line in text.splitlines():
+            if line.startswith('#') or not line.strip():
+                continue
+            digest, _, path = line.partition('  ')
+            entries[path.strip()] = digest
+        return entries
+
+    old, new = read(current), read(expected)
+    problems = []
+    for path in sorted(set(old) | set(new)):
+        if path not in new:
+            problems.append(f'{path} is in the manifest but not in the tree')
+        elif path not in old:
+            problems.append(f'{path} is in the tree but not in the manifest')
+        elif old[path] != new[path]:
+            problems.append(f'{path} has a different content')
+    return problems
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--check', action='store_true',
@@ -97,6 +120,8 @@ def main(argv: list[str] | None = None) -> int:
             current = handle.read()
         if current != expected:
             print(f'{MANIFEST} does not match the tree.')
+            for line in difference(current, expected):
+                print(f'  {line}')
             return 1
         print(f'{MANIFEST} matches the tree.')
         return 0

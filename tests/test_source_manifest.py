@@ -39,14 +39,13 @@ def test_the_source_manifest_matches_the_tree():
 
 
 def test_the_manifest_covers_every_source_file():
-    result = subprocess.run(
-        [sys.executable, SCRIPT, '--root', ROOT],
-        capture_output=True, text=True,
-    )
-    assert result.returncode == 0
+    spec = importlib.util.spec_from_file_location('source_manifest', SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
     with open(os.path.join(ROOT, 'docs', 'SOURCE_INTEGRITY.sha256'), encoding='utf-8') as handle:
         lines = [line for line in handle if not line.startswith('#') and line.strip()]
     assert len(lines) > 100
+    assert len(lines) == len(module.collect(ROOT))
     for line in lines:
         digest, _, path = line.partition('  ')
         path = path.strip()
