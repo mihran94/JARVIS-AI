@@ -12,6 +12,8 @@
 - A signing material checker and the Android release key rotation procedure.
 - Release readiness record and a SHA-256 source integrity manifest for the branch, so the owner can verify the exact tree before building on Windows.
 - The GitHub Actions runner fix as a ready to apply patch, because the connected App cannot write workflow files.
+- The Windows application build and the Android debug APK build as workflow sources in `ci/`, with the matching patches in `patches/`. The Android build uses the automatic debug key and never the exposed release key.
+- A release manifest writer that records the SHA-256 of every built file, so a distributed artefact can be verified.
 - 286 local tests pass, 3 skipped.
 
 ## 0.3.0 — 8 November 2026

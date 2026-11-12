@@ -70,6 +70,27 @@ that repository's `docs/INSTALL.md`.
 The Android release workflow publishes only when it is dispatched manually and
 the release confirmation input is set. It is not part of a normal pull request.
 
+### Automated builds
+
+Two workflow files are prepared and checked with `git apply --check`:
+
+| Workflow | Repository | Artefact |
+| --- | --- | --- |
+| `ci/windows-release.yml` | `mihran94/JARVIS-AI` | `JarvisAI-windows-x64` |
+| `ci/android-debug-apk.yml` | `mihran94/jarvis-blue-android` | `JarvisBlue-android-debug-apk` |
+
+The Windows workflow runs the test suite, builds the unsigned PyInstaller
+folder, writes a release manifest with the SHA-256 of every built file and
+uploads both. The Android workflow restores the Gradle wrapper from its base64
+sidecar, builds the debug variant with the automatic debug key, records the
+APK SHA-256 and uploads it. The exposed release key is not used by either
+workflow.
+
+Both files live in `ci/` and in `patches/` because the connected GitHub App
+cannot write `.github/workflows/`. See `docs/OWNER_CI_FIX.md` for the exact
+commands and for the two permissions that would let the agent apply them and
+re-run the workflows itself.
+
 ## Source integrity
 
 `docs/SOURCE_INTEGRITY.sha256` lists the SHA-256 of every source file on this
