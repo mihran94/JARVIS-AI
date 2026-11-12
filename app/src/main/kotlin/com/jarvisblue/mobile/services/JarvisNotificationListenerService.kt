@@ -18,7 +18,13 @@ class JarvisNotificationListenerService : NotificationListenerService() {
 
     @Inject lateinit var store: NotificationStore
 
+    // Android's notification-access grant alone is not consent to retain
+    // message content. Keep capture disabled until the app offers explicit,
+    // revocable in-app consent with retention and exclusion controls.
+    private val notificationCaptureEnabled = false
+
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
+        if (!notificationCaptureEnabled) return
         val notification = sbn ?: return
         val extras = notification.notification?.extras ?: return
         val title = extras.getCharSequence(android.app.Notification.EXTRA_TITLE)?.toString().orEmpty()
