@@ -148,8 +148,15 @@ re-run the workflows itself.
 branch, in `sha256sum` format. Verify the tree before building:
 
 ```
+python iphone-pwa/icons/restore-icons.py
 sha256sum -c docs/SOURCE_INTEGRITY.sha256
 ```
+
+The PWA icons are build output and are not in the repository, so they are
+restored from their base64 sidecars first. Without that step three files are
+reported as missing. `python scripts/source_manifest.py` regenerates the
+manifest and `--check` verifies it; the test suite runs that check on every
+build, so the manifest cannot drift away from the tree unnoticed.
 
 On Windows PowerShell, compare with:
 
