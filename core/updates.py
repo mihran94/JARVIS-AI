@@ -68,8 +68,14 @@ def inspect_zip(path):
         seen = set()
         for item in entries:
             name = item.filename
+            # The zip module turns a backslash into a path separator while it
+            # reads an archive on Windows, so the name it reports no longer
+            # shows what the archive really contains. The original name is
+            # kept in orig_filename, and it is the one that is checked, so a
+            # backslash is refused on every platform.
+            raw_name = item.orig_filename or name
             parts = name.rstrip('/').split('/')
-            if ('\\' in name or name.startswith('/') or any(
+            if ('\\' in name or '\\' in raw_name or name.startswith('/') or any(
                     p in ('', '.', '..') or p.endswith((' ', '.')) or ':' in p
                     or any(ord(c) < 32 or c in '<>"|?*' for c in p)
                     or p.split('.')[0].upper() in {'CON','PRN','AUX','NUL',

@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 import stat
+import time
 import zipfile
 import pytest
 from core.updates import inspect_zip, activate_zip, rollback, read_state, release_path, UpdateError
@@ -20,7 +21,15 @@ def archive(tmp_path,extras=None):
            'desktop/app.py':b'new UI','core/store.py':b'stable db code'}
     files.update(extras or {})
     with zipfile.ZipFile(path,'w') as z:
-        for name,content in files.items(): z.writestr('JARVIS-AI-main/'+name,content)
+        for name,content in files.items():
+            # The member name is written after the ZipInfo is built, because
+            # the zip module turns a backslash into a path separator on
+            # Windows. An unsafe name has to survive exactly as written on
+            # every platform, otherwise the check would not be tested at all.
+            item=zipfile.ZipInfo('placeholder')
+            item.filename='JARVIS-AI-main/'+name
+            item.date_time=time.localtime()[:6]
+            z.writestr(item,content)
     return path
 
 
@@ -133,3 +142,19 @@ def test_launcher_uses_retained_environment(install,tmp_path,monkeypatch):
     assert launch.main()==0
     assert Path(captured[0][0][1])==release_path(install,digest)/'main.py'
     assert captured[0][1]['env']['JARVIS_INSTALL_ROOT']==str(install)
+
+
+def test_the_raw_member_name_is_checked(tmp_path):
+    # The zip module rewrites a backslash into a path separator while it
+    # reads an archive on Windows. The name as it was written has to be
+    # refused there as well, because a backslash separates paths there.
+    path=tmp_path/'release.zip'
+    with zipfile.ZipFile(path,'w') as z:
+        item=zipfile.ZipInfo('placeholder')
+        item.filename='JARVIS-AI-main/a\\escape.py'
+        item.date_time=time.localtime()[:6]
+        z.writestr(item,b'x')
+    with zipfile.ZipFile(path) as z:
+        stored=z.infolist()[0]
+        assert '\\' in stored.orig_filename or '\\' in stored.filename
+    with pytest.raises(UpdateError,match='Unsafe path'): inspect_zip(path)

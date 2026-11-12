@@ -3,7 +3,10 @@ from PySide6.QtWidgets import QApplication
 from desktop.app import Window
 from developer_studio.generation import messages_for_repair
 
-@pytest.mark.parametrize('source,error',[('', 'error'),('x'*50001,'error'),('pass',''),('pass','x'*10001)])
+# The short names keep the test id small. Windows refuses an environment
+# variable longer than 32767 characters, and pytest puts the test id in one.
+@pytest.mark.parametrize('source,error',[('', 'error'),('x'*50001,'error'),('pass',''),('pass','x'*10001)],
+                         ids=['empty-source','oversized-source','empty-error','oversized-error'])
 def test_repair_bounds(source,error):
     with pytest.raises(ValueError): messages_for_repair(source,error)
 
