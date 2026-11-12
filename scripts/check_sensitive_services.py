@@ -43,9 +43,6 @@ def check() -> list[str]:
         source = (APP / "kotlin/com/jarvisblue/mobile" / filename).read_text(encoding="utf-8")
         if off not in source or guard not in source:
             failures.append(f"{filename}: sensitive capture must remain disabled until consent is implemented")
-        if source.index(guard) > source.index("override fun onNotificationPosted" if "Notification" in filename else "override fun onAccessibilityEvent"):
-            # Guard must be present in the event handler; this check is deliberately conservative.
-            pass
     return failures
 
 
