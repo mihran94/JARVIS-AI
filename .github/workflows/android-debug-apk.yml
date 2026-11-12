@@ -39,7 +39,7 @@ jobs:
       - name: Build the debug APK
         # The debug variant uses the automatic debug key. The release signing
         # key is never involved in this workflow.
-        run: ./gradlew :app:assembleDebug --no-daemon --console=plain
+        run: ./gradlew :app:assembleDebug --no-daemon --console=plain --max-workers=2 -Dorg.gradle.jvmargs='-Xmx2048m -XX:MaxMetaspaceSize=1536m -Dfile.encoding=UTF-8'
       - name: Record the APK digest
         run: |
           sha256sum app/build/outputs/apk/debug/app-debug.apk | tee app-debug.apk.sha256
