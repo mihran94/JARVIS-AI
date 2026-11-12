@@ -30,12 +30,20 @@ android {
             val keystoreProps = Properties().apply {
                 if (keystorePropsFile.exists()) keystorePropsFile.inputStream().use { load(it) }
             }
-            val storePath = rootProject.file(keystoreProps.getProperty("storeFile", ""))
-            if (storePath.exists()) {
-                storeFile = storePath
-                storePassword = keystoreProps.getProperty("storePassword")
-                keyAlias = keystoreProps.getProperty("keyAlias")
-                keyPassword = keystoreProps.getProperty("keyPassword")
+            // The store path must never be empty here: rootProject.file("")
+            // throws during configuration, and that would break the debug build
+            // as well, because the whole project is configured before any task
+            // runs. The keystore stays outside the repository, so this file is
+            // simply absent on a fresh checkout.
+            val storeFilePath = keystoreProps.getProperty("storeFile", "").trim()
+            if (storeFilePath.isNotEmpty()) {
+                val storePath = rootProject.file(storeFilePath)
+                if (storePath.exists()) {
+                    storeFile = storePath
+                    storePassword = keystoreProps.getProperty("storePassword")
+                    keyAlias = keystoreProps.getProperty("keyAlias")
+                    keyPassword = keystoreProps.getProperty("keyPassword")
+                }
             }
             // Sign with every scheme so the APK installs on sideloaders that
             // only understand v1 (older package installers) and on platforms
@@ -91,6 +99,22 @@ android {
     }
     testOptions {
         unitTests.isReturnDefaultValues = true
+    }
+}
+
+// A release build must never be produced without a keystore. It would be
+// distributed unsigned, or worse, signed with a key that is known to be
+// exposed. The check runs only when a release task is actually requested, so
+// the debug build is never affected.
+gradle.taskGraph.whenReady {
+    val wantsRelease = allTasks.any { it.path.startsWith(":app:") && it.path.contains("Release") }
+    val releaseSigning = android.signingConfigs.getByName("release")
+    if (wantsRelease && releaseSigning.storeFile == null) {
+        throw GradleException(
+            "No release keystore is configured. Create keystore/keystore.properties with " +
+                "storeFile, storePassword, keyAlias and keyPassword, or build the debug " +
+                "variant instead. See docs/ANDROID_SIGNING_KEY_ROTATION.md."
+        )
     }
 }
 
