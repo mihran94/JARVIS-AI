@@ -39,6 +39,11 @@ HEADER = """# JARVIS AI source integrity manifest
 # with Windows line endings is checked out with Windows line endings, so
 # check out the branch first and then verify the files that are not text.
 #
+# The PWA icons are build output and are not in the repository. Restore them
+# before verifying, or three files will be reported as missing:
+#
+#     python iphone-pwa/icons/restore-icons.py
+#
 # {count} files
 """
 
