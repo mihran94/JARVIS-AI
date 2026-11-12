@@ -14,6 +14,7 @@
 - The GitHub Actions runner fix as a ready to apply patch, because the connected App cannot write workflow files.
 - The Windows application build and the Android debug APK build as workflow sources in `ci/`, with the matching patches in `patches/`. The Android build uses the automatic debug key and never the exposed release key.
 - A release manifest writer that records the SHA-256 of every built file, so a distributed artefact can be verified.
+- The Qt runtime preparation for Linux: `scripts/qt_runtime.py` installs `libEGL.so.1` when the machine does not have it, and the repository `conftest.py` calls it before the test modules are imported. This is what the GitHub Actions Linux runner was missing.
 - 286 local tests pass, 3 skipped.
 
 ## 0.3.0 — 8 November 2026
