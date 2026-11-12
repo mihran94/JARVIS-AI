@@ -118,6 +118,30 @@ gradle.taskGraph.whenReady {
     }
 }
 
+// The sensitive capture paths have to ask the consent. The check is a source
+// audit, so it runs before the app is compiled and the build fails when a
+// capture path stops asking. It needs a Python interpreter; when there is none
+// the build says so and carries on.
+val checkSensitiveServices by tasks.registering(Exec::class) {
+    group = "verification"
+    description = "Fails the build when a sensitive capture path stops asking for the consent"
+    val script = rootProject.file("scripts/check_sensitive_services.py")
+    val interpreter = listOf("python3", "python").firstOrNull { name ->
+        providers.exec {
+            commandLine(name, "--version")
+            isIgnoreExitValue = true
+        }.result.get().exitValue == 0
+    }
+    if (interpreter != null) {
+        commandLine(interpreter, script.absolutePath)
+    } else {
+        logger.lifecycle("No Python interpreter was found, so the sensitive service guard did not run.")
+        onlyIf { false }
+    }
+}
+
+tasks.named("preBuild") { dependsOn(checkSensitiveServices) }
+
 dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:common"))

@@ -86,4 +86,8 @@ enum class Permission(
         "memory.store", "Personal memory",
         "Persist long-term notes about you so the assistant can personalise replies.", false,
     ),
+    BACKGROUND_SERVICE(
+        "background.service", "Background service",
+        "Keep reminders and scheduled work running while the app is closed.", true,
+    ),
 }

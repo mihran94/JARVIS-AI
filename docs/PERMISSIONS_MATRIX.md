@@ -34,10 +34,39 @@ tool fails with a `DENIED_PERMISSION` verdict and the model is told the truth.
 | `development` | Development tools | no | *none* | required | ✅ |
 | `security_scan` | Security scanning | yes | `INTERNET` | required | ✅ |
 | `memory.store` | Personal memory | no | *none* | required | ✅ |
+| `background.service` | Background service | no | *none* | required | ✅ |
 
 ---
 
-## 2. Tool → capability mapping
+## 2. Sensitive capture consent
+
+Some things are read by a **service**, not by a tool. A tool runs when a model
+asks for it; a service runs when Android binds it. For those, the in-app
+grant is checked again at the moment of the capture, so taking the grant back
+stops the reading at once.
+
+| Capture | Bucket | What is read | Without the consent |
+|---|---|---|---|
+| `microphone.capture` | `microphone` | The audio the recogniser listens to | The service stops and the request is refused |
+| `accessibility.screen` | `accessibility` | The visible text of the current window | Nothing is read, and what was read before is dropped |
+| `notifications.content` | `notifications.read` | The title and the text of a posted notification | Nothing is recorded at all, not even the package name |
+| `background.service` | `background.service` | The scheduled work that runs while the app is closed | The worker returns without doing anything |
+
+The switches live in *Permissions → Privacy* and are separate from the
+capability buckets, because they answer a different question: not "may this
+tool run" but "may the assistant read this".
+
+The Android grant is never enough on its own. Granting notification access in
+the system settings does not let the app keep notification text, and enabling
+the accessibility service in the system settings does not let it read the
+screen. Both need the in-app consent as well.
+
+The default is **denied** for all four, on a fresh install and after
+"Revoke every in-app grant".
+
+---
+
+## 3. Tool → capability mapping
 
 | Tool | Capabilities | Risk | Fresh confirmation |
 |------|-------------|------|--------------------|
@@ -70,7 +99,7 @@ dashboard without revoking the whole capability bucket.
 
 ---
 
-## 3. Android manifest permissions and why each is present
+## 4. Android manifest permissions and why each is present
 
 | Permission | Why | Consequence for the user |
 |------------|-----|--------------------------|
@@ -98,7 +127,7 @@ the app can only see the app types it actually launches.
 
 ---
 
-## 4. How each sensitive access is disclosed
+## 5. How each sensitive access is disclosed
 
 | Access | Disclosure |
 |--------|------------|
@@ -112,7 +141,7 @@ the app can only see the app types it actually launches.
 
 ---
 
-## 5. Emergency stop
+## 6. Emergency stop
 
 The emergency stop is a **sticky** global switch:
 
@@ -126,7 +155,7 @@ that overlays every screen while it is engaged.
 
 ---
 
-## 6. Revocation checklist — "make the assistant forget everything"
+## 7. Revocation checklist — "make the assistant forget everything"
 
 1. **Permissions → Revoke every in-app grant** (one tap).
 2. **Permissions → Emergency stop → Engage** (blocks everything immediately).

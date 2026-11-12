@@ -6,6 +6,10 @@ import android.speech.RecognitionListener
 import android.os.Bundle
 import android.content.Intent
 import android.content.ComponentName
+import com.jarvisblue.core.model.SensitiveCapture
+import com.jarvisblue.core.security.SensitiveCaptureConsent
+import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 
 /**
  * The system's [RecognitionService] entry point.
@@ -14,8 +18,15 @@ import android.content.ComponentName
  * JARVIS BLUE hands the work to the platform [SpeechRecognizer] so the audio
  * path, the privacy indicator and the on-device engine all stay under Android's
  * control — this service never captures audio itself.
+ *
+ * The microphone is only used when the user granted the consent in the app.
+ * Without it the request is refused instead of being passed on.
  */
+@AndroidEntryPoint
 class JarvisRecognitionService : RecognitionService() {
+
+    /** The consent that decides whether the microphone may be used. */
+    @Inject lateinit var consent: SensitiveCaptureConsent
 
     private var recognizer: SpeechRecognizer? = null
     private var activeCallback: Callback? = null
@@ -23,6 +34,13 @@ class JarvisRecognitionService : RecognitionService() {
     override fun onStartListening(intent: Intent?, callback: Callback?) {
         val target = callback ?: return
         activeCallback = target
+
+        // Fail closed: no consent, no microphone.
+        if (!consent.allows(SensitiveCapture.MICROPHONE)) {
+            runCatching { target.error(SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) }
+            activeCallback = null
+            return
+        }
 
         // Do not proxy recognition to our own service; it causes recursion
         // when JARVIS BLUE is the system-selected recognition provider.
