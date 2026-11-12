@@ -3,9 +3,11 @@ package com.jarvisblue.feature.command
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.jarvisblue.core.model.Permission
+import com.jarvisblue.core.model.SensitiveCapture
 import com.jarvisblue.core.security.AppLockController
 import com.jarvisblue.core.security.EmergencyStop
 import com.jarvisblue.core.security.PermissionGrantStore
+import com.jarvisblue.core.security.SensitiveCaptureConsent
 import com.jarvisblue.core.tools.ToolRegistry
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,6 +19,19 @@ import javax.inject.Inject
 data class PermissionRow(
     val permission: Permission,
     val granted: Boolean,
+)
+
+/**
+ * One sensitive capture and whether the user allowed it.
+ *
+ * These are the switches that decide what the services may read. They are
+ * shown separately from the capability buckets, because they answer a
+ * different question: not "may this tool run" but "may the assistant read
+ * this".
+ */
+data class CaptureRow(
+    val capture: SensitiveCapture,
+    val allowed: Boolean,
 )
 
 data class ToolRow(
@@ -31,6 +46,7 @@ data class ToolRow(
 
 data class PermissionsUiState(
     val permissions: List<PermissionRow> = emptyList(),
+    val captures: List<CaptureRow> = emptyList(),
     val tools: List<ToolRow> = emptyList(),
     val emergencyStopEngaged: Boolean = false,
     val emergencyReason: String? = null,
@@ -43,6 +59,7 @@ data class PermissionsUiState(
 @HiltViewModel
 class PermissionsViewModel @Inject constructor(
     private val grantStore: PermissionGrantStore,
+    private val captureConsent: SensitiveCaptureConsent,
     private val emergencyStop: EmergencyStop,
     private val appLock: AppLockController,
     private val toolRegistry: ToolRegistry,
@@ -54,6 +71,13 @@ class PermissionsViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             grantStore.grants.collect { refresh() }
+        }
+        viewModelScope.launch {
+            captureConsent.consent.collect { consent ->
+                _state.value = _state.value.copy(
+                    captures = SensitiveCapture.entries.map { CaptureRow(it, consent.allows(it)) },
+                )
+            }
         }
         viewModelScope.launch {
             emergencyStop.engaged.collect { engaged ->
@@ -92,6 +116,21 @@ class PermissionsViewModel @Inject constructor(
         viewModelScope.launch {
             grantStore.grant(permission, enabled)
             _state.value = _state.value.copy(statusLine = "${permission.label} ${if (enabled) "granted" else "revoked"}")
+        }
+    }
+
+    /**
+     * Allow or take back one sensitive capture.
+     *
+     * The change is written straight away, so the services see it at their
+     * next check and stop at once.
+     */
+    fun setCapture(capture: SensitiveCapture, allowed: Boolean) {
+        viewModelScope.launch {
+            captureConsent.setAllowed(capture, allowed)
+            _state.value = _state.value.copy(
+                statusLine = "${capture.label} ${if (allowed) "allowed" else "revoked"}",
+            )
         }
     }
 

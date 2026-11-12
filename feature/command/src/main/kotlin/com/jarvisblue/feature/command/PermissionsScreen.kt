@@ -60,6 +60,7 @@ fun PermissionsRoute(
     PermissionsScreen(
         state = state,
         onPermissionChange = viewModel::setPermission,
+        onCaptureChange = viewModel::setCapture,
         onToolChange = viewModel::setToolEnabled,
         onEmergencyStop = viewModel::engageEmergencyStop,
         onReleaseStop = viewModel::releaseEmergencyStop,
@@ -75,6 +76,7 @@ fun PermissionsRoute(
 fun PermissionsScreen(
     state: PermissionsUiState,
     onPermissionChange: (com.jarvisblue.core.model.Permission, Boolean) -> Unit,
+    onCaptureChange: (com.jarvisblue.core.model.SensitiveCapture, Boolean) -> Unit,
     onToolChange: (String, Boolean) -> Unit,
     onEmergencyStop: () -> Unit,
     onReleaseStop: () -> Unit,
@@ -176,6 +178,33 @@ fun PermissionsScreen(
                     if (row.permission.sensitive) {
                         StatusPill(text = "Sensitive", color = AmberWarn)
                     }
+                }
+            }
+
+            item {
+                SectionHeader(
+                    title = "Privacy",
+                    subtitle = "What the assistant may read. Nothing is read until you allow it, " +
+                        "and taking it back stops the reading at once.",
+                )
+            }
+
+            items(state.captures, key = { it.capture.id }) { row ->
+                GlowCard(
+                    title = row.capture.label,
+                    subtitle = row.capture.description,
+                    accent = if (row.allowed) GreenOk else BlueCore,
+                    trailing = {
+                        Switch(
+                            checked = row.allowed,
+                            onCheckedChange = { onCaptureChange(row.capture, it) },
+                        )
+                    },
+                ) {
+                    StatusPill(
+                        text = if (row.allowed) "Allowed" else "Not allowed",
+                        color = if (row.allowed) GreenOk else AmberWarn,
+                    )
                 }
             }
 

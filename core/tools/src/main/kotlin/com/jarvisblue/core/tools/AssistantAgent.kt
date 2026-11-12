@@ -105,7 +105,7 @@ class AssistantAgent(
         var finalContent = ""
         var failure: String? = null
 
-        repeat(maxToolIterations) { iteration ->
+        for (iteration in 0 until maxToolIterations) {
             val request = AiRequest(
                 messages = messages.toList(),
                 modelId = preferredModel,
@@ -122,10 +122,11 @@ class AssistantAgent(
                     preferredModel = preferredModel,
                 )
             } catch (t: Throwable) {
+                if (t is kotlinx.coroutines.CancellationException) throw t
                 failure = t.message ?: "The AI provider could not be reached"
                 onEvent(AgentEvent.Notice(failure))
                 finalContent = "I could not reach an AI provider: ${t.message}"
-                return@repeat
+                break
             }
 
             providerUsed = runCatching { ProviderId.valueOf(response.providerId) }
@@ -136,7 +137,7 @@ class AssistantAgent(
             finalContent = response.content
 
             if (response.toolCalls.isEmpty()) {
-                return@repeat
+                break
             }
 
             messages += AiMessage(role = "assistant", content = response.content)

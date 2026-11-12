@@ -9,6 +9,8 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.jarvisblue.core.model.Language
+import com.jarvisblue.core.model.SensitiveCapture
+import com.jarvisblue.core.security.SensitiveCaptureConsent
 import com.jarvisblue.core.voice.SpeechRecognizerController
 import com.jarvisblue.core.voice.WakePhraseMatcher
 import com.jarvisblue.core.voice.WakeWordEngine
@@ -43,7 +45,11 @@ class WakeWordService : Service() {
 
     @Inject lateinit var matcher: WakePhraseMatcher
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    /** The consent that decides whether the microphone may be used. */
+    @Inject lateinit var consent: SensitiveCaptureConsent
+
+    // SpeechRecognizer methods must run on Android's main thread.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var listenJob: Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -55,6 +61,14 @@ class WakeWordService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            stopListening()
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        // Fail closed: the microphone is only used when the user granted the
+        // consent in the app. Android's runtime permission on its own is not
+        // enough.
+        if (!consent.allows(SensitiveCapture.MICROPHONE)) {
             stopListening()
             stopSelf()
             return START_NOT_STICKY
@@ -87,13 +101,28 @@ class WakeWordService : Service() {
         listenJob = scope.launch {
             while (true) {
                 try {
-                    recognizer.listen(Language.ENGLISH).collect { recognition ->
-                        if (recognition.error != null || !recognition.isFinal) return@collect
+                    var failed = false
+                    recognizer.listen(
+                        Language.ENGLISH,
+                        SpeechRecognizerController.EngineMode.ON_DEVICE_ONLY,
+                    ).collect { recognition ->
+                        if (recognition.error != null) {
+                            failed = true
+                            return@collect
+                        }
+                        if (!recognition.isFinal) return@collect
                         val match = matcher.match(recognition.transcript, Language.ENGLISH)
                         if (match.isWakeCall) {
                             launchAssistant()
                         }
                     }
+                    if (failed) {
+                        stopSelf()
+                        break
+                    }
+                    kotlinx.coroutines.delay(500)
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
                 } catch (t: Throwable) {
                     kotlinx.coroutines.delay(1500)
                 }
@@ -106,7 +135,8 @@ class WakeWordService : Service() {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             putExtra(JarvisVoiceInteractionSession.EXTRA_FROM_ASSISTANT, true)
         }
-        startActivity(intent)
+        runCatching { startActivity(intent) }
+            // Android may block an activity launch from a background service.
     }
 
     private fun stopListening() {

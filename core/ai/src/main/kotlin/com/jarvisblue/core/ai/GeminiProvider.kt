@@ -63,7 +63,15 @@ class GeminiProvider(private val httpClient: AiHttpClient) : AiProvider {
                                         buildJsonObject {
                                             put("name", fn?.get("name")?.asString().orEmpty())
                                             put("description", fn?.get("description")?.asString().orEmpty())
-                                            put("parameters", fn?.get("parameters") ?: buildJsonObject {})
+                                            put(
+                                                "parameters",
+                                                ToolSchema.toGeminiParameters(
+                                                    fn?.get("parameters") as? JsonObject ?: buildJsonObject {
+                                                        put("type", "object")
+                                                        put("properties", buildJsonObject {})
+                                                    },
+                                                ),
+                                            )
                                         },
                                     )
                                 }
@@ -74,14 +82,34 @@ class GeminiProvider(private val httpClient: AiHttpClient) : AiProvider {
             }
         }
 
-        val outcome = httpClient.postJson(
-            url = url,
-            body = payload,
-            headers = mapOf("x-goog-api-key" to config.apiKey.orEmpty()),
-            timeoutSeconds = config.timeoutSeconds,
-        )
-        val body = outcome.valueOrNull
-            ?: throw (outcome.errorOrNull ?: AppError.Network("Gemini request failed"))
+        val headers = mapOf("x-goog-api-key" to config.apiKey.orEmpty())
+        val outcome = httpClient.postJson(url, payload, headers, config.timeoutSeconds)
+        val firstError = outcome.errorOrNull
+        // When a tool declaration is rejected, retry ONCE as text-only.
+        // No tool can be executed in this fallback and no action is claimed.
+        val body = if (
+            firstError != null && request.enableTools && request.tools.isNotEmpty() &&
+            firstError.message.orEmpty().contains("HTTP 400") &&
+            (firstError.message.orEmpty().contains("function_declarations", ignoreCase = true) ||
+                firstError.message.orEmpty().contains("functionDeclarations", ignoreCase = true))
+        ) {
+            val noTools = buildJsonObject {
+                payload.forEach { (key, value) -> if (key != "tools") put(key, value) }
+                put("systemInstruction", buildJsonObject {
+                    put("parts", buildJsonArray {
+                        add(buildJsonObject {
+                            put("text", request.messages.firstOrNull { it.role == "system" }
+                                ?.content.orEmpty() + "\nTool execution is unavailable for this " +
+                                "message. Answer with text only; never claim any action was executed.")
+                        })
+                    })
+                })
+            }
+            val retry = httpClient.postJson(url, noTools, headers, config.timeoutSeconds)
+            retry.valueOrNull ?: throw (retry.errorOrNull ?: AppError.Network("Gemini text fallback failed"))
+        } else {
+            outcome.valueOrNull ?: throw (firstError ?: AppError.Network("Gemini request failed"))
+        }
         return parseGeminiResponse(body, model)
     }
 

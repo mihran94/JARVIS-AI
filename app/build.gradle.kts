@@ -30,12 +30,20 @@ android {
             val keystoreProps = Properties().apply {
                 if (keystorePropsFile.exists()) keystorePropsFile.inputStream().use { load(it) }
             }
-            val storePath = rootProject.file(keystoreProps.getProperty("storeFile", ""))
-            if (storePath.exists()) {
-                storeFile = storePath
-                storePassword = keystoreProps.getProperty("storePassword")
-                keyAlias = keystoreProps.getProperty("keyAlias")
-                keyPassword = keystoreProps.getProperty("keyPassword")
+            // The store path must never be empty here: rootProject.file("")
+            // throws during configuration, and that would break the debug build
+            // as well, because the whole project is configured before any task
+            // runs. The keystore stays outside the repository, so this file is
+            // simply absent on a fresh checkout.
+            val storeFilePath = keystoreProps.getProperty("storeFile", "").trim()
+            if (storeFilePath.isNotEmpty()) {
+                val storePath = rootProject.file(storeFilePath)
+                if (storePath.exists()) {
+                    storeFile = storePath
+                    storePassword = keystoreProps.getProperty("storePassword")
+                    keyAlias = keystoreProps.getProperty("keyAlias")
+                    keyPassword = keystoreProps.getProperty("keyPassword")
+                }
             }
             // Sign with every scheme so the APK installs on sideloaders that
             // only understand v1 (older package installers) and on platforms
@@ -93,6 +101,46 @@ android {
         unitTests.isReturnDefaultValues = true
     }
 }
+
+// A release build must never be produced without a keystore. It would be
+// distributed unsigned, or worse, signed with a key that is known to be
+// exposed. The check runs only when a release task is actually requested, so
+// the debug build is never affected.
+gradle.taskGraph.whenReady {
+    val wantsRelease = allTasks.any { it.path.startsWith(":app:") && it.path.contains("Release") }
+    val releaseSigning = android.signingConfigs.getByName("release")
+    if (wantsRelease && releaseSigning.storeFile == null) {
+        throw GradleException(
+            "No release keystore is configured. Create keystore/keystore.properties with " +
+                "storeFile, storePassword, keyAlias and keyPassword, or build the debug " +
+                "variant instead. See docs/ANDROID_SIGNING_KEY_ROTATION.md."
+        )
+    }
+}
+
+// The sensitive capture paths have to ask the consent. The check is a source
+// audit, so it runs before the app is compiled and the build fails when a
+// capture path stops asking. It needs a Python interpreter; when there is none
+// the build says so and carries on.
+val checkSensitiveServices by tasks.registering(Exec::class) {
+    group = "verification"
+    description = "Fails the build when a sensitive capture path stops asking for the consent"
+    val script = rootProject.file("scripts/check_sensitive_services.py")
+    val interpreter = listOf("python3", "python").firstOrNull { name ->
+        providers.exec {
+            commandLine(name, "--version")
+            isIgnoreExitValue = true
+        }.result.get().exitValue == 0
+    }
+    if (interpreter != null) {
+        commandLine(interpreter, script.absolutePath)
+    } else {
+        logger.lifecycle("No Python interpreter was found, so the sensitive service guard did not run.")
+        onlyIf { false }
+    }
+}
+
+tasks.named("preBuild") { dependsOn(checkSensitiveServices) }
 
 dependencies {
     implementation(project(":core:model"))

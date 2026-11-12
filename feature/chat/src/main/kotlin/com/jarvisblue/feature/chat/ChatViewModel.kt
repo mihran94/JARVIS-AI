@@ -129,7 +129,8 @@ class ChatViewModel @Inject constructor(
             try {
                 val reply = agent.run(
                     userText = text,
-                    history = _state.value.messages,
+                    // AssistantAgent appends userText; avoid duplicate user prompt.
+                    history = _state.value.messages.dropLast(1),
                     language = userMessage.language,
                     preferredProvider = _state.value.providerId,
                     onEvent = ::handleEvent,

@@ -5,6 +5,11 @@ import android.speech.SpeechRecognizer
 import android.speech.RecognitionListener
 import android.os.Bundle
 import android.content.Intent
+import android.content.ComponentName
+import com.jarvisblue.core.model.SensitiveCapture
+import com.jarvisblue.core.security.SensitiveCaptureConsent
+import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 
 /**
  * The system's [RecognitionService] entry point.
@@ -13,8 +18,15 @@ import android.content.Intent
  * JARVIS BLUE hands the work to the platform [SpeechRecognizer] so the audio
  * path, the privacy indicator and the on-device engine all stay under Android's
  * control — this service never captures audio itself.
+ *
+ * The microphone is only used when the user granted the consent in the app.
+ * Without it the request is refused instead of being passed on.
  */
+@AndroidEntryPoint
 class JarvisRecognitionService : RecognitionService() {
+
+    /** The consent that decides whether the microphone may be used. */
+    @Inject lateinit var consent: SensitiveCaptureConsent
 
     private var recognizer: SpeechRecognizer? = null
     private var activeCallback: Callback? = null
@@ -23,7 +35,27 @@ class JarvisRecognitionService : RecognitionService() {
         val target = callback ?: return
         activeCallback = target
 
-        val instance = recognizer ?: SpeechRecognizer.createSpeechRecognizer(this).also { created ->
+        // Fail closed: no consent, no microphone.
+        if (!consent.allows(SensitiveCapture.MICROPHONE)) {
+            runCatching { target.error(SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) }
+            activeCallback = null
+            return
+        }
+
+        // Do not proxy recognition to our own service; it causes recursion
+        // when JARVIS BLUE is the system-selected recognition provider.
+        val external = packageManager.queryIntentServices(
+            Intent(RecognitionService.SERVICE_INTERFACE), 0,
+        ).firstNotNullOfOrNull { info ->
+            val service = info.serviceInfo
+            if (service == null || service.packageName == packageName) null
+            else ComponentName(service.packageName, service.name)
+        }
+        if (external == null) {
+            runCatching { target.error(SpeechRecognizer.ERROR_CLIENT) }
+            return
+        }
+        val instance = recognizer ?: SpeechRecognizer.createSpeechRecognizer(this, external).also { created ->
             recognizer = created
             created.setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) {

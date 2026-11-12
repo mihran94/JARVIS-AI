@@ -6,7 +6,9 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.jarvisblue.core.common.AuditSink
 import com.jarvisblue.core.database.TaskRepository
+import com.jarvisblue.core.model.SensitiveCapture
 import com.jarvisblue.core.model.TaskStatus
+import com.jarvisblue.core.security.SensitiveCaptureConsent
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.flow.first
@@ -24,9 +26,15 @@ class ScheduledTaskWorker @AssistedInject constructor(
     @Assisted params: WorkerParameters,
     private val taskRepository: TaskRepository,
     private val audit: AuditSink,
+    private val captureConsent: SensitiveCaptureConsent,
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
+        // Fail closed: background work only runs while the user allows it.
+        // The check happens here, at the moment the work would run, so a
+        // revocation takes effect on the next run.
+        if (!captureConsent.allows(SensitiveCapture.BACKGROUND_SERVICE)) return Result.success()
+
         val pending = taskRepository.observeAll()
         val queued = pending.first().filter { it.status == TaskStatus.QUEUED && it.enabled }
 

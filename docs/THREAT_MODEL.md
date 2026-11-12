@@ -138,6 +138,12 @@ started from a boot receiver or from the background. There is no camera
 permission and no background recording: `SpeechRecognizer` is used instead of
 raw `AudioRecord`, and no audio is ever written to disk.
 
+The in-app consent for microphone capture is checked again at the moment the
+microphone would be opened, not only when the service was created. Without the
+consent the wake-word service stops itself and the system's recognition entry
+point refuses the request with `ERROR_INSUFFICIENT_PERMISSIONS`. The Android
+runtime permission on its own is therefore not enough to record anything.
+
 ### T8 — Screen capture without consent
 
 **Mitigation:** `MediaProjection` is only usable with the system consent
@@ -152,6 +158,29 @@ or type. It only records the text of the window the user is already in, for a
 command the user issued. It is off by default, requires an explicit settings
 toggle, shows the system disclosure, and is visible in the permanent status
 bar. It never reads another app's files and never works on the lock screen.
+
+On top of the system toggle the app asks for a separate, revocable *Screen
+reading* consent. The check happens for every event, so taking the consent
+back stops the reading immediately, and the text that was read before is
+dropped rather than kept.
+
+### T9b — Notification content is kept without the user asking for it
+
+**Mitigation:** the system notification-access grant only decides whether the
+service is bound. The title and the text of a notification are private, so
+they are read and kept only when the user gave the separate, revocable
+*Notification content* consent. Without it nothing is recorded at all, not
+even the package name or the time, and the in-memory cache stays empty. The
+consent is checked for every posted notification, so revoking it stops the
+retention at once.
+
+### T9c — Background work keeps running after the user said no
+
+**Mitigation:** the scheduled worker checks the *Background service* consent
+before it looks at the task queue. Without the consent it returns without
+doing anything, so a revoked grant stops the background work on the next
+run. The boot receiver only re-arms the work; it never starts the microphone
+service.
 
 ### T10 — Malicious file handling (path traversal, symlinks, zip bombs)
 
@@ -232,3 +261,5 @@ The following are **not** implemented, on purpose:
 | Keystore envelope round-trip | pass on device |
 | SQLCipher database unreadable without the passphrase | verified by construction — the passphrase lives in the Keystore |
 | Release build is signed and verified (`apksigner verify`, v3) | pass — see `docs/TESTING.md` |
+| Sensitive capture consent denies by default and is independent per capture (9 cases, `SensitiveCaptureTest`) | pass |
+| Every capture path asks the consent store before it reads (`scripts/check_sensitive_services.py`) | pass — the guard fails when a check is removed |

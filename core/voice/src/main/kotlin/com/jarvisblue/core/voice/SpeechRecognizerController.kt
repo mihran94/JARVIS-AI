@@ -24,6 +24,8 @@ class SpeechRecognizerController(private val context: Context) {
     enum class EngineMode {
         /** Prefer the offline recogniser; fall back to the network engine. */
         PREFER_ON_DEVICE,
+        /** Wake word NEVER falls back to cloud recognition. */
+        ON_DEVICE_ONLY,
         /** Use whatever the system picks. */
         SYSTEM_DEFAULT,
     }
@@ -46,12 +48,15 @@ class SpeechRecognizerController(private val context: Context) {
         partialResults: Boolean = true,
         maxResults: Int = 5,
     ): Flow<Recognition> = callbackFlow {
-        val recognizer = createRecognizer(engineMode)
-        if (recognizer == null) {
-            trySend(Recognition("", 0f, true, false, error = "Speech recognition is not available on this device"))
+        val selected = createRecognizer(engineMode)
+        if (selected == null) {
+            trySend(Recognition("", 0f, true, false, error =
+                "No Android speech recognition service is installed or enabled. " +
+                "Open Voice settings and select a working speech recognizer."))
             close()
             return@callbackFlow
         }
+        val (recognizer, onDevice) = selected
 
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
@@ -94,33 +99,47 @@ class SpeechRecognizerController(private val context: Context) {
             }
         }
 
-        recognizer.setRecognitionListener(listener)
-        recognizer.startListening(intent)
+        try {
+            recognizer.setRecognitionListener(listener)
+            recognizer.startListening(intent)
+        } catch (exception: Exception) {
+            trySend(Recognition("", 0f, true, onDevice, error =
+                "Could not start Android speech recognition: ${exception.message ?: "service unavailable"}"))
+            runCatching { recognizer.destroy() }
+            close()
+            return@callbackFlow
+        }
         awaitClose {
-            runCatching { recognizer.stopListening() }
+            runCatching { recognizer.cancel() }
             runCatching { recognizer.destroy() }
         }
     }
 
-    private val onDevice: Boolean by lazy {
-        runCatching {
-            SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
-            true
-        }.getOrDefault(false)
-    }
+    private data class SelectedRecognizer(val recognizer: SpeechRecognizer, val onDevice: Boolean)
 
-    private fun createRecognizer(engineMode: EngineMode): SpeechRecognizer? = runCatching {
-        if (engineMode == EngineMode.PREFER_ON_DEVICE) {
-            SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
-        } else {
-            SpeechRecognizer.createSpeechRecognizer(context)
-        }
-    }.getOrNull()
-
-    /** True when the platform exposes an offline recogniser at all. */
+    /** True if Android reports an on-device recognizer service. */
     fun supportsOnDevice(): Boolean = runCatching {
         SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
     }.getOrDefault(false)
+
+    /** A normal recognizer can exist without a downloaded offline pack. */
+    fun supportsRecognition(): Boolean = supportsOnDevice() || runCatching {
+        SpeechRecognizer.isRecognitionAvailable(context)
+    }.getOrDefault(false)
+
+    private fun createRecognizer(engineMode: EngineMode): SelectedRecognizer? {
+        if (engineMode != EngineMode.SYSTEM_DEFAULT && supportsOnDevice()) {
+            runCatching { SpeechRecognizer.createOnDeviceSpeechRecognizer(context) }
+                .getOrNull()?.let { return SelectedRecognizer(it, onDevice = true) }
+        }
+        if (engineMode == EngineMode.ON_DEVICE_ONLY) return null
+        // System speech recognition may use a cloud provider; explicit push-to-talk only.
+        if (runCatching { SpeechRecognizer.isRecognitionAvailable(context) }.getOrDefault(false)) {
+            runCatching { SpeechRecognizer.createSpeechRecognizer(context) }
+                .getOrNull()?.let { return SelectedRecognizer(it, onDevice = false) }
+        }
+        return null
+    }
 
     private fun describeError(code: Int): String = when (code) {
         SpeechRecognizer.ERROR_AUDIO -> "Audio capture error"
