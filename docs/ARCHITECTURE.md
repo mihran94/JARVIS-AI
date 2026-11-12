@@ -9,13 +9,15 @@ Chat: user → explicit Send → provider adapter → streamed text → conversa
 ## Components and trust boundaries
 | Component | v0.2 responsibility | Expansion |
 |---|---|---|
-| desktop | Chat, settings, history, editor, automation, stop | Voice and dashboard panels |
-| providers | OpenAI-compatible streaming for OpenAI/MiniMax/Gemini | Native Claude, other providers, opt-in fallback, evaluations |
+| desktop | Chat, settings, history, editor, automation, stop, mobile bridge | Dashboard panels |
+| providers | Registry and router over eight providers: OpenAI, Gemini, Claude, MiniMax, DeepSeek, Groq, OpenRouter and a local Ollama model | Evaluations, cost ledger |
 | security | OS credential vault, one-action approvals, stop latch | Policy-bound workflow grants, signed updates |
 | core | SQLite tasks/messages/config/jobs/usage, upgrade backup and interrupted-run recovery | Versioned migrations, cost/health metrics |
 | automation | Approved Notepad/Calculator launch and read-only window title inventory | Accessibility tree, verified UI actions, browser tools |
 | developer_studio | UTF-8 workspace editor, backups, syntax check | Isolated test/build runner and Git integration |
 | agents | Single-action gateway, manual queue and up to 10 sequential approved steps | Durable planner, scheduler and verifier |
+| voice | Wake phrase matching, microphone consent and stop control, Windows speech adapters | Windows acceptance of the speech adapters |
+| remote | Versioned bridge protocol, listener, pairing with revocation, owner approved jobs | A real phone on a private tunnel |
 | remaining directories | Explicitly planned extension boundaries | No pretend implementations |
 
 Permissions are evaluated outside the model. Approval is bound to an immutable action and consumed once. An emergency-stop generation invalidates outstanding work even after Resume. Existing applications are not forcibly killed. Chat cancellation stops accepting output and requests interruption; a network read can take up to its timeout to return and provider billing may already have occurred.
@@ -27,11 +29,11 @@ Data: local per-user app directory contains history.sqlite3 and workspace/. Hist
 2. **Windows validation + intelligence:** Windows CI recipe, manual live-provider test, token ledger and chat reopening implemented in v0.2. Still pending: executed Windows CI, signed packaging, live account validation, costs, fallback consent and summarization.
 3. **Automation:** accessibility-first inspection, verified actions, process ownership, scoped file actions; never arbitrary model shell execution.
 4. **Development:** sandboxed runners, command approval, Git diffs/PR preparation, build tool detection; unfamiliar code only in isolation.
-5. **Voice + memory:** push-to-talk first; Tamil/English/French STT/TTS; opt-in microphone and wake word; indexed, editable/deletable memory.
+5. **Voice + memory:** the wake phrase matcher, the microphone permission and the Windows speech adapters exist; the adapters still need Windows acceptance. Push to talk first, then indexed, editable/deletable memory.
 6. **Durable agents:** persistent queues, schedules, cancellation, checkpoints, idempotency, approvals tied to exact workflow/version. Add supervised/trusted modes only after enforcement tests.
 7. **Quantum research:** optional Qiskit simulation, circuit visualization and benchmarks; label simulated versus authorized hardware.
 8. **Vision + defense:** OCR/accessibility, permissioned screenshots, local audit and dependency checks.
-9. **Remote:** authenticated FastAPI service behind private network/TLS; device pairing, revocation and approval channels before enabling any listener.
+9. **Remote:** the authenticated protocol, pairing, revocation and the owner approval channel are implemented, and the listener refuses to start without TLS or on a public address. It still needs a real phone over a private tunnel, and the Windows job executors are not written.
 10. **Maintenance:** patch branches, regression suite, human-reviewed deployment, rollback; security modules cannot self-edit silently.
 11. **Release engineering:** Windows installer, dependency hashes/SBOM, signing, resource benchmarks, recovery tests.
 12. **Plugins:** declared capabilities, versioning, process isolation and explicit activation. No arbitrary plugin auto-loading.

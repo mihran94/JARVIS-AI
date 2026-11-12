@@ -33,8 +33,12 @@ def test_worker_boundaries(monkeypatch,case,expected,status):
             raise TransientProviderError('temporary')
         metrics['total_tokens']=7
         emit('complete'); return 'complete'
-    monkeypatch.setattr(desktop,'stream_chat',stream)
-    worker=desktop.ChatWorker('OpenAI','primary','fake',[{'role':'user','content':'hi'}],policy,policy.ticket(),
+    class FakeRouter:
+        def spec(self, name):
+            return name
+        def stream(self, spec, model, key, messages, check, emit, metrics=None):
+            return stream(spec, model, key, messages, check, emit, metrics)
+    worker=desktop.ChatWorker(FakeRouter(),'OpenAI','primary','fake',[{'role':'user','content':'hi'}],policy,policy.ticket(),
                               backup=None if case=='no_consent' else StreamTarget('Gemini','secondary','fake'))
     worker.result.connect(lambda *args:results.append(args))
     if case=='stop': policy.stop()
