@@ -3,29 +3,55 @@
 These are the workflow files for this repository and for the Android client.
 They live here because the connected GitHub App cannot write to
 `.github/workflows/` (it has no `workflows` permission), so the owner applies
-them with the prepared patches.
+them with the prepared patches or starts them by hand.
 
-| File | Goes to | Repository |
-| --- | --- | --- |
-| `windows-release.yml` | `.github/workflows/windows-release.yml` | `mihran94/JARVIS-AI` |
-| `android-debug-apk.yml` | `.github/workflows/android-debug-apk.yml` | `mihran94/jarvis-blue-android` |
+| File | Goes to | Repository | State |
+| --- | --- | --- | --- |
+| `windows-release.yml` | `.github/workflows/windows-release.yml` | `mihran94/JARVIS-AI` | already on `main`, only needs a dispatch |
+| `android-debug-apk.yml` | `.github/workflows/android-debug-apk.yml` | `mihran94/jarvis-blue-android` | one patch away |
 
-## Applying them
+## The Windows build is already on `main`
 
-In `mihran94/JARVIS-AI`, the patch fixes the failing runner and adds the
-Windows build:
+`mihran94/JARVIS-AI` already carries `.github/workflows/windows-release.yml`
+and GitHub reports the workflow as **active**. Nothing has to be copied for
+the Windows build.
 
-```
-git apply patches/github-actions-green.patch
-```
+The connected GitHub App cannot dispatch a workflow run, so the owner starts
+it from the browser:
 
-In `mihran94/jarvis-blue-android`, the patch adds the debug APK build:
+1. Open the repository → **Actions** → **Windows desktop build**.
+2. Press **Run workflow** and choose the branch `main`.
+3. The job runs the test suite, builds the unsigned PyInstaller folder,
+   writes the release manifest and uploads the folder as the artifact
+   `JarvisAI-windows-x64`.
+
+The workflow only runs on a push that touches the workflow file itself, so a
+normal commit does not start it. A dispatch is the shortest route.
+
+## The Android build still needs one file
+
+`mihran94/jarvis-blue-android` has no APK build workflow yet. The owner adds
+it with the prepared patch:
 
 ```
 git apply patches/android-debug-apk.patch
+git commit -am "ci: build the Android debug APK"
+git push
 ```
 
-Both patches were verified with `git apply --check`.
+The push matches the path filter (`app/**`, `core/**`, `feature/**`), so the
+job starts by itself and uploads the artifact `JarvisBlue-android-debug-apk`.
+
+The patch was verified with `git apply --check`.
+
+## The CI improvement patch
+
+`patches/github-actions-green.patch` now only carries the change to the test
+workflow: it reports both operating systems even when one of them fails, so a
+Linux only problem never hides the Windows result. The Qt runtime library
+that the Linux job needs is installed from the repository content
+(`scripts/qt_runtime.py`), so the recipe is already green without this
+patch.
 
 ## What they do
 
