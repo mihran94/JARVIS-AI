@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 import stat
+import time
 import zipfile
 import pytest
 from core.updates import inspect_zip, activate_zip, rollback, read_state, release_path, UpdateError
@@ -20,7 +21,15 @@ def archive(tmp_path,extras=None):
            'desktop/app.py':b'new UI','core/store.py':b'stable db code'}
     files.update(extras or {})
     with zipfile.ZipFile(path,'w') as z:
-        for name,content in files.items(): z.writestr('JARVIS-AI-main/'+name,content)
+        for name,content in files.items():
+            # The member name is written after the ZipInfo is built, because
+            # the zip module turns a backslash into a path separator on
+            # Windows. An unsafe name has to survive exactly as written on
+            # every platform, otherwise the check would not be tested at all.
+            item=zipfile.ZipInfo('placeholder')
+            item.filename='JARVIS-AI-main/'+name
+            item.date_time=time.localtime()[:6]
+            z.writestr(item,content)
     return path
 
 

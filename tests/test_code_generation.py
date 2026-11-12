@@ -3,7 +3,11 @@ from PySide6.QtWidgets import QApplication
 from desktop.app import Window
 from developer_studio.generation import messages_for_goal, prepare_draft
 
-@pytest.mark.parametrize('goal',['', ' '*3, 'x'*20001])
+# The short names keep the test id small, because pytest puts the test id in
+# an environment variable and Windows refuses a value longer than 32767
+# characters.
+@pytest.mark.parametrize('goal',['', ' '*3, 'x'*20001],
+                         ids=['empty-goal','blank-goal','oversized-goal'])
 def test_invalid_goal(goal):
     with pytest.raises(ValueError): messages_for_goal(goal)
 
