@@ -30,6 +30,9 @@ class JarvisAccessibilityService : AccessibilityService() {
         @Volatile
         var lastPackageName: String = ""
 
+        // Fail closed until an explicit in-app, session-scoped consent flow exists.
+        private const val SCREEN_READING_ENABLED = false
+
         private val listeners = mutableListOf<(String) -> Unit>()
 
         fun addListener(listener: (String) -> Unit) {
@@ -53,6 +56,7 @@ class JarvisAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (!SCREEN_READING_ENABLED) return
         val source = event?.source ?: return
         val text = source.text?.toString().orEmpty()
         if (text.isBlank()) return
@@ -63,5 +67,14 @@ class JarvisAccessibilityService : AccessibilityService() {
         }
     }
 
-    override fun onInterrupt() = Unit
+    override fun onDestroy() {
+        lastVisibleText = ""
+        lastPackageName = ""
+        super.onDestroy()
+    }
+
+    override fun onInterrupt() {
+        lastVisibleText = ""
+        lastPackageName = ""
+    }
 }
