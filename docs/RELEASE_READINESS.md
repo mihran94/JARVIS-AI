@@ -110,12 +110,10 @@ the release confirmation input is set. It is not part of a normal pull request.
 
 ### Automated builds
 
-Two workflow files are prepared and checked with `git apply --check`:
-
-| Workflow | Repository | Artefact |
-| --- | --- | --- |
-| `ci/windows-release.yml` | `mihran94/JARVIS-AI` | `JarvisAI-windows-x64` |
-| `ci/android-debug-apk.yml` | `mihran94/jarvis-blue-android` | `JarvisBlue-android-debug-apk` |
+| Workflow | Repository | Artefact | State |
+| --- | --- | --- | --- |
+| `ci/windows-release.yml` | `mihran94/JARVIS-AI` | `JarvisAI-windows-x64` | on `main`, needs a dispatch |
+| `ci/android-debug-apk.yml` | `mihran94/jarvis-blue-android` | `JarvisBlue-android-debug-apk` | one patch away |
 
 The Windows workflow runs the test suite, builds the unsigned PyInstaller
 folder, writes a release manifest with the SHA-256 of every built file and
@@ -123,6 +121,21 @@ uploads both. The Android workflow restores the Gradle wrapper from its base64
 sidecar, builds the debug variant with the automatic debug key, records the
 APK SHA-256 and uploads it. The exposed release key is not used by either
 workflow.
+
+**The Windows workflow is already on `main`** and GitHub reports it as active,
+so the owner only has to open **Actions → Windows desktop build → Run
+workflow** and pick `main`. The connected GitHub App is not allowed to
+dispatch a workflow run, so this one click is the owner's step.
+
+The Android workflow is not in its repository yet. The owner applies the
+prepared patch and pushes; the push matches the path filter and the job
+starts by itself:
+
+```
+git apply patches/android-debug-apk.patch
+git commit -am "ci: build the Android debug APK"
+git push
+```
 
 Both files live in `ci/` and in `patches/` because the connected GitHub App
 cannot write `.github/workflows/`. See `docs/OWNER_CI_FIX.md` for the exact

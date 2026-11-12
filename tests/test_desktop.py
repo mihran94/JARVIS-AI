@@ -10,7 +10,7 @@ def test_desktop_navigation_stop_and_editor(tmp_path):
     window = Window(tmp_path)
     window.show()
     app.processEvents()
-    assert window.pages.count() == 11
+    assert window.pages.count() == 12
     for index in range(11):
         window.nav.setCurrentRow(index)
         app.processEvents()

@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 from core.store import Store
 from desktop.bridge_panel import BridgePanel
 from desktop.update_dialog import open_updates
+from desktop.voice_panel import VoicePanel
 from security.policy import Policy, Action, Stopped
 from security.vault import Vault
 from providers.chat import ProviderError, TransientProviderError
@@ -155,6 +156,7 @@ class Window(QMainWindow):
         self.add_page('Agent Task Queue', self.queue_page())
         self.add_page('Step Workflows', self.workflow_page())
         self.add_page('Mobile Bridge', self.bridge_page())
+        self.add_page('Voice', VoicePanel())
         self.add_page('Developer Studio', self.editor_page())
         self.add_page('Task History', self.history_page())
         self.add_page('API Providers', self.provider_page())
