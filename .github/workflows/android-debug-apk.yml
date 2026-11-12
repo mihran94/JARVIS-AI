@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: mihran94/jarvis-blue-android
-          ref: fix/gemini-voice-android12-v118-20261109
+          ref: main
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
