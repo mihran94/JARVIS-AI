@@ -42,7 +42,8 @@ def test_a_failing_command_stops_the_installation(monkeypatch):
 def test_without_sudo_nothing_is_installed(monkeypatch):
     monkeypatch.setattr(qt_runtime.ctypes, 'CDLL', lambda name: object())
     monkeypatch.setattr(qt_runtime.shutil, 'which', lambda name: None)
-    monkeypatch.setattr(qt_runtime.os, 'geteuid', lambda: 1000)
+    # Windows has no geteuid, so the attribute is added for the test only.
+    monkeypatch.setattr(qt_runtime.os, 'geteuid', lambda: 1000, raising=False)
     commands = []
     code = qt_runtime.install_egl_runtime(
         run=lambda command: commands.append(command) or 0)
@@ -53,7 +54,7 @@ def test_without_sudo_nothing_is_installed(monkeypatch):
 def test_a_root_account_installs_without_sudo(monkeypatch):
     monkeypatch.setattr(qt_runtime.ctypes, 'CDLL', lambda name: object())
     monkeypatch.setattr(qt_runtime.shutil, 'which', lambda name: None)
-    monkeypatch.setattr(qt_runtime.os, 'geteuid', lambda: 0)
+    monkeypatch.setattr(qt_runtime.os, 'geteuid', lambda: 0, raising=False)
     commands = []
     code = qt_runtime.install_egl_runtime(
         run=lambda command: commands.append(command) or 0)
