@@ -33,8 +33,21 @@ A ChatGPT subscription is separate from provider API access. No keys are provisi
 - **Step Workflows:** enter 1–10 comma-separated actions from the fixed Notepad/Calculator allowlist. Each step shows a fresh, explicit approval prompt. Runs stop on denial, error or Emergency Stop; no automatic replay of failed/interrupted work.
 - **Read-only window inventory:** click the inspection button under Windows Automation, approve access, then view up to 12 of the top-level visible Windows window titles and PIDs (the inspector caps collection at 30). Inspection runs in a separate subprocess with a three-second timeout and does not click/type into windows. Window titles may reveal private information and action results are logged locally.
 - **Database migration v3:** on first upgrade from v0.2, a history-pre-v03-*.sqlite3 backup is created before adding workflow records. Existing provider keys remain in the original Windows vault namespace.
-- **Manual safety only:** model responses cannot create workflows. Remote phone control, wake words, arbitrary app automation and autonomous planning are still not implemented.
+- **Manual safety only:** model responses cannot create workflows. Arbitrary app automation and autonomous planning are still not implemented. The wake phrase matcher and the mobile bridge arrived after this release; see the sections below.
 - **Validation:** nine local workflow/inspection tests passed using the shared v0.2 gateway, policy and store interfaces; full suite and live Windows behavior still require validation.
+
+## Voice
+
+- **Voice page** in the desktop: allow the microphone, type the wake phrase, listen once or wait for the wake phrase, and let JARVIS speak. The wake phrase can be given in English, Tamil or French, and the matcher is a faithful port of the Android one, so a transcript is judged the same way on both platforms.
+- **The microphone stays closed until you allow it.** The permission is shown on the page, unchecking the box withdraws it, and the stop button closes the microphone at once. Resuming does not silently reopen it: you allow it again yourself.
+- **The recognition runs on a worker thread**, so the interface never freezes and a widget is never touched from another thread. The recognised text is shown, and a wake call is marked with the phrase that matched and the command that followed it.
+- **On a machine that is not Windows** the speech adapters are not available, and the page says so instead of pretending. They have to be exercised on the owner's Windows machine before they are trusted.
+
+## Mobile bridge
+
+- **The phone never holds a provider key.** The chat is answered by the PC. A local provider needs no permission, a paid provider needs the owner's consent *and* the consent on the request itself, and the emergency stop stops the bridge too.
+- **Pairing by QR.** The desktop shows a pairing code and a QR image; the phone scans it and the device is remembered. The pairing can be revoked from the desktop.
+- **Ten endpoints** cover status, jobs, chat, memory, notifications and the device list. Every request is signed and audited, and only a short digest of the body is recorded, never the body itself.
 
 ## New in v0.2.0
 
