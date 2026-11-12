@@ -1,0 +1,12 @@
+# Windows batch files are checked out with Windows line endings.
+#
+# Two of the scripts use a label and a goto. cmd.exe looks for a label in a
+# batch file by reading it line by line, and a file that only has Unix line
+# endings can fail with "The system cannot find the batch label specified".
+# The files are stored with Unix line endings in the repository and are
+# written with Windows line endings when they are checked out.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Everything else keeps the line endings it has.
+* text=auto
