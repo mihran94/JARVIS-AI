@@ -20,9 +20,10 @@ from providers.selection import NoProviderAvailable, Provider, choose_provider
 class ProviderRouter:
     """Selects a provider and streams one answer with the matching adapter."""
 
-    def __init__(self, registry=None, *, health=None):
+    def __init__(self, registry=None, *, health=None, transport=None):
         self._specs = dict(registry) if registry is not None else specs()
         self._health = dict(health) if health else {}
+        self._transport = transport
 
     # ------------------------------------------------------------- selection
 
@@ -66,6 +67,7 @@ class ProviderRouter:
     def stream(self, spec: ProviderSpec, model: str, key: str, messages, check, emit,
                transport=None, metrics=None) -> str:
         """Stream one answer using the adapter that matches the provider."""
+        transport = transport if transport is not None else self._transport
         if spec.auth == 'anthropic':
             return claude.stream_claude(model, key, messages, check, emit,
                                          transport=transport, metrics=metrics)

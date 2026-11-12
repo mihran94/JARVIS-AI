@@ -9,7 +9,7 @@ installer were produced in the environment used for this work.
 
 | Check | Result |
 | --- | --- |
-| Test suite | `239 passed, 3 skipped` |
+| Test suite | `286 passed, 3 skipped` |
 | Baseline before the branch work | `175 passed, 3 skipped` |
 | Byte compilation | `python -m compileall -q .` exit code 0 |
 | Pushed file contents | Every pushed file read back from the branch and compared with the locally validated copy |
@@ -17,9 +17,14 @@ installer were produced in the environment used for this work.
 Environment: Linux, Python 3.11.2, PySide6 6.8.3, httpx 0.28.1, keyring 25.6.0,
 pytest 8.3.5, Qt offscreen platform. The repository targets Python 3.12.
 
-No API key was configured or created, no provider was called, no device was
-paired, no bridge socket was bound and no code from a provider response was
-executed.
+No API key was configured or created, no provider was called, no phone was
+paired, no listener was exposed outside the loopback interface and no code
+from a provider response was executed.
+
+The bridge listener was exercised over real HTTP and real TLS on the loopback
+interface during the tests, including the refusal rules: no TLS, no start; a
+non loopback address, no start; an unsigned request, refused; a replayed
+request, refused; a revoked device, refused.
 
 The 3 skipped tests are the Windows only ones. See `docs/TEST_RESULTS.md` for
 the full record.
@@ -110,3 +115,34 @@ is covered.
 
 5. **No Windows or Android build was executed here**, so no artefact hash,
    installer or APK is claimed.
+
+## Rollback
+
+`integration/unified-foundation` is kept as the rollback point. The branch
+holds every merged change, so reverting a release means reverting that branch
+rather than unpicking individual commits.
+
+```
+git checkout main
+git log --oneline main..integration/unified-foundation   REM what would be rolled back
+git revert --no-commit <sha>                              REM one change
+git revert --no-commit <sha>
+git commit -m "Revert the bridge, router and voice work"
+```
+
+For a full rollback to the previous release, reset `main` to the commit that
+the release was built from and keep `integration/unified-foundation` for the
+history:
+
+```
+git branch rollback-point-<date> main
+git reset --hard <previous-release-sha>
+git push --force-with-lease origin main
+```
+
+The database is not affected by a code rollback: `core/store.py` keeps the
+schema version, and the first start after a schema change creates a backup of
+the previous database next to it. Keep that backup.
+
+The Android client is a separate repository and is never changed by a desktop
+rollback. Its own release history is in `mihran94/jarvis-blue-android`.

@@ -14,10 +14,13 @@ from PySide6.QtWidgets import (
     QHeaderView, QCheckBox,
 )
 from core.store import Store
+from desktop.bridge_panel import BridgePanel
 from desktop.update_dialog import open_updates
 from security.policy import Policy, Action, Stopped
 from security.vault import Vault
-from providers.chat import PROVIDERS, stream_chat, ProviderError, TransientProviderError
+from providers.chat import ProviderError, TransientProviderError
+from providers.registry import provider_names
+from providers.router import ProviderRouter
 from providers.stream_fallback import StreamTarget, stream_with_fallback, FallbackBlocked
 from automation.windows import APPS, launch_app
 from automation.inspection import inspect_windows
@@ -50,9 +53,9 @@ class ChatWorker(QThread):
     chunk = Signal(str)
     result = Signal(str, str, object)
 
-    def __init__(self, provider, model, key, messages, policy, ticket, backup=None):
+    def __init__(self, router, provider, model, key, messages, policy, ticket, backup=None):
         super().__init__()
-        self.provider, self.model, self.key = provider, model, key
+        self.router, self.provider, self.model, self.key = router, provider, model, key
         self.messages, self.policy, self.ticket = messages, policy, ticket
         self.backup = backup
 
@@ -68,7 +71,8 @@ class ChatWorker(QThread):
             def attempt(provider, model, key, messages, check, emit):
                 metrics.clear()
                 metrics.update(provider=provider, model=model)
-                return stream_chat(provider, model, key, messages, check, emit, metrics=metrics)
+                return self.router.stream(self.router.spec(provider), model, key, messages,
+                                          check, emit, metrics=metrics)
             if self.backup is None:
                 answer = attempt(self.provider, self.model, self.key, self.messages,
                                  self.check, self.chunk.emit)
@@ -98,6 +102,7 @@ class Window(QMainWindow):
         self.resize(1180, 790)
         self.root = Path(data_root)
         self.store = Store(self.root / 'history.sqlite3')
+        self.router = ProviderRouter()
         self.policy = Policy()
         self.vault = Vault()
         self.gateway = Gateway(self.policy, self.store)
@@ -149,6 +154,7 @@ class Window(QMainWindow):
         self.add_page('Windows Automation', self.automation_page())
         self.add_page('Agent Task Queue', self.queue_page())
         self.add_page('Step Workflows', self.workflow_page())
+        self.add_page('Mobile Bridge', self.bridge_page())
         self.add_page('Developer Studio', self.editor_page())
         self.add_page('Task History', self.history_page())
         self.add_page('API Providers', self.provider_page())
@@ -156,7 +162,7 @@ class Window(QMainWindow):
         self.add_page('Permissions & Roadmap', self.permissions_page())
         self.nav.currentRowChanged.connect(self.pages.setCurrentIndex)
         self.nav.setCurrentRow(0)
-        self.statusBar().showMessage('Local history • No remote listener • Keys configured on your PC')
+        self.statusBar().showMessage('Local history • Bridge listener is off by default • Keys configured on your PC')
         self.shortcut = QShortcut(QKeySequence('Ctrl+Alt+J'), self)
         self.shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
         self.shortcut.activated.connect(self.stop)
@@ -210,7 +216,7 @@ class Window(QMainWindow):
             'Send transmits this conversation to the selected provider and may incur API charges. AI replies do not execute actions.')
         row = QHBoxLayout()
         self.chat_provider = QComboBox()
-        self.chat_provider.addItems(PROVIDERS)
+        self.chat_provider.addItems(provider_names())
         row.addWidget(self.chat_provider)
         self.new_chat_button = self.button(row, 'New chat', self.new_chat)
         self.clear_button = self.button(row, 'Delete this conversation', self.clear_chat)
@@ -218,7 +224,7 @@ class Window(QMainWindow):
         self.backup_consent = QCheckBox('Allow one backup attempt for this message (shares full conversation; charges may apply)')
         layout.addWidget(self.backup_consent)
         self.backup_provider = QComboBox()
-        self.backup_provider.addItems(PROVIDERS)
+        self.backup_provider.addItems(provider_names())
         self.backup_provider.setCurrentIndex(1)
         layout.addWidget(self.backup_provider)
         archives = QHBoxLayout()
@@ -236,6 +242,10 @@ class Window(QMainWindow):
         layout.addWidget(self.prompt)
         self.send_button = self.button(layout, 'Send to selected provider', self.send)
         return page
+
+    def bridge_page(self):
+        self.bridge = BridgePanel(self.policy, self.store, self.vault, self.confirm, self.notify)
+        return self.bridge
 
     def automation_page(self):
         page, layout = self.page('Windows Automation',
@@ -291,7 +301,7 @@ class Window(QMainWindow):
             ticket = self.policy.ticket()
             messages = messages_for_goal(self.code_goal.text())
             provider = self.chat_provider.currentText()
-            model = self.store.get('model:' + provider) or PROVIDERS[provider].default_model
+            model = self.store.get('model:' + provider) or self.router.spec(provider).default_model
             key = self.get_key(provider)
             if not self.confirm(Action('send_coding_goal', provider + ' / ' + model + ' (API charges may apply)')):
                 return
@@ -309,7 +319,7 @@ class Window(QMainWindow):
             ticket = self.policy.ticket()
             messages = messages_for_repair(self.editor.toPlainText(), self.code_error.toPlainText())
             provider = self.chat_provider.currentText()
-            model = self.store.get('model:' + provider) or PROVIDERS[provider].default_model
+            model = self.store.get('model:' + provider) or self.router.spec(provider).default_model
             key = self.get_key(provider)
             action = Action('send_editor_code_and_error',
                             provider + ' / ' + model + ' (shares editor code and pasted error; API charges may apply)',
@@ -348,10 +358,12 @@ class Window(QMainWindow):
     def provider_page(self):
         page, layout = self.page('API Provider Manager',
             'Keys are stored only in Windows Credential Manager. Leave the key blank to retain it. '
-            'Choose a provider and enter only your key. A model is preselected; Advanced settings are optional. OpenRouter routes requests to downstream providers.')
+            'Choose a provider and enter only your key. A model is preselected; Advanced settings are optional. '
+            'OpenRouter routes requests to downstream providers. Claude uses the Anthropic Messages API. '
+            'Ollama runs on this computer, needs no key and never reaches the network.')
         form = QFormLayout()
         self.provider = QComboBox()
-        self.provider.addItems(PROVIDERS)
+        self.provider.addItems(provider_names())
         self.model = QLineEdit()
         self.model.setPlaceholderText("Enter the exact model ID from your provider account")
         self.secret = QLineEdit()
@@ -525,7 +537,7 @@ class Window(QMainWindow):
         def operation():
             ticket = self.policy.ticket()
             provider = self.provider.currentText()
-            model = self.store.get('model:' + provider, PROVIDERS[provider].default_model)
+            model = self.store.get('model:' + provider, self.router.spec(provider).default_model)
             if self.secret.text() or self.model.text().strip() != model:
                 raise ValueError('Save the provider configuration before testing.')
             if not self.confirm(Action('provider_check',
@@ -540,6 +552,9 @@ class Window(QMainWindow):
         self.notify(operation)
 
     def get_key(self, provider):
+        if self.router.spec(provider).local:
+            # A local model needs no key and must never be given one.
+            return ''
         try:
             key = self.vault.get(provider)
         except Exception:
@@ -553,7 +568,8 @@ class Window(QMainWindow):
         self.active_provider, self.active_model = provider, model
         self.chat_task = self.store.task(kind, provider + ' / ' + model)
         self.store.finish(self.chat_task, 'running')
-        self.worker = ChatWorker(provider, model, key, messages, self.policy, self.chat_ticket,
+        self.worker = ChatWorker(self.router, provider, model, key, messages, self.policy,
+                                 self.chat_ticket,
                                  backup=backup if kind == "chat" else None)
         self.worker.chunk.connect(self.on_chunk)
         self.worker.result.connect(self.on_result)
@@ -588,8 +604,10 @@ class Window(QMainWindow):
             'Deleting a conversation removes app records, not forensic disk remnants.\n\n'
             'PLANNED, NOT IMPLEMENTED\n'
             'Assisted/supervised/trusted automation, planner/scheduler, voice, RAG,\n'
-            'quantum lab, cybersecurity scans, remote phone access, self-updates,\n'
-            'Claude/other providers and isolated code execution.\n\n'
+            'quantum lab, cybersecurity scans, self-updates and isolated code execution.\n\n'
+            'AVAILABLE NOW\n'
+            'Eight providers including Claude and the local Ollama model. A local model\n'
+            'never falls back to a paid endpoint and never leaves this computer.\n\n'
             'CURRENT: Manual workflows and read-only window title inspection.\n'
             'NEXT: Windows acceptance tests and live provider checks.\n'
             'See docs/ARCHITECTURE.md and docs/WINDOWS_ACCEPTANCE.md.'
@@ -645,15 +663,19 @@ class Window(QMainWindow):
         self.notify(operation)
 
     def reset_provider_model(self):
-        self.model.setText(PROVIDERS[self.provider.currentText()].default_model)
+        self.model.setText(self.router.spec(self.provider.currentText()).default_model)
 
     def load_provider(self):
         provider = self.provider.currentText()
-        self.model.setText(self.store.get('model:' + provider) or PROVIDERS[provider].default_model)
-        self.endpoint.setText(PROVIDERS[provider].endpoint)
+        spec = self.router.spec(provider)
+        self.model.setText(self.store.get('model:' + provider) or spec.default_model)
+        self.endpoint.setText(spec.endpoint)
         self.secret.clear()
         health = self.store.get('health:' + provider + ':' + self.model.text())
         self.provider_health.setText('Last explicit check: ' + (health['summary'] if health else 'Not tested'))
+        if spec.local:
+            self.key_status.setText('Not required: this model runs on this computer')
+            return
         try:
             self.key_status.setText('Stored in Windows vault' if self.vault.get(provider) else 'Not configured')
         except Exception:
@@ -663,7 +685,15 @@ class Window(QMainWindow):
         def operation():
             self.policy.ticket()
             provider = self.provider.currentText()
-            model = self.model.text().strip() or PROVIDERS[provider].default_model
+            spec = self.router.spec(provider)
+            model = self.model.text().strip() or spec.default_model
+            if spec.local:
+                if self.secret.text():
+                    raise ValueError('The local model does not use an API key.')
+                self.store.set('model:' + provider, model)
+                self.load_provider()
+                self.chat_provider.setCurrentText(provider)
+                return 'Local model saved. Ready for chat; connection has not been tested.'
             if self.secret.text():
                 try:
                     self.vault.put(provider, self.secret.text())
@@ -718,13 +748,16 @@ class Window(QMainWindow):
             self.chat_ticket = self.policy.ticket()
             provider = self.chat_provider.currentText()
             key = self.get_key(provider)
-            model = self.store.get('model:' + provider, PROVIDERS[provider].default_model)
+            model = self.store.get('model:' + provider, self.router.spec(provider).default_model)
             backup = None
             if self.backup_consent.isChecked():
                 name = self.backup_provider.currentText()
                 if name == provider:
                     raise ValueError('Choose a different backup provider.')
-                backup = StreamTarget(name, self.store.get('model:' + name, PROVIDERS[name].default_model),
+                if self.router.spec(provider).local:
+                    # A local model never falls through to a paid cloud provider.
+                    raise ValueError('The local model never falls back to a cloud provider.')
+                backup = StreamTarget(name, self.store.get('model:' + name, self.router.spec(name).default_model),
                                       self.get_key(name))
             prompt = self.prompt.toPlainText().strip()
             messages = self.store.messages(self.session) + [{'role': 'user', 'content': prompt}]
