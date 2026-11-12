@@ -25,6 +25,10 @@ jobs:
           java-version: '17'
           cache: gradle
       - uses: android-actions/setup-android@v3
+        with:
+          # Legacy 'tools' is no longer available in the Android SDK.
+          packages: 'platform-tools'
+          log-accepted-android-sdk-licenses: false
       - name: Install the SDK packages
         run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
       - name: Restore the Gradle wrapper
