@@ -6,6 +6,12 @@ from desktop.dictation import validate_model_path
 
 
 class DictationTests(unittest.TestCase):
+    def test_reject_blank_model_path(self):
+        for path in ('', '   ', None):
+            with self.subTest(path=path):
+                with self.assertRaises(ValueError):
+                    validate_model_path(path)
+
     def test_reject_missing_model(self):
         with tempfile.TemporaryDirectory() as root:
             with self.assertRaises(ValueError):
