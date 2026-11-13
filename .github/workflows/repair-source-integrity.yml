@@ -17,7 +17,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: source-integrity-repair
+  group: jarvis-integration-branch-writes
   cancel-in-progress: false
 
 jobs:
