@@ -8,6 +8,7 @@ on:
       - 'jarvis_unified/**'
       - 'scripts/import_jarvis_sources.py'
       - 'tests/test_unified_*.py'
+      - 'tests/test_source_import.py'
       - '.github/workflows/**'
       - 'docs/SOURCE_INTEGRITY.sha256'
   workflow_dispatch:
