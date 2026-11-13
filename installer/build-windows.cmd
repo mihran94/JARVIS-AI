@@ -32,13 +32,22 @@ if not exist "dist\JARVIS-BLUE\JARVIS-BLUE.exe" (
 echo.
 echo App bundle: dist\JARVIS-BLUE\JARVIS-BLUE.exe
 where ISCC.exe >nul 2>&1
-if not errorlevel 1 (
- ISCC.exe installer\jarvis-blue.iss
- exit /b %errorlevel%
+if not errorlevel 1 goto compile_on_path
+if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" goto compile_default
+echo Inno Setup 6 not found. App bundle is ready but Setup.exe was not built.
+echo Install Inno Setup 6, then compile installer\jarvis-blue.iss.
+exit /b 2
+:compile_on_path
+ISCC.exe installer\jarvis-blue.iss
+if errorlevel 1 exit /b 1
+goto verify_installer
+:compile_default
+"%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" installer\jarvis-blue.iss
+if errorlevel 1 exit /b 1
+:verify_installer
+if not exist "dist\installer\JARVIS-BLUE-Setup.exe" (
+ echo Inno Setup returned without creating the expected installer.
+ exit /b 1
 )
-if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" (
- "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" installer\jarvis-blue.iss
- exit /b %errorlevel%
-)
-echo Install Inno Setup 6, then compile installer\jarvis-blue.iss to create Setup.exe.
+echo Installer created: dist\installer\JARVIS-BLUE-Setup.exe
 exit /b 0
