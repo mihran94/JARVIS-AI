@@ -806,6 +806,9 @@ class Window(QMainWindow):
             worker.deleteLater()
             self.speech_worker = None
         self.speech_button.setEnabled(not self.policy.stopped)
+        if getattr(self, 'close_after_speech', False):
+            self.close_after_speech = False
+            self.close()
 
     def on_chunk(self, text):
         if self.worker_kind != 'chat':
@@ -945,11 +948,12 @@ class Window(QMainWindow):
                 self.usage_table.setItem(index, column, QTableWidgetItem(str(value)))
 
     def closeEvent(self, event):
-        if not self.close_when_done and self.editor.document().isModified():
+        if not self.close_when_done and not getattr(self, 'close_after_speech', False) and self.editor.document().isModified():
             if not self.confirm(Action('discard_unsaved_editor_changes', self.filename.text())):
                 event.ignore()
                 return
         if getattr(self, 'speech_worker', None) is not None:
+            self.close_after_speech = True
             self.speech_worker.requestInterruption()
             self.statusBar().showMessage('Waiting for local speech to finish before closing…')
             event.ignore()
