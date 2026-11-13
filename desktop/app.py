@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 )
 from desktop.blue_theme import FUTURISTIC_BLUE
 from desktop.blue_orb import BlueOrb
-from desktop.system_metrics import snapshot, format_snapshot
+from desktop.system_metrics import CpuSampler, snapshot, format_snapshot
 from core.store import Store
 from desktop.update_dialog import open_updates
 from security.policy import Policy, Action, Stopped
@@ -166,6 +166,7 @@ class Window(QMainWindow):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh_history)
         self.timer.start(1500)
+        self.cpu_sampler = CpuSampler()
         self.system_timer = QTimer(self)
         self.system_timer.setInterval(5000)
         self.system_timer.timeout.connect(self.refresh_system_metrics)
@@ -226,7 +227,7 @@ class Window(QMainWindow):
         """Refresh only local, read-only hardware measurements."""
         if hasattr(self, 'system_metrics_label'):
             try:
-                self.system_metrics_label.setText(format_snapshot(snapshot(self.root)))
+                self.system_metrics_label.setText(format_snapshot(snapshot(self.root, self.cpu_sampler)))
             except (OSError, ValueError):
                 self.system_metrics_label.setText('System metrics unavailable.')
 
