@@ -27,6 +27,10 @@ class NetworkMetricsTests(unittest.TestCase):
         self.assertIsNone(sampler.sample())
         self.assertIsNone(sampler.sample())
 
+    def test_invalid_counter_payload(self):
+        sampler = NetworkSampler(counter_reader=lambda: object(), clock=lambda: 1.0)
+        self.assertIsNone(sampler.sample())
+
     def test_missing_counter_reader(self):
         sampler = NetworkSampler(counter_reader=lambda: None)
         self.assertIsNone(sampler.sample())
