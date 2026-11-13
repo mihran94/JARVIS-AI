@@ -128,6 +128,9 @@ class Window(QMainWindow):
         self.store.set('session', self.session)
         self.chat_task = None
         self.chat_ticket = None
+        self.voice_rearm_timer = QTimer(self)
+        self.voice_rearm_timer.setSingleShot(True)
+        self.voice_rearm_timer.timeout.connect(self.rearm_local_voice)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -167,6 +170,8 @@ class Window(QMainWindow):
         self.voice_panel = VoicePanel()
         self.voice_panel.wake_detected.connect(self.on_wake_detected)
         self.voice_panel.utterance_detected.connect(self.on_voice_transcript)
+        self.voice_panel.cycle_finished.connect(self.schedule_local_voice_rearm)
+        self.voice_panel.speech_finished.connect(self.schedule_local_voice_rearm)
         self.add_page('Voice / Hey Jarvis', self.voice_panel)
         self.add_page('Phone Remote', self.bridge_page())
         self.add_page('Settings & Safety', self.permissions_page())
@@ -218,18 +223,94 @@ class Window(QMainWindow):
                 break
         self.pages.setCurrentIndex(index)
 
+    def local_voice_allowed(self):
+        """Hands-free calls are allowed only to local, non-billable Ollama."""
+        return (
+            self.hands_free_voice.isChecked()
+            and not self.policy.stopped
+            and self.voice_panel.consent.listening
+            and self.chat_provider.currentText() == 'Ollama'
+            and self.router.spec('Ollama').local
+            and not self.backup_consent.isChecked()
+            and not self.close_when_done
+        )
+
+    def set_local_hands_free(self, enabled):
+        """An explicit, session-only microphone and local-provider opt-in."""
+        if enabled:
+            busy_voice = (self.voice_panel.worker is not None
+                          and self.voice_panel.worker.isRunning())
+            if (self.policy.stopped or not self.voice_panel.consent.listening
+                    or self.chat_provider.currentText() != 'Ollama'
+                    or not self.router.spec('Ollama').local
+                    or self.backup_consent.isChecked() or self.worker is not None
+                    or busy_voice):
+                self.hands_free_voice.blockSignals(True)
+                self.hands_free_voice.setChecked(False)
+                self.hands_free_voice.blockSignals(False)
+                self.statusBar().showMessage(
+                    'Hands-free needs allowed microphone, idle voice and Ollama selected; '
+                    'cloud providers and backups are not supported.', 20000)
+                return
+            # The user opted in to the local dialogue session. No cloud key
+            # is read; no other provider can be used for automatic messages.
+            self.read_replies.setChecked(True)
+            self.voice_panel.listen('dialogue')
+            self.statusBar().showMessage(
+                'Hands-free LOCAL Ollama active. Say Hey Jarvis, then your question. '
+                'Uncheck to stop; PC actions still require approval.', 20000)
+        else:
+            self.voice_rearm_timer.stop()
+            if hasattr(self, 'voice_panel') and self.voice_panel.worker is not None:
+                if self.voice_panel.worker._mode == 'dialogue':
+                    self.voice_panel.cancel_listening()
+
+    def guard_local_voice_provider(self):
+        if (self.hands_free_voice.isChecked()
+                and (self.chat_provider.currentText() != 'Ollama'
+                     or self.backup_consent.isChecked())):
+            self.hands_free_voice.setChecked(False)
+            self.statusBar().showMessage(
+                'Local hands-free stopped: provider or backup settings changed.', 15000)
+
+    def schedule_local_voice_rearm(self):
+        # Do not reopen the microphone while speech is still playing.
+        speaking = self.voice_panel.speaker_worker
+        if (self.local_voice_allowed() and self.worker is None
+                and (speaking is None or not speaking.isRunning())):
+            self.voice_rearm_timer.start(350)
+
+    def rearm_local_voice(self):
+        """Only listen again after the previous answer and speech have ended."""
+        if not self.local_voice_allowed() or self.worker is not None:
+            return
+        speaking = self.voice_panel.speaker_worker
+        if speaking is not None and speaking.isRunning():
+            return
+        current = self.voice_panel.worker
+        if current is not None and current.isRunning():
+            return
+        self.voice_panel.listen('dialogue')
+
     def on_wake_detected(self, transcript, command):
-        # Wake phrase recognition is not permission to spend API credits or
-        # execute Windows actions. Only populate a human-reviewable draft.
         if self.policy.stopped or not self.voice_panel.consent.listening:
             return
-        if command:
-            self.on_voice_transcript(command)
+        self.open_section('JARVIS Chat')
+        text = (command or '').strip()[:4000]
+        if (text and self.local_voice_allowed() and self.worker is None
+                and not self.prompt.toPlainText().strip()):
+            # Exact opt-in, local model only: no cloud API charges, no shell
+            # execution, no implicit PC action approval, no model fallback.
+            self.prompt.setPlainText(text)
+            self.send()
+            return
+        if text:
+            self.on_voice_transcript(text)
         else:
-            self.open_section('JARVIS Chat')
             self.prompt.setFocus()
             self.statusBar().showMessage(
-                'Hello! I am listening. Say what you need, then review your message.', 15000)
+                'Hello! Say your request after Hey Jarvis. '
+                'PC actions always need approval.', 15000)
 
     def on_voice_transcript(self, transcript):
         """Draft spoken text on the main screen; never automatically send."""
@@ -328,11 +409,13 @@ class Window(QMainWindow):
         row = QHBoxLayout()
         self.chat_provider = QComboBox()
         self.chat_provider.addItems(provider_names())
+        self.chat_provider.currentTextChanged.connect(self.guard_local_voice_provider)
         row.addWidget(self.chat_provider)
         self.new_chat_button = self.button(row, 'New chat', self.new_chat)
         self.clear_button = self.button(row, 'Delete this conversation', self.clear_chat)
         layout.addLayout(row)
         self.backup_consent = QCheckBox('Allow one backup attempt for this message (shares full conversation; charges may apply)')
+        self.backup_consent.toggled.connect(lambda enabled: self.guard_local_voice_provider() if enabled else None)
         layout.addWidget(self.backup_consent)
         self.backup_provider = QComboBox()
         self.backup_provider.addItems(provider_names())
@@ -353,6 +436,14 @@ class Window(QMainWindow):
         layout.addWidget(self.prompt)
         self.read_replies = QCheckBox('Read replies aloud on this PC (optional; uses Windows speech)')
         layout.addWidget(self.read_replies)
+        self.hands_free_voice = QCheckBox(
+            'Hands-free Hey Jarvis (LOCAL Ollama only, session opt-in)')
+        self.hands_free_voice.setToolTip(
+            'Requires microphone permission and Ollama. Each wake phrase plus '
+            'question sends a message ONLY to your local model; never to cloud '
+            'providers. No PC actions run without separate approval.')
+        self.hands_free_voice.toggled.connect(self.set_local_hands_free)
+        layout.addWidget(self.hands_free_voice)
         self.send_button = self.button(layout, 'Ask JARVIS', self.send)
         self.review_pc_action_button = self.button(
             layout, 'Review PC action (Notepad / Calculator)', self.review_chat_pc_action)
@@ -952,8 +1043,7 @@ class Window(QMainWindow):
             if status == 'completed':
                 self.store.message(self.session, 'assistant', text)
                 if self.read_replies.isChecked() and not self.policy.stopped:
-                    self.voice_panel.speak_text.setText(text[:600])
-                    self.voice_panel.speak()
+                    self.voice_panel.speak_response(text[:600])
             else:
                 self.transcript.appendPlainText('\n[' + status.upper() + '] ' + text)
             self.refresh_archives()
@@ -985,11 +1075,14 @@ class Window(QMainWindow):
         self.chat_provider.setEnabled(True)
         self.backup_provider.setEnabled(True)
         self.backup_consent.setEnabled(True)
+        self.schedule_local_voice_rearm()
         if self.close_when_done:
             self.close()
 
     def stop(self):
         self.policy.stop()
+        self.voice_rearm_timer.stop()
+        self.hands_free_voice.setChecked(False)
         self.voice_panel.stop_voice()
         self.set_ai_visual_state('stopped')
         self.queue.cancel_pending()
@@ -1073,7 +1166,10 @@ class Window(QMainWindow):
             self.statusBar().showMessage('Waiting for cancelled chat to exit safely…')
             event.ignore()
         else:
+            self.voice_rearm_timer.stop()
+            self.hands_free_voice.setChecked(False)
             self.voice_panel.stop_voice()
+            self.voice_panel.wait_for_workers()
             self.bridge.listener.stop()
             event.accept()
 

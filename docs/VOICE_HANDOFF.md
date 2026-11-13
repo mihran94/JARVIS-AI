@@ -23,6 +23,43 @@ control for the Windows process, not another AI brain.
    before the microphone fully closes. **EMERGENCY STOP** additionally
    invalidates outstanding PC action approvals.
 
+## Hands-free conversation (opt-in, LOCAL Ollama only)
+
+This optional mode lets JARVIS rearm the wake listener after each local-model
+answer, without cloud API costs:
+
+1. Install and start **Ollama** on the Windows PC and download the model ID
+   selected in JARVIS (the default is `llama3.2`). JARVIS does not silently
+   download models or run installers.
+2. Visit **Voice / Hey Jarvis**, enable **Allow the microphone**. Make sure
+   your Windows speech recognition and output voices work on this PC.
+3. In **JARVIS Chat**, choose **Ollama** and check
+   **Hands-free Hey Jarvis (LOCAL Ollama only, session opt-in)**. This turns on
+   **Read replies aloud** and starts a bounded offline wake listener.
+4. Say **Hey Jarvis**, wait for recognition, then speak one question within
+   the eight-second dictation window. The recognized text goes only to
+   loopback Ollama. The optional Windows SAPI voice speaks its reply; once
+   speaking finishes, JARVIS resumes waiting for another wake phrase.
+5. Uncheck hands-free, uncheck microphone permission, close the app or press
+   **EMERGENCY STOP** to stop listening. Microphone consent and local
+   hands-free are OFF at startup and never persist across sessions.
+
+**Important boundaries**: Hands-free requests are never routed to a paid
+cloud model. Switching provider, enabling backup fallback, losing microphone
+consent, or invoking Emergency Stop immediately disables the automatic
+conversation path. If a draft already exists or an AI request is running,
+the spoken phrase cannot send that draft automatically. Spoken commands do
+not execute Windows actions: the user must press **Review PC action**, and
+the existing one-use owner approval remains mandatory.
+
+The speaker now runs in its own initialized Windows COM thread. SAPI output
+is interruptible by **Stop voice** and Emergency Stop without blocking the
+main Qt interface. A running Windows recognition timeout is bounded; stopping
+the microphone can still take until the current recognition call returns.
+No system-wide always-on listening, wake-word recognition with the app closed,
+unsupervised cloud spending, or automatic external application control is
+claimed. A real PC/phone hardware acceptance test is still required.
+
 ## Windows dependencies
 
 - Local System.Speech recognition uses optional `pythonnet`, an available
@@ -60,7 +97,8 @@ control for the Windows process, not another AI brain.
   auto-trading, or microphone permission on boot.
 - No guarantee of 24/7 recognition while Windows is asleep, JARVIS is closed,
   the microphone is unavailable, or an unsupported speech pack is selected.
-- Continuous back-and-forth hands-free AI dialogue is not completed by this
-  draft handoff. The owner currently reviews and sends each new message.
+- An optional, explicitly enabled **local Ollama** wake/dictation/reply
+  loop is implemented. Cloud providers still require reviewed manual Send.
+  A physical Windows microphone/speaker and model test remains outstanding.
 - Mocked speech contract tests and CI do not substitute for a physical
   Windows microphone and speaker acceptance test.

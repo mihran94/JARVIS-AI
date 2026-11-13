@@ -172,3 +172,65 @@ def test_sapi_missing_language_returns_false():
     speaker._voice = FakeVoice()
     assert speaker.select_language("ta") is False
     assert speaker._voice.Voice is None
+
+
+def test_wake_to_dictation_disposes_old_grammar(fake_system_speech):
+    permission = VoiceConsent()
+    permission.grant()
+    adapter = WindowsSpeechRecognizer(permission, language='en')
+    wake, command = adapter.wait_for_wake_phrase(2.0)
+    assert wake and not command
+    wake_engine = fake_system_speech.engine.last
+    assert isinstance(wake_engine.loaded[0], fake_system_speech.grammar)
+
+    text = adapter.recognize_once(6.0)
+    dictation_engine = fake_system_speech.engine.last
+    assert text == 'Hey Jarvis'
+    assert dictation_engine is not wake_engine
+    assert wake_engine.disposed
+    assert isinstance(dictation_engine.loaded[0], fake_system_speech.dictation)
+    assert dictation_engine.recognized_with == ('seconds', 6.0)
+    adapter.stop()
+    assert dictation_engine.disposed
+    assert permission.listening
+
+
+def test_sapi_interruptible_speech_stops_on_emergency_cancel():
+    calls = []
+
+    class Voice:
+        def __init__(self):
+            self.polls = 0
+
+        def Speak(self, text, flags=0):
+            calls.append(('speak', text, flags))
+
+        def WaitUntilDone(self, interval):
+            calls.append(('poll', interval))
+            self.polls += 1
+            return False
+
+    speaker = object.__new__(WindowsTextToSpeech)
+    speaker._voice = Voice()
+    speaker.speak_interruptibly(
+        'The user can stop speech', lambda: speaker._voice.polls >= 1)
+    assert calls[:2] == [
+        ('speak', 'The user can stop speech', 1), ('poll', 120)]
+    assert ('speak', '', 3) in calls
+
+
+def test_sapi_interruptible_speech_finishes_without_cancellation():
+    calls = []
+
+    class Voice:
+        def Speak(self, text, flags=0):
+            calls.append(('speak', text, flags))
+
+        def WaitUntilDone(self, interval):
+            calls.append(('poll', interval))
+            return True
+
+    speaker = object.__new__(WindowsTextToSpeech)
+    speaker._voice = Voice()
+    speaker.speak_interruptibly('Safe voice response', lambda: False)
+    assert calls == [('speak', 'Safe voice response', 1), ('poll', 120)]

@@ -224,3 +224,132 @@ def test_chat_pc_action_only_runs_exact_allowlisted_command_after_approval(tmp_p
     finally:
         window.close()
         app.processEvents()
+
+
+def test_hands_free_is_explicit_session_opt_in_and_local_only(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
+    listens = []
+    window.voice_panel.listen = lambda mode='once': listens.append(mode)
+    try:
+        assert not window.hands_free_voice.isChecked()
+        assert not window.voice_panel.consent.listening
+        window.hands_free_voice.setChecked(True)
+        assert not window.hands_free_voice.isChecked()
+        assert listens == []
+        window.voice_panel.allow.setChecked(True)
+        window.hands_free_voice.setChecked(True)
+        assert not window.hands_free_voice.isChecked()
+        assert listens == []
+        window.chat_provider.setCurrentText('Ollama')
+        window.hands_free_voice.setChecked(True)
+        assert window.hands_free_voice.isChecked()
+        assert window.read_replies.isChecked()
+        assert listens == ['dialogue']
+        assert window.store.messages(window.session) == []
+        window.backup_consent.setChecked(True)
+        assert not window.hands_free_voice.isChecked()
+        assert not window.local_voice_allowed()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_local_hands_free_wake_auto_sends_only_to_ollama(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
+    window.voice_panel.listen = lambda mode='once': None
+    sent = []
+    window.send = lambda: sent.append((window.chat_provider.currentText(),
+                                       window.prompt.toPlainText()))
+    try:
+        window.voice_panel.allow.setChecked(True)
+        window.chat_provider.setCurrentText('Ollama')
+        window.hands_free_voice.setChecked(True)
+        assert window.local_voice_allowed()
+
+        window.on_wake_detected('Hey Jarvis', 'Explain Python lists')
+        assert sent == [('Ollama', 'Explain Python lists')]
+        assert window.store.messages(window.session) == []
+        # Never accidentally send an existing draft combined with speech.
+        window.prompt.setPlainText('An unfinished private draft')
+        window.on_wake_detected('Hey Jarvis', 'new question')
+        assert len(sent) == 1
+        assert 'An unfinished private draft' in window.prompt.toPlainText()
+
+        window.chat_provider.setCurrentText('OpenAI')
+        assert not window.hands_free_voice.isChecked()
+        window.prompt.clear()
+        window.on_wake_detected('Hey Jarvis', 'cloud question')
+        assert sent == [('Ollama', 'Explain Python lists')]
+        assert window.prompt.toPlainText() == 'cloud question'
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_local_hands_free_rearms_but_emergency_stop_revokes_it(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
+    listened = []
+    window.voice_panel.listen = lambda mode='once': listened.append(mode)
+    try:
+        window.voice_panel.allow.setChecked(True)
+        window.chat_provider.setCurrentText('Ollama')
+        window.hands_free_voice.setChecked(True)
+        assert listened == ['dialogue']
+        window.schedule_local_voice_rearm()
+        assert window.voice_rearm_timer.isActive()
+        window.voice_rearm_timer.stop()
+        window.rearm_local_voice()
+        assert listened == ['dialogue', 'dialogue']
+        window.stop()
+        assert not window.hands_free_voice.isChecked()
+        assert not window.voice_rearm_timer.isActive()
+        assert not window.voice_panel.consent.granted
+        window.rearm_local_voice()
+        assert listened == ['dialogue', 'dialogue']
+        window.resume()
+        assert not window.voice_panel.consent.granted
+        assert not window.hands_free_voice.isChecked()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_hands_free_never_reopens_microphone_during_speech(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
+    listened = []
+    window.voice_panel.listen = lambda mode='once': listened.append(mode)
+    try:
+        window.voice_panel.allow.setChecked(True)
+        window.chat_provider.setCurrentText('Ollama')
+        window.hands_free_voice.setChecked(True)
+        assert listened == ['dialogue']
+
+        class Speaking:
+            running = True
+
+            def isRunning(self):
+                return self.running
+
+        speaker = Speaking()
+        window.voice_panel.speaker_worker = speaker
+        window.schedule_local_voice_rearm()
+        assert not window.voice_rearm_timer.isActive()
+        window.rearm_local_voice()
+        assert listened == ['dialogue']
+
+        # Speech finishing unlocks the next local wake-phrase cycle.
+        speaker.running = False
+        window.schedule_local_voice_rearm()
+        assert window.voice_rearm_timer.isActive()
+        window.voice_rearm_timer.stop()
+        window.rearm_local_voice()
+        assert listened == ['dialogue', 'dialogue']
+        window.voice_panel.speaker_worker = None
+    finally:
+        window.voice_panel.speaker_worker = None
+        window.close()
+        app.processEvents()
