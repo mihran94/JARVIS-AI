@@ -35,3 +35,6 @@ The build script now runs `installer\\preflight.py` before packaging. This parse
 
 ## Futuristic Blue UI (development)
 The Windows Command Center now imports `desktop/blue_theme.py` and `desktop/blue_orb.py`. The orb is decorative and animated, not connected to AI requests, voice listening, or device status. It stops its animation timer while hidden. Validate the layout and animation on Windows 10 before treating it as finished.
+
+## Orb activity states
+The command-center orb now reflects the chat worker: idle, thinking (request in progress), responding (text chunks arriving), and stopped (emergency stop). These are UI indications only, not microphone listening, voice output, or proof of model reasoning. Confirm transitions and emergency stop behavior during Windows acceptance testing.
