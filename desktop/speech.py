@@ -15,6 +15,7 @@ class SpeechWorker(QThread):
     def __init__(self, text, parent=None):
         super().__init__(parent)
         self.text = speech_text(text)
+        self._engine = None
 
     def run(self):
         if not self.text:
@@ -23,11 +24,14 @@ class SpeechWorker(QThread):
         try:
             import pyttsx3
             engine = pyttsx3.init()
+            self._engine = engine
             if self.isInterruptionRequested():
                 self.completed.emit("Cancelled")
                 return
             engine.say(self.text)
             engine.runAndWait()
-            self.completed.emit("Speech finished")
+            self.completed.emit("Cancelled" if self.isInterruptionRequested() else "Speech finished")
         except Exception as exc:
             self.completed.emit("Speech unavailable: " + type(exc).__name__)
+        finally:
+            self._engine = None
