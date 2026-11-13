@@ -30,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -184,7 +185,7 @@ fun WindowsScreen(
     var jobKind by remember { mutableStateOf(BridgeJobKind.AFTER_EFFECTS_RENDER) }
 
     JarvisScaffold(
-        title = "Windows link",
+        title = "JARVIS Remote",
         subtitle = state.statusLine,
         modifier = modifier,
     ) { padding ->
@@ -195,19 +196,25 @@ fun WindowsScreen(
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            NoticeBanner(
+                "Your Windows PC is the AI brain. This phone is only its remote: " +
+                    "check status, request jobs and cancel jobs. PC actions need approval on Windows.",
+                accent = BlueCore,
+            )
             if (state.peer == null) {
-                GlowCard(title = "Pair with your desktop", accent = AmberWarn) {
+                GlowCard(title = "Connect to Windows JARVIS", accent = AmberWarn) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         NoticeBanner(
-                            "Run the JARVIS BLUE bridge on your Windows machine, then reach it over " +
-                                "Tailscale, WireGuard or an SSH tunnel. Do not open the port on your router.",
+                            "Start the HTTPS Mobile Bridge on your Windows JARVIS PC. " +
+                                "Connect via a trusted private network or HTTPS tunnel. " +
+                                "Do not publish the control port on the internet.",
                             accent = AmberWarn,
                         )
                         OutlinedTextField(
                             value = state.hostInput,
                             onValueChange = onHostChange,
                             modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Host (Tailscale name or tunnel IP)") },
+                            label = { Text("HTTPS Windows host or private network address") },
                             singleLine = true,
                             shape = RoundedCornerShape(12.dp),
                         )
@@ -223,12 +230,14 @@ fun WindowsScreen(
                             value = state.secretInput,
                             onValueChange = onSecretChange,
                             modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Pairing secret") },
+                            label = { Text("Pairing secret (32+ characters)") },
+                            visualTransformation = PasswordVisualTransformation(),
+                            singleLine = true,
                             shape = RoundedCornerShape(12.dp),
                         )
                         Button(
                             onClick = onPair,
-                            enabled = state.hostInput.isNotBlank() && state.secretInput.isNotBlank(),
+                            enabled = state.hostInput.isNotBlank() && state.secretInput.length >= 32,
                         ) { Text("Pair") }
                     }
                 }

@@ -1,6 +1,7 @@
 package com.jarvisblue.core.windows
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 /**
@@ -48,5 +49,19 @@ class BridgeSignatureTest {
         val a = BridgeClient.sign("POST", "/api/jobs", "1700000000000", "{\"a\":1}", "secret", "n")
         val b = BridgeClient.sign("POST", "/api/jobs", "1700000000000", "{\"a\":2}", "secret", "n")
         assertEquals(false, a == b)
+    }
+
+    @Test
+    fun `control endpoints reject plaintext and invalid origins`() {
+        assertEquals("https://pc.example:8765", BridgeClient.secureEndpoint("https://pc.example:8765"))
+        for (origin in listOf(
+            "http://pc.example:8765", "https://user:pw@pc.example:8765",
+            "https://pc.example:8765/api", "https://pc.example?secret=x",
+            "ftp://pc.example", "https://"
+        )) {
+            assertThrows(IllegalArgumentException::class.java) {
+                BridgeClient.secureEndpoint(origin)
+            }
+        }
     }
 }

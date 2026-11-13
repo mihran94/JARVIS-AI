@@ -52,3 +52,24 @@ continuous voice while Windows/JARVIS is closed. All trading, Exness,
 XAUUSD, buy/sell signal and broker-order features are **excluded** at the
 owner's request. Duplicate/legacy source archives are kept for lossless
 recovery until independently verified and safely retired.
+
+## Android application is now remote only
+
+The Compose launcher opens `WindowsRoute()` directly; it no longer exposes
+standalone mobile chat, studio, Android task execution, wake services, screen
+capture, accessibility or background receivers. The app keeps Android biometric
+lock and HTTPS bridge pairing. The release manifest requests only network and
+biometric permissions and disables sensitive data backups. Old Android source
+files remain in Git history but are not registered by the launcher.
+
+The phone may view Windows status, submit **approval-required** job requests,
+cancel queued jobs and see logs. It cannot execute arbitrary PC actions and
+cannot override the Windows emergency stop. An owner must explicitly pair the
+phone, configure the private HTTPS bridge and approve actions on Windows.
+Plain HTTP origins, embedded credentials, paths and conflicting ports are
+rejected. The shared secret is stored in the phone's Keystore-backed vault and
+is not printed or embedded in the APK.
+
+The remote-only Android privacy audit runs during the Gradle pre-build; it is
+not a substitute for validating the final merged manifest and device hardware.
+Existing installed APKs are not upgraded or uninstalled by merging source.
