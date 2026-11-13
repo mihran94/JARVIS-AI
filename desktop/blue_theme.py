@@ -59,6 +59,15 @@ QListWidget::item:hover { background-color: #12344e; }
 QListWidget::item:selected { background-color: #124b71; color: #70eaff; }
 QHeaderView::section { background-color: #12304a; color: #b7e8ff; padding: 9px; border: 0; }
 QTableWidget { gridline-color: #1c405a; }
+QLabel#systemMetrics {
+    background-color: #0b253b;
+    border: 1px solid #23617f;
+    border-radius: 10px;
+    color: #b6edff;
+    padding: 14px;
+    font-family: 'Consolas';
+    font-size: 13px;
+}
 QStatusBar { background-color: #071625; color: #91b8d2; border-top: 1px solid #173d59; }
 QScrollBar:vertical { background-color: #09192a; width: 10px; }
 QScrollBar::handle:vertical { background-color: #255575; border-radius: 4px; min-height: 28px; }
