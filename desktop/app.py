@@ -1078,6 +1078,25 @@ class Window(QMainWindow):
             event.accept()
 
 
+def voice_runtime_smoke_test():
+    """Validate packaged Windows speech imports without a microphone or AI key.
+
+    This is a packaging check, not proof that the user's speech language pack
+    or physical microphone works. No audio is captured and nothing is spoken.
+    """
+    if sys.platform != 'win32':
+        return 21
+    try:
+        import clr
+        clr.AddReference('System.Speech')
+        from System.Speech.Recognition import Grammar
+        import win32com.client
+        voice = win32com.client.Dispatch('SAPI.SpVoice')
+        return 0 if Grammar is not None and voice is not None else 22
+    except Exception:
+        return 23
+
+
 def launch_arguments(argv):
     """Strip the explicit offline smoke flag before invoking Qt."""
     smoke = '--smoke-test' in argv[1:]
@@ -1086,6 +1105,8 @@ def launch_arguments(argv):
 
 def main():
     args, smoke = launch_arguments(sys.argv)
+    if '--check-voice-runtime' in args[1:]:
+        return voice_runtime_smoke_test()
     app = QApplication(args)
     app.setStyleSheet(STYLE)
     base = Path(os.environ.get('LOCALAPPDATA', str(Path.home() / '.local' / 'share'))) / 'JarvisAI'

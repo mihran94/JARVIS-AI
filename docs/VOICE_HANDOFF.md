@@ -30,6 +30,11 @@ control for the Windows process, not another AI brain.
   recognizer matching the selected language.
 - Native SAPI speech output uses optional `pywin32` and an installed voice.
   Voice output is optional, disabled by default on the Chat page.
+- The Windows installer build now installs pinned `pythonnet` and `pywin32`
+  dependencies and asks PyInstaller to bundle dynamic CLR and COM imports.
+  The built EXE must pass `--check-voice-runtime` in CI. This only verifies
+  package imports and creation of a SAPI object, never microphone capture,
+  installed languages, wake-word accuracy, or physical audio output.
 - The .NET System.Speech integration uses `Grammar(GrammarBuilder)`,
   `SetInputToDefaultAudioDevice()` and `Recognize(TimeSpan)`.
 - Tamil and French support **depend on installed Windows recognizers and

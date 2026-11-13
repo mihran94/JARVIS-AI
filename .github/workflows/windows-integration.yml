@@ -36,8 +36,10 @@ jobs:
           python -m pytest -q
       - name: Build standalone desktop folder
         run: |
-          python -m pip install pyinstaller==6.12.0
-          python -m PyInstaller --noconfirm --clean --windowed --onedir --name JarvisAI --hidden-import keyring.backends.Windows main.py
+          python -m pip install pyinstaller==6.12.0 pythonnet==3.2.1 pywin32==312
+          # The adapters import these modules dynamically when the owner
+          # enables voice, so PyInstaller cannot discover them automatically.
+          python -m PyInstaller --noconfirm --clean --windowed --onedir --name JarvisAI --hidden-import keyring.backends.Windows --hidden-import clr --hidden-import win32com.client --hidden-import pythoncom --collect-all pythonnet main.py
           if (!(Test-Path 'dist/JarvisAI/JarvisAI.exe')) { throw 'Desktop EXE not generated' }
       - name: Smoke-test the packaged Windows executable
         shell: pwsh
@@ -45,6 +47,12 @@ jobs:
           $app = Join-Path (Get-Location) 'dist/JarvisAI/JarvisAI.exe'
           $process = Start-Process -FilePath $app -ArgumentList '--smoke-test' -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Packaged EXE startup failed: $($process.ExitCode)" }
+      - name: Smoke-test packaged Windows voice runtime (no audio capture)
+        shell: pwsh
+        run: |
+          $app = Join-Path (Get-Location) 'dist/JarvisAI/JarvisAI.exe'
+          $process = Start-Process -FilePath $app -ArgumentList '--check-voice-runtime' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Packaged voice dependencies unavailable: $($process.ExitCode)" }
       - name: Create traceable manifest
         run: python scripts/release_manifest.py dist/JarvisAI dist/JarvisAI-RELEASE.txt --version 0.3.0 --revision "${{ github.sha }}" --channel integration-beta
       - name: Create unsigned Windows installer
