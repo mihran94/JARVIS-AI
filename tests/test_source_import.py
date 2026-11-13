@@ -18,6 +18,15 @@ class SourceImportTests(unittest.TestCase):
             self.assertNotIn("push", cmd)
             self.assertNotIn("delete", cmd)
 
+    def test_select_one_source(self):
+        selected = commands('android')
+        self.assertEqual(len(selected), 1)
+        self.assertIn('--prefix=android', selected[0])
+        self.assertNotIn('legacy/jarvis-blue', ' '.join(selected[0]))
+
+    def test_one_source_dry_run(self):
+        self.assertEqual(main(['--source', 'android']), 0)
+
     def test_default_is_dry_run(self):
         self.assertEqual(main([]), 0)
 
