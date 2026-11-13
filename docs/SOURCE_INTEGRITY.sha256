@@ -14,7 +14,7 @@
 #
 #     python iphone-pwa/icons/restore-icons.py
 #
-# 525 files
+# 530 files
 811427777ef27750dc4a2b86240a03943355a35c020d18347b744316119736e7  .gitattributes
 d0054c28206fb12948e9a6f2c09a3ed0846762fb142e2eb96fb29917cf280a78  .github/workflows/android-integration.yml
 08a3cef7437a7b015f04dd505103f96fce5c896b7e7cae7f7aabfd6d1f5276e1  .github/workflows/import-upstream-sources.yml
@@ -448,6 +448,11 @@ bb6b5db4dd6b6ce075206bd352c73d625591f8648d3adcf9dd494b86f84efa3b  legacy/jarvis-
 0726fd5378160ae03652e13b2b335f7c31dfbbdba7c84bdb230171b7cffda749  legacy/jarvis-blue/tools/update_keys.py
 703db59a18bf04a0d752be7d515b74e7e29c653570a5fd7202598aeccea7c2f9  legacy/jarvis-blue/tools/windows/Sign-WindowsRelease.ps1
 87eb2e7f57f904010d7f2b7c77e6755a0e4e33e6d3fa19bb9556f679ed5f1906  legacy/jarvis-blue/ui.py
+a5dc40f0fed0454fe233f62f2d0d3c042be2a2064833d74abd75282e6487aac7  legacy/jarvis-mobile-beta/README.md
+b8efb79f72720339045f6d29decfbe7e38d80a565a4bdad7d60826e000f16531  legacy/jarvis-mobile-beta/app.js
+daede7f0c8a485a2c345f9ba5470452e6e33121aabef80133413fc46d12f77e1  legacy/jarvis-mobile-beta/gateway/worker.mjs
+11265190106d71c18d6bce8be838d57bea2eb80ec4a1c26026f9d7b4bb470046  legacy/jarvis-mobile-beta/index.html
+3ce9bf1208995ecb25a8b4af134df1291d605c6c4c0fe1a614656465644519bf  legacy/jarvis-mobile-beta/manifest.webmanifest
 1d0be6acfb501dd6fc87de2a30d830649c09fa378b19a05b154952cf3feae7aa  main.py
 5bf3813dfe52b088b613280533b3cfe45b7e91e5742748cac9c0179987246624  memory/README.md
 bd5f32f2c0e4cf015dc0a8986edecf5a185ac8ba709f49f5d42264c3d989579c  patches/android-debug-apk.patch
