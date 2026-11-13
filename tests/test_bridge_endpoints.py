@@ -134,7 +134,7 @@ def test_a_memory_entry_travels_to_the_desktop():
 
 
 def test_an_empty_memory_entry_is_refused():
-    server = make_server()
+    server = make_server(memory_allowed=lambda: True)
     response = server.handle(signed_request(
         server, 'POST', '/api/memory', json.dumps({'text': '  '}), nonce='n2'))
     assert response.status == 400
