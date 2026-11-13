@@ -39,6 +39,9 @@ if errorlevel 1 exit /b 1
 echo Running unified read-only bridge tests...
 .venv\Scripts\python.exe -m unittest discover -s tests -p test_unified_read_only.py
 if errorlevel 1 exit /b 1
+echo Running complete offline Python regression suite...
+.venv\Scripts\python.exe -m unittest discover -s tests -p test_*.py
+if errorlevel 1 exit /b 1
 echo Running source and dependency preflight...
 .venv\Scripts\python.exe installer\preflight.py
 if errorlevel 1 exit /b 1
