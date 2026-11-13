@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QHeaderView, QCheckBox,
 )
 from desktop.blue_theme import FUTURISTIC_BLUE
+from desktop.blue_orb import BlueOrb
 from core.store import Store
 from desktop.update_dialog import open_updates
 from security.policy import Policy, Action, Stopped
@@ -193,6 +194,8 @@ class Window(QMainWindow):
     def dashboard(self):
         page, layout = self.page('Your command center',
             'A practical foundation for a Windows AI assistant. Add your own provider key to start chatting.')
+        orb = BlueOrb(page)
+        layout.addWidget(orb)
         for title, text in [
             ('01  /  INTELLIGENCE', 'Stream chat through OpenAI, MiniMax or Gemini. Tamil, English and French text can be entered.'),
             ('02  /  CONTROL', 'Review each app launch and workspace save. Emergency stop blocks new work.'),
