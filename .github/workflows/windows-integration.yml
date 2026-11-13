@@ -11,6 +11,14 @@ on:
       - 'installers/**'
       - 'requirements*.txt'
       - '.github/workflows/windows-integration.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'desktop/**'
+      - 'voice/**'
+      - 'installers/**'
+      - 'requirements*.txt'
+      - '.github/workflows/windows-integration.yml'
   workflow_dispatch:
 permissions:
   contents: read
