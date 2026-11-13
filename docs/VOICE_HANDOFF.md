@@ -41,7 +41,10 @@ control for the Windows process, not another AI brain.
   PyInstaller includes CLR and COM support. The built EXE must pass
   `--check-voice-runtime` in CI. This checks imports and creation of a
   SAPI object, never microphone capture, installed languages, wake-word
-  accuracy, or physical audio output.
+  accuracy, or physical audio output. The installer also carries the
+  System.Speech **MIT attribution** copied from `licenses/System.Speech.MIT.txt`
+  as `System.Speech.LICENSE.txt` beside the installed executable; CI refuses
+  to package the binary without that notice.
   Diagnostic codes: 31 = CLR import, 32 = assembly loading, 33 = speech
   grammar import, 34 = win32com import, 35 = SAPI COM object. These do not
   disclose local file paths or credentials.
