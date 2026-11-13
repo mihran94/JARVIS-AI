@@ -2,7 +2,7 @@
 
 Safe by default: prints commands only. Never deletes repositories, pushes, or
 merges to main. Run from a clean JARVIS-AI checkout with git-subtree available.
-This preserves each upstream source tree and license in its own directory.
+This imports each upstream source tree and its history, including licenses,\ninto a dedicated directory.
 """
 import argparse
 import subprocess
@@ -20,7 +20,7 @@ def commands(source=None):
         raise ValueError("Unknown upstream source")
     selected = [item for item in SOURCES if source is None or item[0] == source]
     return [
-        ["git", "subtree", "add", f"--prefix={prefix}", url, ref, "--squash"]
+        ["git", "subtree", "add", f"--prefix={prefix}", url, ref]
         for prefix, url, ref in selected
     ]
 
