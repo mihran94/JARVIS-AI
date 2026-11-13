@@ -53,13 +53,11 @@ class WindowsTextToSpeech:
         if identifier is None:
             return False
         try:
-            token = self._voice.GetVoices(f'Language={identifier}')
-        except Exception:
-            return False
-        if token is None:
-            return False
-        try:
-            self._voice.Voice = token
+            # GetVoices returns a token collection, NOT one voice token.
+            tokens = self._voice.GetVoices(f'Language={identifier}')
+            if tokens is None or tokens.Count < 1:
+                return False
+            self._voice.Voice = tokens.Item(0)
         except Exception:
             return False
         return True

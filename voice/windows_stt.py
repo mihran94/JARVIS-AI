@@ -1,7 +1,7 @@
-"""Windows offline speech recognition through System.Speech.
+"""Windows speech recognition through System.Speech with explicit microphone consent.
 
 This adapter needs Windows and the optional `pythonnet` package. It uses the
-Windows offline recogniser, so no audio leaves the machine. It has **not**
+Windows System.Speech recogniser; no cloud STT API is called. It has **not**
 been executed in the Linux environment where it was written and must be
 exercised on the owner's Windows machine before it is trusted.
 
@@ -51,20 +51,42 @@ class WindowsSpeechRecognizer:
         return CultureInfo(SPEECH_LANGUAGES.get(self._language, 'en-US'))
 
     def _build_engine(self, grammar_kind: str):
-        from System.Speech.Recognition import (DictationGrammar, GrammarBuilder,
-                                               SpeechRecognitionEngine)
-        culture = self._culture()
-        engine = SpeechRecognitionEngine(culture)
-        if grammar_kind == 'wake':
-            builder = GrammarBuilder(culture)
-            builder.Culture = culture
-            for variants in VARIANTS.values():
-                for variant in variants:
-                    builder.AppendWord(variant)
-            engine.LoadGrammar(GrammarBuilder.GrammarBuilderToGrammar(builder))
-        else:
-            engine.LoadGrammar(DictationGrammar())
-        return engine
+        from System.Speech.Recognition import (Choices, DictationGrammar, Grammar,
+                                               GrammarBuilder, SpeechRecognitionEngine)
+        # Windows requires a recognizer installed for the selected language.
+        engine = None
+        try:
+            culture = self._culture()
+            engine = SpeechRecognitionEngine(culture)
+            if grammar_kind == 'wake':
+                choices = Choices()
+                for phrase in VARIANTS.get(self._language, VARIANTS['en']):
+                    choices.Add(phrase)
+                builder = GrammarBuilder()
+                builder.Culture = culture
+                builder.Append(choices)
+                engine.LoadGrammar(Grammar(builder))
+            else:
+                engine.LoadGrammar(DictationGrammar())
+            # Loading the grammar does not select the microphone.
+            engine.SetInputToDefaultAudioDevice()
+            return engine
+        except Exception:
+            if engine is not None:
+                try:
+                    engine.Dispose()
+                except Exception:
+                    pass
+            raise VoiceUnavailable(
+                'Windows speech recognition needs a microphone and an '
+                'installed recognizer for the selected language.'
+            ) from None
+
+    def _recognize(self, timeout_seconds: float):
+        from System import TimeSpan
+        seconds = max(0.1, min(float(timeout_seconds), 30.0))
+        # Recognize(TimeSpan) is the supported .NET API overload.
+        return self._engine.Recognize(TimeSpan.FromSeconds(seconds))
 
     def recognize_once(self, timeout_seconds: float = 5.0) -> str:
         """Listen once and return the transcript.
@@ -74,7 +96,7 @@ class WindowsSpeechRecognizer:
         self._consent.require_listening()
         if self._engine is None:
             self._engine = self._build_engine('dictation')
-        result = self._engine.Recognize(None, int(timeout_seconds * 1000))
+        result = self._recognize(timeout_seconds)
         if result is None:
             return ''
         return str(result.Text)
@@ -84,7 +106,7 @@ class WindowsSpeechRecognizer:
         self._consent.require_listening()
         if self._engine is None:
             self._engine = self._build_engine('wake')
-        result = self._engine.Recognize(None, int(timeout_seconds * 1000))
+        result = self._recognize(timeout_seconds)
         if result is None:
             return '', ''
         transcript = str(result.Text)
@@ -95,7 +117,8 @@ class WindowsSpeechRecognizer:
 
     def stop(self) -> None:
         """Close the microphone and release the recogniser."""
-        self._consent.revoke()
+        # Releasing a one-shot recognizer must NOT cancel the user's consent.
+        # Only the explicit Stop/permission toggle in VoicePanel revokes it.
         engine, self._engine = self._engine, None
         if engine is not None:
             try:

@@ -146,3 +146,38 @@ def test_packaged_smoke_switch_is_explicit_and_not_forwarded_to_qt():
     args, smoke = launch_arguments(['JarvisAI.exe'])
     assert smoke is False
     assert args == ['JarvisAI.exe']
+
+
+def test_voice_drafts_text_without_network_or_automation(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
+    try:
+        assert window.nav.item(0).text() == 'JARVIS Chat'
+        assert window.pages.currentIndex() == window.page_indices['JARVIS Chat']
+        assert window.voice_panel.consent.granted is False
+        window.listen_to_user()
+        assert window.pages.currentIndex() == window.page_indices['Voice / Hey Jarvis']
+        assert window.store.messages(window.session) == []
+
+        window.voice_panel.allow.setChecked(True)
+        window.open_section('JARVIS Chat')
+        window.voice_panel.on_transcript('Can you help write a Python test?')
+        assert window.prompt.toPlainText() == 'Can you help write a Python test?'
+        assert window.store.messages(window.session) == []
+        assert window.worker is None
+        assert window.gateway is not None
+
+        window.voice_panel.on_wake_call('Hey Jarvis', 'explain this code')
+        assert 'explain this code' in window.prompt.toPlainText()
+        assert window.store.messages(window.session) == []
+
+        original = window.prompt.toPlainText()
+        window.voice_panel.stop_voice()
+        window.voice_panel.on_transcript('delete all files')
+        assert window.prompt.toPlainText() == original
+        window.stop()
+        window.on_voice_transcript('launch every program')
+        assert window.prompt.toPlainText() == original
+    finally:
+        window.close()
+        app.processEvents()
