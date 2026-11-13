@@ -78,13 +78,11 @@ jobs:
             adb shell am start -W -n com.jarvisblue.mobile.debug/com.jarvisblue.mobile.MainActivity
             sleep 9
             adb logcat -d -v time > android/android-launch-logcat.txt
-            PID="$(adb shell pidof com.jarvisblue.mobile.debug || true)"
-            if [ -z "$PID" ]; then
-              echo "FAIL: Android JARVIS process exited on cold launch"
-              grep -A 36 -B 5 -E 'FATAL EXCEPTION|Process: com.jarvisblue.mobile.debug|AndroidRuntime' android/android-launch-logcat.txt | tail -170 || true
-              exit 1
-            fi
-            echo "PASS: Android JARVIS launch process is alive (pid=$PID)"
+            grep -A 36 -B 5 -E 'FATAL EXCEPTION|Process: com.jarvisblue.mobile.debug|AndroidRuntime' android/android-launch-logcat.txt | tail -170 || true
+            adb shell pidof com.jarvisblue.mobile.debug
+            adb exec-out screencap -p > android/android-launch-screen.png
+            test -s android/android-launch-screen.png
+            echo "PASS: Android JARVIS process and screen survived cold launch"
       - name: Check build output and digest
         run: |
           test -s app/build/outputs/apk/debug/app-debug.apk
@@ -96,5 +94,6 @@ jobs:
             android/app/build/outputs/apk/debug/app-debug.apk
             android/app-debug.apk.sha256
             android/remote-manifest-audit.txt
+            android/android-launch-screen.png
           retention-days: 14
           if-no-files-found: error
