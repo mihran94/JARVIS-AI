@@ -14,7 +14,7 @@ class SourceImportTests(unittest.TestCase):
         self.assertEqual(len(planned), 2)
         for cmd in planned:
             self.assertEqual(cmd[:3], ["git", "subtree", "add"])
-            self.assertIn("--squash", cmd)
+            self.assertNotIn("--squash", cmd)
             self.assertNotIn("push", cmd)
             self.assertNotIn("delete", cmd)
 
