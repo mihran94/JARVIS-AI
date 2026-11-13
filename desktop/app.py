@@ -818,7 +818,7 @@ class Window(QMainWindow):
             self.cancel_dictation_button.setEnabled(False)
 
     def on_dictation_text(self, text):
-        if text and not self.policy.stopped:
+        if text and not self.policy.stopped and not getattr(self, 'close_after_dictation', False):
             existing = self.prompt.toPlainText()
             self.prompt.setPlainText((existing + ' ' + text).strip())
             self.statusBar().showMessage('Offline transcription inserted. Review before Send.', 10000)
