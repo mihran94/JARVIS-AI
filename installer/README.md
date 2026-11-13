@@ -47,3 +47,14 @@ The Chat page has a **Speak latest reply** button. Speech is opt-in, limited to 
 
 ## Manual offline dictation (experimental)
 The Chat page can record a **single 15-second** microphone session after an explicit Yes/No confirmation. It requires an extracted, user-supplied Vosk speech model directory with `am/` and `conf/` folders. Choose a language-appropriate model (English or Tamil, if available); recognition accuracy is model-dependent. Audio stays in memory and is not uploaded or saved to a file by this feature. Recognized text is inserted into the editable prompt only, never sent automatically. Recording cancellation is checked between 250 ms audio blocks; OS microphone permissions and compatible 16 kHz input hardware are required. No wake word, continuous listening, or voice-command execution is implemented. Validate on Windows 10 before release.
+
+### Dictation acceptance checks on Windows 10
+1. Select an extracted local Vosk model folder with `am/` and `conf/` subdirectories; blank or invalid folders must be rejected.
+2. Deny the explicit microphone confirmation: recording must not start.
+3. Allow one recording and speak in the model's language: text should appear only in the editable Chat prompt, not be sent automatically.
+4. Stay silent: the status should report that no speech was recognized; the prompt should remain unchanged.
+5. Press Cancel or Emergency Stop during recording: no transcription should be inserted after cancellation.
+6. Close the window during recording: the app should wait for the recording worker to exit. Check OS microphone privacy controls and input-device errors.
+7. Confirm no continuous listening, wake-word recognition, audio-file persistence, or automatic voice-command execution.
+
+These checks are a manual test plan, not a claim that Windows hardware testing has passed.
