@@ -29,3 +29,6 @@ The bundled app uses the existing `main.py` entrypoint; no new capabilities are 
 - The source ZIP update workflow is not automatically compatible with a frozen PyInstaller installation; use a fresh installer build for updates until a separately tested update path is available.
 - The package does not yet merge the PyQt6 Jarvis-Blue HUD into the PySide6 Windows UI. Voice and mobile functionality need end-to-end testing.
 - Do not publish the generated unsigned executable as a verified release until Windows acceptance tests pass.
+
+## Preflight validation
+The build script now runs `installer\\preflight.py` before packaging. This parses Python source files and checks PySide6, httpx, and keyring availability. It does not run the application or test Windows functionality. You can also run `.venv\\Scripts\\python.exe installer\\preflight.py` manually after setup.
