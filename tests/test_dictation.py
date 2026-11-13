@@ -2,10 +2,17 @@
 import tempfile
 import unittest
 from pathlib import Path
-from desktop.dictation import validate_model_path
+from desktop.dictation import validate_model_path, normalize_transcript
 
 
 class DictationTests(unittest.TestCase):
+    def test_transcript_normalization(self):
+        self.assertEqual(normalize_transcript(['  hello ', '', ' world  ']), 'hello world')
+        self.assertEqual(normalize_transcript([' ']), '')
+        self.assertEqual(normalize_transcript(['abcdefgh'], max_chars=4), 'abcd')
+        with self.assertRaises(ValueError):
+            normalize_transcript(['hello'], max_chars=0)
+
     def test_reject_blank_model_path(self):
         for path in ('', '   ', None):
             with self.subTest(path=path):
