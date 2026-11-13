@@ -81,4 +81,17 @@ jobs:
           python -m pip install -r requirements-dev.txt
           python -m pytest -q tests
       - name: Push verified integration commits only
-        run: git push origin HEAD:integration/main-preserving-20261113
+        run: |
+          # The integrity-repair workflow may push while imports are testing.
+          # Rebase the import commits on the latest remote without force-pushing.
+          git fetch origin integration/main-preserving-20261113
+          git rebase origin/integration/main-preserving-20261113
+          # Rebase may change tracked files; refresh and validate the manifest.
+          python scripts/source_manifest.py
+          python scripts/source_manifest.py --check
+          if ! git diff --quiet -- docs/SOURCE_INTEGRITY.sha256; then
+            git add -- docs/SOURCE_INTEGRITY.sha256
+            git commit -m "chore(integrity): refresh source hashes after rebase"
+          fi
+          python -m pytest -q tests
+          git push origin HEAD:integration/main-preserving-20261113
