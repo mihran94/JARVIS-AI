@@ -948,7 +948,7 @@ class Window(QMainWindow):
                 self.usage_table.setItem(index, column, QTableWidgetItem(str(value)))
 
     def closeEvent(self, event):
-        if not self.close_when_done and not getattr(self, 'close_after_speech', False) and self.editor.document().isModified():
+        if not self.close_when_done and self.editor.document().isModified():
             if not self.confirm(Action('discard_unsaved_editor_changes', self.filename.text())):
                 event.ignore()
                 return
