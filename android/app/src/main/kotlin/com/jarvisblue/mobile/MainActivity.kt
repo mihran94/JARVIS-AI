@@ -4,7 +4,6 @@ import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.fragment.app.FragmentActivity
@@ -22,17 +21,20 @@ import javax.inject.Inject
 class MainActivity : FragmentActivity() {
     @Inject lateinit var appLock: AppLockController
 
+    // App-lock expiry updates the screen instead of recursively recreating the Activity.
+    private var screenLocked by mutableStateOf(false)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        screenLocked = appLock.appLockEnabled
         setContent {
             val scope = rememberCoroutineScope()
-            var locked by remember { mutableStateOf(appLock.appLockEnabled) }
             JarvisBlueTheme {
-                if (locked) {
+                if (screenLocked) {
                     LockScreen(
                         onUnlock = {
                             appLock.unlock()
-                            locked = false
+                            screenLocked = false
                         },
                         onUseBiometrics = {
                             val gate = BiometricGate(this@MainActivity)
@@ -44,7 +46,7 @@ class MainActivity : FragmentActivity() {
                                 )
                                 if (result is BiometricGate.BiometricResult.Success) {
                                     appLock.unlock()
-                                    locked = false
+                                    screenLocked = false
                                 }
                             }
                         },
@@ -64,7 +66,9 @@ class MainActivity : FragmentActivity() {
     override fun onResume() {
         super.onResume()
         if (appLock.appLockEnabled && !appLock.refreshSession()) {
-            recreate()
+            screenLocked = true
+        } else if (!appLock.appLockEnabled) {
+            screenLocked = false
         }
     }
 }
