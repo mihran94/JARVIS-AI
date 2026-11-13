@@ -52,7 +52,8 @@ class BridgePanel(QWidget):
         self.policy, self.store = policy, store
         self.confirm, self.notify = confirm, notify
         self.gateway = Gateway(policy, store)
-        self.pairing = pairing if pairing is not None else PairingStore(VaultSecrets(vault))
+        self.pairing = pairing if pairing is not None else PairingStore(
+            VaultSecrets(vault), metadata_store=store)
         self.bridge = bridge if bridge is not None else BridgeServer(
             self.pairing, peer_id=platform.node() or 'windows',
             agent_version='0.3.0', allowed_hosts=('127.0.0.1', '::1'),
