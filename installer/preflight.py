@@ -34,7 +34,7 @@ def main():
             ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
         except (SyntaxError, UnicodeError, OSError) as exc:
             errors.append(f"{path.relative_to(ROOT)}: {exc}")
-    for module in ("PySide6", "httpx", "keyring", "psutil", "pyttsx3"):
+    for module in ("PySide6", "httpx", "keyring", "psutil", "pyttsx3", "vosk", "sounddevice"):
         if importlib.util.find_spec(module) is None:
             errors.append(f"Missing installed Python module: {module}")
 
