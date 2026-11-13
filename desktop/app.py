@@ -274,6 +274,8 @@ class Window(QMainWindow):
         self.send_button = self.button(layout, 'Send to selected provider', self.send)
         self.speech_button = self.button(layout, 'Speak latest reply (local / manual)', self.speak_latest_reply)
         self.speech_button.setToolTip('Speaks only when clicked. No microphone access.')
+        self.stop_speech_button = self.button(layout, 'Request speech stop', self.request_speech_stop)
+        self.stop_speech_button.setEnabled(False)
         return page
 
     def automation_page(self):
@@ -798,7 +800,15 @@ class Window(QMainWindow):
         self.speech_worker.completed.connect(lambda message: self.statusBar().showMessage(message, 8000))
         self.speech_worker.finished.connect(self.on_speech_finished)
         self.speech_button.setEnabled(False)
+        self.stop_speech_button.setEnabled(True)
         self.speech_worker.start()
+
+    def request_speech_stop(self):
+        """Request cancellation; the local speech engine may not stop immediately."""
+        if getattr(self, 'speech_worker', None) is not None:
+            self.speech_worker.requestInterruption()
+            self.stop_speech_button.setEnabled(False)
+            self.statusBar().showMessage('Speech stop requested; waiting for playback engine.', 8000)
 
     def on_speech_finished(self):
         worker = self.speech_worker
@@ -806,6 +816,7 @@ class Window(QMainWindow):
             worker.deleteLater()
             self.speech_worker = None
         self.speech_button.setEnabled(not self.policy.stopped)
+        self.stop_speech_button.setEnabled(False)
         if getattr(self, 'close_after_speech', False):
             self.close_after_speech = False
             self.close()
@@ -877,7 +888,7 @@ class Window(QMainWindow):
     def stop(self):
         self.set_ai_visual_state('stopped')
         if getattr(self, 'speech_worker', None) is not None:
-            self.speech_worker.requestInterruption()
+            self.request_speech_stop()
         self.policy.stop()
         self.queue.cancel_pending()
         self.workflows.cancel_pending()
