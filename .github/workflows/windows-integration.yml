@@ -63,6 +63,17 @@ jobs:
           # enables voice, so PyInstaller cannot discover them automatically.
           python -m PyInstaller --noconfirm --clean --windowed --onedir --name JarvisAI --hidden-import keyring.backends.Windows --hidden-import clr --hidden-import win32com.client --hidden-import pythoncom --collect-all pythonnet --add-binary "build/System.Speech.dll;." main.py
           if (!(Test-Path 'dist/JarvisAI/JarvisAI.exe')) { throw 'Desktop EXE not generated' }
+      - name: Include Microsoft System.Speech MIT attribution
+        shell: pwsh
+        run: |
+          $license = Join-Path (Get-Location) 'licenses/System.Speech.MIT.txt'
+          $destination = Join-Path (Get-Location) 'dist/JarvisAI/System.Speech.LICENSE.txt'
+          if (!(Test-Path $license)) { throw 'Microsoft System.Speech license was not found' }
+          if (!(Test-Path 'dist/JarvisAI/_internal/System.Speech.dll')) {
+            throw 'Microsoft System.Speech assembly was not bundled'
+          }
+          Copy-Item -LiteralPath $license -Destination $destination
+          if (!(Test-Path $destination)) { throw 'Speech attribution missing from installer staging' }
       - name: Smoke-test the packaged Windows executable
         shell: pwsh
         run: |
