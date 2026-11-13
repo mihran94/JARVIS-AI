@@ -17,6 +17,7 @@ from desktop.blue_theme import FUTURISTIC_BLUE
 from desktop.blue_orb import BlueOrb
 from desktop.speech import SpeechWorker
 from desktop.dictation import DictationWorker, validate_model_path
+from desktop.voice_commands import parse_voice_command
 from desktop.system_metrics import CpuSampler, snapshot, format_snapshot
 from desktop.network_metrics import NetworkSampler, format_network
 from core.store import Store
@@ -279,6 +280,7 @@ class Window(QMainWindow):
         self.dictate_button = self.button(layout, 'Record 15 seconds (offline / manual)', self.start_dictation)
         self.cancel_dictation_button = self.button(layout, 'Cancel recording', self.cancel_dictation)
         self.cancel_dictation_button.setEnabled(False)
+        self.voice_command_button = self.button(layout, 'Review spoken app command (approval required)', self.review_voice_command)
         self.send_button = self.button(layout, 'Send to selected provider', self.send)
         self.speech_button = self.button(layout, 'Speak latest reply (local / manual)', self.speak_latest_reply)
         self.speech_button.setToolTip('Speaks only when clicked. No microphone access.')
@@ -802,6 +804,18 @@ class Window(QMainWindow):
             return
         self.dictation_model_path.setText(validated)
         self.statusBar().showMessage('Offline speech model folder selected.', 6000)
+
+    def review_voice_command(self):
+        """Only exact allowlisted commands; always show one-use confirmation."""
+        if self.policy.stopped:
+            self.statusBar().showMessage('Emergency stop is active.', 8000)
+            return
+        target = parse_voice_command(self.prompt.toPlainText())
+        if target is None:
+            self.statusBar().showMessage('No allowlisted app command found. Try: open notepad.', 10000)
+            return
+        self.notify(lambda: self.gateway.run(Action('launch_app', target), self.confirm,
+                                              lambda: launch_app(target)))
 
     def start_dictation(self):
         if self.policy.stopped or getattr(self, 'dictation_worker', None) is not None:
