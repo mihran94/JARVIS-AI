@@ -8,6 +8,13 @@ from pathlib import Path
 from PySide6.QtCore import QThread, Signal
 
 
+def normalize_transcript(parts, max_chars=4000):
+    """Normalize model output without saving or transmitting it."""
+    if max_chars < 1:
+        raise ValueError('max_chars must be positive')
+    return ' '.join(str(part).strip() for part in parts if str(part).strip())[:max_chars]
+
+
 def validate_model_path(path):
     if not isinstance(path, (str, Path)) or not str(path).strip():
         raise ValueError('Choose a local Vosk model folder first.')
@@ -32,6 +39,7 @@ class DictationWorker(QThread):
             model = Model(self.model_path)
             recognizer = KaldiRecognizer(model, 16000)
             pieces = []
+            overflow_seen = False
             # Single, bounded push-to-talk session: at most 15 seconds.
             with sd.RawInputStream(samplerate=16000, blocksize=4000, dtype="int16",
                                    channels=1) as microphone:
@@ -40,6 +48,7 @@ class DictationWorker(QThread):
                         self.completed.emit("Dictation cancelled")
                         return
                     audio, overflow = microphone.read(4000)
+                    overflow_seen = overflow_seen or bool(overflow)
                     if recognizer.AcceptWaveform(bytes(audio)):
                         value = json.loads(recognizer.Result()).get("text", "").strip()
                         if value:
@@ -48,8 +57,12 @@ class DictationWorker(QThread):
                 if final:
                     pieces.append(final)
             if not self.isInterruptionRequested():
-                self.recognized.emit(" ".join(pieces).strip())
-                self.completed.emit("Dictation finished (not sent)")
+                transcript = normalize_transcript(pieces)
+                if transcript:
+                    self.recognized.emit(transcript)
+                    self.completed.emit("Dictation finished (not sent)" + (" · audio overflow detected" if overflow_seen else ""))
+                else:
+                    self.completed.emit("No speech recognized; nothing inserted" + (" · audio overflow detected" if overflow_seen else ""))
             else:
                 self.completed.emit("Dictation cancelled")
         except Exception as exc:
