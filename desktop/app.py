@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QComboBox, QMessageBox, QFormLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QCheckBox,
 )
+from desktop.blue_theme import FUTURISTIC_BLUE
 from core.store import Store
 from desktop.update_dialog import open_updates
 from security.policy import Policy, Action, Stopped
@@ -94,7 +95,7 @@ class ChatWorker(QThread):
 class Window(QMainWindow):
     def __init__(self, data_root):
         super().__init__()
-        self.setWindowTitle('JARVIS AI • 0.3.0')
+        self.setWindowTitle('JARVIS BLUE • Windows Command Center')
         self.resize(1180, 790)
         self.root = Path(data_root)
         self.store = Store(self.root / 'history.sqlite3')
@@ -119,7 +120,7 @@ class Window(QMainWindow):
         outer = QVBoxLayout(central)
         outer.setContentsMargins(24, 20, 24, 20)
         header = QHBoxLayout()
-        brand = QLabel('J A R V I S   /   AI')
+        brand = QLabel('J A R V I S   /   B L U E')
         brand.setObjectName('title')
         header.addWidget(brand)
         header.addStretch()
@@ -134,7 +135,7 @@ class Window(QMainWindow):
         stop.clicked.connect(self.stop)
         header.addWidget(stop)
         outer.addLayout(header)
-        subtitle = QLabel('WINDOWS ASSISTANT    /    FOUNDATION RELEASE 0.3    /    OWNER CONTROLLED')
+        subtitle = QLabel('FUTURISTIC COMMAND CENTER    /    WINDOWS ASSISTANT    /    OWNER CONTROLLED')
         subtitle.setObjectName('subtitle')
         outer.addWidget(subtitle)
         body = QHBoxLayout()
@@ -888,7 +889,7 @@ class Window(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
-    app.setStyleSheet(STYLE)
+    app.setStyleSheet(FUTURISTIC_BLUE)
     base = Path(os.environ.get('LOCALAPPDATA', str(Path.home() / '.local' / 'share'))) / 'JarvisAI'
     base.mkdir(parents=True, exist_ok=True)
     lock = QLockFile(str(base / 'application.lock'))
