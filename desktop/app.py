@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 from desktop.blue_theme import FUTURISTIC_BLUE
 from desktop.blue_orb import BlueOrb
+from desktop.system_metrics import snapshot, format_snapshot
 from core.store import Store
 from desktop.update_dialog import open_updates
 from security.policy import Policy, Action, Stopped
@@ -165,6 +166,11 @@ class Window(QMainWindow):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh_history)
         self.timer.start(1500)
+        self.system_timer = QTimer(self)
+        self.system_timer.setInterval(5000)
+        self.system_timer.timeout.connect(self.refresh_system_metrics)
+        self.system_timer.start()
+        self.refresh_system_metrics()
         self.refresh_history()
         self.render_chat()
 
@@ -199,6 +205,10 @@ class Window(QMainWindow):
         self.orb_status = QLabel('AI STATUS  /  IDLE')
         self.orb_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.orb_status)
+        self.system_metrics_label = QLabel('SYSTEM  /  Loading local metrics…')
+        self.system_metrics_label.setWordWrap(True)
+        self.system_metrics_label.setObjectName('systemMetrics')
+        layout.addWidget(self.system_metrics_label)
         for title, text in [
             ('01  /  INTELLIGENCE', 'Stream chat through OpenAI, MiniMax or Gemini. Tamil, English and French text can be entered.'),
             ('02  /  CONTROL', 'Review each app launch and workspace save. Emergency stop blocks new work.'),
@@ -211,6 +221,14 @@ class Window(QMainWindow):
             layout.addWidget(box)
         layout.addStretch()
         return page
+
+    def refresh_system_metrics(self):
+        """Refresh only local, read-only hardware measurements."""
+        if hasattr(self, 'system_metrics_label'):
+            try:
+                self.system_metrics_label.setText(format_snapshot(snapshot(self.root)))
+            except (OSError, ValueError):
+                self.system_metrics_label.setText('System metrics unavailable.')
 
     def set_ai_visual_state(self, state):
         """Display actual chat worker activity, not microphone or speech state."""
