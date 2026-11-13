@@ -16,6 +16,8 @@ SOURCES = (
 
 
 def commands(source=None):
+    if source is not None and source not in {item[0] for item in SOURCES}:
+        raise ValueError("Unknown upstream source")
     selected = [item for item in SOURCES if source is None or item[0] == source]
     return [
         ["git", "subtree", "add", f"--prefix={prefix}", url, ref, "--squash"]
@@ -36,6 +38,11 @@ def verify_checkout(source=None):
     )
     if changes.strip():
         raise RuntimeError("Working tree must be clean")
+    remotes = subprocess.check_output(
+        ["git", "remote", "-v"], cwd=ROOT, text=True
+    )
+    if "mihran94/JARVIS-AI" not in remotes:
+        raise RuntimeError("This checkout does not identify the expected JARVIS-AI origin")
     for prefix, _, _ in SOURCES:
         if (source is None or prefix == source) and (ROOT / prefix).exists():
             raise RuntimeError(f"Import destination already exists: {prefix}")
