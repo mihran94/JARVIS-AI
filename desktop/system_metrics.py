@@ -100,9 +100,11 @@ def format_snapshot(data):
         return f"{used:.1f} / {total:.1f} GiB"
 
     cores = data.get("cpu_cores")
+    usage = data.get("cpu_usage_percent")
+    usage_text = f"{usage:.1f}%" if usage is not None else "Collecting / unavailable"
     return (
         f"CPU  /  {cores if cores is not None else 'Unavailable'} logical processors"
-        "  ·  usage not measured\n"
+        f"  ·  {usage_text} usage\n"
         f"RAM  /  {ratio(data.get('ram_used_gib'), data.get('ram_total_gib'))}\n"
         f"DISK  /  {ratio(data.get('disk_used_gib'), data.get('disk_total_gib'))}\n"
         f"NETWORK  /  {data.get('network_status', 'Not measured')}"
