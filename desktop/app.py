@@ -836,6 +836,7 @@ class Window(QMainWindow):
         worker.finished.connect(self.on_dictation_finished)
         self.dictate_button.setEnabled(False)
         self.cancel_dictation_button.setEnabled(True)
+        self.statusBar().showMessage('Offline microphone starting; maximum 15 seconds. Cancel available.')
         worker.start()
 
     def cancel_dictation(self):
@@ -845,7 +846,9 @@ class Window(QMainWindow):
             self.cancel_dictation_button.setEnabled(False)
 
     def on_dictation_text(self, text):
-        if text and not self.policy.stopped and not getattr(self, 'close_after_dictation', False):
+        worker = getattr(self, 'dictation_worker', None)
+        if (text and worker is not None and not worker.isInterruptionRequested()
+                and not self.policy.stopped and not getattr(self, 'close_after_dictation', False)):
             existing = self.prompt.toPlainText()
             self.prompt.setPlainText((existing + ' ' + text).strip())
             self.statusBar().showMessage('Offline transcription inserted. Review before Send.', 10000)
