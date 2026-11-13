@@ -18,6 +18,10 @@ from desktop.bridge_panel import BridgePanel
 from desktop.update_dialog import open_updates
 from desktop.voice_panel import VoicePanel
 from desktop.tray import BackgroundControls
+from desktop.blue_theme import FUTURISTIC_BLUE
+from desktop.blue_orb import BlueOrb
+from desktop.system_metrics import CpuSampler, snapshot, format_snapshot
+from desktop.network_metrics import NetworkSampler, format_network
 from security.policy import Policy, Action, Stopped
 from security.vault import Vault
 from providers.chat import ProviderError, TransientProviderError
@@ -49,6 +53,9 @@ QListWidget::item { padding:16px 8px; margin:3px 0; }
 QListWidget::item:selected { background:#17344c; color:#65d9ff; border-radius:6px; }
 QHeaderView::section { background:#183047; padding:9px; border:0; }
 """
+# One visual theme for the unified desktop; the existing owner-controlled
+# voice, mobile bridge and provider routing remain the same application.
+STYLE = FUTURISTIC_BLUE
 
 
 class ChatWorker(QThread):
@@ -172,6 +179,13 @@ class Window(QMainWindow):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh_history)
         self.timer.start(1500)
+        self.cpu_sampler = CpuSampler()
+        self.network_sampler = NetworkSampler()
+        self.system_timer = QTimer(self)
+        self.system_timer.setInterval(5000)
+        self.system_timer.timeout.connect(self.refresh_system_metrics)
+        self.system_timer.start()
+        self.refresh_system_metrics()
         self.refresh_history()
         self.render_chat()
         self.background_controls = BackgroundControls(self)
@@ -201,7 +215,16 @@ class Window(QMainWindow):
 
     def dashboard(self):
         page, layout = self.page('Your command center',
-            'A practical foundation for a Windows AI assistant. Add your own provider key to start chatting.')
+            'Windows AI, Mobile Bridge and voice share one supervised application.')
+        self.orb = BlueOrb(page)
+        layout.addWidget(self.orb)
+        self.orb_status = QLabel('AI STATUS  /  IDLE')
+        self.orb_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.orb_status)
+        self.system_metrics_label = QLabel('SYSTEM  /  Collecting local metrics...')
+        self.system_metrics_label.setWordWrap(True)
+        self.system_metrics_label.setObjectName('systemMetrics')
+        layout.addWidget(self.system_metrics_label)
         for title, text in [
             ('01  /  INTELLIGENCE', 'Stream chat through OpenAI, MiniMax or Gemini. Tamil, English and French text can be entered.'),
             ('02  /  CONTROL', 'Review each app launch and workspace save. Emergency stop blocks new work.'),
@@ -214,6 +237,22 @@ class Window(QMainWindow):
             layout.addWidget(box)
         layout.addStretch()
         return page
+
+    def refresh_system_metrics(self):
+        """Read-only hardware counters; never opens a network connection."""
+        if hasattr(self, 'system_metrics_label'):
+            try:
+                data = snapshot(self.root, self.cpu_sampler)
+                data['network_status'] = format_network(self.network_sampler.sample())
+                self.system_metrics_label.setText(format_snapshot(data))
+            except (OSError, ValueError):
+                self.system_metrics_label.setText('System metrics unavailable.')
+
+    def set_ai_visual_state(self, state):
+        """Show actual chat worker activity, not microphone or AI permissions."""
+        if hasattr(self, 'orb'):
+            self.orb.set_state(state)
+            self.orb_status.setText('AI STATUS  /  ' + state.upper())
 
     def chat_page(self):
         page, layout = self.page('Chat',
@@ -585,6 +624,7 @@ class Window(QMainWindow):
         self.chat_provider.setEnabled(False)
         self.backup_provider.setEnabled(False)
         self.backup_consent.setEnabled(False)
+        self.set_ai_visual_state('thinking')
         self.worker.start()
 
     def permissions_page(self):
@@ -832,6 +872,7 @@ class Window(QMainWindow):
     def on_finished(self):
         self.worker.deleteLater()
         self.worker = None
+        self.set_ai_visual_state('stopped' if self.policy.stopped else 'idle')
         for button in (self.send_button, self.new_chat_button, self.clear_button,
                        self.archive_button, self.probe_button, self.generate_button, self.repair_button):
             button.setEnabled(not self.policy.stopped)
@@ -843,6 +884,7 @@ class Window(QMainWindow):
 
     def stop(self):
         self.policy.stop()
+        self.set_ai_visual_state('stopped')
         self.queue.cancel_pending()
         self.workflows.cancel_pending()
         if self.worker:
@@ -857,6 +899,7 @@ class Window(QMainWindow):
 
     def resume(self):
         self.policy.resume()
+        self.set_ai_visual_state('idle' if self.worker is None else 'thinking')
         self.resume_button.setEnabled(False)
         self.state.setText('● READY · MANUAL APPROVAL')
         if self.worker is None:
