@@ -83,6 +83,13 @@ Windows credential vault (`security.vault.Vault`), never in the repository.
 Revoking a key id removes the secret immediately, so the next request from that
 device is rejected. Revocation is not a soft flag that a request can race.
 
+The Windows desktop now saves only device IDs, labels, last-seen timestamps and
+revocation flags in its existing local SQLite configuration. Pairing secrets
+remain exclusively in the Windows Credential Manager. A saved metadata record
+without its vault key cannot authenticate. Restarting the desktop preserves
+pairing and revocation, but does not enable the listener automatically. Device
+metadata in SQLite is private user data and is not encrypted by the bridge.
+
 ## Endpoints
 
 | Method | Path | Answer |
