@@ -48,11 +48,21 @@ jobs:
           SOURCE: ${{ inputs.source }}
         run: |
           if [ -n "$SOURCE" ]; then
-            python scripts/import_jarvis_sources.py --source "$SOURCE"
-            python scripts/import_jarvis_sources.py --apply --source "$SOURCE"
+            if [ -d "$SOURCE" ]; then
+              echo "Source already imported: $SOURCE"
+            else
+              python scripts/import_jarvis_sources.py --source "$SOURCE"
+              python scripts/import_jarvis_sources.py --apply --source "$SOURCE"
+            fi
           else
-            python scripts/import_jarvis_sources.py
-            python scripts/import_jarvis_sources.py --apply
+            for item in legacy/jarvis-blue android; do
+              if [ -d "$item" ]; then
+                echo "Source already imported: $item"
+              else
+                python scripts/import_jarvis_sources.py --source "$item"
+                python scripts/import_jarvis_sources.py --apply --source "$item"
+              fi
+            done
           fi
       - name: Verify imported source directories and histories
         env:
