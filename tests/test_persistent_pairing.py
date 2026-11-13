@@ -128,3 +128,36 @@ def test_repairing_a_revoked_device_creates_new_identity(tmp_path):
     reloaded = PairingStore(VaultSecrets(vault), metadata_store=store)
     assert not reloaded.device(KEY_ID).revoked
     assert reloaded.secret_for(KEY_ID) == second.secret
+
+def test_desktop_bridge_panel_reuses_pairing_after_reopen(tmp_path):
+    import os
+    os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+    from PySide6.QtWidgets import QApplication
+    from desktop.bridge_panel import BridgePanel
+    from security.policy import Policy
+
+    app = QApplication.instance() or QApplication([])
+    store = Store(tmp_path / 'history.sqlite3')
+    vault = FakeVault()
+    notify = lambda callback: callback()
+    first = BridgePanel(Policy(), store, vault, lambda action: True, notify)
+    first.pair_device()
+    original_secret = first.pairing.secret_for(KEY_ID)
+    assert len(original_secret) >= 32
+    first.close()
+
+    restarted = BridgePanel(Policy(), Store(store.path), vault,
+                            lambda action: True, notify)
+    assert restarted.devices.rowCount() == 1
+    assert restarted.devices.item(0, 2).text() == 'active'
+    assert restarted.secret_display.toPlainText() == ''
+    assert restarted.pairing.secret_for(KEY_ID) == original_secret
+    restarted.devices.setCurrentCell(0, 0)
+    restarted.revoke_device()
+    restarted.close()
+
+    final = BridgePanel(Policy(), Store(store.path), vault,
+                        lambda action: True, notify)
+    assert final.devices.item(0, 2).text() == 'revoked'
+    assert final.pairing.secret_for(KEY_ID) is None
+    final.close()
