@@ -256,10 +256,10 @@ def test_listen_once_can_be_reused_without_renewing_owner_consent(panel, app):
     panel.allow.setChecked(True)
     speech = []
     panel.utterance_detected.connect(speech.append)
-    panel._recognizer_factory = lambda *a, **kw: FakeRecognizer('hello JARVIS')
+    panel._recognizer_factory = lambda *a, **kw: FakeRecognizer('please review this Python module')
     panel.listen('once')
     panel.worker.wait(4000)
     app.processEvents()
-    assert speech == ['hello JARVIS']
+    assert speech == ['please review this Python module']
     assert panel.consent.granted is True
     assert panel.consent.listening is True
