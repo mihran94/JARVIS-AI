@@ -1,7 +1,7 @@
 name: Android monorepo integration APK
 on:
   push:
-    branches: [integration/main-preserving-20261113]
+    branches: [main, integration/single-jarvis-20261113]
     paths:
       - 'android/**'
       - '.github/workflows/android-integration.yml'
