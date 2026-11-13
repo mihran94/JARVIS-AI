@@ -36,7 +36,13 @@ class DictationWorker(QThread):
         try:
             import sounddevice as sd
             from vosk import Model, KaldiRecognizer
+            if self.isInterruptionRequested():
+                self.completed.emit('Dictation cancelled before model load')
+                return
             model = Model(self.model_path)
+            if self.isInterruptionRequested():
+                self.completed.emit('Dictation cancelled during model load')
+                return
             recognizer = KaldiRecognizer(model, 16000)
             pieces = []
             overflow_seen = False
