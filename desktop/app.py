@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 from desktop.blue_theme import FUTURISTIC_BLUE
 from desktop.blue_orb import BlueOrb
 from desktop.speech import SpeechWorker
+from desktop.dictation import DictationWorker
 from desktop.system_metrics import CpuSampler, snapshot, format_snapshot
 from desktop.network_metrics import NetworkSampler, format_network
 from core.store import Store
@@ -271,6 +272,12 @@ class Window(QMainWindow):
         self.prompt.setPlaceholderText('Ask JARVIS… தமிழ் / English / Français')
         self.prompt.setMaximumHeight(120)
         layout.addWidget(self.prompt)
+        self.dictation_model_path = QLineEdit()
+        self.dictation_model_path.setPlaceholderText('Local Vosk model folder (Tamil / English)')
+        layout.addWidget(self.dictation_model_path)
+        self.dictate_button = self.button(layout, 'Record 15 seconds (offline / manual)', self.start_dictation)
+        self.cancel_dictation_button = self.button(layout, 'Cancel recording', self.cancel_dictation)
+        self.cancel_dictation_button.setEnabled(False)
         self.send_button = self.button(layout, 'Send to selected provider', self.send)
         self.speech_button = self.button(layout, 'Speak latest reply (local / manual)', self.speak_latest_reply)
         self.speech_button.setToolTip('Speaks only when clicked. No microphone access.')
@@ -783,6 +790,50 @@ class Window(QMainWindow):
             self.backup_consent.setChecked(False)
         self.notify(operation)
 
+    def start_dictation(self):
+        if self.policy.stopped or getattr(self, 'dictation_worker', None) is not None:
+            return
+        if QMessageBox.question(self, 'Allow microphone for 15 seconds?',
+                'Record audio locally to transcribe into the prompt? Nothing is sent automatically.',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                ) != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            worker = DictationWorker(self.dictation_model_path.text(), self)
+        except (ValueError, OSError) as exc:
+            self.statusBar().showMessage(str(exc), 10000)
+            return
+        self.dictation_worker = worker
+        worker.recognized.connect(self.on_dictation_text)
+        worker.completed.connect(lambda status: self.statusBar().showMessage(status, 10000))
+        worker.finished.connect(self.on_dictation_finished)
+        self.dictate_button.setEnabled(False)
+        self.cancel_dictation_button.setEnabled(True)
+        worker.start()
+
+    def cancel_dictation(self):
+        worker = getattr(self, 'dictation_worker', None)
+        if worker is not None:
+            worker.requestInterruption()
+            self.cancel_dictation_button.setEnabled(False)
+
+    def on_dictation_text(self, text):
+        if text and not self.policy.stopped:
+            existing = self.prompt.toPlainText()
+            self.prompt.setPlainText((existing + ' ' + text).strip())
+            self.statusBar().showMessage('Offline transcription inserted. Review before Send.', 10000)
+
+    def on_dictation_finished(self):
+        worker = self.dictation_worker
+        if worker is not None:
+            worker.deleteLater()
+            self.dictation_worker = None
+        self.dictate_button.setEnabled(not self.policy.stopped)
+        self.cancel_dictation_button.setEnabled(False)
+        if getattr(self, 'close_after_dictation', False):
+            self.close_after_dictation = False
+            self.close()
+
     def speak_latest_reply(self):
         if getattr(self, 'speech_worker', None) is not None:
             self.statusBar().showMessage('Speech already playing.', 5000)
@@ -886,6 +937,7 @@ class Window(QMainWindow):
             self.close()
 
     def stop(self):
+        self.cancel_dictation()
         self.set_ai_visual_state('stopped')
         if getattr(self, 'speech_worker', None) is not None:
             self.request_speech_stop()
@@ -904,6 +956,8 @@ class Window(QMainWindow):
 
     def resume(self):
         self.policy.resume()
+        if getattr(self, 'dictation_worker', None) is None:
+            self.dictate_button.setEnabled(True)
         self.set_ai_visual_state('idle')
         self.resume_button.setEnabled(False)
         self.state.setText('● READY · MANUAL APPROVAL')
@@ -963,6 +1017,11 @@ class Window(QMainWindow):
             if not self.confirm(Action('discard_unsaved_editor_changes', self.filename.text())):
                 event.ignore()
                 return
+        if getattr(self, 'dictation_worker', None) is not None:
+            self.close_after_dictation = True
+            self.cancel_dictation()
+            event.ignore()
+            return
         if getattr(self, 'speech_worker', None) is not None:
             self.close_after_speech = True
             self.speech_worker.requestInterruption()
