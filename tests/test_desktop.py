@@ -11,7 +11,8 @@ def test_desktop_navigation_stop_and_editor(tmp_path):
     window.show()
     app.processEvents()
     assert window.pages.count() == 12
-    for index in range(11):
+    assert window.nav.count() == 6
+    for index in range(window.nav.count()):
         window.nav.setCurrentRow(index)
         app.processEvents()
         assert window.pages.currentIndex() == index

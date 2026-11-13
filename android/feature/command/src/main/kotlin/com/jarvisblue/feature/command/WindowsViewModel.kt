@@ -68,29 +68,42 @@ class WindowsViewModel @Inject constructor(
         val host = _state.value.hostInput.trim()
         val port = _state.value.portInput.toIntOrNull() ?: 8765
         val secret = _state.value.secretInput.trim()
-        if (host.isEmpty() || secret.isEmpty()) {
-            _state.value = _state.value.copy(error = "A host and the pairing secret are required")
+        if (host.isEmpty() || secret.length < 32) {
+            _state.value = _state.value.copy(
+                error = "Enter the Windows address and its 32+ character pairing secret")
+            return
+        }
+        if (runCatching { DesktopEndpoint.baseUrl(host, port) }.isFailure) {
+            _state.value = _state.value.copy(
+                error = "Use the HTTPS address and port shown in Windows JARVIS")
             return
         }
         viewModelScope.launch {
-            secretVault.put(SecretVault.ALIAS_WINDOWS_PEER, secret)
-            val peer = WindowsPeer(
-                peerId = "windows-${host.lowercase()}",
-                displayName = "JARVIS BLUE desktop",
-                host = host,
-                port = port,
-                pairedAtEpochMs = System.currentTimeMillis(),
-                lastSeenEpochMs = 0L,
-                sharedSecretAlias = SecretVault.ALIAS_WINDOWS_PEER,
-                trusted = true,
-            )
-            peerRepository.save(peer)
-            _state.value = _state.value.copy(
-                secretInput = "",
-                statusLine = "Paired with $host:$port",
-                error = null,
-            )
-            refresh()
+            try {
+                secretVault.put(SecretVault.ALIAS_WINDOWS_PEER, secret)
+                val peer = WindowsPeer(
+                    peerId = "windows-${host.lowercase()}",
+                    displayName = "Windows JARVIS",
+                    host = host,
+                    port = port,
+                    pairedAtEpochMs = System.currentTimeMillis(),
+                    lastSeenEpochMs = 0L,
+                    sharedSecretAlias = SecretVault.ALIAS_WINDOWS_PEER,
+                    trusted = true,
+                )
+                peerRepository.save(peer)
+                _state.value = _state.value.copy(
+                    peer = peer,
+                    secretInput = "",
+                    statusLine = "PC details saved; checking secure connection...",
+                    error = null,
+                )
+                refresh()
+            } catch (_: Exception) {
+                _state.value = _state.value.copy(
+                    secretInput = "",
+                    error = "Could not save the pairing details on this phone.")
+            }
         }
     }
 
@@ -115,6 +128,14 @@ class WindowsViewModel @Inject constructor(
         viewModelScope.launch {
             _state.value = _state.value.copy(isBusy = true)
             val base = baseUrl(peer)
+            if (base == null) {
+                _state.value = _state.value.copy(
+                    isBusy = false,
+                    error = "Invalid Windows address. HTTPS is required.",
+                    statusLine = "Windows link unavailable",
+                )
+                return@launch
+            }
             val statusResult = bridgeClient.status(base)
             val jobsResult = bridgeClient.jobs(base)
             _state.value = _state.value.copy(
@@ -131,8 +152,14 @@ class WindowsViewModel @Inject constructor(
         val peer = _state.value.peer ?: return
         viewModelScope.launch {
             _state.value = _state.value.copy(isBusy = true)
+            val base = baseUrl(peer)
+            if (base == null) {
+                _state.value = _state.value.copy(
+                    isBusy = false, error = "HTTPS Windows bridge is required")
+                return@launch
+            }
             val result = bridgeClient.submitJob(
-                baseUrl(peer),
+                base,
                 BridgeRequest(kind = kind, title = title, payloadJson = "{}", requireApproval = true),
             )
             _state.value = _state.value.copy(
@@ -147,7 +174,8 @@ class WindowsViewModel @Inject constructor(
     fun cancelJob(jobId: String) {
         val peer = _state.value.peer ?: return
         viewModelScope.launch {
-            val result = bridgeClient.cancelJob(baseUrl(peer), jobId)
+            val base = baseUrl(peer) ?: return@launch
+            val result = bridgeClient.cancelJob(base, jobId)
             _state.value = _state.value.copy(
                 statusLine = result.errorOrNull?.message
                     ?: if (result.valueOrNull == true) "Job cancelled" else "Cancellation was refused",
@@ -166,10 +194,6 @@ class WindowsViewModel @Inject constructor(
         }
     }
 
-    private fun baseUrl(peer: WindowsPeer): String =
-        if (peer.host.startsWith("http://") || peer.host.startsWith("https://")) {
-            "${peer.host.trimEnd('/')}:${peer.port}"
-        } else {
-            "http://${peer.host}:${peer.port}"
-        }
+    private fun baseUrl(peer: WindowsPeer): String? =
+        runCatching { DesktopEndpoint.baseUrl(peer.host, peer.port) }.getOrNull()
 }

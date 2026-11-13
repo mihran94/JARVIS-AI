@@ -107,7 +107,7 @@ class ChatWorker(QThread):
 class Window(QMainWindow):
     def __init__(self, data_root):
         super().__init__()
-        self.setWindowTitle('JARVIS AI • 0.3.0')
+        self.setWindowTitle('JARVIS AI • Your Windows Assistant')
         self.resize(1180, 790)
         self.root = Path(data_root)
         self.store = Store(self.root / 'history.sqlite3')
@@ -148,7 +148,7 @@ class Window(QMainWindow):
         stop.clicked.connect(self.stop)
         header.addWidget(stop)
         outer.addLayout(header)
-        subtitle = QLabel('WINDOWS ASSISTANT    /    FOUNDATION RELEASE 0.3    /    OWNER CONTROLLED')
+        subtitle = QLabel('YOUR WINDOWS ASSISTANT   /   PC ACTIONS NEED YOUR APPROVAL   /   PHONE IS A REMOTE')
         subtitle.setObjectName('subtitle')
         outer.addWidget(subtitle)
         body = QHBoxLayout()
@@ -158,19 +158,23 @@ class Window(QMainWindow):
         body.addWidget(self.nav)
         body.addWidget(self.pages, 1)
         outer.addLayout(body, 1)
-        self.add_page('Command Center', self.dashboard())
-        self.add_page('Chat', self.chat_page())
-        self.add_page('Windows Automation', self.automation_page())
-        self.add_page('Agent Task Queue', self.queue_page())
-        self.add_page('Step Workflows', self.workflow_page())
-        self.add_page('Mobile Bridge', self.bridge_page())
-        self.add_page('Voice', VoicePanel())
-        self.add_page('Developer Studio', self.editor_page())
-        self.add_page('Task History', self.history_page())
-        self.add_page('API Providers', self.provider_page())
-        self.add_page('Usage & Health', self.usage_page())
-        self.add_page('Permissions & Roadmap', self.permissions_page())
-        self.nav.currentRowChanged.connect(self.pages.setCurrentIndex)
+        # One main UI: specialized tools remain available under Settings.
+        self.page_indices = {}
+        self.add_page('JARVIS Chat', self.chat_page())
+        self.add_page('PC Control', self.automation_page())
+        self.add_page('Coding Assistant', self.editor_page())
+        self.voice_panel = VoicePanel()
+        self.voice_panel.wake_detected.connect(self.on_wake_detected)
+        self.add_page('Voice / Hey Jarvis', self.voice_panel)
+        self.add_page('Phone Remote', self.bridge_page())
+        self.add_page('Settings & Safety', self.permissions_page())
+        self.add_page('Command Center', self.dashboard(), primary=False)
+        self.add_page('Task Queue', self.queue_page(), primary=False)
+        self.add_page('Step Workflows', self.workflow_page(), primary=False)
+        self.add_page('Task History', self.history_page(), primary=False)
+        self.add_page('AI Providers', self.provider_page(), primary=False)
+        self.add_page('System & Usage', self.usage_page(), primary=False)
+        self.nav.currentRowChanged.connect(self.show_primary_page)
         self.nav.setCurrentRow(0)
         self.statusBar().showMessage('Local history • Bridge listener is off by default • Keys configured on your PC')
         self.shortcut = QShortcut(QKeySequence('Ctrl+Alt+J'), self)
@@ -190,9 +194,39 @@ class Window(QMainWindow):
         self.render_chat()
         self.background_controls = BackgroundControls(self)
 
-    def add_page(self, name, page):
-        self.nav.addItem(name)
+    def add_page(self, name, page, *, primary=True):
+        index = self.pages.count()
+        self.page_indices[name] = index
         self.pages.addWidget(page)
+        if primary:
+            self.nav.addItem(name)
+            self.nav.item(self.nav.count() - 1).setData(
+                Qt.ItemDataRole.UserRole, index)
+
+    def show_primary_page(self, row):
+        item = self.nav.item(row)
+        if item is not None:
+            self.pages.setCurrentIndex(item.data(Qt.ItemDataRole.UserRole))
+
+    def open_section(self, name):
+        index = self.page_indices[name]
+        for row in range(self.nav.count()):
+            if self.nav.item(row).data(Qt.ItemDataRole.UserRole) == index:
+                self.nav.setCurrentRow(row)
+                break
+        self.pages.setCurrentIndex(index)
+
+    def on_wake_detected(self, transcript, command):
+        # A wake call only drafts speech as a chat message. It never grants
+        # tool permissions or initiates a paid provider request by itself.
+        if self.policy.stopped:
+            return
+        self.open_section('JARVIS Chat')
+        if command:
+            self.prompt.setPlainText(command)
+        self.prompt.setFocus()
+        self.statusBar().showMessage(
+            'I heard you. Review the message and press Ask JARVIS.', 15000)
 
     def page(self, title, note=''):
         page = QWidget()
@@ -214,27 +248,10 @@ class Window(QMainWindow):
         return button
 
     def dashboard(self):
-        page, layout = self.page('Your command center',
-            'Windows AI, Mobile Bridge and voice share one supervised application.')
-        self.orb = BlueOrb(page)
-        layout.addWidget(self.orb)
-        self.orb_status = QLabel('AI STATUS  /  IDLE')
-        self.orb_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.orb_status)
-        self.system_metrics_label = QLabel('SYSTEM  /  Collecting local metrics...')
-        self.system_metrics_label.setWordWrap(True)
-        self.system_metrics_label.setObjectName('systemMetrics')
-        layout.addWidget(self.system_metrics_label)
-        for title, text in [
-            ('01  /  INTELLIGENCE', 'Stream chat through OpenAI, MiniMax or Gemini. Tamil, English and French text can be entered.'),
-            ('02  /  CONTROL', 'Review each app launch and workspace save. Emergency stop blocks new work.'),
-            ('03  /  BUILD', 'Edit UTF-8 source files, check Python syntax and retain previous file contents.'),
-            ('04  /  TRACE', 'Review persistent task status. Interrupted tasks are marked on restart.'),
-        ]:
-            box = QLabel(title + '\n\n' + text)
-            box.setWordWrap(True)
-            box.setStyleSheet('background:#102237; padding:22px; border-radius:9px;')
-            layout.addWidget(box)
+        page, layout = self.page('System overview',
+            'JARVIS runs on your Windows PC. The phone is only a remote.')
+        self.button(layout, 'Back to JARVIS Chat',
+                    lambda: self.open_section('JARVIS Chat'))
         layout.addStretch()
         return page
 
@@ -255,8 +272,30 @@ class Window(QMainWindow):
             self.orb_status.setText('AI STATUS  /  ' + state.upper())
 
     def chat_page(self):
-        page, layout = self.page('Chat',
-            'Send transmits this conversation to the selected provider and may incur API charges. AI replies do not execute actions.')
+        page, layout = self.page('Hello! I am JARVIS.',
+            'Chat in Tamil, English or French. I help with coding and '
+            'supervised Windows tasks. You decide which actions run.')
+        hero = QHBoxLayout()
+        self.orb = BlueOrb(page)
+        self.orb.setMaximumHeight(145)
+        hero.addWidget(self.orb)
+        details = QVBoxLayout()
+        self.orb_status = QLabel('AI STATUS  /  IDLE')
+        details.addWidget(self.orb_status)
+        self.system_metrics_label = QLabel('SYSTEM  /  Collecting local metrics...')
+        self.system_metrics_label.setWordWrap(True)
+        self.system_metrics_label.setObjectName('systemMetrics')
+        details.addWidget(self.system_metrics_label)
+        hero.addLayout(details, 1)
+        layout.addLayout(hero)
+        shortcuts = QHBoxLayout()
+        for label, section in [('PC Control', 'PC Control'),
+                               ('Coding', 'Coding Assistant'),
+                               ('Talk', 'Voice / Hey Jarvis'),
+                               ('Phone Remote', 'Phone Remote')]:
+            self.button(shortcuts, label,
+                        lambda checked=False, section=section: self.open_section(section))
+        layout.addLayout(shortcuts)
         row = QHBoxLayout()
         self.chat_provider = QComboBox()
         self.chat_provider.addItems(provider_names())
@@ -283,7 +322,9 @@ class Window(QMainWindow):
         self.prompt.setPlaceholderText('Ask JARVIS… தமிழ் / English / Français')
         self.prompt.setMaximumHeight(120)
         layout.addWidget(self.prompt)
-        self.send_button = self.button(layout, 'Send to selected provider', self.send)
+        self.read_replies = QCheckBox('Read replies aloud on this PC (optional; uses Windows speech)')
+        layout.addWidget(self.read_replies)
+        self.send_button = self.button(layout, 'Ask JARVIS', self.send)
         return page
 
     def bridge_page(self):
@@ -628,8 +669,21 @@ class Window(QMainWindow):
         self.worker.start()
 
     def permissions_page(self):
-        page, layout = self.page('Permissions & release boundaries')
+        page, layout = self.page('Settings and safety',
+            'Only essential tools are in the main navigation. '
+            'Every computer action needs your explicit approval.')
         self.button(layout, 'Updates & rollback', lambda: open_updates(self))
+        advanced = QHBoxLayout()
+        for label, name in [
+            ('AI providers', 'AI Providers'),
+            ('Tasks', 'Task Queue'),
+            ('Workflows', 'Step Workflows'),
+            ('History', 'Task History'),
+            ('Usage', 'System & Usage'),
+        ]:
+            self.button(advanced, label,
+                        lambda checked=False, name=name: self.open_section(name))
+        layout.addLayout(advanced)
         text = QPlainTextEdit()
         text.setReadOnly(True)
         text.setPlainText(
@@ -647,9 +701,9 @@ class Window(QMainWindow):
             'DATA\n'
             'Keys: Windows Credential Manager. Chat/history/code: local plaintext files.\n'
             'Deleting a conversation removes app records, not forensic disk remnants.\n\n'
-            'PLANNED, NOT IMPLEMENTED\n'
-            'Assisted/supervised/trusted automation, planner/scheduler, voice, RAG,\n'
-            'quantum lab, cybersecurity scans, self-updates and isolated code execution.\n\n'
+            'NOT YET AVAILABLE\n'
+            'Unrestricted desktop control, self-executing model commands, RAG,\n'
+            'isolated code execution and end-to-end physical device acceptance.\n\n'
             'AVAILABLE NOW\n'
             'Eight providers including Claude and the local Ollama model. A local model\n'
             'never falls back to a paid endpoint and never leaves this computer.\n\n'
@@ -848,6 +902,9 @@ class Window(QMainWindow):
         elif self.worker_kind == 'chat':
             if status == 'completed':
                 self.store.message(self.session, 'assistant', text)
+                if self.read_replies.isChecked() and not self.policy.stopped:
+                    self.voice_panel.speak_text.setText(text[:600])
+                    self.voice_panel.speak()
             else:
                 self.transcript.appendPlainText('\n[' + status.upper() + '] ' + text)
             self.refresh_archives()
@@ -884,6 +941,7 @@ class Window(QMainWindow):
 
     def stop(self):
         self.policy.stop()
+        self.voice_panel.stop_voice()
         self.set_ai_visual_state('stopped')
         self.queue.cancel_pending()
         self.workflows.cancel_pending()
@@ -964,6 +1022,8 @@ class Window(QMainWindow):
             self.statusBar().showMessage('Waiting for cancelled chat to exit safely…')
             event.ignore()
         else:
+            self.voice_panel.stop_voice()
+            self.bridge.listener.stop()
             event.accept()
 
 

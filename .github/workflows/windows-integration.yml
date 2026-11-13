@@ -1,7 +1,7 @@
 name: Windows monorepo integration installer
 on:
   push:
-    branches: [main, integration/single-jarvis-20261113]
+    branches: [main, integration/single-jarvis-20261113, integration/all-remaining-sources-20261113]
     paths:
       - 'desktop/**'
       - 'remote/**'

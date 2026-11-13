@@ -20,6 +20,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -95,9 +96,11 @@ class BridgeClient(
         onEvent: (String) -> Unit,
         onClosed: (String?) -> Unit,
     ): WebSocket? {
+        val safeBase = runCatching { secureEndpoint(baseUrl) }.getOrNull()
+            ?: return null
         val secret = runCatching { kotlinx.coroutines.runBlocking { secretProvider() } }.getOrNull()
             ?: return null
-        val wsUrl = baseUrl.replaceFirst("https://", "wss://").replaceFirst("http://", "ws://") + "/ws"
+        val wsUrl = safeBase.replaceFirst("https://", "wss://") + "/ws"
         val timestamp = System.currentTimeMillis().toString()
         val nonce = nonce()
 
@@ -125,7 +128,7 @@ class BridgeClient(
         val timestamp = System.currentTimeMillis().toString()
         val nonce = nonce()
         val request = Request.Builder()
-            .url(baseUrl.trimEnd('/') + path)
+            .url(secureEndpoint(baseUrl) + path)
             .get()
             .header("X-Jarvis-Key-Id", KEY_ID)
             .header("X-Jarvis-Timestamp", timestamp)
@@ -140,7 +143,7 @@ class BridgeClient(
         val timestamp = System.currentTimeMillis().toString()
         val nonce = nonce()
         val request = Request.Builder()
-            .url(baseUrl.trimEnd('/') + path)
+            .url(secureEndpoint(baseUrl) + path)
             .post(body.toRequestBody(JSON_MEDIA))
             .header("Content-Type", "application/json")
             .header("X-Jarvis-Key-Id", KEY_ID)
@@ -217,6 +220,18 @@ class BridgeClient(
 
     companion object {
         const val KEY_ID = "jarvis-blue-mobile-v1"
+
+        /** A paired remote never sends signed control traffic over HTTP. */
+        fun secureEndpoint(baseUrl: String): String {
+            val origin = baseUrl.trim().toHttpUrlOrNull()
+                ?: throw IllegalArgumentException("Invalid Windows bridge address")
+            require(origin.scheme == "https" && origin.username.isEmpty() &&
+                origin.password.isEmpty() && origin.encodedPath == "/" &&
+                origin.query == null && origin.fragment == null) {
+                "Windows bridge requires a clean HTTPS origin"
+            }
+            return origin.toString().removeSuffix("/")
+        }
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
 
         fun defaultClient(): OkHttpClient = OkHttpClient.Builder()

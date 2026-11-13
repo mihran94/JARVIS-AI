@@ -118,13 +118,13 @@ gradle.taskGraph.whenReady {
     }
 }
 
-// The sensitive capture paths have to ask the consent. The check is a source
-// audit, so it runs before the app is compiled and the build fails when a
-// capture path stops asking. It needs a Python interpreter; when there is none
+// The remote-only privacy guard checks that the Android launcher no longer
+// exposes standalone assistant, microphone, boot or background tools.
+// It runs before compiling the APK. It needs a Python interpreter; when there is none
 // the build says so and carries on.
 val checkSensitiveServices by tasks.registering(Exec::class) {
     group = "verification"
-    description = "Fails the build when a sensitive capture path stops asking for the consent"
+    description = "Fails the build if the Android remote exposes standalone AI/capture permissions"
     val script = rootProject.file("scripts/check_sensitive_services.py")
     val interpreter = listOf("python3", "python").firstOrNull { name ->
         providers.exec {

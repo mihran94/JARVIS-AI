@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">JARVIS BLUE</string>
+    <string name="app_name">JARVIS Remote</string>
     <string name="notification_listener_label">JARVIS BLUE notification reader</string>
     <string name="accessibility_service_label">JARVIS BLUE limited UI automation</string>
     <string name="accessibility_service_description">Lets JARVIS BLUE read the on-screen text of the app you are currently using so a single, explicit command can complete a narrow, predefined step. It cannot browse your data, cannot read other apps silently and cannot act on its own — every action is started by you and confirmed before it runs.</string>
