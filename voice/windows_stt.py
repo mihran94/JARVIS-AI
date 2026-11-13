@@ -71,7 +71,6 @@ class WindowsSpeechRecognizer:
             ) from None
         except Exception:
             raise VoiceUnavailable('Windows speech recognition could not be started.') from None
-        self._clr = clr
         self._consent = consent if consent is not None else VoiceConsent()
         self._matcher = WakePhraseMatcher()
         self._language = language
