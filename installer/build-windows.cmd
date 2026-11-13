@@ -1,0 +1,44 @@
+@echo off
+setlocal EnableExtensions
+cd /d "%~dp0.."
+if not "%OS%"=="Windows_NT" (
+ echo Windows 10 or 11 is required.
+ exit /b 1
+)
+where py >nul 2>&1
+if errorlevel 1 (
+ echo Python launcher missing. Install Python 3.12 64-bit.
+ exit /b 1
+)
+py -3.12 -c "import struct,sys; sys.exit(0 if struct.calcsize('P') == 8 else 1)"
+if errorlevel 1 (
+ echo Python 3.12 64-bit is required.
+ exit /b 1
+)
+if not exist ".venv\Scripts\python.exe" (
+ py -3.12 -m venv .venv
+ if errorlevel 1 exit /b 1
+)
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+if errorlevel 1 exit /b 1
+.venv\Scripts\python.exe -m pip install "pyinstaller==6.16.0"
+if errorlevel 1 exit /b 1
+.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --onedir --windowed --name JARVIS-BLUE --paths . main.py
+if errorlevel 1 exit /b 1
+if not exist "dist\JARVIS-BLUE\JARVIS-BLUE.exe" (
+ echo EXE missing. Build failed.
+ exit /b 1
+)
+echo.
+echo App bundle: dist\JARVIS-BLUE\JARVIS-BLUE.exe
+where ISCC.exe >nul 2>&1
+if not errorlevel 1 (
+ ISCC.exe installer\jarvis-blue.iss
+ exit /b %errorlevel%
+)
+if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" (
+ "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" installer\jarvis-blue.iss
+ exit /b %errorlevel%
+)
+echo Install Inno Setup 6, then compile installer\jarvis-blue.iss to create Setup.exe.
+exit /b 0
