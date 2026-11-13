@@ -9,6 +9,8 @@ from PySide6.QtCore import QThread, Signal
 
 
 def validate_model_path(path):
+    if not isinstance(path, (str, Path)) or not str(path).strip():
+        raise ValueError('Choose a local Vosk model folder first.')
     folder = Path(path).expanduser()
     if not folder.is_dir() or not (folder / "am").is_dir() or not (folder / "conf").is_dir():
         raise ValueError("Choose an extracted Vosk model directory containing am/ and conf/.")
