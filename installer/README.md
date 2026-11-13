@@ -41,3 +41,6 @@ The command-center orb now reflects the chat worker: idle, thinking (request in 
 
 ## CPU utilization monitoring
 The read-only dashboard now uses Windows `GetSystemTimes` to compute CPU usage between samples, refreshing every five seconds. The first sample displays collecting/unavailable because a baseline is needed. CPU usage is system-wide, not per-process. Network throughput is not yet measured. Validate readings against Windows Task Manager on the target PC.
+
+## Manual local speech
+The Chat page has a **Speak latest reply** button. Speech is opt-in, limited to the first 2,500 characters of the latest stored assistant reply, and uses the local pyttsx3 engine. No microphone is opened, and no speech-recognition or wake-word feature is implemented. Windows voice availability and Tamil pronunciation depend on installed OS voices. Emergency stop requests interruption but an already-running engine may continue until playback finishes; do not rely on this button as an instant audio kill switch. Verify speech playback and safe window closing on Windows 10.
