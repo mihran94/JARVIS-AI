@@ -22,6 +22,24 @@ class ReadOnlyTests(unittest.TestCase):
                                     tasks_provider=lambda: [{"status": "waiting"}])
         self.assertEqual(result["data"][0]["status"], "waiting")
 
+    def test_status_cannot_leak_unexpected_fields(self):
+        with self.assertRaises(CapabilityUnavailable):
+            dispatch_read_only(message('status.read'),
+                               status_provider=lambda: {'api_key': 'private'},
+                               tasks_provider=lambda: [])
+
+    def test_tasks_cannot_leak_titles_or_content(self):
+        with self.assertRaises(CapabilityUnavailable):
+            dispatch_read_only(message('tasks.read'),
+                               status_provider=lambda: {},
+                               tasks_provider=lambda: [{'status': 'waiting', 'title': 'private'}])
+
+    def test_tasks_reject_oversized_list(self):
+        with self.assertRaises(CapabilityUnavailable):
+            dispatch_read_only(message('tasks.read'),
+                               status_provider=lambda: {},
+                               tasks_provider=lambda: [{'status': 'waiting'}] * 101)
+
     def test_mutation_denied(self):
         for capability in ("chat.send", "automation.request"):
             with self.subTest(capability=capability):
