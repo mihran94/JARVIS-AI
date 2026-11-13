@@ -20,7 +20,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: jarvis-upstream-import
+  group: jarvis-integration-branch-writes
   cancel-in-progress: false
 
 jobs:
