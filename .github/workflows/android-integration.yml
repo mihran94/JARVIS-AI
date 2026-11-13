@@ -1,7 +1,7 @@
 name: Android monorepo integration APK
 on:
   push:
-    branches: [main, integration/single-jarvis-20261113, integration/all-remaining-sources-20261113]
+    branches: [main, integration/single-jarvis-20261113, integration/all-remaining-sources-20261113, fix/remote-only-merged-manifest-20261113]
     paths:
       - 'android/**'
       - '.github/workflows/android-integration.yml'
@@ -38,6 +38,28 @@ jobs:
           chmod +x gradlew
       - name: Android unit tests and debug APK
         run: ./gradlew :core:windows:testDebugUnitTest :feature:command:testDebugUnitTest :app:testDebugUnitTest :app:assembleDebug --no-daemon --console=plain --max-workers=2
+      - name: Audit compiled APK permissions and active components
+        run: |
+          set -eu
+          AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt"
+          test -x "$AAPT"
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          "$AAPT" dump permissions "$APK" | tee remote-manifest-audit.txt
+          grep -F 'android.permission.INTERNET' remote-manifest-audit.txt
+          for forbidden in RECORD_AUDIO WAKE_LOCK RECEIVE_BOOT_COMPLETED FOREGROUND_SERVICE USE_FINGERPRINT SYSTEM_ALERT_WINDOW SCHEDULE_EXACT_ALARM USE_EXACT_ALARM POST_NOTIFICATIONS; do
+            if grep -Fq "android.permission.$forbidden" remote-manifest-audit.txt; then
+              echo "Unexpected remote permission: $forbidden" >&2
+              exit 1
+            fi
+          done
+          "$AAPT" dump xmltree "$APK" AndroidManifest.xml > remote-manifest-components.txt
+          for forbidden in PreviewActivity SystemAlarmService SystemJobService SystemForegroundService ForceStopRunnable ConstraintProxyUpdateReceiver RescheduleReceiver DiagnosticsReceiver ProfileInstallReceiver; do
+            if grep -Fq "$forbidden" remote-manifest-components.txt; then
+              echo "Unexpected Android background component: $forbidden" >&2
+              exit 1
+            fi
+          done
+          echo "PASS: compiled APK exposes only remote-use permissions and launcher" | tee -a remote-manifest-audit.txt
       - name: Check build output and digest
         run: |
           test -s app/build/outputs/apk/debug/app-debug.apk
@@ -48,5 +70,6 @@ jobs:
           path: |
             android/app/build/outputs/apk/debug/app-debug.apk
             android/app-debug.apk.sha256
+            android/remote-manifest-audit.txt
           retention-days: 14
           if-no-files-found: error

@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "app/src/main"
 KOTLIN = APP / "kotlin/com/jarvisblue/mobile"
 ANDROID = "{http://schemas.android.com/apk/res/android}"
+TOOLS = "{http://schemas.android.com/tools}"
 
 ALLOWED_PERMISSIONS = {
     "android.permission.INTERNET",
@@ -37,7 +38,8 @@ def check() -> list[str]:
         problems.append("Remote-only application host is required")
 
     permissions = {node.get(ANDROID + "name")
-                   for node in root.findall("uses-permission")}
+                   for node in root.findall("uses-permission")
+                   if node.get(TOOLS + "node") != "remove"}
     extra = permissions - ALLOWED_PERMISSIONS
     if extra:
         problems.append("Remote must not request standalone Android permissions: "
@@ -45,9 +47,37 @@ def check() -> list[str]:
     if not {"android.permission.INTERNET"}.issubset(permissions):
         problems.append("Remote requires permission to connect to Windows")
     for name in ("service", "receiver"):
-        if app.findall(name):
-            problems.append(f"Remote manifest must not register any {name}s")
-    activities = app.findall("activity")
+        active = [node for node in app.findall(name)
+                  if node.get(TOOLS + "node") != "remove"]
+        if active:
+            problems.append(f"Remote manifest must not register any active {name}s")
+    activities = [node for node in app.findall("activity")
+                  if node.get(TOOLS + "node") != "remove"]
+    forbidden_removal = {
+        "android.permission.WAKE_LOCK",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.USE_FINGERPRINT",
+    }
+    removed = {node.get(ANDROID + "name")
+               for node in root.findall("uses-permission")
+               if node.get(TOOLS + "node") == "remove"}
+    if not forbidden_removal.issubset(removed):
+        problems.append("Transitive AndroidX permissions must be explicitly removed")
+    removed_components = {
+        node.get(ANDROID + "name")
+        for kind in ("activity", "service", "receiver")
+        for node in app.findall(kind)
+        if node.get(TOOLS + "node") == "remove"
+    }
+    if ("androidx.compose.ui.tooling.PreviewActivity" not in removed_components
+            or "androidx.work.impl.background.systemjob.SystemJobService"
+            not in removed_components
+            or "androidx.work.impl.utils.ForceStopRunnable$BroadcastReceiver"
+            not in removed_components):
+        problems.append("Remove transitive preview, job service and boot receiver")
+
     if len(activities) != 1 or activities[0].get(ANDROID + "name") != ".MainActivity":
         problems.append("Only the Windows remote MainActivity may be launched")
     for activity in activities:
