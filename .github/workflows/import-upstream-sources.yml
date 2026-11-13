@@ -6,6 +6,8 @@ on:
       - integration/main-preserving-20261113
     paths:
       - '.github/workflows/import-upstream-sources.yml'
+      - 'scripts/import_jarvis_sources.py'
+      - 'tests/test_source_import.py'
   workflow_dispatch:
     inputs:
       source:
