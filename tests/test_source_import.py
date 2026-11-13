@@ -28,7 +28,7 @@ class SourceImportTests(unittest.TestCase):
         selected = commands('legacy/jarvis-mobile-beta')
         self.assertEqual(len(selected), 1)
         self.assertIn('--prefix=legacy/jarvis-mobile-beta', selected[0])
-        self.assertIn('mihran94/JARVIS-Mobile-Beta.git', selected[0])
+        self.assertIn('https://github.com/mihran94/JARVIS-Mobile-Beta.git', selected[0])
         self.assertNotIn('--squash', selected[0])
 
     def test_one_source_dry_run(self):
