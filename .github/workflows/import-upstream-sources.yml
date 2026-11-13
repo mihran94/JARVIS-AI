@@ -1,6 +1,11 @@
 name: Import JARVIS upstream source histories
 
 on:
+  push:
+    branches:
+      - integration/main-preserving-20261113
+    paths:
+      - '.github/workflows/import-upstream-sources.yml'
   workflow_dispatch:
     inputs:
       source:
@@ -37,8 +42,13 @@ jobs:
         env:
           SOURCE: ${{ inputs.source }}
         run: |
-          python scripts/import_jarvis_sources.py --source "$SOURCE"
-          python scripts/import_jarvis_sources.py --apply --source "$SOURCE"
+          if [ -n "$SOURCE" ]; then
+            python scripts/import_jarvis_sources.py --source "$SOURCE"
+            python scripts/import_jarvis_sources.py --apply --source "$SOURCE"
+          else
+            python scripts/import_jarvis_sources.py
+            python scripts/import_jarvis_sources.py --apply
+          fi
       - name: Restore generated PWA icons
         run: python iphone-pwa/icons/restore-icons.py
       - name: Recalculate and validate complete source manifest
