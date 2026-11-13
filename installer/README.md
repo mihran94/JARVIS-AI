@@ -11,7 +11,7 @@ This is a **build recipe**, not a tested or released installer. Source branch: `
 From the repository root, double-click `installer\build-windows.cmd` or run it from Command Prompt.
 The script builds `dist\JARVIS-BLUE\JARVIS-BLUE.exe` with PyInstaller.
 When Inno Setup is available, it also creates `dist\installer\JARVIS-BLUE-Setup.exe`.
-If ISCC is not on PATH or at the default install path, open `installer\jarvis-blue.iss` in Inno Setup and click Compile.
+If Inno Setup is missing, the script exits with code 2 after producing the app bundle (not the Setup.exe). If ISCC is installed in a custom path, open `installer\jarvis-blue.iss` in Inno Setup and click Compile.
 
 ## Acceptance checks (must be completed on the user's Windows PC)
 1. Confirm bundle EXE launches and Chat/Voice/Provider pages open without a console.
@@ -23,3 +23,9 @@ If ISCC is not on PATH or at the default install path, open `installer\jarvis-bl
 
 No GitHub Actions. No automatic signing. Never upload API keys or credentials.
 The bundled app uses the existing `main.py` entrypoint; no new capabilities are implied.
+
+## Important limitations
+- This build recipe has not been executed on the owner's Windows 10 PC. A successful GitHub commit is not a successful installer build.
+- The source ZIP update workflow is not automatically compatible with a frozen PyInstaller installation; use a fresh installer build for updates until a separately tested update path is available.
+- The package does not yet merge the PyQt6 Jarvis-Blue HUD into the PySide6 Windows UI. Voice and mobile functionality need end-to-end testing.
+- Do not publish the generated unsigned executable as a verified release until Windows acceptance tests pass.
