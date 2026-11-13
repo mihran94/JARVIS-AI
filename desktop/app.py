@@ -1093,7 +1093,8 @@ def voice_runtime_smoke_test():
     except Exception:
         return 31
     try:
-        clr.AddReference('System.Speech')
+        from voice.windows_stt import load_system_speech
+        load_system_speech()
     except Exception:
         return 32
     try:

@@ -38,3 +38,34 @@ def test_voice_runtime_checks_clr_and_sapi_without_recording(monkeypatch):
 
     assert voice_runtime_smoke_test() == 0
     assert calls == [('assembly', 'System.Speech'), ('sapi', 'SAPI.SpVoice')]
+
+
+def test_bundle_fallback_uses_only_pyinstaller_data_directory(monkeypatch, tmp_path):
+    from voice.windows_stt import load_system_speech
+    calls = []
+    clr = types.ModuleType("clr")
+
+    def add_reference(name):
+        calls.append(name)
+        if name == "System.Speech":
+            raise FileNotFoundError("Assembly absent from runner")
+
+    clr.AddReference = add_reference
+    monkeypatch.setitem(sys.modules, "clr", clr)
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+    assembly = tmp_path / "System.Speech.dll"
+    assembly.write_bytes(b"mocked-assembly-path-not-a-real-binary")
+    load_system_speech()
+    assert calls == ["System.Speech", str(assembly.resolve())]
+
+
+def test_bundle_fallback_without_binary_fails_closed(monkeypatch, tmp_path):
+    import pytest
+    from voice.errors import VoiceUnavailable
+    from voice.windows_stt import load_system_speech
+    clr = types.ModuleType("clr")
+    clr.AddReference = lambda name: (_ for _ in ()).throw(FileNotFoundError())
+    monkeypatch.setitem(sys.modules, "clr", clr)
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+    with pytest.raises(VoiceUnavailable, match="missing"):
+        load_system_speech()
