@@ -58,3 +58,6 @@ The Chat page can record a **single 15-second** microphone session after an expl
 7. Confirm no continuous listening, wake-word recognition, audio-file persistence, or automatic voice-command execution.
 
 These checks are a manual test plan, not a claim that Windows hardware testing has passed.
+
+## Manual spoken app commands (experimental)
+After dictation, review the editable Chat prompt and press **Review spoken app command (approval required)**. Only exact English commands `open/launch/start notepad` or `open/launch/start calculator` are recognized. The existing one-use action confirmation appears before launching the fixed Windows allowlisted executable. No command is executed from transcription automatically. Tamil-language command recognition, arbitrary applications, continuous wake-word listening, and background automation are **not** implemented. Offline parser tests reject extra text and attempted command injection; Windows UI behavior remains to be verified manually.
