@@ -10,6 +10,10 @@ control for the Windows process, not another AI brain.
 3. Review/edit the draft and click **Ask JARVIS** to query the selected AI
    provider. Cloud models may cost money. No voice transcript can directly
    execute a PC command; all PC actions use their own per-action approval.
+   Alternatively, **Review PC action** recognizes only exact allowlisted
+   utterances (`open notepad`, `open calculator` or matching Tamil phrases).
+   It shows the same one-use Windows confirmation before launching the app;
+   longer, mixed or unknown commands are refused without execution.
 4. **Wait for the wake phrase** or **Keep listening for Hey Jarvis** can
    detect the wake phrase while the microphone is allowed. A wake phrase
    switches to Chat; instructions are drafted, not executed.
