@@ -115,7 +115,9 @@ class VoiceSpeakerWorker(QThread):
     def run(self):
         apartment = None
         try:
-            if sys.platform == 'win32':
+            if sys.platform == 'win32' and self._speaker_factory is default_speaker_factory:
+                # The actual SAPI factory requires COM on its worker thread.
+                # Test doubles and non-COM backends must not require pywin32.
                 import pythoncom
                 apartment = pythoncom
                 apartment.CoInitialize()
