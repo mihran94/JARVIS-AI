@@ -101,7 +101,7 @@ jobs:
           git fetch origin integration/main-preserving-20261113
           # Prefer the current remote version only when both sides edit the same file.
           # This avoids replaying upstream initial commits and README add/add conflicts.
-          git merge --no-edit -X theirs origin/integration/main-preserving-20261113
+          git merge --no-edit origin/integration/main-preserving-20261113
           # Merge may change tracked files; refresh and validate the manifest.
           python scripts/source_manifest.py
           python scripts/source_manifest.py --check
