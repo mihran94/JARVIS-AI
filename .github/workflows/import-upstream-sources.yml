@@ -53,6 +53,17 @@ jobs:
             python scripts/import_jarvis_sources.py
             python scripts/import_jarvis_sources.py --apply
           fi
+      - name: Verify imported source directories and histories
+        env:
+          SOURCE: ${{ inputs.source }}
+        run: |
+          if [ -z "$SOURCE" ] || [ "$SOURCE" = "legacy/jarvis-blue" ]; then
+            test -f legacy/jarvis-blue/README.md
+          fi
+          if [ -z "$SOURCE" ] || [ "$SOURCE" = "android" ]; then
+            test -f android/README.md
+          fi
+          git log -1 --format='%h %s'
       - name: Restore generated PWA icons
         run: python iphone-pwa/icons/restore-icons.py
       - name: Recalculate and validate complete source manifest
