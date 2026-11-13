@@ -9,6 +9,7 @@ The microphone is opened only after `voice.consent.VoiceConsent` has granted
 permission, and `stop()` closes it.
 """
 import sys
+from pathlib import Path
 
 from voice.consent import VoiceConsent
 from voice.errors import VoiceUnavailable
@@ -22,6 +23,37 @@ SPEECH_LANGUAGES = {
 }
 
 
+def load_system_speech():
+    """Load Windows System.Speech, falling back to the official bundled DLL.
+
+    The PyInstaller build includes the Microsoft NuGet netstandard2.0 binary
+    because Windows Server build images may not have System.Speech installed.
+    Never fetch code or assemblies at runtime.
+    """
+    import clr
+    try:
+        clr.AddReference('System.Speech')
+        return
+    except Exception:
+        pass
+    # PyInstaller uses _MEIPASS for bundled data on Windows; avoid searching
+    # arbitrary relative directories or trusting a DLL from the current cwd.
+    base = getattr(sys, '_MEIPASS', None)
+    if base is None:
+        raise VoiceUnavailable(
+            'System.Speech is not installed in this Windows runtime.'
+        ) from None
+    assembly = Path(base) / 'System.Speech.dll'
+    if not assembly.is_file():
+        raise VoiceUnavailable('The packaged System.Speech assembly is missing.')
+    try:
+        clr.AddReference(str(assembly.resolve()))
+    except Exception:
+        raise VoiceUnavailable(
+            'The packaged System.Speech assembly could not be loaded.'
+        ) from None
+
+
 class WindowsSpeechRecognizer:
     """Offline speech recognition with the Windows recogniser."""
 
@@ -29,8 +61,7 @@ class WindowsSpeechRecognizer:
         if sys.platform != 'win32':
             raise VoiceUnavailable('Windows speech recognition needs Windows.')
         try:
-            import clr
-            clr.AddReference('System.Speech')
+            load_system_speech()
             from System.Speech.Recognition import (  # noqa: F401 - imported for the side effect
                 DictationGrammar, GrammarBuilder, SpeechRecognitionEngine,
             )
@@ -40,7 +71,6 @@ class WindowsSpeechRecognizer:
             ) from None
         except Exception:
             raise VoiceUnavailable('Windows speech recognition could not be started.') from None
-        self._clr = clr
         self._consent = consent if consent is not None else VoiceConsent()
         self._matcher = WakePhraseMatcher()
         self._language = language

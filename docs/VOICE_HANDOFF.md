@@ -30,6 +30,21 @@ control for the Windows process, not another AI brain.
   recognizer matching the selected language.
 - Native SAPI speech output uses optional `pywin32` and an installed voice.
   Voice output is optional, disabled by default on the Chat page.
+- The Windows installer build installs pinned `pythonnet` and `pywin32`
+  dependencies, then retrieves Microsoft's MIT-licensed `System.Speech`
+  **10.0.14** from the official NuGet feed at build time. It bundles the
+  `netstandard2.0` assembly beside the packaged executable, because the
+  Windows Server 2025 CI runner does not ship that assembly. No packages
+  or assemblies are fetched when a user speaks or launches JARVIS.
+  The optional CLR loader first checks native System.Speech availability,
+  then explicitly loads only the bundled Microsoft DLL if needed.
+  PyInstaller includes CLR and COM support. The built EXE must pass
+  `--check-voice-runtime` in CI. This checks imports and creation of a
+  SAPI object, never microphone capture, installed languages, wake-word
+  accuracy, or physical audio output.
+  Diagnostic codes: 31 = CLR import, 32 = assembly loading, 33 = speech
+  grammar import, 34 = win32com import, 35 = SAPI COM object. These do not
+  disclose local file paths or credentials.
 - The .NET System.Speech integration uses `Grammar(GrammarBuilder)`,
   `SetInputToDefaultAudioDevice()` and `Recognize(TimeSpan)`.
 - Tamil and French support **depend on installed Windows recognizers and
