@@ -4,6 +4,7 @@ This is a structural pre-merge gate, not a substitute for application,
 Windows installer, Android device, or security integration tests.
 """
 from pathlib import Path
+import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 REQUIRED = {
@@ -22,6 +23,22 @@ def missing_sources(root=ROOT):
 
 
 def main():
+    if not (ROOT / '.git').exists():
+        print('MERGE BLOCKED: full git checkout required to verify main history')
+        return 1
+    try:
+        subprocess.run(['git', 'fetch', '--no-tags', 'origin', 'main'],
+                       cwd=ROOT, check=True, capture_output=True, timeout=120)
+        result = subprocess.run(['git', 'merge-base', '--is-ancestor',
+                                 'refs/remotes/origin/main', 'HEAD'],
+                                cwd=ROOT, check=False, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        print('MERGE BLOCKED: unable to verify origin/main ancestry')
+        return 1
+    if result.returncode != 0:
+        print('MERGE BLOCKED: current branch has not integrated origin/main')
+        return 1
+
     missing = missing_sources()
     if missing:
         print("MERGE BLOCKED: required source trees missing:")
