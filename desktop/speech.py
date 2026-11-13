@@ -9,6 +9,30 @@ def speech_text(text, limit=2500):
     return text.strip()[:limit]
 
 
+def speech_chunks(text, max_chars=180):
+    """Split bounded speech into phrases so cancellation is checked between phrases."""
+    if max_chars < 1:
+        raise ValueError("max_chars must be positive")
+    words = speech_text(text).split()
+    chunks, current = [], ""
+    for word in words:
+        if len(word) > max_chars:
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.extend(word[i:i + max_chars] for i in range(0, len(word), max_chars))
+        elif not current:
+            current = word
+        elif len(current) + len(word) + 1 <= max_chars:
+            current += " " + word
+        else:
+            chunks.append(current)
+            current = word
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 class SpeechWorker(QThread):
     completed = Signal(str)
 
@@ -28,8 +52,11 @@ class SpeechWorker(QThread):
             if self.isInterruptionRequested():
                 self.completed.emit("Cancelled")
                 return
-            engine.say(self.text)
-            engine.runAndWait()
+            for chunk in speech_chunks(self.text):
+                if self.isInterruptionRequested():
+                    break
+                engine.say(chunk)
+                engine.runAndWait()
             self.completed.emit("Cancelled" if self.isInterruptionRequested() else "Speech finished")
         except Exception as exc:
             self.completed.emit("Speech unavailable: " + type(exc).__name__)
