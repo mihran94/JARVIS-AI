@@ -1,0 +1,46 @@
+name: JARVIS BLUE - Release preflight (no publish)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - 'scripts/create_update_manifest.py'
+      - 'tests/test_update_manifest.py'
+      - 'app/build.gradle.kts'
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - 'scripts/create_update_manifest.py'
+      - 'tests/test_update_manifest.py'
+      - 'app/build.gradle.kts'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test update manifest format and SHA-256
+        run: python3 -m unittest discover -s tests -p 'test_update_manifest.py' -v
+      - name: Assert signing files and API secrets were not committed
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import re, subprocess
+          from pathlib import PurePosixPath
+          tracked = subprocess.check_output(['git','ls-files','-z']).decode().split('\0')
+          suffixes = ('.p12', '.pfx', '.jks', '.keystore', '.pem', '.key', '.apk', '.aab')
+          bad = [s for s in tracked if s and (
+              s.endswith(suffixes) or s == 'local.properties' or
+              s == '.env' or PurePosixPath(s).name.startswith('.env.') or
+              s.startswith('keystore/'))]
+          if bad:
+              raise SystemExit('STOP: forbidden tracked files: ' + ', '.join(bad))
+          print('No tracked APKs, signing material or .env files')
+          PY

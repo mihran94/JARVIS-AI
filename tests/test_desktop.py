@@ -1,7 +1,7 @@
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 from PySide6.QtWidgets import QApplication
-from desktop.app import Window, STYLE
+from desktop.app import Window, STYLE, launch_arguments
 
 
 def test_desktop_navigation_stop_and_editor(tmp_path):
@@ -136,3 +136,12 @@ def test_workflow_desktop_create_and_emergency_cancel(tmp_path):
     assert window.workflows.rows()[0]['status'] == 'cancelled'
     window.resume()
     window.close()
+
+
+def test_packaged_smoke_switch_is_explicit_and_not_forwarded_to_qt():
+    args, smoke = launch_arguments(['JarvisAI.exe', '--smoke-test'])
+    assert smoke is True
+    assert args == ['JarvisAI.exe']
+    args, smoke = launch_arguments(['JarvisAI.exe'])
+    assert smoke is False
+    assert args == ['JarvisAI.exe']

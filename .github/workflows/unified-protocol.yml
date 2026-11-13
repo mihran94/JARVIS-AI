@@ -1,0 +1,37 @@
+name: JARVIS Unified Protocol CI
+
+on:
+  push:
+    branches:
+      - integration/**
+      - dev/**
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unified-protocol-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unified-protocol:
+    name: Python protocol and read-only security tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Syntax-check shared protocol
+        run: python -m compileall -q jarvis_unified
+      - name: Run focused protocol and security tests
+        run: python -m unittest discover -s tests -p 'test_unified_*.py' -v

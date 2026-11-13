@@ -1,0 +1,54 @@
+name: Android debug APK build
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/android-debug-apk.yml'
+permissions:
+  contents: read
+concurrency:
+  group: jarvis-android-build
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: mihran94/jarvis-blue-android
+          ref: main
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - uses: android-actions/setup-android@v3
+        with:
+          # Legacy 'tools' is no longer available in the Android SDK.
+          packages: 'platform-tools'
+          log-accepted-android-sdk-licenses: false
+      - name: Install the SDK packages
+        run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+      - name: Restore the Gradle wrapper
+        # The wrapper JAR travels as a base64 sidecar, so it is restored first.
+        run: |
+          bash gradle/wrapper/restore-wrapper.sh
+          chmod +x gradlew
+      - name: Build the debug APK
+        # The debug variant uses the automatic debug key. The release signing
+        # key is never involved in this workflow.
+        run: ./gradlew :app:assembleDebug --no-daemon --console=plain --max-workers=2 -Dorg.gradle.jvmargs='-Xmx2048m -XX:MaxMetaspaceSize=1536m -Dfile.encoding=UTF-8'
+      - name: Record the APK digest
+        run: |
+          sha256sum app/build/outputs/apk/debug/app-debug.apk | tee app-debug.apk.sha256
+      - name: Upload the APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: JarvisBlue-android-debug-apk
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app-debug.apk.sha256
+          retention-days: 14
+          if-no-files-found: error

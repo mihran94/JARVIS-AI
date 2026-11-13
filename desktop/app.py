@@ -17,6 +17,7 @@ from core.store import Store
 from desktop.bridge_panel import BridgePanel
 from desktop.update_dialog import open_updates
 from desktop.voice_panel import VoicePanel
+from desktop.tray import BackgroundControls
 from security.policy import Policy, Action, Stopped
 from security.vault import Vault
 from providers.chat import ProviderError, TransientProviderError
@@ -173,6 +174,7 @@ class Window(QMainWindow):
         self.timer.start(1500)
         self.refresh_history()
         self.render_chat()
+        self.background_controls = BackgroundControls(self)
 
     def add_page(self, name, page):
         self.nav.addItem(name)
@@ -922,8 +924,15 @@ class Window(QMainWindow):
             event.accept()
 
 
+def launch_arguments(argv):
+    """Strip the explicit offline smoke flag before invoking Qt."""
+    smoke = '--smoke-test' in argv[1:]
+    return [arg for arg in argv if arg != '--smoke-test'], smoke
+
+
 def main():
-    app = QApplication(sys.argv)
+    args, smoke = launch_arguments(sys.argv)
+    app = QApplication(args)
     app.setStyleSheet(STYLE)
     base = Path(os.environ.get('LOCALAPPDATA', str(Path.home() / '.local' / 'share'))) / 'JarvisAI'
     base.mkdir(parents=True, exist_ok=True)
@@ -934,4 +943,12 @@ def main():
         return 1
     window = Window(base)
     window.show()
+    if smoke:
+        # Offline native smoke test: no provider calls or remote listener.
+        def finish_smoke():
+            if window.isVisible():
+                app.quit()
+            else:
+                app.exit(10)
+        QTimer.singleShot(1000, finish_smoke)
     return app.exec()

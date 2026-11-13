@@ -1,0 +1,129 @@
+name: Import JARVIS upstream source histories
+
+on:
+  push:
+    branches:
+      - integration/main-preserving-20261113
+    paths:
+      - '.github/workflows/import-upstream-sources.yml'
+      - 'scripts/import_jarvis_sources.py'
+      - 'tests/test_source_import.py'
+  workflow_dispatch:
+    inputs:
+      source:
+        description: 'Upstream source to import'
+        required: true
+        type: choice
+        options:
+          - legacy/jarvis-blue
+          - android
+          - legacy/jarvis-mobile-beta
+
+permissions:
+  contents: write
+
+concurrency:
+  group: jarvis-integration-branch-writes
+  cancel-in-progress: false
+
+jobs:
+  import:
+    if: github.repository == 'mihran94/JARVIS-AI' && github.ref == 'refs/heads/integration/main-preserving-20261113'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout full Git history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: integration/main-preserving-20261113
+          persist-credentials: true
+      - name: Set up compatible Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Configure importer identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Validate upstream and import with history
+        env:
+          SOURCE: ${{ inputs.source }}
+        run: |
+          if [ -n "$SOURCE" ]; then
+            if [ -d "$SOURCE" ]; then
+              echo "Source already imported: $SOURCE"
+            else
+              python scripts/import_jarvis_sources.py --source "$SOURCE"
+              python scripts/import_jarvis_sources.py --apply --source "$SOURCE"
+            fi
+          else
+            for item in legacy/jarvis-blue android legacy/jarvis-mobile-beta; do
+              if [ -d "$item" ]; then
+                echo "Source already imported: $item"
+              else
+                python scripts/import_jarvis_sources.py --source "$item"
+                python scripts/import_jarvis_sources.py --apply --source "$item"
+              fi
+            done
+          fi
+      - name: Verify imported source directories and histories
+        env:
+          SOURCE: ${{ inputs.source }}
+        run: |
+          if [ -z "$SOURCE" ] || [ "$SOURCE" = "legacy/jarvis-blue" ]; then
+            test -f legacy/jarvis-blue/README.md
+          fi
+          if [ -z "$SOURCE" ] || [ "$SOURCE" = "android" ]; then
+            test -f android/README.md
+          fi
+          if [ -z "$SOURCE" ] || [ "$SOURCE" = "legacy/jarvis-mobile-beta" ]; then
+            test -f legacy/jarvis-mobile-beta/README.md
+          fi
+          git log -1 --format='%h %s'
+      - name: Restore generated PWA icons
+        run: python iphone-pwa/icons/restore-icons.py
+      - name: Recalculate and validate complete source manifest
+        run: |
+          python scripts/source_manifest.py
+          python scripts/source_manifest.py --check
+          git add -- docs/SOURCE_INTEGRITY.sha256
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(integrity): track imported source hashes"
+          fi
+      - name: Run core and unified tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python -m pip install -r requirements-dev.txt
+          python -m pytest -q tests
+      - name: Push verified integration commits only
+        run: |
+          # The integrity-repair workflow may push while imports are testing.
+          # Merge remote integration updates; never replay upstream subtree history.
+          # Preserve tracked and untracked changes as a real commit before rebase.
+          # Stashing alone left android/gradlew.bat dirty in an earlier run.
+          git status --short
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(import): preserve post-test working tree"
+          fi
+          # Do not risk rebasing with an unexpectedly dirty worktree.
+          if [ -n "$(git status --porcelain)" ]; then
+            git status --short
+            echo "::error::Working tree remains dirty after staging; aborting safely"
+            exit 1
+          fi
+          git fetch origin integration/main-preserving-20261113
+          # Prefer the current remote version only when both sides edit the same file.
+          # This avoids replaying upstream initial commits and README add/add conflicts.
+          git merge --no-edit origin/integration/main-preserving-20261113
+          # Merge may change tracked files; refresh and validate the manifest.
+          python scripts/source_manifest.py
+          python scripts/source_manifest.py --check
+          if ! git diff --quiet -- docs/SOURCE_INTEGRITY.sha256; then
+            git add -- docs/SOURCE_INTEGRITY.sha256
+            git commit -m "chore(integrity): refresh source hashes after merge"
+          fi
+          python -m pytest -q tests
+          git push origin HEAD:integration/main-preserving-20261113

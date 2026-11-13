@@ -1,0 +1,52 @@
+name: Android monorepo integration APK
+on:
+  push:
+    branches: [integration/main-preserving-20261113]
+    paths:
+      - 'android/**'
+      - '.github/workflows/android-integration.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: jarvis-android-monorepo-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  android-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+      - name: Install pinned Android SDK packages
+        run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+      - name: Restore verified Gradle wrapper
+        run: |
+          bash gradle/wrapper/restore-wrapper.sh
+          echo "2db75c40782f5e8ba1fc278a5574bab070adccb2d21ca5a6e5ed840888448046  gradle/wrapper/gradle-wrapper.jar" | sha256sum --check -
+          chmod +x gradlew
+      - name: Android unit tests and debug APK
+        run: ./gradlew :core:windows:testDebugUnitTest :app:testDebugUnitTest :app:assembleDebug --no-daemon --console=plain --max-workers=2
+      - name: Check build output and digest
+        run: |
+          test -s app/build/outputs/apk/debug/app-debug.apk
+          sha256sum app/build/outputs/apk/debug/app-debug.apk | tee app-debug.apk.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: JARVIS-unified-android-debug-${{ github.sha }}
+          path: |
+            android/app/build/outputs/apk/debug/app-debug.apk
+            android/app-debug.apk.sha256
+          retention-days: 14
+          if-no-files-found: error
