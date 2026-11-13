@@ -29,6 +29,27 @@ class ReadOnlyTests(unittest.TestCase):
                     dispatch_read_only(message(capability),
                                        status_provider=lambda: {}, tasks_provider=lambda: [])
 
+    def test_mutating_requests_never_call_providers(self):
+        calls = []
+        def provider():
+            calls.append('called')
+            return {}
+        for capability in ('chat.send', 'automation.request'):
+            with self.assertRaises(CapabilityUnavailable):
+                dispatch_read_only(message(capability),
+                                   status_provider=provider, tasks_provider=provider)
+        self.assertEqual(calls, [])
+
+    def test_emergency_stop_never_calls_providers(self):
+        calls = []
+        def provider():
+            calls.append('called')
+            return {}
+        with self.assertRaises(CapabilityUnavailable):
+            dispatch_read_only(message('status.read'), stopped=True,
+                               status_provider=provider, tasks_provider=provider)
+        self.assertEqual(calls, [])
+
     def test_emergency_stop(self):
         with self.assertRaises(CapabilityUnavailable):
             dispatch_read_only(message("status.read"), stopped=True,
