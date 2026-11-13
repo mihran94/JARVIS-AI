@@ -17,6 +17,7 @@ from core.store import Store
 from desktop.bridge_panel import BridgePanel
 from desktop.update_dialog import open_updates
 from desktop.voice_panel import VoicePanel
+from desktop.tray import BackgroundControls
 from security.policy import Policy, Action, Stopped
 from security.vault import Vault
 from providers.chat import ProviderError, TransientProviderError
@@ -173,6 +174,7 @@ class Window(QMainWindow):
         self.timer.start(1500)
         self.refresh_history()
         self.render_chat()
+        self.background_controls = BackgroundControls(self)
 
     def add_page(self, name, page):
         self.nav.addItem(name)
