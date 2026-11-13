@@ -6,6 +6,7 @@ on:
       - integration/main-preserving-20261113
     paths:
       - 'jarvis_unified/**'
+      - 'scripts/import_jarvis_sources.py'
       - 'tests/test_unified_*.py'
       - '.github/workflows/**'
       - 'docs/SOURCE_INTEGRITY.sha256'
