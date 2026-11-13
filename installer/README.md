@@ -32,3 +32,6 @@ The bundled app uses the existing `main.py` entrypoint; no new capabilities are 
 
 ## Preflight validation
 The build script now runs `installer\\preflight.py` before packaging. This parses Python source files and checks PySide6, httpx, and keyring availability. It does not run the application or test Windows functionality. You can also run `.venv\\Scripts\\python.exe installer\\preflight.py` manually after setup.
+
+## Futuristic Blue UI (development)
+The Windows Command Center now imports `desktop/blue_theme.py` and `desktop/blue_orb.py`. The orb is decorative and animated, not connected to AI requests, voice listening, or device status. It stops its animation timer while hidden. Validate the layout and animation on Windows 10 before treating it as finished.
