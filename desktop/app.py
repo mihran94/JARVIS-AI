@@ -11,12 +11,12 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QListWidget, QStackedWidget, QPlainTextEdit, QLineEdit,
     QComboBox, QMessageBox, QFormLayout, QTableWidget, QTableWidgetItem,
-    QHeaderView, QCheckBox,
+    QHeaderView, QCheckBox, QFileDialog,
 )
 from desktop.blue_theme import FUTURISTIC_BLUE
 from desktop.blue_orb import BlueOrb
 from desktop.speech import SpeechWorker
-from desktop.dictation import DictationWorker
+from desktop.dictation import DictationWorker, validate_model_path
 from desktop.system_metrics import CpuSampler, snapshot, format_snapshot
 from desktop.network_metrics import NetworkSampler, format_network
 from core.store import Store
@@ -275,6 +275,7 @@ class Window(QMainWindow):
         self.dictation_model_path = QLineEdit()
         self.dictation_model_path.setPlaceholderText('Local Vosk model folder (Tamil / English)')
         layout.addWidget(self.dictation_model_path)
+        self.button(layout, 'Choose offline language model folder…', self.choose_dictation_model)
         self.dictate_button = self.button(layout, 'Record 15 seconds (offline / manual)', self.start_dictation)
         self.cancel_dictation_button = self.button(layout, 'Cancel recording', self.cancel_dictation)
         self.cancel_dictation_button.setEnabled(False)
@@ -789,6 +790,18 @@ class Window(QMainWindow):
             self.start_worker(provider, model, key, [system] + messages, 'chat', backup=backup)
             self.backup_consent.setChecked(False)
         self.notify(operation)
+
+    def choose_dictation_model(self):
+        folder = QFileDialog.getExistingDirectory(self, 'Select extracted Vosk model directory')
+        if not folder:
+            return
+        try:
+            validated = validate_model_path(folder)
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(self, 'Invalid speech model', str(exc))
+            return
+        self.dictation_model_path.setText(validated)
+        self.statusBar().showMessage('Offline speech model folder selected.', 6000)
 
     def start_dictation(self):
         if self.policy.stopped or getattr(self, 'dictation_worker', None) is not None:
