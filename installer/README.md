@@ -38,3 +38,6 @@ The Windows Command Center now imports `desktop/blue_theme.py` and `desktop/blue
 
 ## Orb activity states
 The command-center orb now reflects the chat worker: idle, thinking (request in progress), responding (text chunks arriving), and stopped (emergency stop). These are UI indications only, not microphone listening, voice output, or proof of model reasoning. Confirm transitions and emergency stop behavior during Windows acceptance testing.
+
+## CPU utilization monitoring
+The read-only dashboard now uses Windows `GetSystemTimes` to compute CPU usage between samples, refreshing every five seconds. The first sample displays collecting/unavailable because a baseline is needed. CPU usage is system-wide, not per-process. Network throughput is not yet measured. Validate readings against Windows Task Manager on the target PC.
