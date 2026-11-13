@@ -63,9 +63,16 @@ class VoiceWorker(QThread):
             self.failed.emit(str(error))
             return
         try:
-            if self._mode == 'wake':
-                transcript, command = recognizer.wait_for_wake_phrase(self._timeout)
-                self.wake_call.emit(transcript, command or '')
+            if self._mode in ('wake', 'continuous'):
+                while self.consent.listening and not self.isInterruptionRequested():
+                    transcript, command = recognizer.wait_for_wake_phrase(self._timeout)
+                    if transcript:
+                        self.wake_call.emit(transcript, command or '')
+                    if self._mode == 'wake':
+                        break
+                    # Avoid spinning on devices that return instantly with no
+                    # speech. The owner can stop listening at any point.
+                    QThread.msleep(120)
             else:
                 self.transcript.emit(recognizer.recognize_once(self._timeout))
         except VoiceError as error:
@@ -81,6 +88,10 @@ class VoiceWorker(QThread):
 
 class VoicePanel(QWidget):
     """The microphone permission, the wake phrase and the voice adapters."""
+
+    # The main Windows window uses this to draft spoken chat, never to
+    # execute PC actions or send to a paid provider automatically.
+    wake_detected = Signal(str, str)
 
     def __init__(self, *, consent=None, recognizer_factory=None, speaker_factory=None,
                  matcher=None, parent=None):
@@ -130,6 +141,11 @@ class VoicePanel(QWidget):
         self.wake_button = QPushButton('Wait for the wake phrase')
         self.wake_button.clicked.connect(lambda: self.listen('wake'))
         row.addWidget(self.wake_button)
+        self.continuous_button = QPushButton('Keep listening for Hey Jarvis')
+        self.continuous_button.setToolTip(
+            'Only while explicitly allowed; microphone stops on Stop or exit')
+        self.continuous_button.clicked.connect(lambda: self.listen('continuous'))
+        row.addWidget(self.continuous_button)
         self.stop_button = QPushButton('Stop voice')
         self.stop_button.clicked.connect(self.stop_voice)
         row.addWidget(self.stop_button)
@@ -192,8 +208,10 @@ class VoicePanel(QWidget):
         self.worker.transcript.connect(self.on_transcript)
         self.worker.wake_call.connect(self.on_wake_call)
         self.worker.failed.connect(self.status)
+        self.worker.finished.connect(self.refresh)
         self.worker.start()
-        self.status('Listening…')
+        self.status('Listening for Hey Jarvis (owner allowed).' if mode == 'continuous'
+                    else 'Listening…')
 
     def on_transcript(self, text):
         """Show what was heard and whether it was a wake call."""
@@ -208,11 +226,14 @@ class VoicePanel(QWidget):
         self.append(line)
 
     def on_wake_call(self, transcript, command):
-        """Show a wake call that the recogniser waited for."""
+        """Show a wake call and offer it to the desktop as a draft only."""
+        if not transcript or self.consent.stopped:
+            return
         line = f'{transcript}\nWake call.'
         if command:
             line += f'\nCommand: {command}'
         self.append(line)
+        self.wake_detected.emit(transcript, command)
 
     def speak(self):
         """Say the text with the Windows voice."""
@@ -265,6 +286,9 @@ class VoicePanel(QWidget):
         self.resume_button.setEnabled(self.consent.stopped)
         self.listen_button.setEnabled(self.consent.listening)
         self.wake_button.setEnabled(self.consent.listening)
+        self.continuous_button.setEnabled(
+            self.consent.listening and not (
+                self.worker is not None and self.worker.isRunning()))
 
 
 __all__ = ['VoicePanel', 'VoiceWorker', 'default_recognizer_factory', 'default_speaker_factory']
