@@ -1,0 +1,26 @@
+"""Offline checks for the monorepo source import plan."""
+import unittest
+from scripts.import_jarvis_sources import SOURCES, commands, main
+
+
+class SourceImportTests(unittest.TestCase):
+    def test_exactly_two_separate_upstreams(self):
+        self.assertEqual(len(SOURCES), 2)
+        self.assertEqual({item[0] for item in SOURCES},
+                         {"legacy/jarvis-blue", "android"})
+
+    def test_import_uses_subtree_and_no_destructive_operations(self):
+        planned = commands()
+        self.assertEqual(len(planned), 2)
+        for cmd in planned:
+            self.assertEqual(cmd[:3], ["git", "subtree", "add"])
+            self.assertIn("--squash", cmd)
+            self.assertNotIn("push", cmd)
+            self.assertNotIn("delete", cmd)
+
+    def test_default_is_dry_run(self):
+        self.assertEqual(main([]), 0)
+
+
+if __name__ == "__main__":
+    unittest.main()
