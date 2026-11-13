@@ -924,8 +924,15 @@ class Window(QMainWindow):
             event.accept()
 
 
+def launch_arguments(argv):
+    """Strip the explicit offline smoke flag before invoking Qt."""
+    smoke = '--smoke-test' in argv[1:]
+    return [arg for arg in argv if arg != '--smoke-test'], smoke
+
+
 def main():
-    app = QApplication(sys.argv)
+    args, smoke = launch_arguments(sys.argv)
+    app = QApplication(args)
     app.setStyleSheet(STYLE)
     base = Path(os.environ.get('LOCALAPPDATA', str(Path.home() / '.local' / 'share'))) / 'JarvisAI'
     base.mkdir(parents=True, exist_ok=True)
@@ -936,4 +943,12 @@ def main():
         return 1
     window = Window(base)
     window.show()
+    if smoke:
+        # Offline native smoke test: no provider calls or remote listener.
+        def finish_smoke():
+            if window.isVisible():
+                app.quit()
+            else:
+                app.exit(10)
+        QTimer.singleShot(1000, finish_smoke)
     return app.exec()

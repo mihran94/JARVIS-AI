@@ -39,6 +39,12 @@ jobs:
           python -m pip install pyinstaller==6.12.0
           python -m PyInstaller --noconfirm --clean --windowed --onedir --name JarvisAI --hidden-import keyring.backends.Windows main.py
           if (!(Test-Path 'dist/JarvisAI/JarvisAI.exe')) { throw 'Desktop EXE not generated' }
+      - name: Smoke-test the packaged Windows executable
+        shell: pwsh
+        run: |
+          $app = Join-Path (Get-Location) 'dist/JarvisAI/JarvisAI.exe'
+          $process = Start-Process -FilePath $app -ArgumentList '--smoke-test' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Packaged EXE startup failed: $($process.ExitCode)" }
       - name: Create traceable manifest
         run: python scripts/release_manifest.py dist/JarvisAI dist/JarvisAI-RELEASE.txt --version 0.3.0 --revision "${{ github.sha }}" --channel integration-beta
       - name: Create unsigned Windows installer
