@@ -14,9 +14,9 @@
 #
 #     python iphone-pwa/icons/restore-icons.py
 #
-# 181 files
+# 182 files
 811427777ef27750dc4a2b86240a03943355a35c020d18347b744316119736e7  .gitattributes
-5c1e96d345ea314723ac210632a3e10be980b31efb12811a0cc4df8f89a829dc  .github/workflows/repair-source-integrity.yml
+b3921801dd6357526ff69f882f45f88afcc6c52d5158d9ab7be0dbab7504eed5  .github/workflows/repair-source-integrity.yml
 77fbca8754f9c69b5d16a90a81e38ced978294422e6bd78bbe645b71e14fc14b  .github/workflows/tests.yml
 a04bd2e85c3e4b2eef7a1b55dc162a6fee836d61e22f793e355e06614e517d26  .github/workflows/unified-protocol.yml
 31984f8fa20e27ea504186985a377669271750c69a3040dec6e00b7ae398b7f4  .github/workflows/windows-release.yml
@@ -141,6 +141,7 @@ c6960eaa3f5628877761395a0cabe18eb7d78b4609bb10e8cedbee29c0b94b46  remote/server.
 49a09ea523b9c328ba4edfe320466b821d25b9d86c3020640cfb14d52891d319  research/README.md
 f2093769353c8e8637505a8cbb610013092679e4ab3f9042b5f21045c349f984  scripts/check_signing_material.py
 cb9d5984d18a3c362d6cbea4817582c7712044cabb8a837eaeb5844ade9b99d6  scripts/diagnose.py
+f978c453da82318d3bea7fa09cbc6a961da0bb03efaadff7da003d997635fa0c  scripts/import_jarvis_sources.py
 652ec6fff5e3583b2aa0bb7c505d2880661a18cfbe2a40653c190ee7e53721b1  scripts/launch.py
 d3a371392332208c44ce7cf4ccd21c78c5b6cf9859777639a40be0cb964ed2c7  scripts/qt_runtime.py
 ca25c250273d88e89a0a7502fafbc4c675e57bb91cb15e0e8e358f1ba97450f9  scripts/release_manifest.py
