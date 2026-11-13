@@ -165,6 +165,7 @@ class Window(QMainWindow):
         self.add_page('Coding Assistant', self.editor_page())
         self.voice_panel = VoicePanel()
         self.voice_panel.wake_detected.connect(self.on_wake_detected)
+        self.voice_panel.utterance_detected.connect(self.on_voice_transcript)
         self.add_page('Voice / Hey Jarvis', self.voice_panel)
         self.add_page('Phone Remote', self.bridge_page())
         self.add_page('Settings & Safety', self.permissions_page())
@@ -217,16 +218,42 @@ class Window(QMainWindow):
         self.pages.setCurrentIndex(index)
 
     def on_wake_detected(self, transcript, command):
-        # A wake call only drafts speech as a chat message. It never grants
-        # tool permissions or initiates a paid provider request by itself.
-        if self.policy.stopped:
+        # Wake phrase recognition is not permission to spend API credits or
+        # execute Windows actions. Only populate a human-reviewable draft.
+        if self.policy.stopped or not self.voice_panel.consent.listening:
+            return
+        if command:
+            self.on_voice_transcript(command)
+        else:
+            self.open_section('JARVIS Chat')
+            self.prompt.setFocus()
+            self.statusBar().showMessage(
+                'Hello! I am listening. Say what you need, then review your message.', 15000)
+
+    def on_voice_transcript(self, transcript):
+        """Draft spoken text on the main screen; never automatically send."""
+        if self.policy.stopped or not self.voice_panel.consent.listening:
+            return
+        text = (transcript or '').strip()[:4000]
+        if not text:
             return
         self.open_section('JARVIS Chat')
-        if command:
-            self.prompt.setPlainText(command)
+        existing = self.prompt.toPlainText().strip()
+        self.prompt.setPlainText((existing + '\n' if existing else '') + text)
         self.prompt.setFocus()
         self.statusBar().showMessage(
-            'I heard you. Review the message and press Ask JARVIS.', 15000)
+            'I heard you. Please review and press Ask JARVIS. No action ran.', 15000)
+
+    def listen_to_user(self):
+        """One click in Chat; microphone permission always belongs to Voice."""
+        if self.policy.stopped:
+            return
+        if not self.voice_panel.consent.listening:
+            self.open_section('Voice / Hey Jarvis')
+            self.statusBar().showMessage(
+                'Turn on Allow the microphone, then choose Talk once.', 15000)
+            return
+        self.voice_panel.listen('once')
 
     def page(self, title, note=''):
         page = QWidget()
@@ -295,6 +322,7 @@ class Window(QMainWindow):
                                ('Phone Remote', 'Phone Remote')]:
             self.button(shortcuts, label,
                         lambda checked=False, section=section: self.open_section(section))
+        self.button(shortcuts, 'Speak to JARVIS', self.listen_to_user)
         layout.addLayout(shortcuts)
         row = QHBoxLayout()
         self.chat_provider = QComboBox()

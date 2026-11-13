@@ -225,3 +225,41 @@ def test_the_page_survives_a_stopped_voice_feature(app):
     panel.stop_voice()
     panel.allow.setChecked(True)
     assert panel.consent.granted is False
+
+
+def test_voice_once_forwards_a_reviewable_draft_only_when_allowed(panel):
+    heard = []
+    wake = []
+    panel.utterance_detected.connect(heard.append)
+    panel.wake_detected.connect(lambda transcript, command: wake.append(command))
+
+    panel.on_transcript('check my Python project')
+    panel.on_wake_call('Hey Jarvis', 'open calculator')
+    assert heard == []
+    assert wake == []
+
+    panel.allow.setChecked(True)
+    panel.on_transcript('check my Python project')
+    assert heard == ['check my Python project']
+    panel.on_transcript('Hey Jarvis, review this code')
+    assert len(wake) == 1
+    assert 'review this code' in wake[0]
+
+    panel.stop_voice()
+    panel.on_transcript('delete my documents')
+    panel.on_wake_call('Hey Jarvis', 'delete my documents')
+    assert heard == ['check my Python project']
+    assert len(wake) == 1
+
+
+def test_listen_once_can_be_reused_without_renewing_owner_consent(panel, app):
+    panel.allow.setChecked(True)
+    speech = []
+    panel.utterance_detected.connect(speech.append)
+    panel._recognizer_factory = lambda *a, **kw: FakeRecognizer('hello JARVIS')
+    panel.listen('once')
+    panel.worker.wait(4000)
+    app.processEvents()
+    assert speech == ['hello JARVIS']
+    assert panel.consent.granted is True
+    assert panel.consent.listening is True

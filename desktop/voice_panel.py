@@ -92,6 +92,8 @@ class VoicePanel(QWidget):
     # The main Windows window uses this to draft spoken chat, never to
     # execute PC actions or send to a paid provider automatically.
     wake_detected = Signal(str, str)
+    # A listen-once utterance is a chat draft, never an action or API call.
+    utterance_detected = Signal(str)
 
     def __init__(self, *, consent=None, recognizer_factory=None, speaker_factory=None,
                  matcher=None, parent=None):
@@ -113,9 +115,11 @@ class VoicePanel(QWidget):
         title.setStyleSheet('font-size:24px;font-weight:600')
         layout.addWidget(title)
         note = QLabel(
-            'Talk to JARVIS. The microphone is only opened after you allow it, and '
-            'the stop button closes it again at once. The wake phrase can be given '
-            'in English, Tamil or French.')
+            'Say Hey Jarvis, or dictate one message. Speech is added to Chat as a '
+            'draft; review and press Ask JARVIS before a provider is contacted. '
+            'No voice command can run a PC action without your approval. '
+            'The microphone needs your permission and an installed Windows '
+            'speech language pack.')
         note.setWordWrap(True)
         layout.addWidget(note)
 
@@ -135,7 +139,7 @@ class VoicePanel(QWidget):
         talk_box = QGroupBox('Talk')
         talk_layout = QVBoxLayout(talk_box)
         row = QHBoxLayout()
-        self.listen_button = QPushButton('Listen once')
+        self.listen_button = QPushButton('Talk once (draft only)')
         self.listen_button.clicked.connect(lambda: self.listen('once'))
         row.addWidget(self.listen_button)
         self.wake_button = QPushButton('Wait for the wake phrase')
@@ -224,10 +228,16 @@ class VoicePanel(QWidget):
         else:
             line = f'{text}\nNot a wake call.'
         self.append(line)
+        if not self.consent.listening:
+            return
+        if match.is_wake_call:
+            self.wake_detected.emit(text, command or '')
+        elif text.strip():
+            self.utterance_detected.emit(text.strip())
 
     def on_wake_call(self, transcript, command):
         """Show a wake call and offer it to the desktop as a draft only."""
-        if not transcript or self.consent.stopped:
+        if not transcript or not self.consent.listening:
             return
         line = f'{transcript}\nWake call.'
         if command:
