@@ -1,0 +1,61 @@
+"""Import full upstream JARVIS repositories into a local JARVIS-AI monorepo.
+
+Safe by default: prints commands only. Never deletes repositories, pushes, or
+merges to main. Run from a clean JARVIS-AI checkout with git-subtree available.
+This preserves each upstream source tree and license in its own directory.
+"""
+import argparse
+import subprocess
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SOURCES = (
+    ("legacy/jarvis-blue", "https://github.com/mihran94/Jarvis-Blue.git", "main"),
+    ("android", "https://github.com/mihran94/jarvis-blue-android.git", "main"),
+)
+
+
+def commands():
+    return [
+        ["git", "subtree", "add", f"--prefix={prefix}", url, ref, "--squash"]
+        for prefix, url, ref in SOURCES
+    ]
+
+
+def verify_checkout():
+    if not (ROOT / ".git").exists():
+        raise RuntimeError("Run inside a full git checkout of JARVIS-AI")
+    branch = subprocess.check_output(
+        ["git", "branch", "--show-current"], cwd=ROOT, text=True
+    ).strip()
+    if not branch or branch in {"main", "master"}:
+        raise RuntimeError("Use a named integration branch, never main/master")
+    changes = subprocess.check_output(
+        ["git", "status", "--porcelain"], cwd=ROOT, text=True
+    )
+    if changes.strip():
+        raise RuntimeError("Working tree must be clean")
+    for prefix, _, _ in SOURCES:
+        if (ROOT / prefix).exists():
+            raise RuntimeError(f"Import destination already exists: {prefix}")
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--apply", action="store_true",
+                        help="Actually import upstream trees into this local branch")
+    args = parser.parse_args(argv)
+    for cmd in commands():
+        print(" ".join(cmd), flush=True)
+    if not args.apply:
+        print("DRY RUN: no files changed. Add --apply after reviewing sources and licenses.")
+        return 0
+    verify_checkout()
+    for cmd in commands():
+        subprocess.run(cmd, cwd=ROOT, check=True)
+    print("Local subtree imports complete. Run tests and review diffs before pushing.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
