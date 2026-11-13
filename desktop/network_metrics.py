@@ -12,7 +12,7 @@ except ImportError:
 
 class NetworkSampler:
     def __init__(self, counter_reader=None, clock=None):
-        self.counter_reader = counter_reader or (
+        self.counter_reader = counter_reader if counter_reader is not None else (
             (lambda: psutil.net_io_counters(nowrap=True)) if psutil else None
         )
         self.clock = clock or time.monotonic
@@ -28,7 +28,7 @@ class NetworkSampler:
                 self.previous = None
                 return None
             current = (now, counters.bytes_sent, counters.bytes_recv)
-        except (OSError, RuntimeError, AttributeError, ValueError):
+        except (OSError, RuntimeError, AttributeError, ValueError, TypeError):
             self.previous = None
             return None
         previous = self.previous
