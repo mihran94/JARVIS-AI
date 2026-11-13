@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 from desktop.blue_theme import FUTURISTIC_BLUE
 from desktop.blue_orb import BlueOrb
+from desktop.speech import SpeechWorker
 from desktop.system_metrics import CpuSampler, snapshot, format_snapshot
 from desktop.network_metrics import NetworkSampler, format_network
 from core.store import Store
@@ -271,6 +272,8 @@ class Window(QMainWindow):
         self.prompt.setMaximumHeight(120)
         layout.addWidget(self.prompt)
         self.send_button = self.button(layout, 'Send to selected provider', self.send)
+        self.speech_button = self.button(layout, 'Speak latest reply (local / manual)', self.speak_latest_reply)
+        self.speech_button.setToolTip('Speaks only when clicked. No microphone access.')
         return page
 
     def automation_page(self):
@@ -778,6 +781,32 @@ class Window(QMainWindow):
             self.backup_consent.setChecked(False)
         self.notify(operation)
 
+    def speak_latest_reply(self):
+        if getattr(self, 'speech_worker', None) is not None:
+            self.statusBar().showMessage('Speech already playing.', 5000)
+            return
+        if self.policy.stopped:
+            self.statusBar().showMessage('Resume JARVIS before speaking.', 5000)
+            return
+        messages = self.store.messages(self.session)
+        latest = next((m.get('content', '') for m in reversed(messages)
+                       if m.get('role') == 'assistant'), '')
+        if not latest.strip():
+            self.statusBar().showMessage('No saved AI reply to speak.', 5000)
+            return
+        self.speech_worker = SpeechWorker(latest, self)
+        self.speech_worker.completed.connect(lambda message: self.statusBar().showMessage(message, 8000))
+        self.speech_worker.finished.connect(self.on_speech_finished)
+        self.speech_button.setEnabled(False)
+        self.speech_worker.start()
+
+    def on_speech_finished(self):
+        worker = self.speech_worker
+        if worker is not None:
+            worker.deleteLater()
+            self.speech_worker = None
+        self.speech_button.setEnabled(not self.policy.stopped)
+
     def on_chunk(self, text):
         if self.worker_kind != 'chat':
             return
@@ -844,6 +873,8 @@ class Window(QMainWindow):
 
     def stop(self):
         self.set_ai_visual_state('stopped')
+        if getattr(self, 'speech_worker', None) is not None:
+            self.speech_worker.requestInterruption()
         self.policy.stop()
         self.queue.cancel_pending()
         self.workflows.cancel_pending()
@@ -918,6 +949,11 @@ class Window(QMainWindow):
             if not self.confirm(Action('discard_unsaved_editor_changes', self.filename.text())):
                 event.ignore()
                 return
+        if getattr(self, 'speech_worker', None) is not None:
+            self.speech_worker.requestInterruption()
+            self.statusBar().showMessage('Waiting for local speech to finish before closing…')
+            event.ignore()
+            return
         if self.worker is not None:
             self.close_when_done = True
             self.stop()
