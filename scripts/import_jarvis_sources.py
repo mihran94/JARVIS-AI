@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCES = (
     ("legacy/jarvis-blue", "https://github.com/mihran94/Jarvis-Blue.git", "main"),
     ("android", "https://github.com/mihran94/jarvis-blue-android.git", "main"),
+    ("legacy/jarvis-mobile-beta", "https://github.com/mihran94/JARVIS-Mobile-Beta.git", "main"),
 )
 
 

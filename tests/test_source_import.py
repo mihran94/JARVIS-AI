@@ -4,14 +4,14 @@ from scripts.import_jarvis_sources import SOURCES, commands, main
 
 
 class SourceImportTests(unittest.TestCase):
-    def test_exactly_two_separate_upstreams(self):
-        self.assertEqual(len(SOURCES), 2)
+    def test_all_three_separate_upstreams(self):
+        self.assertEqual(len(SOURCES), 3)
         self.assertEqual({item[0] for item in SOURCES},
-                         {"legacy/jarvis-blue", "android"})
+                         {"legacy/jarvis-blue", "android", "legacy/jarvis-mobile-beta"})
 
     def test_import_uses_subtree_and_no_destructive_operations(self):
         planned = commands()
-        self.assertEqual(len(planned), 2)
+        self.assertEqual(len(planned), 3)
         for cmd in planned:
             self.assertEqual(cmd[:3], ["git", "subtree", "add"])
             self.assertNotIn("--squash", cmd)
@@ -23,6 +23,13 @@ class SourceImportTests(unittest.TestCase):
         self.assertEqual(len(selected), 1)
         self.assertIn('--prefix=android', selected[0])
         self.assertNotIn('legacy/jarvis-blue', ' '.join(selected[0]))
+
+    def test_mobile_beta_source_is_separate_and_history_preserving(self):
+        selected = commands('legacy/jarvis-mobile-beta')
+        self.assertEqual(len(selected), 1)
+        self.assertIn('--prefix=legacy/jarvis-mobile-beta', selected[0])
+        self.assertIn('mihran94/JARVIS-Mobile-Beta.git', selected[0])
+        self.assertNotIn('--squash', selected[0])
 
     def test_one_source_dry_run(self):
         self.assertEqual(main(['--source', 'android']), 0)

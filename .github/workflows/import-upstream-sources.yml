@@ -15,6 +15,7 @@ on:
         options:
           - legacy/jarvis-blue
           - android
+          - legacy/jarvis-mobile-beta
 
 permissions:
   contents: write
@@ -55,7 +56,7 @@ jobs:
               python scripts/import_jarvis_sources.py --apply --source "$SOURCE"
             fi
           else
-            for item in legacy/jarvis-blue android; do
+            for item in legacy/jarvis-blue android legacy/jarvis-mobile-beta; do
               if [ -d "$item" ]; then
                 echo "Source already imported: $item"
               else
@@ -73,6 +74,9 @@ jobs:
           fi
           if [ -z "$SOURCE" ] || [ "$SOURCE" = "android" ]; then
             test -f android/README.md
+          fi
+          if [ -z "$SOURCE" ] || [ "$SOURCE" = "legacy/jarvis-mobile-beta" ]; then
+            test -f legacy/jarvis-mobile-beta/README.md
           fi
           git log -1 --format='%h %s'
       - name: Restore generated PWA icons
