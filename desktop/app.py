@@ -194,8 +194,11 @@ class Window(QMainWindow):
     def dashboard(self):
         page, layout = self.page('Your command center',
             'A practical foundation for a Windows AI assistant. Add your own provider key to start chatting.')
-        orb = BlueOrb(page)
-        layout.addWidget(orb)
+        self.orb = BlueOrb(page)
+        layout.addWidget(self.orb)
+        self.orb_status = QLabel('AI STATUS  /  IDLE')
+        self.orb_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.orb_status)
         for title, text in [
             ('01  /  INTELLIGENCE', 'Stream chat through OpenAI, MiniMax or Gemini. Tamil, English and French text can be entered.'),
             ('02  /  CONTROL', 'Review each app launch and workspace save. Emergency stop blocks new work.'),
@@ -208,6 +211,12 @@ class Window(QMainWindow):
             layout.addWidget(box)
         layout.addStretch()
         return page
+
+    def set_ai_visual_state(self, state):
+        """Display actual chat worker activity, not microphone or speech state."""
+        if hasattr(self, 'orb'):
+            self.orb.set_state(state)
+            self.orb_status.setText('AI STATUS  /  ' + state.upper())
 
     def chat_page(self):
         page, layout = self.page('Chat',
@@ -568,6 +577,7 @@ class Window(QMainWindow):
         self.chat_provider.setEnabled(False)
         self.backup_provider.setEnabled(False)
         self.backup_consent.setEnabled(False)
+        self.set_ai_visual_state('thinking')
         self.worker.start()
 
     def permissions_page(self):
@@ -754,6 +764,7 @@ class Window(QMainWindow):
             return
         self.transcript.moveCursor(QTextCursor.MoveOperation.End)
         self.transcript.insertPlainText(text)
+        self.set_ai_visual_state('responding')
 
     def on_result(self, status, text, metrics=None):
         try:
@@ -796,6 +807,7 @@ class Window(QMainWindow):
         self.refresh_history()
 
     def on_finished(self):
+        self.set_ai_visual_state('stopped' if self.policy.stopped else 'idle')
         self.worker.deleteLater()
         self.worker = None
         for button in (self.send_button, self.new_chat_button, self.clear_button,
@@ -808,6 +820,7 @@ class Window(QMainWindow):
             self.close()
 
     def stop(self):
+        self.set_ai_visual_state('stopped')
         self.policy.stop()
         self.queue.cancel_pending()
         self.workflows.cancel_pending()
@@ -823,6 +836,7 @@ class Window(QMainWindow):
 
     def resume(self):
         self.policy.resume()
+        self.set_ai_visual_state('idle')
         self.resume_button.setEnabled(False)
         self.state.setText('● READY · MANUAL APPROVAL')
         if self.worker is None:
