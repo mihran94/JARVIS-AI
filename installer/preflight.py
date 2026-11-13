@@ -21,7 +21,8 @@ def main():
         return 1
 
     sources = [ROOT / "main.py", ROOT / "installer" / "preflight.py"]
-    sources.extend((ROOT / "tests").rglob("test_*.py")) if (ROOT / "tests").exists() else None
+    if (ROOT / "tests").exists():
+        sources.extend((ROOT / "tests").rglob("test_*.py"))
     for folder in SOURCE_DIRS:
         directory = ROOT / folder
         if directory.exists():
