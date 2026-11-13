@@ -22,6 +22,7 @@ from desktop.blue_theme import FUTURISTIC_BLUE
 from desktop.blue_orb import BlueOrb
 from desktop.system_metrics import CpuSampler, snapshot, format_snapshot
 from desktop.network_metrics import NetworkSampler, format_network
+from desktop.voice_commands import parse_voice_command
 from security.policy import Policy, Action, Stopped
 from security.vault import Vault
 from providers.chat import ProviderError, TransientProviderError
@@ -353,6 +354,8 @@ class Window(QMainWindow):
         self.read_replies = QCheckBox('Read replies aloud on this PC (optional; uses Windows speech)')
         layout.addWidget(self.read_replies)
         self.send_button = self.button(layout, 'Ask JARVIS', self.send)
+        self.review_pc_action_button = self.button(
+            layout, 'Review PC action (Notepad / Calculator)', self.review_chat_pc_action)
         return page
 
     def bridge_page(self):
@@ -763,6 +766,24 @@ class Window(QMainWindow):
         self.notify(lambda: self.gateway.run(Action('launch_app', name), self.confirm,
                                               lambda: launch_app(name)))
 
+    def review_chat_pc_action(self):
+        """Turn only an exact, allowlisted instruction into an approval request.
+
+        This is a deterministic local parser, not a model-to-shell bridge.
+        Unrecognized instructions are refused. No PC action occurs without
+        the same one-use approval dialog used by the PC Control page.
+        """
+        if self.policy.stopped:
+            return
+        name = parse_voice_command(self.prompt.toPlainText())
+        if name not in APPS:
+            self.statusBar().showMessage(
+                'No action ran. Say: open notepad or open calculator '
+                '(Tamil phrases also supported).', 15000)
+            return
+        self.notify(lambda: self.gateway.run(
+            Action('launch_app', name), self.confirm, lambda: launch_app(name)))
+
     def open_file(self):
         def operation():
             if self.editor.document().isModified():
@@ -978,6 +999,7 @@ class Window(QMainWindow):
         self.state.setText('● STOPPED')
         self.resume_button.setEnabled(True)
         self.send_button.setEnabled(False)
+        self.review_pc_action_button.setEnabled(False)
         ident = self.store.task('emergency_stop', 'All outstanding approvals invalidated')
         self.store.finish(ident, 'completed')
         self.statusBar().showMessage('STOPPED. No new actions. In-flight network reads may need up to 30 seconds.')
@@ -992,6 +1014,7 @@ class Window(QMainWindow):
             for button in (self.send_button, self.new_chat_button, self.clear_button,
                        self.archive_button, self.probe_button, self.generate_button, self.repair_button):
                 button.setEnabled(True)
+        self.review_pc_action_button.setEnabled(True)
 
     def refresh_history(self):
         rows = self.store.tasks()

@@ -181,3 +181,46 @@ def test_voice_drafts_text_without_network_or_automation(tmp_path):
     finally:
         window.close()
         app.processEvents()
+
+
+def test_chat_pc_action_only_runs_exact_allowlisted_command_after_approval(tmp_path, monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
+    launched = []
+    monkeypatch.setattr('desktop.app.launch_app',
+                        lambda name: launched.append(name) or 'Mock app started')
+    # Denial is caught by the UI and reported as a dialog.
+    monkeypatch.setattr('desktop.app.QMessageBox.warning', lambda *args: None)
+    try:
+        window.prompt.setPlainText('open notepad and delete everything')
+        window.review_chat_pc_action()
+        assert launched == []
+        assert 'No action ran' in window.statusBar().currentMessage()
+
+        window.prompt.setPlainText('open notepad')
+        window.confirm = lambda action: False
+        window.review_chat_pc_action()
+        assert launched == []
+        assert window.store.tasks()[0]['status'] == 'denied'
+
+        window.confirm = lambda action: (
+            action.kind == 'launch_app' and action.target == 'Notepad')
+        window.review_chat_pc_action()
+        assert launched == ['Notepad']
+        assert window.store.tasks()[0]['status'] == 'completed'
+        assert window.store.messages(window.session) == []
+
+        window.prompt.setPlainText('கால்குலேட்டர் திற')
+        window.confirm = lambda action: action.target == 'Calculator'
+        window.review_chat_pc_action()
+        assert launched == ['Notepad', 'Calculator']
+
+        window.stop()
+        assert not window.review_pc_action_button.isEnabled()
+        window.review_chat_pc_action()
+        assert launched == ['Notepad', 'Calculator']
+        window.resume()
+        assert window.review_pc_action_button.isEnabled()
+    finally:
+        window.close()
+        app.processEvents()
