@@ -85,20 +85,21 @@ jobs:
         run: |
           # The integrity-repair workflow may push while imports are testing.
           # Rebase the import commits on the latest remote without force-pushing.
-          # Tests and generated icons may leave tracked/untracked files modified.
-          # Preserve all of them while rebasing; never discard source changes.
+          # Preserve tracked and untracked changes as a real commit before rebase.
+          # Stashing alone left android/gradlew.bat dirty in an earlier run.
           git status --short
-          git stash push --include-untracked -m "jarvis-import-pre-rebase"
-          git fetch origin integration/main-preserving-20261113
-          git rebase origin/integration/main-preserving-20261113
-          if git stash list | grep -q "jarvis-import-pre-rebase"; then
-            git stash pop
-          fi
-          # Stage any restored generated changes explicitly before committing.
           git add -A
           if ! git diff --cached --quiet; then
-            git commit -m "chore(import): preserve generated changes after rebase"
+            git commit -m "chore(import): preserve post-test working tree"
           fi
+          # Do not risk rebasing with an unexpectedly dirty worktree.
+          if [ -n "$(git status --porcelain)" ]; then
+            git status --short
+            echo "::error::Working tree remains dirty after staging; aborting safely"
+            exit 1
+          fi
+          git fetch origin integration/main-preserving-20261113
+          git rebase origin/integration/main-preserving-20261113
           # Rebase may change tracked files; refresh and validate the manifest.
           python scripts/source_manifest.py
           python scripts/source_manifest.py --check
