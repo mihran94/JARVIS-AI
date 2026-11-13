@@ -35,6 +35,9 @@ control for the Windows process, not another AI brain.
   The built EXE must pass `--check-voice-runtime` in CI. This only verifies
   package imports and creation of a SAPI object, never microphone capture,
   installed languages, wake-word accuracy, or physical audio output.
+  Diagnostic codes: 31 = CLR import, 32 = assembly loading, 33 = speech
+  grammar import, 34 = win32com import, 35 = SAPI COM object. These do not
+  disclose local file paths or credentials.
 - The .NET System.Speech integration uses `Grammar(GrammarBuilder)`,
   `SetInputToDefaultAudioDevice()` and `Recognize(TimeSpan)`.
 - Tamil and French support **depend on installed Windows recognizers and

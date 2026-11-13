@@ -1086,15 +1086,29 @@ def voice_runtime_smoke_test():
     """
     if sys.platform != 'win32':
         return 21
+    # Distinct exit codes reveal *which dependency stage* failed without
+    # printing private paths, credentials, or raw COM exception details.
     try:
         import clr
-        clr.AddReference('System.Speech')
-        from System.Speech.Recognition import Grammar
-        import win32com.client
-        voice = win32com.client.Dispatch('SAPI.SpVoice')
-        return 0 if Grammar is not None and voice is not None else 22
     except Exception:
-        return 23
+        return 31
+    try:
+        clr.AddReference('System.Speech')
+    except Exception:
+        return 32
+    try:
+        from System.Speech.Recognition import Grammar
+    except Exception:
+        return 33
+    try:
+        import win32com.client
+    except Exception:
+        return 34
+    try:
+        voice = win32com.client.Dispatch('SAPI.SpVoice')
+    except Exception:
+        return 35
+    return 0 if Grammar is not None and voice is not None else 36
 
 
 def launch_arguments(argv):
