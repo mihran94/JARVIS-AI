@@ -27,12 +27,8 @@ class WindowsBridgeGateway @Inject constructor(
 
     private suspend fun peer() = peerRepository.trusted()
 
-    private fun baseUrl(host: String, port: Int): String =
-        if (host.startsWith("http://") || host.startsWith("https://")) {
-            "${host.trimEnd('/')}:$port"
-        } else {
-            "http://$host:$port"
-        }
+    private fun baseUrl(host: String, port: Int): String? =
+        runCatching { BridgeEndpoint.baseUrl(host, port) }.getOrNull()
 
     suspend fun status(): PcStatus {
         val peer = peer() ?: return PcStatus(
@@ -40,7 +36,12 @@ class WindowsBridgeGateway @Inject constructor(
             state = PcState.PAIRING_REQUIRED,
             detail = "No Windows machine is paired",
         )
-        return bridgeClient.status(baseUrl(peer.host, peer.port)).valueOrNull
+        val endpoint = baseUrl(peer.host, peer.port) ?: return PcStatus(
+            peerId = peer.peerId,
+            state = PcState.DEGRADED,
+            detail = "Invalid bridge endpoint: HTTPS is required",
+        )
+        return bridgeClient.status(endpoint).valueOrNull
             ?: PcStatus(
                 peerId = peer.peerId,
                 state = PcState.OFFLINE,
@@ -51,7 +52,8 @@ class WindowsBridgeGateway @Inject constructor(
 
     suspend fun jobs(): List<BridgeJob> {
         val peer = peer() ?: return emptyList()
-        return bridgeClient.jobs(baseUrl(peer.host, peer.port)).valueOrNull ?: emptyList()
+        val endpoint = baseUrl(peer.host, peer.port) ?: return emptyList()
+        return bridgeClient.jobs(endpoint).valueOrNull ?: emptyList()
     }
 
     suspend fun submit(request: BridgeRequest): BridgeJob {
@@ -62,7 +64,14 @@ class WindowsBridgeGateway @Inject constructor(
             state = com.jarvisblue.core.model.BridgeJobState.REJECTED,
             error = "No Windows machine is paired",
         )
-        return bridgeClient.submitJob(baseUrl(peer.host, peer.port), request).valueOrNull
+        val endpoint = baseUrl(peer.host, peer.port) ?: return BridgeJob(
+            id = "invalid-bridge-endpoint",
+            kind = request.kind,
+            title = request.title,
+            state = com.jarvisblue.core.model.BridgeJobState.REJECTED,
+            error = "Invalid bridge endpoint: HTTPS is required",
+        )
+        return bridgeClient.submitJob(endpoint, request).valueOrNull
             ?: BridgeJob(
                 id = "failed",
                 kind = request.kind,
@@ -74,6 +83,7 @@ class WindowsBridgeGateway @Inject constructor(
 
     suspend fun cancel(jobId: String): Boolean {
         val peer = peer() ?: return false
-        return bridgeClient.cancelJob(baseUrl(peer.host, peer.port), jobId).valueOrNull ?: false
+        val endpoint = baseUrl(peer.host, peer.port) ?: return false
+        return bridgeClient.cancelJob(endpoint, jobId).valueOrNull ?: false
     }
 }

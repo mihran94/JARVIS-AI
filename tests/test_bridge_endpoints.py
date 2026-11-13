@@ -122,7 +122,7 @@ def test_an_oversized_message_is_refused():
 # --------------------------------------------------------------- memory
 
 def test_a_memory_entry_travels_to_the_desktop():
-    server = make_server()
+    server = make_server(memory_allowed=lambda: True)
     stored = server.handle(signed_request(
         server, 'POST', '/api/memory', json.dumps({'text': 'Milk', 'source': 'phone'})))
     assert stored.status == 200
@@ -147,6 +147,43 @@ def test_the_memory_store_drops_the_oldest_entries():
     entries = store.entries()
     assert len(entries) == 3
     assert entries[0].text == 'entry 2'
+
+
+def test_memory_read_and_write_require_explicit_owner_permission():
+    server = make_server()
+    server.memory.append('private preference', source='desktop')
+    read = server.handle(signed_request(server, 'GET', '/api/memory', nonce='read'))
+    write = server.handle(signed_request(
+        server, 'POST', '/api/memory', json.dumps({'text': 'new preference'}), nonce='write'))
+    assert read.status == 403
+    assert write.status == 403
+    assert 'private preference' not in read.to_json()
+    assert [entry.text for entry in server.memory.entries()] == ['private preference']
+
+
+def test_revoked_memory_permission_applies_immediately_to_reads_and_writes():
+    consent = {'enabled': True}
+    server = make_server(memory_allowed=lambda: consent['enabled'])
+    added = server.handle(signed_request(
+        server, 'POST', '/api/memory', json.dumps({'text': 'remember this'}), nonce='write-one'))
+    assert added.status == 200
+    consent['enabled'] = False
+    assert server.handle(signed_request(server, 'GET', '/api/memory', nonce='read-two')).status == 403
+    assert server.handle(signed_request(
+        server, 'POST', '/api/memory', json.dumps({'text': 'not this'}), nonce='write-two')).status == 403
+    assert [entry.text for entry in server.memory.entries()] == ['remember this']
+
+
+def test_broken_memory_consent_callback_never_exposes_memories():
+    def broken_checker():
+        raise RuntimeError('consent checker unavailable')
+
+    server = make_server(memory_allowed=broken_checker)
+    server.memory.append('sensitive content', source='desktop')
+    response = server.handle(signed_request(server, 'GET', '/api/memory', nonce='read'))
+    assert response.status == 403
+    assert 'sensitive content' not in response.to_json()
+    assert 'checker unavailable' not in response.to_json()
 
 
 # --------------------------------------------------------- notifications

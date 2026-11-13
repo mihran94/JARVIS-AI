@@ -151,7 +151,9 @@ The desktop keeps the last few turns so an answer can refer to them.
 `GET` and `POST /api/memory` carry the memory that the owner allowed to be
 synchronised. An entry is `{"id", "text", "source", "created_at"}`. The store
 is bounded, it is not written to disk by the bridge, and a desktop that has
-not allowed memory synchronisation refuses the request with `403`.
+not allowed memory synchronisation refuses **both read and write** requests
+with `403`. A missing or failing permission checker also denies access; pairing
+alone does not grant permission to read memories.
 
 `GET /api/notifications` returns the notifications that were not acknowledged
 yet, and `POST /api/notifications/<id>/ack` marks one as seen. A notification

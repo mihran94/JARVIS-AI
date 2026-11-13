@@ -198,6 +198,7 @@ class BridgeServer:
         if method == 'POST' and path == '/api/chat':
             return self._chat_answer(request)
         if method == 'GET' and path == '/api/memory':
+            self._require_memory_permission()
             return {'memory': [entry.to_json() for entry in self._memory.entries()]}
         if method == 'POST' and path == '/api/memory':
             return self._remember(request)
@@ -278,18 +279,25 @@ class BridgeServer:
         source = body.get('source', 'phone')
         if not isinstance(text, str) or len(text) > MAX_MEMORY_TEXT:
             raise BridgeHandlerError(400, 'That memory entry is not usable.')
-        if self._memory_allowed is not None:
-            try:
-                allowed = bool(self._memory_allowed())
-            except Exception:
-                allowed = False
-            if not allowed:
-                raise BridgeHandlerError(403, 'The Windows desktop has not allowed memory synchronisation.')
+        self._require_memory_permission()
         try:
             entry = self._memory.append(text, source)
         except MemoryError_ as error:
             raise BridgeHandlerError(400, str(error)) from None
         return entry.to_json()
+
+    def _require_memory_permission(self) -> None:
+        """Fail closed for both reading and writing shared memories.
+
+        Pairing authorises a device, but memory synchronisation also needs an
+        explicit owner-controlled grant. A missing or broken checker is denial.
+        """
+        try:
+            allowed = self._memory_allowed is not None and self._memory_allowed() is True
+        except Exception:
+            allowed = False
+        if not allowed:
+            raise BridgeHandlerError(403, 'The Windows desktop has not allowed memory synchronisation.')
 
     def _submit(self, request: BridgeRequest) -> dict:
         try:
