@@ -9,6 +9,42 @@ import shutil
 import sys
 
 
+class FILETIME(ctypes.Structure):
+    _fields_ = [('dwLowDateTime', ctypes.c_ulong), ('dwHighDateTime', ctypes.c_ulong)]
+
+
+def _filetime_value(value):
+    return (value.dwHighDateTime << 32) | value.dwLowDateTime
+
+
+class CpuSampler:
+    """Non-blocking Windows CPU usage sampler based on GetSystemTimes deltas."""
+    def __init__(self):
+        self.previous = None
+
+    def sample(self):
+        if sys.platform != 'win32':
+            return None
+        idle, kernel, user = FILETIME(), FILETIME(), FILETIME()
+        try:
+            success = ctypes.windll.kernel32.GetSystemTimes(
+                ctypes.byref(idle), ctypes.byref(kernel), ctypes.byref(user))
+        except (AttributeError, OSError):
+            return None
+        if not success:
+            return None
+        current = (_filetime_value(idle), _filetime_value(kernel), _filetime_value(user))
+        previous = self.previous
+        self.previous = current
+        if previous is None:
+            return None
+        idle_delta = current[0] - previous[0]
+        total_delta = current[1] + current[2] - previous[1] - previous[2]
+        if total_delta <= 0 or idle_delta < 0:
+            return None
+        return round(max(0.0, min(100.0, 100.0 * (1.0 - idle_delta / total_delta))), 1)
+
+
 class MEMORYSTATUSEX(ctypes.Structure):
     _fields_ = [
         ("dwLength", ctypes.c_ulong),
@@ -27,12 +63,12 @@ def _gib(value):
     return round(value / (1024 ** 3), 1)
 
 
-def snapshot(path=None):
+def snapshot(path=None, cpu_sampler=None):
     """Return basic metrics or explicit unavailable values; never guess CPU load."""
     root = Path(path or Path.home())
     data = {
         "cpu_cores": os.cpu_count(),
-        "cpu_usage_percent": None,
+        "cpu_usage_percent": cpu_sampler.sample() if cpu_sampler is not None else None,
         "ram_used_gib": None,
         "ram_total_gib": None,
         "disk_used_gib": None,
