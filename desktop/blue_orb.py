@@ -13,15 +13,22 @@ class BlueOrb(QWidget):
         super().__init__(parent)
         self.setMinimumSize(240, 200)
         self._phase = 0.0
+        self._state = 'idle'
         self._timer = QTimer(self)
         self._timer.setInterval(40)
         self._timer.timeout.connect(self._tick)
         self._timer.start()
 
+    def set_state(self, state):
+        if state not in ('idle', 'thinking', 'responding', 'stopped'):
+            raise ValueError('Unknown orb state')
+        self._state = state
+        self.update()
+
     def _tick(self):
         if not self.isVisible():
             return
-        self._phase = (self._phase + 0.035) % (2 * math.pi)
+        self._phase = (self._phase + (0.09 if self._state == 'thinking' else 0.035)) % (2 * math.pi)
         self.update()
 
     def paintEvent(self, event):
@@ -31,8 +38,11 @@ class BlueOrb(QWidget):
         w, h = self.width(), self.height()
         x, y = w / 2, h / 2
         radius = min(w * 0.30, h * 0.36)
+        active = self._state != 'stopped'
+        pulse = 1.0 + (0.045 * math.sin(self._phase * 3) if self._state == 'responding' else 0.0)
+        radius *= pulse
         glow = QRadialGradient(x, y, radius * 1.6)
-        glow.setColorAt(0, QColor(22, 158, 227, 115))
+        glow.setColorAt(0, QColor(22, 158, 227, 115 if active else 35))
         glow.setColorAt(0.5, QColor(0, 117, 200, 45))
         glow.setColorAt(1, QColor(0, 40, 100, 0))
         painter.setPen(Qt.PenStyle.NoPen)
@@ -43,7 +53,7 @@ class BlueOrb(QWidget):
         for ring in range(3):
             offset = math.sin(self._phase + ring) * 3
             r = radius * (0.58 + ring * 0.18) + offset
-            pen = QPen(QColor(50 + ring * 25, 210, 255, 205 - ring * 45))
+            pen = QPen(QColor(50 + ring * 25, 210 if active else 110, 255 if active else 140, (205 - ring * 45) if active else 70))
             pen.setWidthF(2.5 if ring == 0 else 1.5)
             painter.setPen(pen)
             painter.drawEllipse(int(x - r), int(y - r), int(2 * r), int(2 * r))
