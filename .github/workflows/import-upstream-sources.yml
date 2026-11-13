@@ -84,7 +84,7 @@ jobs:
       - name: Push verified integration commits only
         run: |
           # The integrity-repair workflow may push while imports are testing.
-          # Rebase the import commits on the latest remote without force-pushing.
+          # Merge remote integration updates; never replay upstream subtree history.
           # Preserve tracked and untracked changes as a real commit before rebase.
           # Stashing alone left android/gradlew.bat dirty in an earlier run.
           git status --short
@@ -99,13 +99,15 @@ jobs:
             exit 1
           fi
           git fetch origin integration/main-preserving-20261113
-          git rebase origin/integration/main-preserving-20261113
-          # Rebase may change tracked files; refresh and validate the manifest.
+          # Prefer the current remote version only when both sides edit the same file.
+          # This avoids replaying upstream initial commits and README add/add conflicts.
+          git merge --no-edit -X theirs origin/integration/main-preserving-20261113
+          # Merge may change tracked files; refresh and validate the manifest.
           python scripts/source_manifest.py
           python scripts/source_manifest.py --check
           if ! git diff --quiet -- docs/SOURCE_INTEGRITY.sha256; then
             git add -- docs/SOURCE_INTEGRITY.sha256
-            git commit -m "chore(integrity): refresh source hashes after rebase"
+            git commit -m "chore(integrity): refresh source hashes after merge"
           fi
           python -m pytest -q tests
           git push origin HEAD:integration/main-preserving-20261113
