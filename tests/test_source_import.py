@@ -27,6 +27,15 @@ class SourceImportTests(unittest.TestCase):
     def test_one_source_dry_run(self):
         self.assertEqual(main(['--source', 'android']), 0)
 
+    def test_unknown_source_rejected(self):
+        with self.assertRaises(ValueError):
+            commands('unexpected-repository')
+
+    def test_import_command_never_targets_main_repository(self):
+        for command in commands():
+            self.assertNotIn('JARVIS-AI.git', ' '.join(command))
+            self.assertEqual(command[0:3], ['git', 'subtree', 'add'])
+
     def test_default_is_dry_run(self):
         self.assertEqual(main([]), 0)
 
