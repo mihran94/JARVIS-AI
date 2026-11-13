@@ -10,6 +10,8 @@ adapters. Three rules shape it:
 - on a machine that is not Windows the adapters are not available, and the
   page says so instead of pretending.
 """
+import sys
+
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
@@ -63,7 +65,21 @@ class VoiceWorker(QThread):
             self.failed.emit(str(error))
             return
         try:
-            if self._mode in ('wake', 'continuous'):
+            if self._mode == 'dialogue':
+                # One supervised turn: idle on the local wake recognizer,
+                # then capture an utterance with the dictation grammar.
+                # The desktop decides whether to send it; this worker never
+                # calls providers or launches a PC action.
+                while self.consent.listening and not self.isInterruptionRequested():
+                    wake, command = recognizer.wait_for_wake_phrase(self._timeout)
+                    if wake:
+                        if not command and self.consent.listening and not self.isInterruptionRequested():
+                            command = recognizer.recognize_once(8.0)
+                        if self.consent.listening and not self.isInterruptionRequested():
+                            self.wake_call.emit(wake, (command or '').strip()[:4000])
+                        break
+                    QThread.msleep(120)
+            elif self._mode in ('wake', 'continuous'):
                 while self.consent.listening and not self.isInterruptionRequested():
                     transcript, command = recognizer.wait_for_wake_phrase(self._timeout)
                     if transcript:
@@ -86,6 +102,41 @@ class VoiceWorker(QThread):
                 pass
 
 
+class VoiceSpeakerWorker(QThread):
+    """SAPI playback off the UI thread, on its own initialized COM apartment."""
+
+    failed = Signal(str)
+
+    def __init__(self, speaker_factory, text):
+        super().__init__()
+        self._speaker_factory = speaker_factory
+        self._text = text
+
+    def run(self):
+        apartment = None
+        try:
+            if sys.platform == 'win32' and self._speaker_factory is default_speaker_factory:
+                # The actual SAPI factory requires COM on its worker thread.
+                # Test doubles and non-COM backends must not require pywin32.
+                import pythoncom
+                apartment = pythoncom
+                apartment.CoInitialize()
+            if self.isInterruptionRequested():
+                return
+            speaker = self._speaker_factory()
+            if hasattr(speaker, 'speak_interruptibly'):
+                speaker.speak_interruptibly(self._text, self.isInterruptionRequested)
+            elif not self.isInterruptionRequested():
+                speaker.speak(self._text)
+        except VoiceError as error:
+            self.failed.emit(str(error))
+        except Exception:
+            self.failed.emit('Windows speech playback failed. Check the audio output.')
+        finally:
+            if apartment is not None:
+                apartment.CoUninitialize()
+
+
 class VoicePanel(QWidget):
     """The microphone permission, the wake phrase and the voice adapters."""
 
@@ -94,6 +145,8 @@ class VoicePanel(QWidget):
     wake_detected = Signal(str, str)
     # A listen-once utterance is a chat draft, never an action or API call.
     utterance_detected = Signal(str)
+    cycle_finished = Signal()
+    speech_finished = Signal()
 
     def __init__(self, *, consent=None, recognizer_factory=None, speaker_factory=None,
                  matcher=None, parent=None):
@@ -103,6 +156,7 @@ class VoicePanel(QWidget):
         self._recognizer_factory = recognizer_factory or default_recognizer_factory
         self._speaker_factory = speaker_factory or default_speaker_factory
         self.worker = None
+        self.speaker_worker = None
         self._build()
         self.refresh()
 
@@ -213,6 +267,7 @@ class VoicePanel(QWidget):
         self.worker.wake_call.connect(self.on_wake_call)
         self.worker.failed.connect(self.status)
         self.worker.finished.connect(self.refresh)
+        self.worker.finished.connect(self.cycle_finished.emit)
         self.worker.start()
         self.status('Listening for Hey Jarvis (owner allowed).' if mode == 'continuous'
                     else 'Listening…')
@@ -246,30 +301,47 @@ class VoicePanel(QWidget):
         self.wake_detected.emit(transcript, command)
 
     def speak(self):
-        """Say the text with the Windows voice."""
-        text = self.speak_text.text().strip()
+        """Start optional text-to-speech without blocking Emergency Stop."""
+        self.speak_response(self.speak_text.text())
+
+    def speak_response(self, text):
+        """Speak on a dedicated worker so Qt remains responsive."""
+        text = (text or '').strip()[:600]
         if not text:
             return
-        try:
-            speaker = self._speaker_factory()
-        except VoiceUnavailable as error:
-            self.status(str(error))
+        if self.speaker_worker is not None and self.speaker_worker.isRunning():
+            self.status('JARVIS is already speaking. Use Stop voice to interrupt.')
             return
-        except VoiceError as error:
-            self.status(str(error))
-            return
-        try:
-            speaker.speak(text)
-            self.status('Speaking.')
-        except VoiceError as error:
-            self.status(str(error))
+        self.speaker_worker = VoiceSpeakerWorker(self._speaker_factory, text)
+        self.speaker_worker.failed.connect(self.status)
+        self.speaker_worker.finished.connect(self.refresh)
+        self.speaker_worker.finished.connect(self.speech_finished.emit)
+        self.speaker_worker.start()
+        self.status('Speaking…')
 
-    def stop_voice(self):
-        """Close the microphone at once."""
-        self.consent.stop()
+    def cancel_listening(self):
+        """Stop an in-flight listen without revoking the owner's mic consent.
+
+        A Windows recognition call can take until its bounded timeout to
+        return. Pending worker output is ignored by desktop opt-in guards.
+        """
         if self.worker is not None and self.worker.isRunning():
             self.worker.requestInterruption()
+
+    def stop_voice(self):
+        """Revoke microphone consent and request worker interruption."""
+        self.consent.stop()
+        self.cancel_listening()
+        if self.speaker_worker is not None and self.speaker_worker.isRunning():
+            self.speaker_worker.requestInterruption()
         self.refresh()
+
+    def wait_for_workers(self, milliseconds=11000):
+        """On application exit, never destroy a QThread still running."""
+        for worker in (self.worker, self.speaker_worker):
+            if worker is not None and worker.isRunning():
+                worker.requestInterruption()
+                worker.wait(milliseconds)
 
     def resume_voice(self):
         """Allow the microphone to be opened again. The owner grants it again."""
@@ -299,6 +371,9 @@ class VoicePanel(QWidget):
         self.continuous_button.setEnabled(
             self.consent.listening and not (
                 self.worker is not None and self.worker.isRunning()))
+        self.speak_button.setEnabled(
+            self.speaker_worker is None or not self.speaker_worker.isRunning())
 
 
-__all__ = ['VoicePanel', 'VoiceWorker', 'default_recognizer_factory', 'default_speaker_factory']
+__all__ = ['VoicePanel', 'VoiceWorker', 'VoiceSpeakerWorker',
+           'default_recognizer_factory', 'default_speaker_factory']

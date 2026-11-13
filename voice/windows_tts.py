@@ -72,6 +72,30 @@ class WindowsTextToSpeech:
             self._voice.Rate = int(rate)
         self._voice.Speak(text)
 
+    def speak_interruptibly(self, text: str, should_stop, language: str | None = None) -> None:
+        """Use asynchronous SAPI playback and poll for an emergency stop.
+
+        The SAPI voice COM object must be created and used on the same
+        worker-thread apartment. Only the bundled Windows speech API is
+        involved: no provider calls, network access or microphone capture.
+        """
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError('There is nothing to speak.')
+        if language:
+            self.select_language(language)
+        if should_stop():
+            return
+        # SPF_ASYNC = 1; WaitUntilDone polls without blocking the Qt GUI.
+        self._voice.Speak(text, 1)
+        try:
+            while not self._voice.WaitUntilDone(120):
+                if should_stop():
+                    self.stop()
+                    return
+        finally:
+            if should_stop():
+                self.stop()
+
     def stop(self) -> None:
         """Stop speaking immediately."""
         try:

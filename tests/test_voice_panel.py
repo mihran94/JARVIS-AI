@@ -184,6 +184,8 @@ def test_speaking_without_windows_is_reported(panel):
     panel._speaker_factory = factory
     panel.speak_text.setText('hello')
     panel.speak()
+    panel.speaker_worker.wait(4000)
+    QApplication.instance().processEvents()
     assert 'needs Windows' in panel.transcript.toPlainText()
 
 
@@ -197,6 +199,8 @@ def test_speaking_says_the_text(panel):
     panel._speaker_factory = Speaker
     panel.speak_text.setText('the build is green')
     panel.speak()
+    panel.speaker_worker.wait(4000)
+    QApplication.instance().processEvents()
     assert said == ['the build is green']
 
 
@@ -263,3 +267,65 @@ def test_listen_once_can_be_reused_without_renewing_owner_consent(panel, app):
     assert speech == ['please review this Python module']
     assert panel.consent.granted is True
     assert panel.consent.listening is True
+
+
+def test_dialogue_hears_wake_then_dictated_request(panel, app):
+    panel.allow.setChecked(True)
+    heard = []
+    panel.wake_detected.connect(lambda wake, command: heard.append((wake, command)))
+    fake = FakeRecognizer(
+        transcript='Help me write an email', wake=('Hey Jarvis', ''))
+    panel._recognizer_factory = lambda *args: fake
+    panel.listen('dialogue')
+    panel.worker.wait(4000)
+    app.processEvents()
+    assert heard == [('Hey Jarvis', 'Help me write an email')]
+    assert fake.stopped is True
+
+
+def test_dialogue_fails_closed_if_mic_revoked_while_dictating(panel, app):
+    panel.allow.setChecked(True)
+    events = []
+    panel.wake_detected.connect(lambda *args: events.append(args))
+
+    class RevokedDuringDictation(FakeRecognizer):
+        def recognize_once(self, timeout_seconds=5.0):
+            panel.consent.revoke()
+            return 'delete my files'
+
+    panel._recognizer_factory = lambda *args: RevokedDuringDictation(
+        wake=('Hey Jarvis', ''))
+    panel.listen('dialogue')
+    panel.worker.wait(4000)
+    app.processEvents()
+    assert events == []
+    assert not panel.consent.listening
+
+
+def test_speech_output_runs_outside_qt_main_thread(panel, app):
+    import threading
+    main_thread = threading.get_ident()
+    playback_threads = []
+
+    class Speaker:
+        def speak_interruptibly(self, text, should_stop):
+            playback_threads.append((threading.get_ident(), text, should_stop()))
+
+    panel._speaker_factory = Speaker
+    panel.speak_response('Hello from JARVIS')
+    assert panel.speaker_worker is not None
+    panel.speaker_worker.wait(4000)
+    app.processEvents()
+    assert playback_threads == [(playback_threads[0][0], 'Hello from JARVIS', False)]
+    assert playback_threads[0][0] != main_thread
+
+
+def test_speech_worker_failure_is_reported_without_crashing(panel, app):
+    def factory():
+        raise VoiceUnavailable('No compatible voice installed')
+
+    panel._speaker_factory = factory
+    panel.speak_response('Testing the audio')
+    panel.speaker_worker.wait(4000)
+    app.processEvents()
+    assert 'No compatible voice installed' in panel.transcript.toPlainText()

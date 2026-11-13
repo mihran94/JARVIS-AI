@@ -75,6 +75,7 @@ class WindowsSpeechRecognizer:
         self._matcher = WakePhraseMatcher()
         self._language = language
         self._engine = None
+        self._engine_kind = None
 
     def _culture(self):
         from System.Globalization import CultureInfo
@@ -112,6 +113,17 @@ class WindowsSpeechRecognizer:
                 'installed recognizer for the selected language.'
             ) from None
 
+    def _ensure_engine(self, grammar_kind: str):
+        """Switch wake and dictation grammars without reusing the wrong one."""
+        self._consent.require_listening()
+        if self._engine is not None and self._engine_kind != grammar_kind:
+            engine, self._engine = self._engine, None
+            self._engine_kind = None
+            engine.Dispose()
+        if self._engine is None:
+            self._engine = self._build_engine(grammar_kind)
+            self._engine_kind = grammar_kind
+
     def _recognize(self, timeout_seconds: float):
         from System import TimeSpan
         seconds = max(0.1, min(float(timeout_seconds), 30.0))
@@ -124,8 +136,7 @@ class WindowsSpeechRecognizer:
         Raises `VoiceError` when the microphone is not allowed.
         """
         self._consent.require_listening()
-        if self._engine is None:
-            self._engine = self._build_engine('dictation')
+        self._ensure_engine('dictation')
         result = self._recognize(timeout_seconds)
         if result is None:
             return ''
@@ -134,8 +145,7 @@ class WindowsSpeechRecognizer:
     def wait_for_wake_phrase(self, timeout_seconds: float = 5.0) -> tuple[str, str]:
         """Listen for the wake phrase. Returns the phrase and the instruction."""
         self._consent.require_listening()
-        if self._engine is None:
-            self._engine = self._build_engine('wake')
+        self._ensure_engine('wake')
         result = self._recognize(timeout_seconds)
         if result is None:
             return '', ''
@@ -150,6 +160,7 @@ class WindowsSpeechRecognizer:
         # Releasing a one-shot recognizer must NOT cancel the user's consent.
         # Only the explicit Stop/permission toggle in VoicePanel revokes it.
         engine, self._engine = self._engine, None
+        self._engine_kind = None
         if engine is not None:
             try:
                 engine.Dispose()
