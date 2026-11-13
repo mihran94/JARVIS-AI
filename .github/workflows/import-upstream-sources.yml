@@ -1,0 +1,59 @@
+name: Import JARVIS upstream source histories
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: 'Upstream source to import'
+        required: true
+        type: choice
+        options:
+          - legacy/jarvis-blue
+          - android
+
+permissions:
+  contents: write
+
+concurrency:
+  group: jarvis-upstream-import
+  cancel-in-progress: false
+
+jobs:
+  import:
+    if: github.repository == 'mihran94/JARVIS-AI' && github.ref == 'refs/heads/integration/main-preserving-20261113'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout full Git history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Configure importer identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Validate upstream and import with history
+        env:
+          SOURCE: ${{ inputs.source }}
+        run: |
+          python scripts/import_jarvis_sources.py --source "$SOURCE"
+          python scripts/import_jarvis_sources.py --apply --source "$SOURCE"
+      - name: Restore generated PWA icons
+        run: python iphone-pwa/icons/restore-icons.py
+      - name: Recalculate and validate complete source manifest
+        run: |
+          python scripts/source_manifest.py
+          python scripts/source_manifest.py --check
+          git add -- docs/SOURCE_INTEGRITY.sha256
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(integrity): track imported source hashes"
+          fi
+      - name: Run core and unified tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python -m pip install -r requirements-dev.txt
+          python -m pytest -q
+      - name: Push verified integration commits only
+        run: git push origin HEAD:integration/main-preserving-20261113
