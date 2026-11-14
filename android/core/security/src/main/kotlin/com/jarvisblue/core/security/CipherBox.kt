@@ -12,8 +12,10 @@ import java.security.SecureRandom
 class CipherBox(private val keyManager: KeystoreKeyManager = KeystoreKeyManager()) {
 
     fun encrypt(plain: ByteArray): String {
-        val iv = keyManager.newInitVector()
-        val cipher = keyManager.cipherForEncryption(iv)
+        // Android Keystore generates a fresh, non-repeating AES-GCM IV.
+        val cipher = keyManager.cipherForEncryption()
+        val iv = requireNotNull(cipher.iv) { "Android Keystore did not supply an IV" }
+        require(iv.size == 12) { "Unsupported GCM IV length" }
         val combined = cipher.doFinal(plain)
         val cipherText = combined.copyOfRange(0, combined.size - TAG_LENGTH)
         val tag = combined.copyOfRange(combined.size - TAG_LENGTH, combined.size)

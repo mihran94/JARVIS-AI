@@ -1,7 +1,7 @@
 name: Android monorepo integration APK
 on:
   push:
-    branches: [main, integration/single-jarvis-20261113, integration/all-remaining-sources-20261113, fix/remote-only-merged-manifest-20261113]
+    branches: [main, integration/single-jarvis-20261113, integration/all-remaining-sources-20261113, fix/remote-only-merged-manifest-20261113, fix/android-remote-launch-crash-20261114]
     paths:
       - 'android/**'
       - '.github/workflows/android-integration.yml'
@@ -60,6 +60,29 @@ jobs:
             fi
           done
           echo "PASS: compiled APK exposes only remote-use permissions and launcher" | tee -a remote-manifest-audit.txt
+      - name: Allow hardware virtualization for Android cold-launch smoke
+        run: |
+          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+      - name: Run installed APK on Android emulator (actual cold launch)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+          disable-animations: true
+          script: |
+            set -eu
+            adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+            adb logcat -c
+            adb shell am start -W -n com.jarvisblue.mobile.debug/com.jarvisblue.mobile.MainActivity
+            sleep 9
+            adb logcat -d -v time > android/android-launch-logcat.txt
+            grep -A 36 -B 5 -E 'FATAL EXCEPTION|Process: com.jarvisblue.mobile.debug|AndroidRuntime' android/android-launch-logcat.txt | tail -170 || true
+            adb shell pidof com.jarvisblue.mobile.debug
+            adb exec-out screencap -p > android/android-launch-screen.png
+            test -s android/android-launch-screen.png
+            echo "PASS: Android JARVIS process and screen survived cold launch"
       - name: Check build output and digest
         run: |
           test -s app/build/outputs/apk/debug/app-debug.apk
@@ -71,5 +94,6 @@ jobs:
             android/app/build/outputs/apk/debug/app-debug.apk
             android/app-debug.apk.sha256
             android/remote-manifest-audit.txt
+            android/android-launch-screen.png
           retention-days: 14
           if-no-files-found: error

@@ -16,7 +16,7 @@
 #
 # 558 files
 811427777ef27750dc4a2b86240a03943355a35c020d18347b744316119736e7  .gitattributes
-d21c083326e94ef6fba72b73c0ddb7c4cf5690445ae54952d4e3c2c159e355ea  .github/workflows/android-integration.yml
+d26faca3a8885396fa0aac85ff9c11be5c83eb2c95a4d9c2959c642bead72543  .github/workflows/android-integration.yml
 08a3cef7437a7b015f04dd505103f96fce5c896b7e7cae7f7aabfd6d1f5276e1  .github/workflows/import-upstream-sources.yml
 5e968989f826362896aff4106debd5f7114dc14e1f1598425a1cc6d6ca494439  .github/workflows/repair-source-integrity.yml
 77fbca8754f9c69b5d16a90a81e38ced978294422e6bd78bbe645b71e14fc14b  .github/workflows/tests.yml
@@ -43,7 +43,7 @@ bef1829ee6ac7c7dfccf4f7a52c8a41c6b7dc4e9cad74a94a9535cbb2b36b3d9  android/.gitig
 423527be0844d89a8fdc4906e830bca450074cc3f44ebeb8e7a0887dca1ab3ca  android/app/src/main/AndroidManifest.xml
 ceaa6c7c4bb7748a45684edec90267c3e9442104cee323d40c973875903f1054  android/app/src/main/kotlin/com/jarvisblue/mobile/AssistantServicesImpl.kt
 5eb813deb6b41b2875114e59f6e4f590a9d367a32f566a749f518d9b74aa17cc  android/app/src/main/kotlin/com/jarvisblue/mobile/JarvisApplication.kt
-afb9c852862580c7f39d164dcddafcf723916581df27c4b71d5a74ca46f8a37d  android/app/src/main/kotlin/com/jarvisblue/mobile/MainActivity.kt
+88c4de16958254b74d5b39a2c8419a7f6b2684182a4db4fabcfe89c1bdf324d5  android/app/src/main/kotlin/com/jarvisblue/mobile/MainActivity.kt
 6c24244e7dbd8bf0455bc95a1a6c651a8aa908c03bb6899260994c37d3e91cc0  android/app/src/main/kotlin/com/jarvisblue/mobile/assistant/JarvisRecognitionService.kt
 fc4fec8b807f3bc033dae5f95f049b476031e9f3722e251ffd069b176da608d7  android/app/src/main/kotlin/com/jarvisblue/mobile/assistant/JarvisVoiceInteractionService.kt
 2287a3efcb4706b324ab9fb725a1da6a2501efebe2880db651f76d4473b31f0c  android/app/src/main/kotlin/com/jarvisblue/mobile/assistant/JarvisVoiceInteractionSessionService.kt
@@ -123,9 +123,9 @@ e4dc4a351156a784d89b6ad025c2bf1845929ecf5b0f1096eb1c1cb08a32f6b1  android/core/m
 ce389b200716048cc79a67ac9a5016e5d25a239dbf8a9538ca4afdd0ccca7248  android/core/security/consumer-rules.pro
 8b88a2ddd9c99de6839683a3b855e7a7d0a497fada5c995638f8356c114ea267  android/core/security/src/main/kotlin/com/jarvisblue/core/security/AppLockController.kt
 c03d7316803d6e45083af5290b1a77f2fd49bea2e3ea79c24a7d418cd614e2e6  android/core/security/src/main/kotlin/com/jarvisblue/core/security/BiometricGate.kt
-230526a909656834c7f7ea2d229347361471c96717ec9ab3a1abade9b7236c18  android/core/security/src/main/kotlin/com/jarvisblue/core/security/CipherBox.kt
+65911cf5e043f86237adfce7d96c7fc24c655054cf32063c6b759655ea3f6969  android/core/security/src/main/kotlin/com/jarvisblue/core/security/CipherBox.kt
 927de5cff2f734dff6cdb2db05732623e92b82077b8e1fb9499d87d734b1fd05  android/core/security/src/main/kotlin/com/jarvisblue/core/security/EmergencyStop.kt
-0584a80d98b9cdb23ff24d6b06b74ad4f75723b92c9dc062fa51353a5a2fba50  android/core/security/src/main/kotlin/com/jarvisblue/core/security/KeystoreKeyManager.kt
+844308b8dba5f173c6bce2b949e4c1cd4e71bcfd1632d41660c0bce3d80893f4  android/core/security/src/main/kotlin/com/jarvisblue/core/security/KeystoreKeyManager.kt
 78ad2b079f306051e90c280fef19e17a3f8ada72fdd95535be2e4a62b469dbb8  android/core/security/src/main/kotlin/com/jarvisblue/core/security/PermissionGrantStore.kt
 055aff1e10778bf7a443f0e1f67e99c0fcc105f44dc0e10414d73db103063db1  android/core/security/src/main/kotlin/com/jarvisblue/core/security/SecretVault.kt
 2509b723695047486f13034b527571be81c12378cb43903e39c076ced3721311  android/core/security/src/main/kotlin/com/jarvisblue/core/security/SecurityModule.kt
