@@ -18,7 +18,7 @@ def test_one_dashboard_has_orb_read_only_metrics_and_existing_pages(tmp_path):
     try:
         assert STYLE == FUTURISTIC_BLUE
         assert isinstance(window.orb, BlueOrb)
-        assert window.pages.count() == 12
+        assert window.pages.count() == 14
         assert 'CPU' in window.system_metrics_label.text()
         assert window.nav.item(4).text() == 'Phone Remote'
         assert window.nav.item(3).text() == 'Voice / Hey Jarvis'

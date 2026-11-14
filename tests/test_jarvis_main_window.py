@@ -6,16 +6,16 @@ from PySide6.QtWidgets import QApplication
 from desktop.app import Window
 
 
-def test_only_six_primary_sections_and_one_main_window(tmp_path):
+def test_primary_sections_and_one_main_window(tmp_path):
     app = QApplication.instance() or QApplication([])
     win = Window(tmp_path)
     try:
         names = [win.nav.item(i).text() for i in range(win.nav.count())]
         assert names == [
             "JARVIS Chat", "PC Control", "Coding Assistant",
-            "Voice / Hey Jarvis", "Phone Remote", "Settings & Safety"
+            "Voice / Hey Jarvis", "Phone Remote", "Settings & Safety", "Video Editor", "Business"
         ]
-        assert win.pages.count() == 12
+        assert win.pages.count() == 14
         assert win.nav.currentRow() == 0
         assert win.pages.currentIndex() == 0
         assert win.orb._state == "idle"

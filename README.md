@@ -4,6 +4,20 @@
 
 Independent source release for Mihran. Real PySide6 desktop and working provider request code; no API keys included. This is the third increment, **not the complete autonomous system**.
 
+## Google Flow Video Editor
+
+1. In **Settings & Safety → AI providers**, save your Gemini API configuration.
+2. Open **Video Editor** and type a brief, or start an existing voice session and say “Hey Jarvis, video editor, …” followed by the brief.
+3. Review the brief, then select **Generate with Gemini**. This sends the brief to Gemini. API charges may apply.
+4. Copy the shot prompt into Google Flow. For an existing clip, select or attach the clip in Flow before pasting its edit prompt. Assemble and trim the clips in Flow's Scenebuilder using the shot times.
+5. Save the shot plan or English subtitles from JARVIS when needed. Compare subtitle timings with the recorded Tamil voiceover before export.
+
+## Fiverr and website drafts
+
+Open **Business**, choose a task, enter a brief and select **Generate business draft**. The app uses the Gemini configuration from **AI providers**. It can draft Editopro gig packages, client replies, delivery and revision messages, or copy and SEO metadata for a named website page. For a Google AI Studio project, mention Build Mode to get a prompt you can paste there.
+
+For voice input, start an existing voice session and say “Hey Jarvis, Fiverr gig, …”, “Hey Jarvis, Fiverr client reply, …”, “Hey Jarvis, Fiverr delivery, …”, or “Hey Jarvis, website update, …”. Review the recognized text before generating. Review the resulting draft before using it in the account dashboard.
+
 ## Start on Windows 10 / 11
 
 1. Install **Python 3.12, 64-bit**, including its Python launcher, from https://www.python.org/downloads/windows/.
