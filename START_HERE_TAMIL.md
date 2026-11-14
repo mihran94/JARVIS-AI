@@ -2,9 +2,30 @@
 
 # JARVIS AI — தொடங்குவது எப்படி
 
+## ஒரே personal Windows build
+
+1. பழைய JARVIS app-ஐ மூடுங்கள். Windows 10/11 x64 PC-ல் Python 3.12 (64-bit) மற்றும் Python Launcher இருக்க வேண்டும்.
+2. இந்த ZIP-ஐ ஒரு தனி folder-ல் extract செய்து `setup.cmd` இயக்குங்கள். அதன் பிறகு அந்த folder-ல் உள்ள `START_JARVIS.cmd` shortcut-ஐ மட்டும் பயன்படுத்துங்கள்.
+3. **Settings & Safety → AI providers** பகுதியில் Gemini model மற்றும் API key-ஐச் save செய்து **Test saved provider connection** அழுத்துங்கள்.
+4. **Voice / Hey Jarvis** பகுதியில் microphone permission கொடுத்து **Talk once** மூலம் தமிழ் brief பேசிப் பாருங்கள். Windows-ல் கிடைக்கும் speech recognizer மற்றும் மொழி ஆதரவைப் பொறுத்தே recognition இருக்கும்.
+5. **Video Editor**-ல் shot plan தயார் செய்து, Flow clips மற்றும் விருப்பப்பட்டால் பதிவு செய்த Tamil narration-ஐத் தேர்ந்தெடுத்து captions உடன் MP4 export செய்யுங்கள். FFmpeg, ffprobe மற்றும் subtitle filter தேவை.
+6. **Business** பகுதியில் Editopro reply அல்லது website update draft உருவாக்கிப் பாருங்கள். அனுப்புதல் மற்றும் publish செய்வதை account dashboard-ல் செய்யுங்கள்.
+7. Android Remote தேவைப்பட்டால் மட்டும் தனியாக Windows app-உடன் pair செய்யுங்கள். [Android Remote setup](docs/ANDROID_REMOTE_QUICKSTART.md)
+
+**CapCut Desktop:** Video Editor-ல் **Export for CapCut Desktop** தேர்வு செய்யுங்கள். JARVIS உருவாக்கும் `video.mp4` மற்றும் `english.srt` files-ஐ CapCut-ல் import செய்யுங்கள். Subtitle text-ஐ CapCut-ல் திருத்தலாம்.
+
+**iPhone:** Windows-ல் **Phone Remote → Pair this iPhone** மூலம் pairing code எடுக்கவும். இந்த package-ல் உள்ள `iphone-pwa` folder-ஐ private HTTPS வழியாக Windows bridge-உடன் இணைத்த பிறகு, அந்த URL-ஐ Safari-ல் திறந்து **Share → Add to Home Screen** தேர்வு செய்யலாம். [iPhone setup](iphone-pwa/README.md)
+
+Windows PC இயங்கும்போது phone remote-ல் PC status, chat மற்றும் request queue பயன்படுத்தலாம். Video clips தேர்வு, After Effects handoff மற்றும் CapCut import ஆகியவை Windows-ல் செய்யப்படுகின்றன.
+
+இந்த ZIP என்பது ஒரே Windows source build. Windows installer மற்றும் உங்கள் PC-ல் live microphone, Gemini, FFmpeg மற்றும் phone pairing சோதனைகள் முடிந்த பிறகு v1.0 என்று குறிக்கலாம்.
+
 ## Google Flow மற்றும் Business update
 
 - **Video Editor:** 30-second vertical video-க்கான Google Flow prompts, Tamil voiceover draft, English SRT மற்றும் cut instructions.
+- **MP4 preview:** Flow-ல் download செய்த clips-ஐ **Assemble MP4 preview** மூலம் ஒவ்வொரு shot-க்கும் தேர்வு செய்யுங்கள். விரும்பினால் பதிவு செய்த Tamil narration-ஐச் சேர்க்கலாம். English subtitles உடன் 1080 × 1920 MP4 export ஆகும். FFmpeg மற்றும் ffprobe Windows PATH-ல் இருக்க வேண்டும்.
+- **After Effects:** **Video Editor → Render After Effects** திறந்து, நிறுவிய After Effects-ன் `aerender.exe`, உங்கள் `.aep` project, composition பெயர், output module template பெயர், save location ஆகியவற்றைத் தேர்வு செய்யுங்கள். Review செய்து approve செய்ததும் JARVIS render தொடங்கும்.
+- **Editable timeline:** After Effects project-ஐத் திறந்து, JARVIS-ல் shot plan உருவாக்கி **Build After Effects timeline** தேர்வு செய்யுங்கள். ஒவ்வொரு clip, விருப்பப்பட்டால் narration, மற்றும் `AfterFX.exe` ஆகியவற்றைத் தேர்ந்தெடுத்து approve செய்யுங்கள். உருவான composition-ஐ After Effects-ல் பார்த்து project-ஐ save செய்யுங்கள்.
 - **Business:** Editopro Fiverr gig, client reply, delivery/revision drafts, website copy மற்றும் SEO drafts.
 - இரண்டு tabs-க்கும் **Settings & Safety → AI providers → Gemini** பகுதியில் உங்கள் Gemini API configuration-ஐ save செய்யுங்கள். Chat-ல் OpenAI-யும் தேர்வு செய்யலாம்.
 - Voice session-ல் “Hey Jarvis, video editor, …” அல்லது “Hey Jarvis, Fiverr gig, …” என்று சொல்லலாம். Brief-ஐ review செய்து Generate அழுத்துங்கள். Fiverr மற்றும் website drafts-ஐ அந்தந்த dashboard-ல் பயன்படுத்தலாம்.

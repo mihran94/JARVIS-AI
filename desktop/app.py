@@ -5,13 +5,13 @@ import uuid
 import time
 from datetime import datetime, timezone
 
-from PySide6.QtCore import QThread, Signal, QTimer, Qt, QLockFile
+from PySide6.QtCore import QProcess, QThread, Signal, QTimer, Qt, QLockFile
 from PySide6.QtGui import QFont, QTextCursor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QListWidget, QStackedWidget, QPlainTextEdit, QLineEdit,
     QComboBox, QMessageBox, QFormLayout, QTableWidget, QTableWidgetItem,
-    QHeaderView, QCheckBox,
+    QHeaderView, QCheckBox, QDialog,
 )
 from core.store import Store
 from desktop.bridge_panel import BridgePanel
@@ -23,6 +23,12 @@ from desktop.blue_orb import BlueOrb
 from desktop.system_metrics import CpuSampler, snapshot, format_snapshot
 from desktop.network_metrics import NetworkSampler, format_network
 from desktop.voice_commands import parse_voice_command
+from desktop.task_routing import match_task
+from desktop.video_export import AfterEffectsInputs, PreviewInputs, VideoExportWorker
+from video_studio.after_effects import after_effects_render
+from video_studio.after_effects_timeline import timeline_executable, timeline_script
+from video_studio.capcut import export_capcut
+from video_studio.preview import media_tools, render_preview
 from security.policy import Policy, Action, Stopped
 from security.vault import Vault
 from providers.chat import ProviderError, TransientProviderError
@@ -303,7 +309,7 @@ class Window(QMainWindow):
         if self.policy.stopped or not self.voice_panel.consent.listening:
             return
         text = (command or '').strip()[:4000]
-        if self.route_video_brief(text) or self.route_business_brief(text):
+        if self.route_task(text):
             return
         self.open_section('JARVIS Chat')
         if (text and self.local_voice_allowed() and self.worker is None
@@ -328,7 +334,7 @@ class Window(QMainWindow):
         text = (transcript or '').strip()[:4000]
         if not text:
             return
-        if self.route_video_brief(text) or self.route_business_brief(text):
+        if self.route_task(text):
             return
         self.open_section('JARVIS Chat')
         existing = self.prompt.toPlainText().strip()
@@ -337,7 +343,54 @@ class Window(QMainWindow):
         self.statusBar().showMessage(
             'I heard you. Please review and press Ask JARVIS. No action ran.', 15000)
 
+    def route_task(self, text):
+        return (self.route_video_brief(text) or self.route_business_brief(text)
+                or self.route_natural_task(text))
+
+    def route_natural_task(self, text):
+        task = match_task(text)
+        video_commands = {
+            'after_effects_render': 'render after effects',
+            'after_effects_timeline': 'build after effects timeline',
+            'mp4_preview': 'assemble mp4 preview',
+            'capcut_export': 'export for capcut',
+        }
+        business_tasks = {
+            'fiverr_reply': 'Fiverr client reply',
+            'fiverr_gig': 'Fiverr gig',
+            'fiverr_delivery': 'Fiverr delivery or revision',
+            'website_draft': 'Website content update',
+        }
+        if task in video_commands:
+            return self.route_video_brief(video_commands[task])
+        if task == 'video_plan':
+            return self.route_video_brief('Video editor: ' + text)
+        if task in business_tasks:
+            return self.open_business_request(business_tasks[task], text)
+        return False
+
     def route_video_brief(self, text):
+        command = text.casefold().strip(' .!?')
+        if command == 'export for capcut':
+            self.open_section('Video Editor')
+            self.capcut_button.setFocus()
+            self.video_status.setText('Generate a shot plan, then select Export for CapCut Desktop.')
+            return True
+        if command in ('render after effects', 'after effects render பண்ணு'):
+            self.open_section('Video Editor')
+            self.after_effects_button.setFocus()
+            self.video_status.setText('Select Render After Effects to set up a composition render.')
+            return True
+        if command in ('build after effects timeline', 'after effects timeline தயார் செய்'):
+            self.open_section('Video Editor')
+            self.after_effects_timeline_button.setFocus()
+            self.video_status.setText('Generate a shot plan, then select Build After Effects timeline.')
+            return True
+        if command in ('assemble mp4 preview', 'இந்த clips-ஐ இணைத்து mp4 செய்', 'mp4 export பண்ணு'):
+            self.open_section('Video Editor')
+            self.video_render_button.setFocus()
+            self.video_status.setText('Generate a shot plan, then select Assemble MP4 preview and choose your clips.')
+            return True
         brief = spoken_brief(text)
         if brief is None:
             return False
@@ -520,6 +573,19 @@ class Window(QMainWindow):
         for button in self.video_export_buttons:
             button.setEnabled(False)
         layout.addLayout(row)
+        render_row = QHBoxLayout()
+        self.video_render_button = self.button(render_row, 'Assemble MP4 preview', self.assemble_video)
+        self.video_render_button.setEnabled(False)
+        self.capcut_button = self.button(layout, 'Export for CapCut Desktop',
+                                         lambda: self.assemble_video(capcut=True))
+        self.capcut_button.setEnabled(False)
+        self.after_effects_button = self.button(render_row, 'Render After Effects', self.render_after_effects)
+        self.video_cancel_render = self.button(render_row, 'Cancel export', self.cancel_video_export)
+        self.video_cancel_render.hide()
+        layout.addLayout(render_row)
+        self.after_effects_timeline_button = self.button(
+            layout, 'Build After Effects timeline', self.build_after_effects_timeline)
+        self.after_effects_timeline_button.setEnabled(False)
         return page
 
     def generate_video_plan(self):
@@ -555,6 +621,111 @@ class Window(QMainWindow):
             Action('save_file', name, Workspace.digest(content)),
             self.confirm, lambda: self.workspace.save(name, content)))
 
+    def assemble_video(self, *, capcut=False):
+        if self.video_plan is None or self.worker is not None or self.policy.stopped:
+            return
+        selection = self.video_plan
+        _, plan = selection
+
+        def operation():
+            media_tools()
+            dialog = PreviewInputs(plan, self, capcut=capcut)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            if self.video_plan is not selection or self.worker is not None:
+                raise ValueError('The current task changed. Open the export dialog again.')
+            clips = [field.text() for field in dialog.clips]
+            output = dialog.target.text()
+            narration = dialog.narration.text() or None
+            exporter = export_capcut if capcut else render_preview
+            label = 'Preparing CapCut export…' if capcut else 'Assembling local MP4 preview…'
+            self.gateway.run(
+                Action('export_for_capcut' if capcut else 'start_video_preview', output), self.confirm,
+                lambda: self.start_video_export(
+                    output, label,
+                    lambda check: exporter(plan, clips, output, check, narration=narration)))
+
+        self.notify(operation)
+
+    def build_after_effects_timeline(self):
+        if self.video_plan is None or self.worker is not None or self.policy.stopped:
+            return
+        folder, plan = self.video_plan
+
+        def operation():
+            if sys.platform != 'win32':
+                raise ValueError('After Effects timeline handoff requires Windows.')
+            dialog = PreviewInputs(plan, self, timeline=True)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            if self.video_plan != (folder, plan) or self.worker is not None:
+                raise ValueError('The shot plan changed. Open the timeline dialog again.')
+            executable = timeline_executable(dialog.target.text())
+            clips = [field.text() for field in dialog.clips]
+            narration = dialog.narration.text() or None
+            script = timeline_script(plan, clips, narration)
+            name = f'video-plans/{folder}/after-effects-timeline-{uuid.uuid4().hex}.jsx'
+
+            def handoff():
+                self.workspace.save(name, script)
+                # Adobe processes -r in its open application. The dispatch does
+                # not tell JARVIS whether the composition was created.
+                started, _ = QProcess.startDetached(
+                    str(executable), ['-r', str(self.workspace.path(name))])
+                if not started:
+                    raise ValueError('After Effects could not start. The timeline script was saved in the workspace.')
+                return 'Timeline command sent. Check the composition in After Effects.'
+
+            target = '\n'.join([str(executable), *clips, *([narration] if narration else [])])
+            result = self.gateway.run(
+                Action('build_after_effects_timeline', target, Workspace.digest(script)), self.confirm, handoff)
+            self.video_status.setText(result)
+
+        self.notify(operation)
+
+    def render_after_effects(self):
+        if self.worker is not None or self.policy.stopped:
+            return
+
+        def operation():
+            dialog = AfterEffectsInputs(self)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            renderer, project, composition, template, output = dialog.values()
+            target = f'{project}\nComposition: {composition}\nTemplate: {template}\nOutput: {output}\nRenderer: {renderer}'
+            self.gateway.run(
+                Action('start_after_effects_render', target), self.confirm,
+                lambda: self.start_video_export(
+                    output, 'Rendering After Effects composition…',
+                    lambda check: after_effects_render(renderer, project, composition, template, output, check)))
+
+        self.notify(operation)
+
+    def start_video_export(self, output, message, operation):
+        if self.worker is not None:
+            raise ValueError('Wait for the current request to finish.')
+        self.worker_kind = 'video_export'
+        self.chat_task = self.store.task('video_export', Path(output).name)
+        self.store.finish(self.chat_task, 'running')
+        self.worker = VideoExportWorker(operation, self)
+        self.worker.result.connect(self.on_video_export_result)
+        self.worker.finished.connect(self.on_finished)
+        self.video_status.setText(message)
+        self.video_cancel_render.setEnabled(True)
+        self.video_cancel_render.show()
+        self.refresh_draft_buttons()
+        self.worker.start()
+
+    def cancel_video_export(self):
+        if self.worker is not None and self.worker_kind == 'video_export':
+            self.worker.requestInterruption()
+            self.video_cancel_render.setEnabled(False)
+
+    def on_video_export_result(self, status, detail):
+        self.store.finish(self.chat_task, status)
+        self.video_status.setText('Video saved to ' + detail if status == 'completed' else detail)
+        self.refresh_history()
+
     def business_page(self):
         page, layout = self.page(
             'Business', 'Draft Fiverr work for Editopro or prepare a website update. '
@@ -586,11 +757,13 @@ class Window(QMainWindow):
         request = spoken_business_request(text)
         if request is None:
             return False
+        return self.open_business_request(*request)
+
+    def open_business_request(self, task, brief):
         self.open_section('Business')
         if self.business_brief.isReadOnly():
             self.statusBar().showMessage('A business draft is already generating.', 10000)
             return True
-        task, brief = request
         self.business_task.setCurrentText(task)
         self.business_brief.setPlainText(brief)
         self.business_brief.setFocus()
@@ -1136,7 +1309,11 @@ class Window(QMainWindow):
             self.refresh_archives()
 
     def send(self):
-        if self.worker is not None or not self.prompt.toPlainText().strip():
+        if self.policy.stopped or self.worker is not None or not self.prompt.toPlainText().strip():
+            return
+        text = self.prompt.toPlainText().strip()
+        if self.route_task(text):
+            self.prompt.clear()
             return
         def operation():
             self.chat_ticket = self.policy.ticket()
@@ -1246,6 +1423,7 @@ class Window(QMainWindow):
     def on_finished(self):
         self.worker.deleteLater()
         self.worker = None
+        self.video_cancel_render.hide()
         self.video_brief.setReadOnly(False)
         self.business_brief.setReadOnly(False)
         self.business_task.setEnabled(True)
@@ -1267,6 +1445,10 @@ class Window(QMainWindow):
         self.business_generate.setEnabled(ready)
         for button in self.video_export_buttons:
             button.setEnabled(ready and self.video_plan is not None)
+        self.video_render_button.setEnabled(ready and self.video_plan is not None)
+        self.capcut_button.setEnabled(ready and self.video_plan is not None)
+        self.after_effects_button.setEnabled(ready)
+        self.after_effects_timeline_button.setEnabled(ready and self.video_plan is not None)
 
     def stop(self):
         self.policy.stop()
@@ -1354,7 +1536,7 @@ class Window(QMainWindow):
         if self.worker is not None:
             self.close_when_done = True
             self.stop()
-            self.statusBar().showMessage('Waiting for cancelled chat to exit safely…')
+            self.statusBar().showMessage('Waiting for the current task to exit safely…')
             event.ignore()
         else:
             self.voice_rearm_timer.stop()
