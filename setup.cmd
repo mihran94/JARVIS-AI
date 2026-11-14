@@ -5,6 +5,8 @@ py -3.12 -m venv .venv
 if errorlevel 1 goto failed
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 if errorlevel 1 goto failed
+.venv\Scripts\python.exe -m pip install pythonnet==3.2.1 pywin32==312
+if errorlevel 1 goto failed
 echo Setup complete. Run START_JARVIS.cmd
 pause
 exit /b 0

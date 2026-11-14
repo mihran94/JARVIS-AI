@@ -52,7 +52,7 @@ authenticated control endpoint.
 
 On Windows:
 
-1. open the **Mobile Bridge** page,
+1. open the **Phone Remote** page,
 2. press **Pair this iPhone**,
 3. fill in the address the phone reaches the PC on, for example
    `https://pc.example.lan:8765`,

@@ -11,6 +11,15 @@ Independent source release for Mihran. Real PySide6 desktop and working provider
 3. Review the brief, then select **Generate with Gemini**. This sends the brief to Gemini. API charges may apply.
 4. Copy the shot prompt into Google Flow. For an existing clip, select or attach the clip in Flow before pasting its edit prompt. Assemble and trim the clips in Flow's Scenebuilder using the shot times.
 5. Save the shot plan or English subtitles from JARVIS when needed. Compare subtitle timings with the recorded Tamil voiceover before export.
+6. Download the individual clips from Flow. Back in JARVIS, select **Assemble MP4 preview**, choose one clip per shot in timeline order, and optionally add your recorded Tamil narration. Choose an output path and approve the export. JARVIS creates a 30-second 1080 × 1920 MP4 with burned-in English captions. Clips start at their first frame, and shorter shots hold their last frame. Narration starts at time zero and lowers the clip audio.
+
+MP4 export runs locally and requires an FFmpeg build with `ffmpeg` and `ffprobe` on PATH, plus the `libx264` encoder and libass subtitle filter. On Windows, restart JARVIS after updating PATH. You can cancel an export from Video Editor or use Emergency Stop. An interrupted or failed export leaves any existing destination file intact.
+
+**CapCut Desktop.** Generate a shot plan and choose **Export for CapCut Desktop**. Select clips, optional narration and a destination folder. Import the new folder’s `video.mp4` at the start of the CapCut timeline and import `english.srt` under **Captions → Import captions**. The cuts and audio are assembled into one video. The captions stay editable in CapCut.
+
+**After Effects render.** In Video Editor, select **Render After Effects**, or say “Hey Jarvis, render After Effects” to find the button. Choose Adobe's `aerender.exe` from the installed After Effects **Support Files** folder and your `.aep` project. Enter the exact composition and movie output module template names and choose an output extension that matches the template. Review the paths and approve the render. After Effects must be installed on that Windows PC. Start with a project and template you already trust.
+
+**Editable After Effects timeline.** Open your project in After Effects. In JARVIS, generate a shot plan and select **Build After Effects timeline**. Choose one clip per shot, optional recorded narration, and the installed `AfterFX.exe`. Approve the handoff. After Effects imports the selected files and adds a 30-second vertical composition with separate clip and English caption layers. Short clips leave a gap. Check the result and save the project in After Effects.
 
 ## Fiverr and website drafts
 
