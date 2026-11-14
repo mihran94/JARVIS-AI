@@ -2,6 +2,14 @@
 
 # JARVIS AI — தொடங்குவது எப்படி
 
+## Google Flow மற்றும் Business update
+
+- **Video Editor:** 30-second vertical video-க்கான Google Flow prompts, Tamil voiceover draft, English SRT மற்றும் cut instructions.
+- **Business:** Editopro Fiverr gig, client reply, delivery/revision drafts, website copy மற்றும் SEO drafts.
+- இரண்டு tabs-க்கும் **Settings & Safety → AI providers → Gemini** பகுதியில் உங்கள் Gemini API configuration-ஐ save செய்யுங்கள். Chat-ல் OpenAI-யும் தேர்வு செய்யலாம்.
+- Voice session-ல் “Hey Jarvis, video editor, …” அல்லது “Hey Jarvis, Fiverr gig, …” என்று சொல்லலாம். Brief-ஐ review செய்து Generate அழுத்துங்கள். Fiverr மற்றும் website drafts-ஐ அந்தந்த dashboard-ல் பயன்படுத்தலாம்.
+- Source installation இருந்தால் **Settings & Safety → Updates & rollback → Select GitHub ZIP** வழியாக ZIP-ஐத் தேர்ந்தெடுத்து review செய்யலாம். Approve செய்த பிறகு JARVIS-ஐ மூடி `START_JARVIS.cmd` மூலம் மீண்டும் திறக்கவும். Installer build பயன்படுத்தினால் இந்த ZIP-ஐ தனி folder-ல் extract செய்து source setup வழிமுறையைப் பின்பற்றுங்கள்.
+
 இது முதல் வேலை செய்யக்கூடிய source version (v0.2). முழுமையான autonomous JARVIS இன்னும் இல்லை.
 
 1. Windows கணினியில் Python 3.12 (64-bit) மற்றும் Python Launcher நிறுவுங்கள்.

@@ -33,6 +33,10 @@ from automation.windows import APPS, launch_app
 from automation.inspection import inspect_windows
 from developer_studio.workspace import Workspace
 from developer_studio.generation import messages_for_goal, messages_for_repair, prepare_draft
+from video_studio.planning import (
+    english_srt, flow_instructions, parse_plan, plan_json, planning_messages, spoken_brief,
+)
+from business.drafting import TASKS as BUSINESS_TASKS, draft_messages, spoken_business_request
 from agents.gateway import Gateway
 from agents.queue import TaskQueue
 from agents.workflows import WorkflowQueue
@@ -122,6 +126,7 @@ class Window(QMainWindow):
         self.active_provider = None
         self.active_model = None
         self.workspace = Workspace(self.root / 'workspace')
+        self.video_plan = None
         self.worker = None
         self.close_when_done = False
         self.session = self.store.get('session') or uuid.uuid4().hex
@@ -175,6 +180,8 @@ class Window(QMainWindow):
         self.add_page('Voice / Hey Jarvis', self.voice_panel)
         self.add_page('Phone Remote', self.bridge_page())
         self.add_page('Settings & Safety', self.permissions_page())
+        self.add_page('Video Editor', self.video_page())
+        self.add_page('Business', self.business_page())
         self.add_page('Command Center', self.dashboard(), primary=False)
         self.add_page('Task Queue', self.queue_page(), primary=False)
         self.add_page('Step Workflows', self.workflow_page(), primary=False)
@@ -295,8 +302,10 @@ class Window(QMainWindow):
     def on_wake_detected(self, transcript, command):
         if self.policy.stopped or not self.voice_panel.consent.listening:
             return
-        self.open_section('JARVIS Chat')
         text = (command or '').strip()[:4000]
+        if self.route_video_brief(text) or self.route_business_brief(text):
+            return
+        self.open_section('JARVIS Chat')
         if (text and self.local_voice_allowed() and self.worker is None
                 and not self.prompt.toPlainText().strip()):
             # Exact opt-in, local model only: no cloud API charges, no shell
@@ -319,12 +328,27 @@ class Window(QMainWindow):
         text = (transcript or '').strip()[:4000]
         if not text:
             return
+        if self.route_video_brief(text) or self.route_business_brief(text):
+            return
         self.open_section('JARVIS Chat')
         existing = self.prompt.toPlainText().strip()
         self.prompt.setPlainText((existing + '\n' if existing else '') + text)
         self.prompt.setFocus()
         self.statusBar().showMessage(
             'I heard you. Please review and press Ask JARVIS. No action ran.', 15000)
+
+    def route_video_brief(self, text):
+        brief = spoken_brief(text)
+        if brief is None:
+            return False
+        self.open_section('Video Editor')
+        if self.video_brief.isReadOnly():
+            self.statusBar().showMessage('A shot plan is already generating.', 10000)
+            return True
+        self.video_brief.setPlainText(brief)
+        self.video_brief.setFocus()
+        self.video_status.setText('Review the brief and select Generate with Gemini.')
+        return True
 
     def listen_to_user(self):
         """One click in Chat; microphone permission always belongs to Voice."""
@@ -409,6 +433,7 @@ class Window(QMainWindow):
         row = QHBoxLayout()
         self.chat_provider = QComboBox()
         self.chat_provider.addItems(provider_names())
+        self.chat_provider.setCurrentText('Gemini')
         self.chat_provider.currentTextChanged.connect(self.guard_local_voice_provider)
         row.addWidget(self.chat_provider)
         self.new_chat_button = self.button(row, 'New chat', self.new_chat)
@@ -464,6 +489,130 @@ class Window(QMainWindow):
         self.button(layout, 'Review visible window titles (read only)', self.inspect_visible_windows)
         layout.addStretch()
         return page
+
+    def video_page(self):
+        page, layout = self.page(
+            'Video Editor',
+            'Plan a 30-second vertical reel for Google Flow. Say “Hey Jarvis, '
+            'Video editor” followed by your brief, or type it below. '
+            'Generate sends the displayed brief to Gemini and may incur API charges.')
+        self.video_brief = QPlainTextEdit()
+        self.video_brief.setPlaceholderText(
+            'AI Mystery World episode, topic, opening shot, look, music, logo…')
+        self.video_brief.setMaximumHeight(120)
+        self.video_brief.textChanged.connect(self.invalidate_video_plan)
+        layout.addWidget(self.video_brief)
+        self.video_generate_button = self.button(layout, 'Generate with Gemini', self.generate_video_plan)
+        self.video_status = QLabel('Subtitle timing is estimated. Review it against the recorded voiceover.')
+        self.video_status.setWordWrap(True)
+        layout.addWidget(self.video_status)
+        self.video_preview = QPlainTextEdit()
+        self.video_preview.setReadOnly(True)
+        layout.addWidget(self.video_preview, 1)
+        flow_link = QLabel('<a href="https://labs.google/fx/tools/flow">Open Google Flow</a>')
+        flow_link.setOpenExternalLinks(True)
+        layout.addWidget(flow_link)
+        row = QHBoxLayout()
+        self.video_export_buttons = (
+            self.button(row, 'Save shot plan (JSON)', lambda: self.save_video_draft('json')),
+            self.button(row, 'Save English subtitles (SRT)', lambda: self.save_video_draft('srt')),
+        )
+        for button in self.video_export_buttons:
+            button.setEnabled(False)
+        layout.addLayout(row)
+        return page
+
+    def generate_video_plan(self):
+        if self.worker is not None or self.policy.stopped:
+            return
+
+        def operation():
+            messages = planning_messages(self.video_brief.toPlainText())
+            provider = 'Gemini'
+            spec = self.router.spec(provider)
+            key = self.get_key(provider)
+            model = self.store.get('model:' + provider, spec.default_model)
+            self.chat_ticket = self.policy.ticket()
+            self.invalidate_video_plan()
+            self.video_status.setText('Generating a Google Flow shot plan with Gemini…')
+            self.start_worker(provider, model, key, messages, 'video_plan')
+
+        self.notify(operation)
+
+    def invalidate_video_plan(self):
+        self.video_plan = None
+        self.video_preview.clear()
+        self.refresh_draft_buttons()
+
+    def save_video_draft(self, extension):
+        if self.video_plan is None or self.worker is not None or self.policy.stopped:
+            return
+        folder, plan = self.video_plan
+        name = f'video-plans/{folder}/' + (
+            'shot-plan.json' if extension == 'json' else 'english.srt')
+        content = plan_json(plan) if extension == 'json' else english_srt(plan)
+        self.notify(lambda: self.gateway.run(
+            Action('save_file', name, Workspace.digest(content)),
+            self.confirm, lambda: self.workspace.save(name, content)))
+
+    def business_page(self):
+        page, layout = self.page(
+            'Business', 'Draft Fiverr work for Editopro or prepare a website update. '
+            'Generate sends the displayed brief to Gemini and may incur API charges.')
+        self.business_task = QComboBox()
+        self.business_task.addItems(BUSINESS_TASKS)
+        layout.addWidget(self.business_task)
+        self.business_brief = QPlainTextEdit()
+        self.business_brief.setPlaceholderText(
+            'Describe the gig or paste the client brief. For website work, include the '
+            'site name, page and requested changes.')
+        layout.addWidget(self.business_brief)
+        self.business_generate = self.button(layout, 'Generate business draft', self.generate_business)
+        self.business_status = QLabel('Review and copy the draft into Fiverr or your website editor.')
+        self.business_status.setWordWrap(True)
+        layout.addWidget(self.business_status)
+        self.business_preview = QPlainTextEdit()
+        self.business_preview.setReadOnly(True)
+        layout.addWidget(self.business_preview, 2)
+        self.business_task.currentTextChanged.connect(self.clear_business_draft)
+        self.business_brief.textChanged.connect(self.clear_business_draft)
+        return page
+
+    def clear_business_draft(self):
+        self.business_preview.clear()
+        self.business_status.setText('Review the brief and select Generate business draft.')
+
+    def route_business_brief(self, text):
+        request = spoken_business_request(text)
+        if request is None:
+            return False
+        self.open_section('Business')
+        if self.business_brief.isReadOnly():
+            self.statusBar().showMessage('A business draft is already generating.', 10000)
+            return True
+        task, brief = request
+        self.business_task.setCurrentText(task)
+        self.business_brief.setPlainText(brief)
+        self.business_brief.setFocus()
+        return True
+
+    def generate_business(self):
+        if self.worker is not None or self.policy.stopped:
+            return
+
+        def operation():
+            messages = draft_messages(
+                self.business_task.currentText(), self.business_brief.toPlainText())
+            provider = 'Gemini'
+            spec = self.router.spec(provider)
+            key = self.get_key(provider)
+            model = self.store.get('model:' + provider, spec.default_model)
+            self.chat_ticket = self.policy.ticket()
+            self.clear_business_draft()
+            self.business_status.setText('Generating draft with Gemini…')
+            self.start_worker(provider, model, key, messages, 'business_draft')
+
+        self.notify(operation)
 
     def editor_page(self):
         page, layout = self.page('Developer Studio',
@@ -784,6 +933,12 @@ class Window(QMainWindow):
         for button in (self.send_button, self.new_chat_button, self.clear_button,
                        self.archive_button, self.probe_button, self.generate_button, self.repair_button):
             button.setEnabled(False)
+        self.refresh_draft_buttons()
+        if kind == 'video_plan':
+            self.video_brief.setReadOnly(True)
+        if kind == 'business_draft':
+            self.business_brief.setReadOnly(True)
+            self.business_task.setEnabled(False)
         self.chat_provider.setEnabled(False)
         self.backup_provider.setEnabled(False)
         self.backup_consent.setEnabled(False)
@@ -1039,6 +1194,29 @@ class Window(QMainWindow):
                     self.code_status.setText('Invalid code draft. Nothing was changed.')
             else:
                 self.code_status.setText(status + ': ' + text)
+        elif self.worker_kind == 'video_plan':
+            if status == 'completed':
+                try:
+                    plan = parse_plan(text)
+                except ValueError as error:
+                    status = 'failed'
+                    self.video_status.setText(str(error) + ' Try generating again.')
+                else:
+                    self.video_plan = uuid.uuid4().hex, plan
+                    self.video_preview.setPlainText(flow_instructions(plan))
+                    self.video_status.setText(
+                        'Shot plan ready. Verify historical details and sync captions to the recorded voiceover.')
+            else:
+                self.video_status.setText(status + ': ' + text)
+        elif self.worker_kind == 'business_draft':
+            if status == 'completed' and text.strip():
+                self.business_preview.setPlainText(text.strip())
+                self.business_status.setText('Draft ready to review and copy.')
+            elif status == 'completed':
+                status = 'failed'
+                self.business_status.setText('Gemini returned an empty draft. Try again.')
+            else:
+                self.business_status.setText(status + ': ' + text)
         elif self.worker_kind == 'chat':
             if status == 'completed':
                 self.store.message(self.session, 'assistant', text)
@@ -1068,6 +1246,10 @@ class Window(QMainWindow):
     def on_finished(self):
         self.worker.deleteLater()
         self.worker = None
+        self.video_brief.setReadOnly(False)
+        self.business_brief.setReadOnly(False)
+        self.business_task.setEnabled(True)
+        self.refresh_draft_buttons()
         self.set_ai_visual_state('stopped' if self.policy.stopped else 'idle')
         for button in (self.send_button, self.new_chat_button, self.clear_button,
                        self.archive_button, self.probe_button, self.generate_button, self.repair_button):
@@ -1079,8 +1261,16 @@ class Window(QMainWindow):
         if self.close_when_done:
             self.close()
 
+    def refresh_draft_buttons(self):
+        ready = not self.policy.stopped and self.worker is None
+        self.video_generate_button.setEnabled(ready)
+        self.business_generate.setEnabled(ready)
+        for button in self.video_export_buttons:
+            button.setEnabled(ready and self.video_plan is not None)
+
     def stop(self):
         self.policy.stop()
+        self.refresh_draft_buttons()
         self.voice_rearm_timer.stop()
         self.hands_free_voice.setChecked(False)
         self.voice_panel.stop_voice()
@@ -1100,6 +1290,7 @@ class Window(QMainWindow):
 
     def resume(self):
         self.policy.resume()
+        self.refresh_draft_buttons()
         self.set_ai_visual_state('idle' if self.worker is None else 'thinking')
         self.resume_button.setEnabled(False)
         self.state.setText('● READY · MANUAL APPROVAL')
