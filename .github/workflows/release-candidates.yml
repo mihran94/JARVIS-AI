@@ -1,0 +1,94 @@
+name: Versioned release candidate packages
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release candidate version (e.g. 0.3.1)'
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  windows-candidate:
+    runs-on: windows-latest
+    timeout-minutes: 70
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate version
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          if ($env:RELEASE_VERSION -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Expected semantic version such as 0.3.1' }
+      - name: Run tests
+        run: |
+          python -m pip install -r requirements-dev.txt
+          python -m pytest -q
+      - name: Build Windows candidate
+        run: |
+          python -m pip install pyinstaller==6.12.0
+          python -m PyInstaller --noconfirm --clean --windowed --onedir --name JarvisAI --hidden-import keyring.backends.Windows main.py
+      - name: Package candidate and checksums
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          $version = $env:RELEASE_VERSION
+          python scripts/release_manifest.py dist/JarvisAI dist/JarvisAI-RELEASE.txt --version $version --revision "${{ github.sha }}" --channel candidate
+          $zip = "dist/JarvisAI-Windows-v$version-candidate.zip"
+          Compress-Archive -Path dist/JarvisAI,dist/JarvisAI-RELEASE.txt -DestinationPath $zip
+          $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
+          "$hash  $(Split-Path $zip -Leaf)" | Set-Content -Encoding ascii "$zip.sha256"
+      - name: Upload Windows candidate (not an installer)
+        uses: actions/upload-artifact@v4
+        with:
+          name: JarvisAI-Windows-v${{ inputs.version }}-candidate
+          path: |
+            dist/JarvisAI-Windows-v*-candidate.zip
+            dist/JarvisAI-Windows-v*-candidate.zip.sha256
+          retention-days: 14
+          if-no-files-found: error
+  android-candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install SDK
+        run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+      - name: Restore pinned Gradle wrapper
+        run: |
+          bash gradle/wrapper/restore-wrapper.sh
+          echo "2db75c40782f5e8ba1fc278a5574bab070adccb2d21ca5a6e5ed840888448046  gradle/wrapper/gradle-wrapper.jar" | sha256sum --check -
+          chmod +x gradlew
+      - name: Run Android tests and build debug candidate
+        run: ./gradlew :core:windows:testDebugUnitTest :feature:command:testDebugUnitTest :app:testDebugUnitTest :app:assembleDebug --no-daemon --console=plain --max-workers=2
+      - name: Checksum APK
+        run: |
+          test -s app/build/outputs/apk/debug/app-debug.apk
+          sha256sum app/build/outputs/apk/debug/app-debug.apk > app-debug.apk.sha256
+      - name: Upload Android debug candidate (not production signed)
+        uses: actions/upload-artifact@v4
+        with:
+          name: JarvisAI-Android-v${{ inputs.version }}-debug-candidate
+          path: |
+            android/app/build/outputs/apk/debug/app-debug.apk
+            android/app-debug.apk.sha256
+          retention-days: 14
+          if-no-files-found: error
