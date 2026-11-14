@@ -1,4 +1,4 @@
-"""Explicit local update UI. No requests are sent to GitHub or other services."""
+"""Owner-approved local updates with an optional, read-only GitHub release check."""
 from pathlib import Path
 from PySide6.QtCore import QUrl
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
