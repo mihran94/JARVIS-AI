@@ -1,3 +1,5 @@
+> **14 நவம்பர் 2026 — தற்போதைய நிலை:** JARVIS AI ஒரு Windows **Beta**, அதன் Android செயலி Windows PC-ஐக் கட்டுப்படுத்தும் **Remote**. Android app திறந்தவுடன் crash ஆன Android Keystore பிழை GitHub PR #22-ல் சரிசெய்யப்பட்டு Android 15 emulator-ல் சோதிக்கப்பட்டது. புதிய Android வழிமுறை: [Android Remote setup](docs/ANDROID_REMOTE_QUICKSTART.md). என்ன முடிந்துள்ளது / எது இன்னும் முடியவில்லை: [Development Audit](docs/DEVELOPMENT_AUDIT_2026-11-14.md). உங்கள் PC-யில் உண்மையான microphone, AI connection, mobile pairing, signing ஆகியவை இன்னும் சோதிக்கப்படவேண்டும். முழு autonomous JARVIS தயாராகிவிட்டதாக இதனால் பொருள் இல்லை.
+
 # JARVIS AI — தொடங்குவது எப்படி
 
 இது முதல் வேலை செய்யக்கூடிய source version (v0.2). முழுமையான autonomous JARVIS இன்னும் இல்லை.

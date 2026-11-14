@@ -1,3 +1,5 @@
+> **Latest beta status (14 November 2026):** the canonical product is **one Windows JARVIS with an Android remote**. Android startup crash repair PR #22 was merged (main `9313cb6`) and passed a real Android 15 emulator cold-launch gate; the installed phone and secure PC pairing still require hardware acceptance. Session-only hands-free voice uses **local Ollama only**, not paid cloud providers, and PC actions remain approval-gated. See [current development audit](docs/DEVELOPMENT_AUDIT_2026-11-14.md) and [Android remote setup](docs/ANDROID_REMOTE_QUICKSTART.md). Historic release instructions below may describe earlier source versions; do not treat them as evidence of completed production capabilities.
+
 # JARVIS AI — Windows foundation v0.3.0
 
 Independent source release for Mihran. Real PySide6 desktop and working provider request code; no API keys included. This is the third increment, **not the complete autonomous system**.
