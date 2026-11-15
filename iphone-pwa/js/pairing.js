@@ -9,6 +9,7 @@
 //     key=iphone-mihran-01
 //     secret=<one-time secret>
 //     expires=1764000000
+//     fp=<the SHA-256 of the server certificate>
 //
 // The secret is only ever held in memory. It is never written to storage and
 // it is never sent anywhere except to the bridge that the owner paired.
@@ -28,7 +29,7 @@ export const MINIMUM_SECRET_LENGTH = 32;
  * The desktop uses this to draw the QR code, and the tests use it to check
  * that the phone reads back exactly what the desktop wrote.
  */
-export function buildPairingPayload({ bridgeUrl, keyId, secret, expiresAt = 0 }) {
+export function buildPairingPayload({ bridgeUrl, keyId, secret, expiresAt = 0, fingerprint = '' }) {
   if (typeof bridgeUrl !== 'string' || !bridgeUrl.trim()) {
     throw new Error('A bridge URL is required.');
   }
@@ -38,13 +39,17 @@ export function buildPairingPayload({ bridgeUrl, keyId, secret, expiresAt = 0 })
   if (typeof secret !== 'string' || secret.length < MINIMUM_SECRET_LENGTH) {
     throw new Error(`The pairing secret needs at least ${MINIMUM_SECRET_LENGTH} characters.`);
   }
-  return [
+  const lines = [
     PAIRING_FORMAT,
     `bridge=${bridgeUrl.trim()}`,
     `key=${keyId.trim()}`,
     `secret=${secret}`,
     `expires=${Math.floor(expiresAt)}`,
-  ].join('\n');
+  ];
+  if (typeof fingerprint === 'string' && fingerprint.trim()) {
+    lines.push(`fp=${fingerprint.trim().toLowerCase()}`);
+  }
+  return lines.join('\n');
 }
 
 /**
@@ -74,6 +79,7 @@ export function parsePairingPayload(text, { now = Math.floor(Date.now() / 1000) 
   const keyId = fields.key || '';
   const secret = fields.secret || '';
   const expiresAt = Number.parseInt(fields.expires || '0', 10);
+  const fingerprint = (fields.fp || '').toLowerCase();
   if (!bridgeUrl) {
     throw new Error('The pairing code has no bridge address.');
   }
@@ -85,6 +91,9 @@ export function parsePairingPayload(text, { now = Math.floor(Date.now() / 1000) 
   }
   if (!Number.isFinite(expiresAt) || expiresAt <= 0) {
     throw new Error('The pairing code has no expiry.');
+  }
+  if (fingerprint && !/^[0-9a-f]{64}$/.test(fingerprint)) {
+    throw new Error('The pairing code has a damaged certificate fingerprint.');
   }
   if (expiresAt <= now) {
     throw new Error('That pairing code has expired. Pair the phone again.');
@@ -103,7 +112,7 @@ export function parsePairingPayload(text, { now = Math.floor(Date.now() / 1000) 
   const address = parsed.pathname === '/' && !parsed.search && !parsed.hash
     ? `${parsed.origin}`
     : parsed.toString();
-  return { bridgeUrl: address, keyId, secret, expiresAt };
+  return { bridgeUrl: address, keyId, secret, expiresAt, fingerprint };
 }
 
 /** Whether a pairing code is still usable. */

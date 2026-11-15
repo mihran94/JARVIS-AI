@@ -195,13 +195,22 @@ async function sendMessage(text) {
     drawChat();
     setStatus('chatStatus', `Answered by ${answer.provider || 'the PC'}.`, 'ok');
     if (state.speakAnswers) {
-      speak(answer.text || '', { lang: chooseLanguage(answer.text || '') });
+      speak(answer.text || '', {
+        lang: chooseLanguage(answer.text || '', { current: chosenVoiceLanguage() }),
+      });
     }
   } catch (error) {
     handleFailure(error, 'chat');
     state.transcript.add('system', error.message);
     drawChat();
   }
+}
+
+/** The language the person chose for the voice, or the one of the phone. */
+function chosenVoiceLanguage() {
+  const picker = $('voiceLanguage');
+  const chosen = picker && picker.value;
+  return chosen || defaultLanguage();
 }
 
 function toggleListening() {
@@ -217,7 +226,7 @@ function toggleListening() {
   }
   try {
     state.listening = startListening({
-      lang: defaultLanguage(),
+      lang: chosenVoiceLanguage(),
       onResult: (text) => {
         state.listening = null;
         $('listen').textContent = 'Listen';
@@ -446,6 +455,10 @@ async function refreshAll() {
 // -------------------------------------------------------------------- setup
 
 function installListeners() {
+  const picker = $('voiceLanguage');
+  if (picker) {
+    picker.value = defaultLanguage();
+  }
   $('connect').addEventListener('click', connect);
   $('disconnect').addEventListener('click', forgetSecret);
   $('scan').addEventListener('click', () => $('scanFile').click());

@@ -3,7 +3,7 @@ setlocal
 cd /d "%~dp0.."
 .venv\Scripts\python.exe -m pip install pyinstaller==6.12.0
 if errorlevel 1 exit /b 1
-.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --windowed --onedir --name JarvisAI --hidden-import keyring.backends.Windows main.py
+.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --windowed --onedir --name JarvisAI --version-file installers\version_info.txt --hidden-import keyring.backends.Windows main.py
 if errorlevel 1 exit /b 1
 
 REM Record what was built, with the SHA-256 of every file, so the folder can
@@ -15,4 +15,8 @@ if errorlevel 1 exit /b 1
 
 echo Unsigned folder build available at dist\JarvisAI.
 echo The release manifest is at dist\JarvisAI-RELEASE.txt. Windows testing is required before distribution.
+echo.
+echo To install it on this machine, run installers\setup.cmd
+echo To make a single setup file, install Inno Setup 6 and run
+echo   ISCC.exe installers\jarvis.iss
 pause

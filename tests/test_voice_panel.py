@@ -184,8 +184,6 @@ def test_speaking_without_windows_is_reported(panel):
     panel._speaker_factory = factory
     panel.speak_text.setText('hello')
     panel.speak()
-    panel.speaker_worker.wait(4000)
-    QApplication.instance().processEvents()
     assert 'needs Windows' in panel.transcript.toPlainText()
 
 
@@ -199,8 +197,6 @@ def test_speaking_says_the_text(panel):
     panel._speaker_factory = Speaker
     panel.speak_text.setText('the build is green')
     panel.speak()
-    panel.speaker_worker.wait(4000)
-    QApplication.instance().processEvents()
     assert said == ['the build is green']
 
 
@@ -231,101 +227,40 @@ def test_the_page_survives_a_stopped_voice_feature(app):
     assert panel.consent.granted is False
 
 
-def test_voice_once_forwards_a_reviewable_draft_only_when_allowed(panel):
-    heard = []
-    wake = []
-    panel.utterance_detected.connect(heard.append)
-    panel.wake_detected.connect(lambda transcript, command: wake.append(command))
-
-    panel.on_transcript('check my Python project')
-    panel.on_wake_call('Hey Jarvis', 'open calculator')
-    assert heard == []
-    assert wake == []
-
+def test_the_voice_can_be_muted(panel):
     panel.allow.setChecked(True)
-    panel.on_transcript('check my Python project')
-    assert heard == ['check my Python project']
-    panel.on_transcript('Hey Jarvis, review this code')
-    assert len(wake) == 1
-    assert 'review this code' in wake[0]
-
-    panel.stop_voice()
-    panel.on_transcript('delete my documents')
-    panel.on_wake_call('Hey Jarvis', 'delete my documents')
-    assert heard == ['check my Python project']
-    assert len(wake) == 1
+    panel.mute_button.setChecked(True)
+    assert panel.muted is True
+    assert 'Muted' in panel.privacy.text()
 
 
-def test_listen_once_can_be_reused_without_renewing_owner_consent(panel, app):
-    panel.allow.setChecked(True)
-    speech = []
-    panel.utterance_detected.connect(speech.append)
-    panel._recognizer_factory = lambda *a, **kw: FakeRecognizer('please review this Python module')
-    panel.listen('once')
-    panel.worker.wait(4000)
-    app.processEvents()
-    assert speech == ['please review this Python module']
-    assert panel.consent.granted is True
-    assert panel.consent.listening is True
-
-
-def test_dialogue_hears_wake_then_dictated_request(panel, app):
-    panel.allow.setChecked(True)
-    heard = []
-    panel.wake_detected.connect(lambda wake, command: heard.append((wake, command)))
-    fake = FakeRecognizer(
-        transcript='Help me write an email', wake=('Hey Jarvis', ''))
-    panel._recognizer_factory = lambda *args: fake
-    panel.listen('dialogue')
-    panel.worker.wait(4000)
-    app.processEvents()
-    assert heard == [('Hey Jarvis', 'Help me write an email')]
-    assert fake.stopped is True
-
-
-def test_dialogue_fails_closed_if_mic_revoked_while_dictating(panel, app):
-    panel.allow.setChecked(True)
-    events = []
-    panel.wake_detected.connect(lambda *args: events.append(args))
-
-    class RevokedDuringDictation(FakeRecognizer):
-        def recognize_once(self, timeout_seconds=5.0):
-            panel.consent.revoke()
-            return 'delete my files'
-
-    panel._recognizer_factory = lambda *args: RevokedDuringDictation(
-        wake=('Hey Jarvis', ''))
-    panel.listen('dialogue')
-    panel.worker.wait(4000)
-    app.processEvents()
-    assert events == []
-    assert not panel.consent.listening
-
-
-def test_speech_output_runs_outside_qt_main_thread(panel, app):
-    import threading
-    main_thread = threading.get_ident()
-    playback_threads = []
+def test_a_muted_voice_says_nothing(panel):
+    said = []
 
     class Speaker:
-        def speak_interruptibly(self, text, should_stop):
-            playback_threads.append((threading.get_ident(), text, should_stop()))
+        def speak(self, text, language=None, rate=None):
+            said.append(text)
 
     panel._speaker_factory = Speaker
-    panel.speak_response('Hello from JARVIS')
-    assert panel.speaker_worker is not None
-    panel.speaker_worker.wait(4000)
-    app.processEvents()
-    assert playback_threads == [(playback_threads[0][0], 'Hello from JARVIS', False)]
-    assert playback_threads[0][0] != main_thread
+    panel.speak_text.setText('hello')
+    panel.mute_button.setChecked(True)
+    panel.speak()
+    assert said == []
+    assert 'muted' in panel.transcript.toPlainText()
 
 
-def test_speech_worker_failure_is_reported_without_crashing(panel, app):
-    def factory():
-        raise VoiceUnavailable('No compatible voice installed')
+def test_unmuting_brings_the_voice_back(panel):
+    panel.mute_button.setChecked(True)
+    panel.mute_button.setChecked(False)
+    assert panel.muted is False
+    assert 'muted' not in panel.privacy.text().lower()
 
-    panel._speaker_factory = factory
-    panel.speak_response('Testing the audio')
-    panel.speaker_worker.wait(4000)
-    app.processEvents()
-    assert 'No compatible voice installed' in panel.transcript.toPlainText()
+
+def test_the_privacy_line_says_when_the_microphone_is_closed(panel):
+    assert 'closed' in panel.privacy.text()
+
+
+def test_the_privacy_line_follows_the_stop(panel):
+    panel.allow.setChecked(True)
+    panel.stop_voice()
+    assert 'Stopped' in panel.privacy.text()

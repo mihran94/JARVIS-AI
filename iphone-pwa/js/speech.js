@@ -1,4 +1,4 @@
-// Voice for the phone, in Tamil and English.
+// Voice for the phone, in Tamil, English and French.
 //
 // iOS Safari supports the Web Speech API, but only partly: speech
 // recognition exists, and it has to be started from a user gesture. There is
@@ -13,26 +13,64 @@
 export const LANGUAGES = [
   { code: 'ta-IN', name: 'தமிழ்', english: 'Tamil' },
   { code: 'en-US', name: 'English', english: 'English' },
+  { code: 'fr-FR', name: 'Français', english: 'French' },
 ];
 
 /** The characters that mark a line as Tamil. */
 const TAMIL_PATTERN = /[\u0B80-\u0BFF]/;
+
+/**
+ * The characters that mark a line as French.
+ *
+ * The accented letters are what separates French from English in practice.
+ * A line without them is left to the language the browser is already using,
+ * so the person never gets an answer in a language they did not ask for.
+ */
+const FRENCH_PATTERN = /[\u00C0-\u00FF]/;
+
+/**
+ * The words that are used in French and are not used in English.
+ *
+ * The accents are the strong sign, but a greeting such as "bonjour" has
+ * none. These words are unambiguous, so they are safe to look for.
+ */
+const FRENCH_WORDS = [
+  'bonjour', 'bonsoir', 'salut', 'merci', 'oui', 'non', 'comment', 'pourquoi',
+  'avec', 'pour', 'dans', 'vous', 'je', 'suis', 'faire', 'aider', 's\'il',
+  'plaît', 'bonjour', 'madame', 'monsieur', 'salutations', 'remerc',
+];
+
+const FRENCH_WORD_PATTERN = new RegExp(
+  `\\b(${FRENCH_WORDS.join('|')})\\b`, 'i',
+);
 
 /** Whether a line is written in Tamil. */
 export function isTamil(text) {
   return typeof text === 'string' && TAMIL_PATTERN.test(text);
 }
 
+/** Whether a line is written in French. */
+export function isFrench(text) {
+  if (typeof text !== 'string' || !text) {
+    return false;
+  }
+  return FRENCH_PATTERN.test(text) || FRENCH_WORD_PATTERN.test(text);
+}
+
 /**
  * The language to use for a line.
  *
- * Tamil wins when the text has Tamil characters. Otherwise the language that
- * the browser is already using is kept, so a person who speaks English does
- * not have to change a setting.
+ * Tamil wins when the text has Tamil characters, and French comes next when
+ * it has the accented letters. Otherwise the language that the browser is
+ * already using is kept, so a person who speaks English does not have to
+ * change a setting.
  */
 export function chooseLanguage(text, { current = 'en-US' } = {}) {
   if (isTamil(text)) {
     return 'ta-IN';
+  }
+  if (isFrench(text)) {
+    return 'fr-FR';
   }
   return current;
 }
@@ -40,7 +78,14 @@ export function chooseLanguage(text, { current = 'en-US' } = {}) {
 /** The language the page should listen in by default. */
 export function defaultLanguage() {
   const language = (globalThis.navigator && globalThis.navigator.language) || 'en-US';
-  return language.toLowerCase().startsWith('ta') ? 'ta-IN' : 'en-US';
+  const lower = language.toLowerCase();
+  if (lower.startsWith('ta')) {
+    return 'ta-IN';
+  }
+  if (lower.startsWith('fr')) {
+    return 'fr-FR';
+  }
+  return 'en-US';
 }
 
 /** Whether this browser can recognise speech. */
@@ -114,7 +159,7 @@ export function startListening({
  * Say a line out loud.
  *
  * The page has to be in the foreground and the language has to be one of the
- * two that are installed on the phone, otherwise nothing is said.
+ * ones that are installed on the phone, otherwise nothing is said.
  */
 export function speak(text, {
   synthesis = globalThis.speechSynthesis,
