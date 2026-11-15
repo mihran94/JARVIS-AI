@@ -96,11 +96,15 @@ class BridgePanel(QWidget):
         self.certificate.setPlaceholderText('Path to the PEM certificate')
         self.key = QLineEdit()
         self.key.setPlaceholderText('Path to the PEM private key')
+        self.allowed_peers = QLineEdit('127.0.0.1, ::1')
+        self.allowed_peers.setPlaceholderText(
+            'Peer addresses that may talk to the listener, separated by commas')
         self.plaintext = QCheckBox('Use HTTP behind my private TLS tunnel')
         listener_layout.addRow('Bind address', self.host)
         listener_layout.addRow('Port', self.port)
         listener_layout.addRow('TLS certificate', self.certificate)
         listener_layout.addRow('TLS private key', self.key)
+        listener_layout.addRow('Allowed peers', self.allowed_peers)
         certificate_row = QHBoxLayout()
         self.create_certificate_button = QPushButton('Create cert')
         self.create_certificate_button.setToolTip(
@@ -267,13 +271,21 @@ class BridgePanel(QWidget):
                 tls_cert=self.certificate.text().strip(),
                 tls_key=self.key.text().strip(),
                 allow_plaintext=self.plaintext.isChecked(),
-                allowed_hosts=('127.0.0.1', '::1'),
+                allowed_hosts=self._allowed_peers(),
             )
             self.listener._config = config
+            self.bridge.set_allowed_hosts(self._allowed_peers())
             address = self.listener.start()
             self.refresh()
             return 'Bridge listener started on ' + address
         self.notify(operation)
+
+    def _allowed_peers(self) -> tuple:
+        """The peer addresses the owner allows, and the loopback ones always."""
+        text = self.allowed_peers.text().strip()
+        peers = [part.strip() for part in text.split(',') if part.strip()]
+        peers.extend(('127.0.0.1', '::1'))
+        return tuple(dict.fromkeys(peers))
 
     def create_certificate(self):
         """Create a certificate for the private listener when there is none."""
