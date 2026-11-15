@@ -36,7 +36,13 @@ def test_rejects_incomplete_timeline():
         parse_plan(json.dumps(plan))
 
 
-def test_voice_drafts_then_explicit_gemini_click_exports_plan(tmp_path, monkeypatch):
+@pytest.mark.parametrize(("command", "brief", "engine", "label"), [
+    ("வீடியோ எடிட்டர், archive footage", "archive footage", "Google Flow", "Flow prompt"),
+    ("Higgsfield prompts தயார் செய்", "Higgsfield prompts தயார் செய்", "Higgsfield", "Higgsfield prompt"),
+])
+def test_voice_drafts_then_explicit_gemini_click_exports_plan(
+    tmp_path, monkeypatch, command, brief, engine, label
+):
     app = QApplication.instance() or QApplication([])
     win = Window(tmp_path)
     requests = []
@@ -53,8 +59,9 @@ def test_voice_drafts_then_explicit_gemini_click_exports_plan(tmp_path, monkeypa
         win.voice_panel.allow.setChecked(True)
         win.chat_provider.setCurrentText("Ollama")
         win.hands_free_voice.setChecked(True)
-        win.on_wake_detected("Hey Jarvis", "வீடியோ எடிட்டர், archive footage")
-        assert win.video_brief.toPlainText() == "archive footage"
+        win.on_wake_detected("Hey Jarvis", command)
+        assert win.video_brief.toPlainText() == brief
+        assert win.video_engine.currentText() == engine
         assert win.pages.currentIndex() == win.page_indices["Video Editor"]
         assert requests == []
         assert win.worker is None
@@ -68,8 +75,9 @@ def test_voice_drafts_then_explicit_gemini_click_exports_plan(tmp_path, monkeypa
         assert len(requests) == 1
         host, body = requests[0]
         assert host == "generativelanguage.googleapis.com"
-        assert body["messages"][-1]["content"] == "archive footage"
-        assert "Flow prompt: Slow push-in." in win.video_preview.toPlainText()
+        assert body["messages"][-1]["content"] == brief
+        assert engine in body["messages"][0]["content"]
+        assert f"{label}: Slow push-in." in win.video_preview.toPlainText()
         assert win.store.messages(win.session) == []
 
         approvals = []
@@ -78,11 +86,13 @@ def test_voice_drafts_then_explicit_gemini_click_exports_plan(tmp_path, monkeypa
             button.click()
         paths = [win.workspace.path(action.target) for action in approvals]
         assert paths[0].parent == paths[1].parent
-        assert json.loads(paths[0].read_text(encoding="utf-8"))["height"] == 1920
+        saved = json.loads(paths[0].read_text(encoding="utf-8"))
+        assert saved["height"] == 1920
+        assert saved["engine"] == engine
         srt = paths[1].read_text(encoding="utf-8")
         assert "00:00:21,000 --> 00:00:30,000\nWhat happened?" in srt
 
-        win.video_brief.setPlainText("Another scene")
+        win.video_engine.setCurrentIndex(1 - win.video_engine.currentIndex())
         assert not any(button.isEnabled() for button in win.video_export_buttons)
     finally:
         win.close()

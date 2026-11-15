@@ -4,21 +4,23 @@ import sys
 import uuid
 import time
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
-from PySide6.QtCore import QProcess, QThread, Signal, QTimer, Qt, QLockFile
-from PySide6.QtGui import QFont, QTextCursor, QKeySequence, QShortcut
+from PySide6.QtCore import QProcess, QThread, Signal, QTimer, Qt, QLockFile, QUrl
+from PySide6.QtGui import QDesktopServices, QFont, QTextCursor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QListWidget, QStackedWidget, QPlainTextEdit, QLineEdit,
     QComboBox, QMessageBox, QFormLayout, QTableWidget, QTableWidgetItem,
-    QHeaderView, QCheckBox, QDialog,
+    QHeaderView, QCheckBox, QDialog, QFileDialog, QScrollArea, QLayout, QGridLayout,
 )
 from core.store import Store
 from desktop.bridge_panel import BridgePanel
-from desktop.update_dialog import open_updates
+from desktop.camera_reader import open_camera_reader
+from desktop.update_dialog import ReleaseChecker, open_updates
 from desktop.voice_panel import VoicePanel
 from desktop.tray import BackgroundControls
-from desktop.blue_theme import FUTURISTIC_BLUE
+from desktop.personal_theme import PERSONAL_STYLE
 from desktop.blue_orb import BlueOrb
 from desktop.system_metrics import CpuSampler, snapshot, format_snapshot
 from desktop.network_metrics import NetworkSampler, format_network
@@ -38,35 +40,18 @@ from providers.stream_fallback import StreamTarget, stream_with_fallback, Fallba
 from automation.windows import APPS, launch_app
 from automation.inspection import inspect_windows
 from developer_studio.workspace import Workspace
+from developer_studio.codex_cli import codex_executable, run_codex
 from developer_studio.generation import messages_for_goal, messages_for_repair, prepare_draft
 from video_studio.planning import (
-    english_srt, flow_instructions, parse_plan, plan_json, planning_messages, spoken_brief,
+    VIDEO_ENGINES, english_srt, flow_instructions, parse_plan, plan_json,
+    planning_messages, spoken_brief, suggest_workflow,
 )
 from business.drafting import TASKS as BUSINESS_TASKS, draft_messages, spoken_business_request
 from agents.gateway import Gateway
 from agents.queue import TaskQueue
 from agents.workflows import WorkflowQueue
 
-STYLE = """
-QWidget { background:#0a101c; color:#dce9f9; font-family:'Segoe UI'; font-size:14px; }
-QMainWindow { background:#0a101c; }
-QLabel#title { font-size:29px; font-weight:700; color:#65d9ff; }
-QLabel#subtitle { color:#839ab5; font-size:13px; }
-QPushButton { background:#153047; border:1px solid #285675; border-radius:7px; padding:10px 15px; }
-QPushButton:hover { background:#214a66; }
-QPushButton:disabled { color:#536478; background:#14202d; }
-QPushButton#stop { background:#6d2035; border:1px solid #f16c85; font-weight:700; }
-QPlainTextEdit, QLineEdit, QComboBox, QTableWidget {
- background:#101c2d; border:1px solid #263b54; border-radius:6px; padding:8px; selection-background-color:#235c85;
-}
-QListWidget { background:#0e1828; border:0; padding:10px; min-width:210px; }
-QListWidget::item { padding:16px 8px; margin:3px 0; }
-QListWidget::item:selected { background:#17344c; color:#65d9ff; border-radius:6px; }
-QHeaderView::section { background:#183047; padding:9px; border:0; }
-"""
-# One visual theme for the unified desktop; the existing owner-controlled
-# voice, mobile bridge and provider routing remain the same application.
-STYLE = FUTURISTIC_BLUE
+STYLE = PERSONAL_STYLE
 
 
 class ChatWorker(QThread):
@@ -148,7 +133,7 @@ class Window(QMainWindow):
         outer = QVBoxLayout(central)
         outer.setContentsMargins(24, 20, 24, 20)
         header = QHBoxLayout()
-        brand = QLabel('J A R V I S   /   AI')
+        brand = QLabel('JARVIS AI')
         brand.setObjectName('title')
         header.addWidget(brand)
         header.addStretch()
@@ -163,12 +148,9 @@ class Window(QMainWindow):
         stop.clicked.connect(self.stop)
         header.addWidget(stop)
         outer.addLayout(header)
-        subtitle = QLabel('YOUR WINDOWS ASSISTANT   /   PC ACTIONS NEED YOUR APPROVAL   /   PHONE IS A REMOTE')
-        subtitle.setObjectName('subtitle')
-        outer.addWidget(subtitle)
         body = QHBoxLayout()
         self.nav = QListWidget()
-        self.nav.setMaximumWidth(250)
+        self.nav.setFixedWidth(174)
         self.pages = QStackedWidget()
         body.addWidget(self.nav)
         body.addWidget(self.pages, 1)
@@ -213,10 +195,18 @@ class Window(QMainWindow):
         self.refresh_history()
         self.render_chat()
         self.background_controls = BackgroundControls(self)
+        self.release_checker = ReleaseChecker(self)
 
     def add_page(self, name, page, *, primary=True):
         index = self.pages.count()
         self.page_indices[name] = index
+        if name != 'Phone Remote':
+            scroller = QScrollArea()
+            scroller.setWidgetResizable(True)
+            if page.layout() is not None:
+                page.layout().setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
+            scroller.setWidget(page)
+            page = scroller
         self.pages.addWidget(page)
         if primary:
             self.nav.addItem(name)
@@ -363,8 +353,11 @@ class Window(QMainWindow):
         }
         if task in video_commands:
             return self.route_video_brief(video_commands[task])
+        if task == 'higgsfield_plan':
+            return self.open_video_brief(text, engine='Higgsfield')
         if task == 'video_plan':
-            return self.route_video_brief('Video editor: ' + text)
+            engine = 'Google Flow' if 'google flow' in text.casefold() else None
+            return self.open_video_brief(text, engine=engine)
         if task in business_tasks:
             return self.open_business_request(business_tasks[task], text)
         return False
@@ -394,10 +387,16 @@ class Window(QMainWindow):
         brief = spoken_brief(text)
         if brief is None:
             return False
+        engine = next((name for name in VIDEO_ENGINES if name.casefold() in brief.casefold()), None)
+        return self.open_video_brief(brief, engine=engine)
+
+    def open_video_brief(self, brief, *, engine=None):
         self.open_section('Video Editor')
         if self.video_brief.isReadOnly():
             self.statusBar().showMessage('A shot plan is already generating.', 10000)
             return True
+        if engine is not None:
+            self.video_engine.setCurrentText(engine)
         self.video_brief.setPlainText(brief)
         self.video_brief.setFocus()
         self.video_status.setText('Review the brief and select Generate with Gemini.')
@@ -436,6 +435,12 @@ class Window(QMainWindow):
     def dashboard(self):
         page, layout = self.page('System overview',
             'JARVIS runs on your Windows PC. The phone is only a remote.')
+        self.dashboard_metrics = QLabel()
+        self.dashboard_metrics.setWordWrap(True)
+        self.dashboard_metrics.setObjectName('systemMetrics')
+        layout.addWidget(self.dashboard_metrics)
+        for name in ('Video Editor', 'Coding Assistant', 'Business', 'Phone Remote', 'Task Queue'):
+            self.button(layout, name, lambda checked=False, section=name: self.open_section(section))
         self.button(layout, 'Back to JARVIS Chat',
                     lambda: self.open_section('JARVIS Chat'))
         layout.addStretch()
@@ -447,9 +452,11 @@ class Window(QMainWindow):
             try:
                 data = snapshot(self.root, self.cpu_sampler)
                 data['network_status'] = format_network(self.network_sampler.sample())
-                self.system_metrics_label.setText(format_snapshot(data))
+                summary = format_snapshot(data)
             except (OSError, ValueError):
-                self.system_metrics_label.setText('System metrics unavailable.')
+                summary = 'System metrics unavailable.'
+            self.system_metrics_label.setText(summary)
+            self.dashboard_metrics.setText(summary)
 
     def set_ai_visual_state(self, state):
         """Show actual chat worker activity, not microphone or AI permissions."""
@@ -458,12 +465,10 @@ class Window(QMainWindow):
             self.orb_status.setText('AI STATUS  /  ' + state.upper())
 
     def chat_page(self):
-        page, layout = self.page('Hello! I am JARVIS.',
-            'Chat in Tamil, English or French. I help with coding and '
-            'supervised Windows tasks. You decide which actions run.')
+        page, layout = self.page('Home & Chat', 'Ask in Tamil, Tanglish, English or French.')
         hero = QHBoxLayout()
         self.orb = BlueOrb(page)
-        self.orb.setMaximumHeight(145)
+        self.orb.setFixedSize(52, 52)
         hero.addWidget(self.orb)
         details = QVBoxLayout()
         self.orb_status = QLabel('AI STATUS  /  IDLE')
@@ -471,17 +476,18 @@ class Window(QMainWindow):
         self.system_metrics_label = QLabel('SYSTEM  /  Collecting local metrics...')
         self.system_metrics_label.setWordWrap(True)
         self.system_metrics_label.setObjectName('systemMetrics')
-        details.addWidget(self.system_metrics_label)
+        self.system_metrics_label.hide()
         hero.addLayout(details, 1)
         layout.addLayout(hero)
-        shortcuts = QHBoxLayout()
-        for label, section in [('PC Control', 'PC Control'),
-                               ('Coding', 'Coding Assistant'),
-                               ('Talk', 'Voice / Hey Jarvis'),
-                               ('Phone Remote', 'Phone Remote')]:
-            self.button(shortcuts, label,
-                        lambda checked=False, section=section: self.open_section(section))
-        self.button(shortcuts, 'Speak to JARVIS', self.listen_to_user)
+        shortcuts = QGridLayout()
+        for index, (label, section) in enumerate([
+            ('Video Editor', 'Video Editor'), ('Coding', 'Coding Assistant'),
+            ('Phone Remote', 'Phone Remote'), ('Camera and PC', 'PC Control'),
+            ('Command Center', 'Command Center'),
+        ]):
+            button = QPushButton(label)
+            button.clicked.connect(lambda checked=False, section=section: self.open_section(section))
+            shortcuts.addWidget(button, index // 3, index % 3)
         layout.addLayout(shortcuts)
         row = QHBoxLayout()
         self.chat_provider = QComboBox()
@@ -490,30 +496,39 @@ class Window(QMainWindow):
         self.chat_provider.currentTextChanged.connect(self.guard_local_voice_provider)
         row.addWidget(self.chat_provider)
         self.new_chat_button = self.button(row, 'New chat', self.new_chat)
-        self.clear_button = self.button(row, 'Delete this conversation', self.clear_chat)
         layout.addLayout(row)
-        self.backup_consent = QCheckBox('Allow one backup attempt for this message (shares full conversation; charges may apply)')
+        options = QCheckBox('Chat options')
+        layout.addWidget(options)
+        settings = QWidget()
+        settings_layout = QVBoxLayout(settings)
+        settings_layout.setContentsMargins(0, 0, 0, 0)
+        settings.hide()
+        options.toggled.connect(settings.setVisible)
+        layout.addWidget(settings)
+        self.backup_consent = QCheckBox('Allow one backup attempt for this message')
+        self.backup_consent.setToolTip('Shares the full conversation with the backup provider. Charges may apply.')
         self.backup_consent.toggled.connect(lambda enabled: self.guard_local_voice_provider() if enabled else None)
-        layout.addWidget(self.backup_consent)
+        settings_layout.addWidget(self.backup_consent)
         self.backup_provider = QComboBox()
         self.backup_provider.addItems(provider_names())
         self.backup_provider.setCurrentIndex(1)
-        layout.addWidget(self.backup_provider)
+        settings_layout.addWidget(self.backup_provider)
         archives = QHBoxLayout()
         self.archives = QComboBox()
         archives.addWidget(self.archives, 1)
         self.archive_button = self.button(archives, 'Open saved chat', self.open_chat)
-        layout.addLayout(archives)
+        settings_layout.addLayout(archives)
         self.refresh_archives()
         self.transcript = QPlainTextEdit()
         self.transcript.setReadOnly(True)
+        self.transcript.setMinimumHeight(158)
         layout.addWidget(self.transcript, 1)
         self.prompt = QPlainTextEdit()
         self.prompt.setPlaceholderText('Ask JARVIS… தமிழ் / English / Français')
-        self.prompt.setMaximumHeight(120)
+        self.prompt.setFixedHeight(78)
         layout.addWidget(self.prompt)
         self.read_replies = QCheckBox('Read replies aloud on this PC (optional; uses Windows speech)')
-        layout.addWidget(self.read_replies)
+        settings_layout.addWidget(self.read_replies)
         self.hands_free_voice = QCheckBox(
             'Hands-free Hey Jarvis (LOCAL Ollama only, session opt-in)')
         self.hands_free_voice.setToolTip(
@@ -521,10 +536,18 @@ class Window(QMainWindow):
             'question sends a message ONLY to your local model; never to cloud '
             'providers. No PC actions run without separate approval.')
         self.hands_free_voice.toggled.connect(self.set_local_hands_free)
-        layout.addWidget(self.hands_free_voice)
-        self.send_button = self.button(layout, 'Ask JARVIS', self.send)
+        settings_layout.addWidget(self.hands_free_voice)
+        settings_actions = QHBoxLayout()
+        settings_layout.addLayout(settings_actions)
+        self.clear_button = self.button(settings_actions, 'Delete conversation', self.clear_chat)
         self.review_pc_action_button = self.button(
-            layout, 'Review PC action (Notepad / Calculator)', self.review_chat_pc_action)
+            settings_actions, 'Review PC action', self.review_chat_pc_action)
+        composer_actions = QHBoxLayout()
+        layout.addLayout(composer_actions)
+        self.button(composer_actions, 'Speak', self.listen_to_user)
+        composer_actions.addStretch()
+        self.send_button = self.button(composer_actions, 'Ask JARVIS', self.send)
+        self.send_button.setObjectName('primary')
         return page
 
     def bridge_page(self):
@@ -534,19 +557,21 @@ class Window(QMainWindow):
 
     def automation_page(self):
         page, layout = self.page('Windows Automation',
-            'Fixed allowlisted applications only. Each launch requires approval. No arbitrary shell or AI command execution.')
+            'Open approved apps, inspect windows, or read text from a connected camera.')
         self.app_choice = QComboBox()
         self.app_choice.addItems(APPS)
         layout.addWidget(self.app_choice)
         self.button(layout, 'Review and launch', self.launch)
         self.button(layout, 'Review visible window titles (read only)', self.inspect_visible_windows)
+        self.button(layout, 'Watch & read connected camera',
+                    lambda: self.notify(lambda: open_camera_reader(self)))
         layout.addStretch()
         return page
 
     def video_page(self):
         page, layout = self.page(
             'Video Editor',
-            'Plan a 30-second vertical reel for Google Flow. Say “Hey Jarvis, '
+            'Plan a 30-second vertical reel for Google Flow or Higgsfield. Say “Hey Jarvis, '
             'Video editor” followed by your brief, or type it below. '
             'Generate sends the displayed brief to Gemini and may incur API charges.')
         self.video_brief = QPlainTextEdit()
@@ -555,16 +580,30 @@ class Window(QMainWindow):
         self.video_brief.setMaximumHeight(120)
         self.video_brief.textChanged.connect(self.invalidate_video_plan)
         layout.addWidget(self.video_brief)
+        engine_row = QHBoxLayout()
+        engine_row.addWidget(QLabel('Video engine'))
+        self.video_engine = QComboBox()
+        self.video_engine.addItems(VIDEO_ENGINES)
+        engine_row.addWidget(self.video_engine, 1)
+        layout.addLayout(engine_row)
         self.video_generate_button = self.button(layout, 'Generate with Gemini', self.generate_video_plan)
+        self.button(layout, 'Suggest workflow', self.show_workflow_suggestion)
         self.video_status = QLabel('Subtitle timing is estimated. Review it against the recorded voiceover.')
         self.video_status.setWordWrap(True)
         layout.addWidget(self.video_status)
         self.video_preview = QPlainTextEdit()
         self.video_preview.setReadOnly(True)
         layout.addWidget(self.video_preview, 1)
-        flow_link = QLabel('<a href="https://labs.google/fx/tools/flow">Open Google Flow</a>')
+        flow_link = QLabel()
         flow_link.setOpenExternalLinks(True)
         layout.addWidget(flow_link)
+        links = (
+            '<a href="https://labs.google/fx/tools/flow">Open Google Flow</a>',
+            '<a href="https://higgsfield.ai/">Open Higgsfield</a>',
+        )
+        flow_link.setText(links[0])
+        self.video_engine.currentIndexChanged.connect(lambda index: flow_link.setText(links[index]))
+        self.video_engine.currentIndexChanged.connect(self.invalidate_video_plan)
         row = QHBoxLayout()
         self.video_export_buttons = (
             self.button(row, 'Save shot plan (JSON)', lambda: self.save_video_draft('json')),
@@ -588,19 +627,26 @@ class Window(QMainWindow):
         self.after_effects_timeline_button.setEnabled(False)
         return page
 
+    def show_workflow_suggestion(self):
+        QMessageBox.information(
+            self, 'Suggested video workflow',
+            suggest_workflow(self.video_brief.toPlainText(), self.video_engine.currentText()),
+        )
+
     def generate_video_plan(self):
         if self.worker is not None or self.policy.stopped:
             return
 
         def operation():
-            messages = planning_messages(self.video_brief.toPlainText())
+            engine = self.video_engine.currentText()
+            messages = planning_messages(self.video_brief.toPlainText(), engine)
             provider = 'Gemini'
             spec = self.router.spec(provider)
             key = self.get_key(provider)
             model = self.store.get('model:' + provider, spec.default_model)
             self.chat_ticket = self.policy.ticket()
             self.invalidate_video_plan()
-            self.video_status.setText('Generating a Google Flow shot plan with Gemini…')
+            self.video_status.setText(f'Generating a {engine} shot plan with Gemini…')
             self.start_worker(provider, model, key, messages, 'video_plan')
 
         self.notify(operation)
@@ -730,6 +776,12 @@ class Window(QMainWindow):
         page, layout = self.page(
             'Business', 'Draft Fiverr work for Editopro or prepare a website update. '
             'Generate sends the displayed brief to Gemini and may incur API charges.')
+        website_row = QHBoxLayout()
+        self.website_project_url = QLineEdit(self.store.get('website_ai_studio_url', ''))
+        self.website_project_url.setPlaceholderText('Paste your Google AI Studio project URL')
+        website_row.addWidget(self.website_project_url, 1)
+        self.button(website_row, 'Save & open AI Studio', self.open_website_project)
+        layout.addLayout(website_row)
         self.business_task = QComboBox()
         self.business_task.addItems(BUSINESS_TASKS)
         layout.addWidget(self.business_task)
@@ -748,6 +800,21 @@ class Window(QMainWindow):
         self.business_task.currentTextChanged.connect(self.clear_business_draft)
         self.business_brief.textChanged.connect(self.clear_business_draft)
         return page
+
+    def open_website_project(self):
+        def operation():
+            self.policy.ticket()
+            url = self.website_project_url.text().strip()
+            parsed = urlsplit(url)
+            if (parsed.scheme != 'https' or parsed.netloc != 'aistudio.google.com'
+                    or not parsed.path.startswith('/apps/') or not parsed.path.removeprefix('/apps/').strip('/')):
+                raise ValueError('Paste the HTTPS project URL from the AI Studio Build address bar.')
+            self.store.set('website_ai_studio_url', url)
+            if not QDesktopServices.openUrl(QUrl(url)):
+                raise ValueError('Project URL saved. Windows could not open your browser.')
+            return 'AI Studio project URL saved.'
+
+        self.notify(operation)
 
     def clear_business_draft(self):
         self.business_preview.clear()
@@ -789,23 +856,43 @@ class Window(QMainWindow):
 
     def editor_page(self):
         page, layout = self.page('Developer Studio',
-            'Local UTF-8 editor. Code is never executed. Saves need approval; overwritten contents are retained in .revisions.')
+            'Draft Python, repair code from an error, or ask Codex to review a project.')
+        provider_row = QHBoxLayout()
+        provider_row.addWidget(QLabel('Coding AI'))
+        self.coding_provider = QComboBox()
+        self.coding_provider.addItems(['Use chat provider', 'MiniMax'])
+        saved_provider = self.store.get('coding_provider')
+        if saved_provider == 'MiniMax':
+            self.coding_provider.setCurrentText(saved_provider)
+        self.coding_provider.currentTextChanged.connect(
+            lambda provider: self.store.set('coding_provider', provider))
+        provider_row.addWidget(self.coding_provider, 1)
+        self.button(provider_row, 'MiniMax API settings', self.open_minimax_settings)
+        layout.addLayout(provider_row)
         self.code_goal = QLineEdit()
         self.code_goal.setPlaceholderText('Describe the Python program you want to create…')
         layout.addWidget(self.code_goal)
-        self.generate_button = self.button(layout, 'Generate Python draft with selected chat provider', self.generate_code)
-        self.code_status = QLabel('Generate sends your task. Repair sends editor code and pasted error after approval.')
+        actions = QHBoxLayout()
+        self.generate_button = self.button(actions, 'Generate Python draft', self.generate_code)
+        self.codex_button = self.button(actions, 'Ask Codex about a project', self.ask_codex)
+        layout.addLayout(actions)
+        self.code_status = QLabel('Enter a task to generate a draft, or paste an error below to repair the editor code.')
         self.code_status.setWordWrap(True)
         layout.addWidget(self.code_status)
         self.code_error = QPlainTextEdit()
         self.code_error.setPlaceholderText('Paste the Python error here. Remove keys and private data before sharing.')
         self.code_error.setMaximumHeight(70)
         layout.addWidget(self.code_error)
-        self.repair_button = self.button(layout, 'Review and request code repair', self.repair_code)
+        self.repair_button = self.button(layout, 'Draft a code fix', self.repair_code)
         self.code_preview = QPlainTextEdit()
         self.code_preview.setReadOnly(True)
         self.code_preview.setMaximumHeight(160)
         layout.addWidget(self.code_preview)
+        self.codex_response = QPlainTextEdit()
+        self.codex_response.setReadOnly(True)
+        self.codex_response.setPlaceholderText('Codex project response')
+        self.codex_response.hide()
+        layout.addWidget(self.codex_response, 1)
         self.button(layout, 'Review and copy draft to editor', self.apply_code_draft)
         self.filename = QLineEdit('hello.py')
         layout.addWidget(self.filename)
@@ -823,21 +910,96 @@ class Window(QMainWindow):
         layout.addWidget(location)
         return page
 
+    def open_minimax_settings(self):
+        self.provider.setCurrentText('MiniMax')
+        self.open_section('AI Providers')
+        self.secret.setFocus()
+
+    def selected_coding_provider(self):
+        choice = self.coding_provider.currentText()
+        return self.chat_provider.currentText() if choice == 'Use chat provider' else choice
+
+    def coding_key(self, provider):
+        try:
+            return self.get_key(provider)
+        except ValueError:
+            if provider != 'MiniMax':
+                raise
+            raise ValueError('Open MiniMax API settings and save your MiniMax key, then retry.') from None
+
+    def ask_codex(self):
+        if self.worker is not None or self.policy.stopped:
+            return
+
+        def operation():
+            ticket = self.policy.ticket()
+            prompt = self.code_goal.text().strip()
+            if not prompt or len(prompt) > 12_000:
+                raise ValueError('Enter a coding request of 1–12,000 characters.')
+            executable = codex_executable()
+            selected = QFileDialog.getExistingDirectory(self, 'Select the project Codex can inspect')
+            if not selected:
+                return
+            project = Path(selected).resolve(strict=True)
+            self.policy.check(ticket)
+            if self.worker is not None:
+                return
+            action = Action('codex_project_review',
+                            f'{project}\n\nCodex can read project context for this request.\n\n{prompt}')
+
+            def start():
+                if self.worker is not None:
+                    raise ValueError('Wait for the current task to finish.')
+                self.chat_ticket = ticket
+                self.worker_kind = 'codex_review'
+                self.active_provider = None
+                self.chat_task = self.store.task('codex_review', 'Codex CLI project review')
+                self.store.finish(self.chat_task, 'running')
+                self.codex_response.clear()
+                self.codex_response.show()
+                self.code_status.setText('Codex is reviewing the project…')
+                self.worker = VideoExportWorker(
+                    lambda check: run_codex(executable, project, prompt, check), self)
+                self.worker.result.connect(self.on_codex_result)
+                self.worker.finished.connect(self.on_finished)
+                self.refresh_draft_buttons()
+                self.set_ai_visual_state('thinking')
+                self.worker.start()
+
+            if self.confirm(action):
+                self.policy.check(ticket)
+                start()
+
+        self.notify(operation)
+
+    def on_codex_result(self, status, response):
+        try:
+            self.policy.check(self.chat_ticket)
+        except Stopped:
+            status, response = 'cancelled', 'Codex review cancelled by Emergency Stop.'
+        self.store.finish(self.chat_task, status)
+        if status == 'completed':
+            self.codex_response.setPlainText(response)
+            self.code_status.setText('Codex review ready.')
+        else:
+            self.code_status.setText('Codex review cancelled.' if status == 'cancelled' else response)
+        self.refresh_history()
+
     def generate_code(self):
         if self.worker is not None:
             return
         def operation():
             ticket = self.policy.ticket()
             messages = messages_for_goal(self.code_goal.text())
-            provider = self.chat_provider.currentText()
+            provider = self.selected_coding_provider()
             model = self.store.get('model:' + provider) or self.router.spec(provider).default_model
-            key = self.get_key(provider)
+            key = self.coding_key(provider)
             if not self.confirm(Action('send_coding_goal', provider + ' / ' + model + ' (API charges may apply)')):
                 return
             self.policy.check(ticket)
             self.chat_ticket = ticket
             self.code_preview.clear()
-            self.code_status.setText('Generating draft… Emergency stop cancels this request.')
+            self.code_status.setText(f'{provider} is drafting your code…')
             self.start_worker(provider, model, key, messages, 'code_generation')
         self.notify(operation)
 
@@ -847,9 +1009,9 @@ class Window(QMainWindow):
         def operation():
             ticket = self.policy.ticket()
             messages = messages_for_repair(self.editor.toPlainText(), self.code_error.toPlainText())
-            provider = self.chat_provider.currentText()
+            provider = self.selected_coding_provider()
             model = self.store.get('model:' + provider) or self.router.spec(provider).default_model
-            key = self.get_key(provider)
+            key = self.coding_key(provider)
             action = Action('send_editor_code_and_error',
                             provider + ' / ' + model + ' (shares editor code and pasted error; API charges may apply)',
                             Workspace.digest(messages[-1]['content']))
@@ -858,7 +1020,7 @@ class Window(QMainWindow):
             self.policy.check(ticket)
             self.chat_ticket = ticket
             self.code_preview.clear()
-            self.code_status.setText('Requesting repair… Editor remains unchanged until you approve replacement.')
+            self.code_status.setText(f'{provider} is drafting a fix for review…')
             self.start_worker(provider, model, key, messages, 'code_repair')
         self.notify(operation)
 
@@ -1379,6 +1541,7 @@ class Window(QMainWindow):
                     status = 'failed'
                     self.video_status.setText(str(error) + ' Try generating again.')
                 else:
+                    plan['engine'] = self.video_engine.currentText()
                     self.video_plan = uuid.uuid4().hex, plan
                     self.video_preview.setPlainText(flow_instructions(plan))
                     self.video_status.setText(
@@ -1441,7 +1604,10 @@ class Window(QMainWindow):
 
     def refresh_draft_buttons(self):
         ready = not self.policy.stopped and self.worker is None
+        self.codex_button.setEnabled(ready)
+        self.coding_provider.setEnabled(ready)
         self.video_generate_button.setEnabled(ready)
+        self.video_engine.setEnabled(ready)
         self.business_generate.setEnabled(ready)
         for button in self.video_export_buttons:
             button.setEnabled(ready and self.video_plan is not None)

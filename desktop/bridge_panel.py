@@ -20,7 +20,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
-    QLineEdit, QPlainTextEdit, QPushButton, QTableWidget, QTableWidgetItem,
+    QLineEdit, QPlainTextEdit, QPushButton, QScrollArea, QLayout, QTabWidget, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
 
@@ -71,15 +71,14 @@ class BridgePanel(QWidget):
     def _build(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(22, 18, 10, 10)
-        title = QLabel('Mobile Bridge')
+        title = QLabel('Phone Remote')
         title.setStyleSheet('font-size:24px;font-weight:600')
         layout.addWidget(title)
-        note = QLabel(
-            'A paired phone can check this machine and send jobs for your approval. '
-            'Nothing runs without your confirmation. Keep the listener on a private '
-            'network; it must not be published to the internet.')
+        note = QLabel('Choose iPhone or Android. Use Advanced connection to start the private listener.')
         note.setWordWrap(True)
         layout.addWidget(note)
+        tabs = QTabWidget()
+        layout.addWidget(tabs, 1)
 
         listener_box = QGroupBox('Listener')
         listener_layout = QFormLayout(listener_box)
@@ -89,7 +88,7 @@ class BridgePanel(QWidget):
         self.certificate.setPlaceholderText('Path to the PEM certificate')
         self.key = QLineEdit()
         self.key.setPlaceholderText('Path to the PEM private key')
-        self.plaintext = QCheckBox('My private tunnel terminates TLS, so this listener may use HTTP')
+        self.plaintext = QCheckBox('Use HTTP behind my private TLS tunnel')
         listener_layout.addRow('Bind address', self.host)
         listener_layout.addRow('Port', self.port)
         listener_layout.addRow('TLS certificate', self.certificate)
@@ -106,23 +105,27 @@ class BridgePanel(QWidget):
         self.listener_status = QLabel('Stopped')
         self.listener_status.setWordWrap(True)
         listener_layout.addRow('Status', self.listener_status)
-        layout.addWidget(listener_box)
 
-        pairing_box = QGroupBox('Paired phones')
+        pairing_box = QGroupBox('Android pairing and paired devices')
         pairing_layout = QVBoxLayout(pairing_box)
         pairing_row = QHBoxLayout()
-        self.pair_button = QPushButton('Pair a phone')
+        android_help = QLabel('Enter your private HTTPS address and the pairing secret in the Android app, then tap Pair and Refresh.')
+        android_help.setWordWrap(True)
+        pairing_layout.addWidget(android_help)
+        self.pair_button = QPushButton('Pair Android')
         self.pair_button.clicked.connect(self.pair_device)
         pairing_row.addWidget(self.pair_button)
         pairing_layout.addLayout(pairing_row)
         self.secret_display = QPlainTextEdit()
         self.secret_display.setReadOnly(True)
         self.secret_display.setMaximumHeight(80)
+        self.secret_display.setMinimumHeight(64)
         self.secret_display.setPlaceholderText(
             'The shared secret of a newly paired phone is shown here once. '
             'Transfer it to the phone and it is never displayed again.')
         pairing_layout.addWidget(self.secret_display)
         self.devices = QTableWidget(0, 3)
+        self.devices.setMinimumHeight(125)
         self.devices.setHorizontalHeaderLabels(['Key id', 'Label', 'State'])
         self.devices.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.devices.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -131,10 +134,12 @@ class BridgePanel(QWidget):
         self.revoke_button = QPushButton('Revoke the selected phone')
         self.revoke_button.clicked.connect(self.revoke_device)
         pairing_layout.addWidget(self.revoke_button)
-        layout.addWidget(pairing_box)
 
         code_box = QGroupBox('Pairing code for the iPhone')
         code_layout = QFormLayout(code_box)
+        iphone_help = QLabel('Open your private HTTPS remote URL in Safari. Use the code below to pair, then refresh PC status.')
+        iphone_help.setWordWrap(True)
+        code_layout.addRow(iphone_help)
         self.phone_address = QLineEdit()
         self.phone_address.setPlaceholderText(
             'The HTTPS address the phone reaches this PC on, for example '
@@ -153,15 +158,16 @@ class BridgePanel(QWidget):
         self.code_qr = QLabel()
         self.code_qr.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.code_qr.setMinimumHeight(180)
+        self.code_qr.hide()
         code_layout.addRow(self.code_qr)
         self.code_text = QPlainTextEdit()
         self.code_text.setReadOnly(True)
         self.code_text.setMaximumHeight(110)
+        self.code_text.setMinimumHeight(75)
         self.code_text.setPlaceholderText(
             'The pairing code appears here. It holds a one time secret, so it '
             'is shown only once.')
         code_layout.addRow(self.code_text)
-        layout.addWidget(code_box)
 
         chat_box = QGroupBox('Chat and memory for paired devices')
         chat_layout = QFormLayout(chat_box)
@@ -169,10 +175,10 @@ class BridgePanel(QWidget):
         for name, spec in specs().items():
             self.chat_provider.addItem(name + (' (local)' if spec.local else ''), name)
         chat_layout.addRow('Provider for the phone', self.chat_provider)
-        self.chat_paid = QCheckBox(
-            'Allow a paid provider to answer for a paired phone. Charges may apply.')
+        self.chat_paid = QCheckBox('Allow paid AI for paired phones')
+        self.chat_paid.setToolTip('Provider charges may apply.')
         chat_layout.addRow(self.chat_paid)
-        self.chat_memory = QCheckBox('Allow a paired phone to synchronise memory.')
+        self.chat_memory = QCheckBox('Allow paired phones to sync memory')
         chat_layout.addRow(self.chat_memory)
         chat_row = QHBoxLayout()
         self.chat_save_button = QPushButton('Save the bridge settings')
@@ -182,29 +188,43 @@ class BridgePanel(QWidget):
         chat_note = QLabel(
             'A paired phone sends a message to this PC and the PC answers with '
             'the provider key it already holds. The phone never holds a key. '
-            'A paid provider also needs the consent of the phone.')
+            'Paid providers may charge and need consent on the phone.')
         chat_note.setWordWrap(True)
         chat_layout.addRow(chat_note)
-        layout.addWidget(chat_box)
 
         jobs_box = QGroupBox('Jobs from a phone')
         jobs_layout = QVBoxLayout(jobs_box)
         self.jobs = QTableWidget(0, 4)
+        self.jobs.setMinimumHeight(145)
         self.jobs.setHorizontalHeaderLabels(['Job', 'Title', 'State', 'Needs approval'])
         self.jobs.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.jobs.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.jobs.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         jobs_layout.addWidget(self.jobs)
         job_row = QHBoxLayout()
-        self.approve_button = QPushButton('Approve the selected job')
+        self.approve_button = QPushButton('Approve job')
         self.approve_button.clicked.connect(self.approve_job)
         job_row.addWidget(self.approve_button)
-        self.reject_button = QPushButton('Reject the selected job')
+        self.reject_button = QPushButton('Reject job')
         self.reject_button.clicked.connect(self.reject_job)
         job_row.addWidget(self.reject_button)
         jobs_layout.addLayout(job_row)
-        layout.addWidget(jobs_box)
-        layout.addStretch()
+        for label, panels in (
+            ('Set up iPhone', (code_box,)),
+            ('Set up Android', (pairing_box,)),
+            ('Advanced connection', (listener_box, chat_box)),
+            ('Job approvals', (jobs_box,)),
+        ):
+            content = QWidget()
+            column = QVBoxLayout(content)
+            column.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
+            for panel in panels:
+                column.addWidget(panel)
+            column.addStretch()
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setWidget(content)
+            tabs.addTab(scroll, label)
 
     # ---------------------------------------------------------------- actions
 
@@ -278,6 +298,7 @@ class BridgePanel(QWidget):
 
     def _draw_qr(self, payload):
         """Draw the pairing code as a picture."""
+        self.code_qr.show()
         try:
             svg = pairing_svg(payload)
         except Exception as error:

@@ -23,7 +23,7 @@ import javax.inject.Inject
 data class WindowsUiState(
     val peer: WindowsPeer? = null,
     val hostInput: String = "",
-    val portInput: String = "8765",
+    val portInput: String = "",
     val secretInput: String = "",
     val status: PcStatus? = null,
     val jobs: List<BridgeJob> = emptyList(),
@@ -66,14 +66,16 @@ class WindowsViewModel @Inject constructor(
     /** Stores the shared secret in the Keystore-backed vault and remembers the peer. */
     fun pair() {
         val host = _state.value.hostInput.trim()
-        val port = _state.value.portInput.toIntOrNull() ?: 8765
+        val portInput = _state.value.portInput
         val secret = _state.value.secretInput.trim()
         if (host.isEmpty() || secret.length < 32) {
             _state.value = _state.value.copy(
                 error = "Enter the Windows address and its 32+ character pairing secret")
             return
         }
-        if (runCatching { DesktopEndpoint.baseUrl(host, port) }.isFailure) {
+        val port = runCatching {
+            DesktopEndpoint.pairingPort(host, portInput).also { DesktopEndpoint.baseUrl(host, it) }
+        }.getOrElse {
             _state.value = _state.value.copy(
                 error = "Use the HTTPS address and port shown in Windows JARVIS")
             return

@@ -6,7 +6,7 @@ from PySide6.QtWidgets import QApplication
 
 from desktop.app import STYLE, Window
 from desktop.blue_orb import BlueOrb
-from desktop.blue_theme import FUTURISTIC_BLUE
+from desktop.personal_theme import PERSONAL_STYLE
 from desktop.network_metrics import NetworkSampler, format_network
 from desktop.voice_commands import parse_voice_command
 
@@ -16,7 +16,7 @@ def test_one_dashboard_has_orb_read_only_metrics_and_existing_pages(tmp_path):
     app.setStyleSheet(STYLE)
     window = Window(tmp_path)
     try:
-        assert STYLE == FUTURISTIC_BLUE
+        assert STYLE == PERSONAL_STYLE
         assert isinstance(window.orb, BlueOrb)
         assert window.pages.count() == 14
         assert 'CPU' in window.system_metrics_label.text()

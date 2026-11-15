@@ -4,6 +4,19 @@ import java.net.URI
 
 /** The remote never downgrades a Windows control connection to plaintext. */
 object DesktopEndpoint {
+    /** Use the explicit URL port, or standard HTTPS, when the separate field is blank. */
+    fun pairingPort(host: String, portInput: String): Int {
+        val entered = portInput.trim()
+        if (entered.isNotEmpty()) {
+            return entered.toIntOrNull() ?: throw IllegalArgumentException("Invalid port number")
+        }
+        val address = host.trim()
+        val uri = runCatching {
+            URI(if (address.contains("://")) address else "https://$address")
+        }.getOrElse { throw IllegalArgumentException("Invalid HTTPS Windows bridge address") }
+        return if (uri.port == -1) 443 else uri.port
+    }
+
     fun baseUrl(host: String, port: Int): String {
         require(port in 1..65535) { "Choose a valid Windows bridge port" }
         val value = host.trim()

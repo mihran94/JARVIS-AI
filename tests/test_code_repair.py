@@ -14,6 +14,7 @@ def test_repair_bounds(source,error):
 def test_repair_approval_and_result(tmp_path,monkeypatch,mode):
     app=QApplication.instance() or QApplication([])
     window=Window(tmp_path)
+    window.coding_provider.setCurrentText('MiniMax')
     window.editor.setPlainText('print(missing)')
     window.code_error.setPlainText('NameError: missing')
     window.code_preview.setPlainText('old draft')
@@ -26,6 +27,7 @@ def test_repair_approval_and_result(tmp_path,monkeypatch,mode):
         return mode!='decline'
     window.confirm=confirm
     def start(provider,model,key,messages,kind):
+        assert provider == 'MiniMax'
         calls.append((messages,kind))
         window.worker_kind=kind
         window.active_provider=provider; window.active_model=model

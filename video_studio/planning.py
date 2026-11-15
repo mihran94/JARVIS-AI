@@ -3,6 +3,7 @@ import json
 import re
 
 DURATION_MS = 30_000
+VIDEO_ENGINES = ("Google Flow", "Higgsfield")
 _MAX_BRIEF = 4000
 _VOICE_PREFIX = re.compile(
     r"^(?:video editor|cinematic reel|வீடியோ எடிட்டர்|சினிமாட்டிக் ரீல்)"
@@ -24,10 +25,39 @@ def spoken_brief(text):
     return match["brief"] if match else None
 
 
-def planning_messages(brief):
+def suggest_workflow(brief, engine):
+    """Return local workflow suggestions based on the chosen engine and brief."""
+    text = brief.casefold()
+    steps = ["Use Generate with Gemini for the shot plan, Tamil narration draft and English captions."]
+    if engine == "Higgsfield":
+        steps.append("Use Higgsfield for the planned clips. Start with the most important shot to check the look and motion.")
+    else:
+        steps.append("Use Google Flow for the main set of clips.")
+        if re.search(r"\b(?:higgsfield|close[ -]?up|dolly|orbit|camera move|face reference)\b|முகம்", text):
+            steps.append("Try Higgsfield for the close-up or key camera move. Reuse the same reference image for continuity.")
+    if re.search(r"\b(?:logo|vfx|composit(?:e|ing)|motion graphics|after effects)\b|லோகோ", text):
+        steps.append("Use After Effects for the logo animation or effects shot, then bring that clip into the edit.")
+    steps.append("Assemble the 1080 × 1920 preview in JARVIS and check narration and caption timing.")
+    if not re.search(r"\b(?:skip|no|without)\s+capcut\b|capcut\s+வேண்டாம்", text):
+        steps.append("Use CapCut export if you want to fine-tune captions and audio. Import the MP4 and English SRT together.")
+    return "\n\n".join(f"{index}. {step}" for index, step in enumerate(steps, 1))
+
+
+def planning_messages(brief, engine="Google Flow"):
     brief = brief.strip()
     if not brief or len(brief) > _MAX_BRIEF:
         raise ValueError('Enter a video brief with 1–4000 characters.')
+    if engine not in VIDEO_ENGINES:
+        raise ValueError("Choose a supported video engine.")
+    clip_guidance = (
+        "For Higgsfield, write each English clip prompt in this order: subject action, "
+        "setting and lighting, one camera move, then mood. When a reference image is "
+        "available, describe what to preserve. Put camera preset suggestions in edit_and_sound. "
+        if engine == "Higgsfield" else
+        "Specify reference use, composition, camera movement, lighting and one main "
+        "action per English Google Flow clip prompt. For an existing clip, write an edit "
+        "prompt describing changes to that clip and what must be preserved. "
+    )
     return [
         {
             "role": "system",
@@ -38,9 +68,7 @@ def planning_messages(brief):
                 "Write natural spoken Tamil and matching concise English subtitles, with pauses "
                 "and an intelligible dialogue mix. Use the presenter in the opening when the brief "
                 "calls for it. Keep face, wardrobe, setting and lighting consistent across generated "
-                "shots. Specify reference use, composition, camera movement, lighting and one main "
-                "action per English Google Flow clip prompt. For an existing clip, write an edit "
-                "prompt describing changes to that clip and what must be preserved. Distinguish "
+                "shots. " + clip_guidance + "Distinguish "
                 "generated clip length from its final timeline length; place trim and assembly "
                 "directions in edit_and_sound. Keep this channel focused on documented "
                 "human events. Label proposed historical reconstructions 'AI reenactment'. "
@@ -121,14 +149,16 @@ def _timecode(milliseconds):
 
 
 def flow_instructions(plan):
-    lines = [plan["title"], "30 seconds · 1080 × 1920 · Google Flow",
+    engine = plan.get("engine", "Google Flow")
+    prompt_label = "Higgsfield prompt" if engine == "Higgsfield" else "Flow prompt"
+    lines = [plan["title"], f"30 seconds · 1080 × 1920 · {engine}",
              "Verification: " + (plan["verification_notes"] or "Review historical details.")]
     for number, shot in enumerate(plan["shots"], 1):
         start, end = _timecode(shot["start_ms"]), _timecode(shot["end_ms"])
         lines.extend([
             "", f"Shot {number}  |  {start} → {end}",
             "Visual: " + shot["visual"],
-            "Flow prompt: " + shot["flow_prompt"],
+            f"{prompt_label}: " + shot["flow_prompt"],
             "Edit and sound: " + shot["edit_and_sound"],
         ])
         if shot["tamil_voiceover"]:

@@ -17,7 +17,7 @@
 
 1. On the Windows JARVIS app open **Phone Remote**, choose **Pair a phone** and copy the unique pairing secret. Never paste it into support chats or source code.
 2. The bridge listener is **off by default** and binds `127.0.0.1:8765` unless changed. Android requires HTTPS. The safe documented pattern is a trusted, *private* HTTPS tunnel/reverse proxy that terminates TLS and forwards requests to the loopback PC listener. On the PC only, explicitly check the option **My private tunnel terminates TLS** for the loopback listener if appropriate. Never expose the raw HTTP port publicly.
-3. Enter the actual **HTTPS hostname** and matching public-facing HTTPS port in Android, e.g. port `443` if your private HTTPS reverse proxy accepts 443. Do not copy `127.0.0.1` into a phone: that means the *phone itself*.
+3. Enter the **HTTPS address** reachable from your phone. In builds with the optional Port field, leave the field blank to use the port in the URL, or 443 if the URL has no explicit port. If your installed APK still shows a required Port field, enter the matching HTTPS port yourself. Use the phone-facing address; `127.0.0.1` on the phone points to the phone itself.
 4. Paste the unique secret from Windows JARVIS; press **Pair** and **Refresh**. An address being saved is not proof of a live connection. Expect a signed status result and reachable Windows screen before attempting jobs.
 5. An expired/revoked secret or TLS certificate mismatch must fail closed. Do not disable certificate verification, use HTTP for the phone, or open a public router port.
 

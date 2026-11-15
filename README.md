@@ -2,9 +2,17 @@
 
 # JARVIS AI — Windows foundation v0.3.0
 
+To use a camera connected to the PC, open **PC Control → Watch & read connected camera** and select the device. For text on a document or label, select **Capture frame**, review it, and select **Read text**. Use **Find next** to search the recognized text. Live viewing requires a camera recognized by Windows. Text recognition requires Tesseract on PATH and the language data for your selection (`eng`, `tam` or `fra`). Recognition runs locally.
+
+To check for releases in the app, open **Settings & Safety → Updates & rollback** and enable **Check GitHub once a day while JARVIS is open**. When due, JARVIS checks GitHub release metadata and displays a newly seen release tag. Use the Releases link to review it and select a trusted ZIP to approve an update.
+
 Independent source release for Mihran. Real PySide6 desktop and working provider request code; no API keys included. This is the third increment, **not the complete autonomous system**.
 
 ## Google Flow Video Editor
+
+Select **Suggest workflow** to see which tools fit your brief and the selected video engine. The suggestion uses local rules and is available before you generate a shot plan.
+
+For Higgsfield, select **Video engine → Higgsfield**, or say “Hey Jarvis, Higgsfield prompts தயார் செய்” with your scene brief. Select **Generate with Gemini**, then use **Open Higgsfield** to paste the shot prompts and generate your clips. Download the clips to use the same JARVIS export and editing tools.
 
 1. In **Settings & Safety → AI providers**, save your Gemini API configuration.
 2. Open **Video Editor** and type a brief, or start an existing voice session and say “Hey Jarvis, video editor, …” followed by the brief.
@@ -26,6 +34,12 @@ MP4 export runs locally and requires an FFmpeg build with `ffmpeg` and `ffprobe`
 Open **Business**, choose a task, enter a brief and select **Generate business draft**. The app uses the Gemini configuration from **AI providers**. It can draft Editopro gig packages, client replies, delivery and revision messages, or copy and SEO metadata for a named website page. For a Google AI Studio project, mention Build Mode to get a prompt you can paste there.
 
 For voice input, start an existing voice session and say “Hey Jarvis, Fiverr gig, …”, “Hey Jarvis, Fiverr client reply, …”, “Hey Jarvis, Fiverr delivery, …”, or “Hey Jarvis, website update, …”. Review the recognized text before generating. Review the resulting draft before using it in the account dashboard.
+
+## Codex project review
+
+For Python drafts and fixes, choose **MiniMax** under **Coding AI**. Use **MiniMax API settings** to save your key and model. The coding preference is remembered separately from Chat. Use **Generate Python draft** for a new task or **Draft a code fix** with the editor code and its error.
+
+Install the official [Codex CLI](https://developers.openai.com/codex/cli), run `codex login` once in a terminal, and restart JARVIS. In **Coding Assistant**, enter your question, select **Ask Codex about a project**, choose a folder, and approve the request. Codex reviews the selected project in read-only mode and shows its response in a separate panel. Use **Emergency Stop** to cancel an active review. The CLI uses its own sign-in.
 
 ## Start on Windows 10 / 11
 

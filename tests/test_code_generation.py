@@ -19,21 +19,30 @@ def test_draft_validation_does_not_execute(tmp_path):
     assert draft==source and 'passed' in report and not target.exists()
     assert 'failed' in prepare_draft('def broken(')[1]
 
-@pytest.mark.parametrize('allow,stop',[(False,False),(True,False),(True,True)])
-def test_generation_review_boundary(tmp_path,monkeypatch,allow,stop):
+@pytest.mark.parametrize('allow,stop,provider', [
+    (False, False, 'Gemini'), (True, False, 'Gemini'), (True, True, 'Gemini'),
+    (True, False, 'MiniMax'),
+])
+def test_generation_review_boundary(tmp_path,monkeypatch,allow,stop,provider):
     app=QApplication.instance() or QApplication([])
     window=Window(tmp_path)
+    if provider == 'MiniMax':
+        window.coding_provider.setCurrentText(provider)
+        assert window.store.get('coding_provider') == provider
+        assert window.chat_provider.currentText() == 'Gemini'
     original=window.editor.toPlainText()
     monkeypatch.setattr(window,'get_key',lambda _: 'fake')
     window.code_goal.setText('Create a calculator')
     calls=[]
     def start(provider,model,key,messages,kind):
+        assert provider == expected_provider
         calls.append(messages)
         window.worker_kind=kind
         window.active_provider=provider; window.active_model=model
         window.chat_task=window.store.task(kind,'test')
         if stop: window.policy.stop()
         window.on_result('completed','print(42)',{})
+    expected_provider = provider
     monkeypatch.setattr(window,'start_worker',start)
     monkeypatch.setattr('desktop.app.QMessageBox.warning',lambda *args:None)
     window.confirm=lambda _:allow

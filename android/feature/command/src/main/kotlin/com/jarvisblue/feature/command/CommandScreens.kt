@@ -222,7 +222,7 @@ fun WindowsScreen(
                             value = state.portInput,
                             onValueChange = onPortChange,
                             modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Port") },
+                            label = { Text("Port (optional, defaults to 443)") },
                             singleLine = true,
                             shape = RoundedCornerShape(12.dp),
                         )

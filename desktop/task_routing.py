@@ -23,7 +23,11 @@ def match_task(text):
     text = " ".join(text.casefold().split())
     if not text or _QUESTION.search(text) or not re.search(_ACTION, text):
         return None
-    if re.search(r"\b(?:davinci|resolve|photoshop|canva|higgsfield)\b", text):
+    if re.search(r"\b(?:davinci|resolve|photoshop|canva)\b", text):
+        return None
+    if re.search(r"\bhiggsfield\b", text):
+        if re.search(r"\b(?:prompts?|shot list|shot plan)\b|வீடியோ திட்டம்", text):
+            return "higgsfield_plan"
         return None
     if re.search(r"\bcapcut\b", text):
         if re.search(r"\b(?:for|to) capcut\b|\bcapcut\s*[-–]?க்கு", text) and re.search(r"\b(?:export|prepare)\b|தயார்", text):
