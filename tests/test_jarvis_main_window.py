@@ -12,10 +12,10 @@ def test_primary_sections_and_one_main_window(tmp_path):
     try:
         names = [win.nav.item(i).text() for i in range(win.nav.count())]
         assert names == [
-            "JARVIS Chat", "PC Control", "Coding Assistant",
+            "JARVIS Chat", "PC Control", "Coding Assistant", "Memory",
             "Voice / Hey Jarvis", "Phone Remote", "Settings & Safety", "Video Editor", "Business"
         ]
-        assert win.pages.count() == 14
+        assert win.pages.count() == 15
         assert win.nav.currentRow() == 0
         assert win.pages.currentIndex() == 0
         assert win.orb._state == "idle"
