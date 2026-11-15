@@ -13,9 +13,13 @@ from PySide6.QtWidgets import (
     QPushButton, QListWidget, QStackedWidget, QPlainTextEdit, QLineEdit,
     QComboBox, QMessageBox, QFormLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QCheckBox, QDialog, QFileDialog, QScrollArea, QLayout, QGridLayout,
+    QSizePolicy,
 )
 from core.store import Store
+from memory.memory_service import MemoryService
 from desktop.bridge_panel import BridgePanel
+from desktop.memory_page import MemoryPanel
+from desktop.research_dialog import open_research
 from desktop.camera_reader import open_camera_reader
 from desktop.update_dialog import ReleaseChecker, open_updates
 from desktop.voice_panel import VoicePanel
@@ -165,6 +169,8 @@ class Window(QMainWindow):
         self.voice_panel.utterance_detected.connect(self.on_voice_transcript)
         self.voice_panel.cycle_finished.connect(self.schedule_local_voice_rearm)
         self.voice_panel.speech_finished.connect(self.schedule_local_voice_rearm)
+        self.memory_service = MemoryService(self.root / 'history.sqlite3')
+        self.add_page('Memory', MemoryPanel(service=self.memory_service))
         self.add_page('Voice / Hey Jarvis', self.voice_panel)
         self.add_page('Phone Remote', self.bridge_page())
         self.add_page('Settings & Safety', self.permissions_page())
@@ -480,16 +486,31 @@ class Window(QMainWindow):
         hero.addLayout(details, 1)
         layout.addLayout(hero)
         shortcuts = QGridLayout()
-        for index, (label, section) in enumerate([
-            ('Video Editor', 'Video Editor'), ('Coding', 'Coding Assistant'),
-            ('Phone Remote', 'Phone Remote'), ('Camera and PC', 'PC Control'),
-            ('Command Center', 'Command Center'),
+        for index, (label, section, tip) in enumerate([
+            ('Video', 'Video Editor', 'Open the video editor'),
+            ('Coding', 'Coding Assistant', 'Open the coding assistant'),
+            ('Phone', 'Phone Remote', 'Set up and use the phone remote'),
+            ('Camera', 'PC Control', 'Watch and read a camera, and control this PC'),
+            ('Commands', 'Command Center', 'Open the command center'),
         ]):
             button = QPushButton(label)
+            button.setToolTip(tip)
             button.clicked.connect(lambda checked=False, section=section: self.open_section(section))
             shortcuts.addWidget(button, index // 3, index % 3)
         layout.addLayout(shortcuts)
         row = QHBoxLayout()
+        tools_row = QHBoxLayout()
+        self.research_button = QPushButton('Research a page')
+        self.research_button.setToolTip(
+            'Give an https address and a question. The page is read on this '
+            'machine and the answer comes from the same provider as the chat.')
+        self.research_button.clicked.connect(self.open_research)
+        tools_row.addWidget(self.research_button)
+        self.memory_button = QPushButton('Memory')
+        self.memory_button.setToolTip('Open the notes that JARVIS remembers between sessions.')
+        self.memory_button.clicked.connect(lambda: self.open_section('Memory'))
+        tools_row.addWidget(self.memory_button)
+        layout.addLayout(tools_row)
         self.chat_provider = QComboBox()
         self.chat_provider.addItems(provider_names())
         self.chat_provider.setCurrentText('Gemini')
@@ -505,7 +526,14 @@ class Window(QMainWindow):
         settings.hide()
         options.toggled.connect(settings.setVisible)
         layout.addWidget(settings)
-        self.backup_consent = QCheckBox('Allow one backup attempt for this message')
+        self.backup_consent = QCheckBox('One backup attempt')
+        self.backup_consent.setToolTip(
+            'If the answer fails once, JARVIS may try the backup provider once.')
+        # The row has to fit a narrow window, so the box may be clipped. The
+        # tooltip keeps the meaning.
+        self.backup_consent.setMinimumWidth(0)
+        self.backup_consent.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.backup_consent.setToolTip('Shares the full conversation with the backup provider. Charges may apply.')
         self.backup_consent.toggled.connect(lambda enabled: self.guard_local_voice_provider() if enabled else None)
         settings_layout.addWidget(self.backup_consent)
@@ -516,7 +544,8 @@ class Window(QMainWindow):
         archives = QHBoxLayout()
         self.archives = QComboBox()
         archives.addWidget(self.archives, 1)
-        self.archive_button = self.button(archives, 'Open saved chat', self.open_chat)
+        self.archive_button = self.button(archives, 'Saved chats', self.open_chat)
+        self.archive_button.setToolTip('Open a conversation that was saved earlier.')
         settings_layout.addLayout(archives)
         self.refresh_archives()
         self.transcript = QPlainTextEdit()
@@ -527,10 +556,13 @@ class Window(QMainWindow):
         self.prompt.setPlaceholderText('Ask JARVIS… தமிழ் / English / Français')
         self.prompt.setFixedHeight(78)
         layout.addWidget(self.prompt)
-        self.read_replies = QCheckBox('Read replies aloud on this PC (optional; uses Windows speech)')
+        self.read_replies = QCheckBox('Read replies aloud')
+        self.read_replies.setToolTip(
+            'Optional. The answers are spoken on this PC with the Windows voice.')
+        self.read_replies.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         settings_layout.addWidget(self.read_replies)
-        self.hands_free_voice = QCheckBox(
-            'Hands-free Hey Jarvis (LOCAL Ollama only, session opt-in)')
+        self.hands_free_voice = QCheckBox('Hands-free Hey Jarvis')
         self.hands_free_voice.setToolTip(
             'Requires microphone permission and Ollama. Each wake phrase plus '
             'question sends a message ONLY to your local model; never to cloud '
@@ -539,9 +571,12 @@ class Window(QMainWindow):
         settings_layout.addWidget(self.hands_free_voice)
         settings_actions = QHBoxLayout()
         settings_layout.addLayout(settings_actions)
-        self.clear_button = self.button(settings_actions, 'Delete conversation', self.clear_chat)
+        self.clear_button = self.button(settings_actions, 'Delete chat', self.clear_chat)
+        self.clear_button.setToolTip('Delete this conversation from the history.')
         self.review_pc_action_button = self.button(
-            settings_actions, 'Review PC action', self.review_chat_pc_action)
+            settings_actions, 'Review action', self.review_chat_pc_action)
+        self.review_pc_action_button.setToolTip(
+            'See what the answer wants to do on this PC and approve it.')
         composer_actions = QHBoxLayout()
         layout.addLayout(composer_actions)
         self.button(composer_actions, 'Speak', self.listen_to_user)
@@ -1470,6 +1505,10 @@ class Window(QMainWindow):
             self.render_chat()
             self.refresh_archives()
 
+    def open_research(self):
+        """Open the research window."""
+        open_research(self)
+
     def send(self):
         if self.policy.stopped or self.worker is not None or not self.prompt.toPlainText().strip():
             return
@@ -1503,6 +1542,10 @@ class Window(QMainWindow):
             system = {'role': 'system', 'content':
                 'You are JARVIS, a helpful assistant. Reply in the user language. '
                 'You cannot execute tools or control this computer. Never claim actions were executed.'}
+            known = self.memory_service.as_context(prompt)
+            if known:
+                system = {'role': 'system', 'content':
+                    system['content'] + '\n\nWhat the owner asked JARVIS to remember:\n' + known}
             self.start_worker(provider, model, key, [system] + messages, 'chat', backup=backup)
             self.backup_consent.setChecked(False)
         self.notify(operation)

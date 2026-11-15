@@ -329,3 +329,42 @@ def test_speech_worker_failure_is_reported_without_crashing(panel, app):
     panel.speaker_worker.wait(4000)
     app.processEvents()
     assert 'No compatible voice installed' in panel.transcript.toPlainText()
+
+
+def test_the_voice_can_be_muted(panel):
+    panel.allow.setChecked(True)
+    panel.mute_button.setChecked(True)
+    assert panel.muted is True
+    assert 'Muted' in panel.privacy.text()
+
+
+def test_a_muted_voice_says_nothing(panel):
+    said = []
+
+    class Speaker:
+        def speak(self, text, language=None, rate=None):
+            said.append(text)
+
+    panel._speaker_factory = Speaker
+    panel.speak_text.setText('hello')
+    panel.mute_button.setChecked(True)
+    panel.speak()
+    assert said == []
+    assert 'muted' in panel.transcript.toPlainText()
+
+
+def test_unmuting_brings_the_voice_back(panel):
+    panel.mute_button.setChecked(True)
+    panel.mute_button.setChecked(False)
+    assert panel.muted is False
+    assert 'muted' not in panel.privacy.text().lower()
+
+
+def test_the_privacy_line_says_when_the_microphone_is_closed(panel):
+    assert 'closed' in panel.privacy.text()
+
+
+def test_the_privacy_line_follows_the_stop(panel):
+    panel.allow.setChecked(True)
+    panel.stop_voice()
+    assert 'Stopped' in panel.privacy.text()

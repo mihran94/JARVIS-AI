@@ -322,6 +322,17 @@ class BridgeServer:
 
     # ------------------------------------------------------------- authenticity
 
+    def set_allowed_hosts(self, hosts) -> None:
+        """The peer addresses that may talk to the bridge.
+
+        The loopback addresses are always allowed. The owner adds the
+        address of a VPN or a private tunnel, so the phone can reach the
+        desktop without the listener being published to the internet.
+        """
+        allowed = {host.strip() for host in hosts if host and host.strip()}
+        allowed.update(DEFAULT_ALLOWED_HOSTS)
+        self._allowed_hosts = tuple(sorted(allowed))
+
     def _check_source(self, request: BridgeRequest) -> None:
         """Reject a request that did not arrive over an allowed interface."""
         if request.remote_addr not in self._allowed_hosts:

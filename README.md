@@ -82,6 +82,13 @@ A ChatGPT subscription is separate from provider API access. No keys are provisi
 - **The recognition runs on a worker thread**, so the interface never freezes and a widget is never touched from another thread. The recognised text is shown, and a wake call is marked with the phrase that matched and the command that followed it.
 - **On a machine that is not Windows** the speech adapters are not available, and the page says so instead of pretending. They have to be exercised on the owner's Windows machine before they are trusted.
 
+## Memory and research
+
+- **Memory page.** The owner keeps short notes with a title, a text and a few tags. They live in the same local SQLite file as the conversation history, so one encrypted file holds everything. The notes never leave the machine.
+- **A word search, not a model.** The search is BM25 over the title, the text and the tags. There is no embedding model and no vector store: a model would have to be downloaded on every machine, and the owner would have to trust it with the text of every note.
+- **The notes reach the assistant only when they match.** When a question matches some notes, they go into the prompt as context. Nothing else is sent, and the provider is not asked to fetch anything.
+- **Research reads one page the owner names.** Only `https`, and a page that resolves to a private or loopback address is refused, so a link cannot reach the machines inside the owner's own network. The page size and the time are limited, and the provider never follows a link that is in the page.
+
 ## Mobile bridge
 
 - **The phone never holds a provider key.** The chat is answered by the PC. A local provider needs no permission, a paid provider needs the owner's consent *and* the consent on the request itself, and the emergency stop stops the bridge too.

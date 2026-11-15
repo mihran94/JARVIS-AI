@@ -157,6 +157,7 @@ class VoicePanel(QWidget):
         self._speaker_factory = speaker_factory or default_speaker_factory
         self.worker = None
         self.speaker_worker = None
+        self.muted = False
         self._build()
         self.refresh()
 
@@ -226,10 +227,23 @@ class VoicePanel(QWidget):
         self.speak_button = QPushButton('Say it')
         self.speak_button.clicked.connect(self.speak)
         speak_layout.addRow(self.speak_button)
+        self.mute_button = QPushButton('Mute the voice')
+        self.mute_button.setCheckable(True)
+        self.mute_button.toggled.connect(self.set_muted)
+        speak_layout.addRow(self.mute_button)
+        self.privacy = QLabel()
+        self.privacy.setWordWrap(True)
+        speak_layout.addRow('Privacy', self.privacy)
         layout.addWidget(speak_box)
         layout.addStretch()
 
     # ---------------------------------------------------------------- actions
+
+    def set_muted(self, muted):
+        """Turn the spoken answers off without touching the microphone."""
+        self.muted = muted
+        self.mute_button.setText('Unmute the voice' if muted else 'Mute the voice')
+        self.refresh()
 
     def set_phrase(self, phrase):
         """The wake phrase the owner typed."""
@@ -309,6 +323,9 @@ class VoicePanel(QWidget):
         text = (text or '').strip()[:600]
         if not text:
             return
+        if self.muted:
+            self.status('The voice is muted, so nothing was said.')
+            return
         if self.speaker_worker is not None and self.speaker_worker.isRunning():
             self.status('JARVIS is already speaking. Use Stop voice to interrupt.')
             return
@@ -354,6 +371,16 @@ class VoicePanel(QWidget):
         """Show a line of feedback."""
         self.append(message)
 
+    def privacy_line(self):
+        """What the voice is doing with the microphone, in words."""
+        if self.muted:
+            return 'Muted: the microphone is still closed, and nothing is said out loud.'
+        if self.consent.stopped:
+            return 'Stopped: the microphone is closed until the owner allows it again.'
+        if self.consent.granted:
+            return 'The microphone may open while you listen, and only then.'
+        return 'The microphone is closed. Nothing is recorded.'
+
     def append(self, line):
         """Add a line to the transcript area."""
         self.transcript.appendPlainText(line)
@@ -361,6 +388,7 @@ class VoicePanel(QWidget):
     def refresh(self):
         """Update the state that the owner sees."""
         self.permission.setText(self.consent.listener)
+        self.privacy.setText(self.privacy_line())
         self.allow.blockSignals(True)
         self.allow.setChecked(self.consent.granted)
         self.allow.blockSignals(False)

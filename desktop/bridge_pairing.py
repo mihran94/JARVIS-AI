@@ -7,6 +7,7 @@ The code is a short text block:
     key=jarvis-iphone-v1
     secret=<the one time secret>
     expires=1764000000
+    fp=<the SHA-256 of the server certificate>
 
 The desktop draws it as a QR code and the phone reads it with the camera. The
 same text can be pasted, which is what a person does when the camera is not
@@ -38,8 +39,13 @@ def expires_at(now=None, lifetime_seconds: int = DEFAULT_LIFETIME_SECONDS) -> in
 
 
 def pairing_payload(bridge_url: str, key_id: str, secret: str,
-                    expires: int) -> str:
-    """The text of the pairing code."""
+                    expires: int, fingerprint: str = '') -> str:
+    """The text of the pairing code.
+
+    The fingerprint is the SHA-256 of the server certificate. It is optional
+    so that an older code still reads, but a phone that has it can pin the
+    certificate instead of trusting whatever the network hands over.
+    """
     if not isinstance(bridge_url, str) or not bridge_url.strip():
         raise PairingCodeError('A bridge address for the phone is required.')
     if not bridge_url.strip().lower().startswith('https://'):
@@ -50,13 +56,16 @@ def pairing_payload(bridge_url: str, key_id: str, secret: str,
         raise PairingCodeError('The pairing secret is too short to use.')
     if not isinstance(expires, int) or expires <= 0:
         raise PairingCodeError('The pairing code needs an expiry.')
-    return '\n'.join([
+    lines = [
         PAIRING_FORMAT,
         'bridge=' + bridge_url.strip(),
         'key=' + key_id.strip(),
         'secret=' + secret,
         'expires=' + str(expires),
-    ])
+    ]
+    if isinstance(fingerprint, str) and fingerprint.strip():
+        lines.append('fp=' + fingerprint.strip().lower())
+    return '\n'.join(lines)
 
 
 def pairing_svg(payload: str) -> str:
