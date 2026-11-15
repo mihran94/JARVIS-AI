@@ -20,15 +20,16 @@ class BlueOrb(QWidget):
         self._timer.start()
 
     def set_state(self, state):
-        if state not in ('idle', 'thinking', 'responding', 'stopped'):
+        if state not in ('idle', 'listening', 'thinking', 'responding', 'speaking', 'stopped'):
             raise ValueError('Unknown orb state')
         self._state = state
         self.update()
 
     def _tick(self):
-        if not self.isVisible():
+        if not self.isVisible() or self._state == 'stopped':
             return
-        self._phase = (self._phase + (0.09 if self._state == 'thinking' else 0.035)) % (2 * math.pi)
+        speed = {'listening': 0.055, 'thinking': 0.09, 'speaking': 0.16}.get(self._state, 0.035)
+        self._phase = (self._phase + speed) % (2 * math.pi)
         self.update()
 
     def paintEvent(self, event):
@@ -39,7 +40,7 @@ class BlueOrb(QWidget):
         x, y = w / 2, h / 2
         radius = min(w * 0.30, h * 0.36)
         active = self._state != 'stopped'
-        pulse = 1.0 + (0.045 * math.sin(self._phase * 3) if self._state == 'responding' else 0.0)
+        pulse = 1.0 + (0.045 * math.sin(self._phase * 3) if self._state in ('responding', 'speaking') else 0.0)
         radius *= pulse
         glow = QRadialGradient(x, y, radius * 1.6)
         glow.setColorAt(0, QColor(22, 158, 227, 115 if active else 35))

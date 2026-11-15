@@ -50,7 +50,7 @@ class ListenerConfig:
     allow_public_bind: bool = False
     #: Peer addresses that may talk to the listener.
     allowed_hosts: tuple = ('127.0.0.1', '::1')
-    #: Seconds a single request may take.
+    #: Seconds of inactivity allowed on a connection.
     request_timeout_seconds: float = 30.0
 
     @property
@@ -69,6 +69,8 @@ class ListenerConfig:
                 'private tunnel, or confirm the address explicitly.')
         if not self.allow_public_bind and not is_loopback_host(self.host):
             raise ListenerError('Refusing to bind a non loopback address.')
+        if self.request_timeout_seconds <= 0:
+            raise ListenerError('The request timeout must be positive.')
         if self.port < 0 or self.port > 65535:
             raise ListenerError('Invalid port.')
 
@@ -113,10 +115,23 @@ class _Server(http.server.ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, address, handler, bridge, config: ListenerConfig):
+    def __init__(self, address, handler, bridge, config: ListenerConfig,
+                 tls_context: ssl.SSLContext | None):
         self.bridge = bridge
         self.config = config
+        self.tls_context = tls_context
         super().__init__(address, handler)
+
+    def process_request_thread(self, request, client_address):
+        # Do not let one TLS handshake block the listener's accept loop.
+        try:
+            request.settimeout(self.config.request_timeout_seconds)
+            if self.tls_context is not None:
+                request = self.tls_context.wrap_socket(request, server_side=True)
+        except OSError:
+            request.close()
+            return
+        super().process_request_thread(request, client_address)
 
 
 class BridgeListener:
@@ -150,19 +165,18 @@ class BridgeListener:
         if self._server is not None:
             raise ListenerError('The listener is already running.')
         self._config.validate()
-        try:
-            server = _Server((self._config.host, self._config.port), _Handler, self._bridge,
-                             self._config)
-        except OSError as error:
-            raise ListenerError(f'Could not bind the bridge listener: {error}') from None
+        context = None
         if self._config.tls_enabled:
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             try:
                 context.load_cert_chain(self._config.tls_cert, self._config.tls_key)
             except (OSError, ssl.SSLError) as error:
-                server.server_close()
                 raise ListenerError(f'Could not load the TLS certificate: {error}') from None
-            server.socket = context.wrap_socket(server.socket, server_side=True)
+        try:
+            server = _Server((self._config.host, self._config.port), _Handler, self._bridge,
+                             self._config, context)
+        except OSError as error:
+            raise ListenerError(f'Could not bind the bridge listener: {error}') from None
         self._server = server
         self._thread = threading.Thread(target=server.serve_forever, daemon=True,
                                         name='jarvis-bridge-listener')

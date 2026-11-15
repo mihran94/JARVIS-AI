@@ -4,6 +4,7 @@ The listener is exercised over real HTTP on the loopback interface, so the
 request path, the authentication and the refusal rules are all covered.
 """
 import json
+import socket
 import time
 
 import httpx
@@ -198,3 +199,16 @@ def test_a_broken_certificate_is_refused(tmp_path):
                                                            tls_key=str(key)))
     with pytest.raises(ListenerError):
         listener.start()
+
+@pytest.mark.parametrize('tls', [False, True])
+def test_idle_connections_close_after_the_configured_timeout(tmp_path, tls):
+    cert, key = _self_signed_certificate(tmp_path) if tls else ('', '')
+    config = ListenerConfig(port=0, allow_plaintext=not tls,
+                            tls_cert=cert, tls_key=key, request_timeout_seconds=0.25)
+    with BridgeListener(make_bridge(), config) as listener:
+        address = listener.address
+        with socket.create_connection(('127.0.0.1', int(address.rsplit(':', 1)[1])), timeout=2) as idle:
+            response = httpx.get(address + '/api/status', verify=False,
+                                 headers=signed_headers('GET', '/api/status'))
+            assert response.status_code == 200
+            assert idle.recv(1) == b''

@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  LANGUAGES, chooseLanguage, defaultLanguage, isTamil, recognitionSupported,
+  LANGUAGES, chooseLanguage, defaultLanguage, isFrench, isTamil, recognitionSupported,
   speak, speakLanguage, startListening, synthesisSupported,
 } from '../js/speech.js';
 
@@ -43,10 +43,16 @@ test('Tamil is spoken and heard in Tamil', () => {
 test('English keeps the language that is already in use', () => {
   assert.equal(chooseLanguage('hello', { current: 'en-US' }), 'en-US');
   assert.equal(chooseLanguage('hello', { current: 'ta-IN' }), 'ta-IN');
+  assert.equal(chooseLanguage('bonjour le monde'), 'fr-FR');
+  assert.equal(chooseLanguage('ça va très bien'), 'fr-FR');
+  assert.equal(chooseLanguage('hello', { current: 'fr-FR' }), 'fr-FR');
+  assert.equal(isFrench('bonjour'), true);
+  assert.equal(isFrench('hello'), false);
+  assert.equal(isFrench('வணக்கம்'), false);
 });
 
-test('the two languages are the agreed ones', () => {
-  assert.deepEqual(LANGUAGES.map((language) => language.code), ['ta-IN', 'en-US']);
+test('the supported languages are Tamil, English and French', () => {
+  assert.deepEqual(LANGUAGES.map((language) => language.code), ['ta-IN', 'en-US', 'fr-FR']);
 });
 
 test('the default language follows the phone', () => {
@@ -56,6 +62,10 @@ test('the default language follows the phone', () => {
     assert.equal(defaultLanguage(), 'ta-IN');
     Object.defineProperty(globalThis, 'navigator', { value: { language: 'en-GB' }, configurable: true });
     assert.equal(defaultLanguage(), 'en-US');
+    navigator.language = 'fr-FR';
+    assert.equal(defaultLanguage(), 'fr-FR');
+    navigator.language = 'fr-CA';
+    assert.equal(defaultLanguage(), 'fr-FR');
   } finally {
     Object.defineProperty(globalThis, 'navigator', { value: original, configurable: true });
   }

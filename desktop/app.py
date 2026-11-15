@@ -6,15 +6,18 @@ import time
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
-from PySide6.QtCore import QProcess, QThread, Signal, QTimer, Qt, QLockFile, QUrl
+from PySide6.QtCore import QProcess, QThread, Signal, QTimer, Qt, QLockFile, QUrl, QEvent
 from PySide6.QtGui import QDesktopServices, QFont, QTextCursor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QListWidget, QStackedWidget, QPlainTextEdit, QLineEdit,
     QComboBox, QMessageBox, QFormLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QCheckBox, QDialog, QFileDialog, QScrollArea, QLayout, QGridLayout,
+    QProgressBar, QGroupBox,
 )
 from core.store import Store
+from desktop.memory_page import MemoryPanel
+from memory.memory_service import MemoryService
 from desktop.bridge_panel import BridgePanel
 from desktop.camera_reader import open_camera_reader
 from desktop.update_dialog import ReleaseChecker, open_updates
@@ -107,6 +110,7 @@ class Window(QMainWindow):
         self.resize(1180, 790)
         self.root = Path(data_root)
         self.store = Store(self.root / 'history.sqlite3')
+        self.memory_service = MemoryService(self.root / 'history.sqlite3')
         self.router = ProviderRouter()
         self.policy = Policy()
         self.vault = Vault()
@@ -114,6 +118,7 @@ class Window(QMainWindow):
         self.queue = TaskQueue(self.store, self.gateway)
         self.workflows = WorkflowQueue(self.store, self.gateway)
         self.worker_kind = "chat"
+        self.ai_visual_state = "idle"
         self.active_provider = None
         self.active_model = None
         self.workspace = Workspace(self.root / 'workspace')
@@ -170,7 +175,12 @@ class Window(QMainWindow):
         self.add_page('Settings & Safety', self.permissions_page())
         self.add_page('Video Editor', self.video_page())
         self.add_page('Business', self.business_page())
+        self.add_page('Memory', MemoryPanel(service=self.memory_service))
         self.add_page('Command Center', self.dashboard(), primary=False)
+        self.voice_panel.activity_changed.connect(self.refresh_voice_hud)
+        self.voice_panel.recognition_failed.connect(lambda: self.hands_free_voice.setChecked(False))
+        self.voice_panel.feedback.connect(lambda message: self.statusBar().showMessage(message, 10000))
+        self.refresh_voice_hud()
         self.add_page('Task Queue', self.queue_page(), primary=False)
         self.add_page('Step Workflows', self.workflow_page(), primary=False)
         self.add_page('Task History', self.history_page(), primary=False)
@@ -191,6 +201,8 @@ class Window(QMainWindow):
         self.system_timer.setInterval(5000)
         self.system_timer.timeout.connect(self.refresh_system_metrics)
         self.system_timer.start()
+        self.fullscreen_shortcut = QShortcut(QKeySequence('F11'), self)
+        self.fullscreen_shortcut.activated.connect(self.toggle_fullscreen)
         self.refresh_system_metrics()
         self.refresh_history()
         self.render_chat()
@@ -258,6 +270,7 @@ class Window(QMainWindow):
             # The user opted in to the local dialogue session. No cloud key
             # is read; no other provider can be used for automatic messages.
             self.read_replies.setChecked(True)
+            self.voice_panel.stop_continuous()
             self.voice_panel.listen('dialogue')
             self.statusBar().showMessage(
                 'Hands-free LOCAL Ollama active. Say Hey Jarvis, then your question. '
@@ -299,7 +312,9 @@ class Window(QMainWindow):
         if self.policy.stopped or not self.voice_panel.consent.listening:
             return
         text = (command or '').strip()[:4000]
-        if self.route_task(text):
+        if text:
+            self.show_hud_text('Heard: ' + text)
+        if self.answer_spoken_system_command(text) or self.route_task(text):
             return
         self.open_section('JARVIS Chat')
         if (text and self.local_voice_allowed() and self.worker is None
@@ -307,7 +322,7 @@ class Window(QMainWindow):
             # Exact opt-in, local model only: no cloud API charges, no shell
             # execution, no implicit PC action approval, no model fallback.
             self.prompt.setPlainText(text)
-            self.send()
+            self.send(allow_notes=False)
             return
         if text:
             self.on_voice_transcript(text)
@@ -324,7 +339,8 @@ class Window(QMainWindow):
         text = (transcript or '').strip()[:4000]
         if not text:
             return
-        if self.route_task(text):
+        self.show_hud_text('Heard: ' + text)
+        if self.answer_spoken_system_command(text) or self.route_task(text):
             return
         self.open_section('JARVIS Chat')
         existing = self.prompt.toPlainText().strip()
@@ -433,8 +449,56 @@ class Window(QMainWindow):
         return button
 
     def dashboard(self):
-        page, layout = self.page('System overview',
-            'JARVIS runs on your Windows PC. The phone is only a remote.')
+        page, layout = self.page('Command Center', 'Live system metrics for this computer.')
+        header = QHBoxLayout()
+        self.hud_clock = QLabel()
+        self.hud_clock.setObjectName('hudClock')
+        header.addWidget(self.hud_clock)
+        header.addStretch()
+        self.fullscreen_button = self.button(header, 'Full screen', self.toggle_fullscreen)
+        self.fullscreen_button.setToolTip('Toggle full screen (F11)')
+        layout.addLayout(header)
+
+        voice_row = QHBoxLayout()
+        self.hud_orb = BlueOrb(page)
+        self.hud_orb.setFixedSize(76, 76)
+        voice_row.addWidget(self.hud_orb)
+        voice_details = QVBoxLayout()
+        self.hud_voice_status = QLabel('STANDBY')
+        self.hud_voice_status.setObjectName('hudClock')
+        voice_details.addWidget(self.hud_voice_status)
+        self.hud_voice_reply = QLabel()
+        self.hud_voice_reply.setTextFormat(Qt.TextFormat.PlainText)
+        self.hud_voice_reply.setWordWrap(True)
+        self.hud_voice_reply.hide()
+        voice_details.addWidget(self.hud_voice_reply)
+        voice_row.addLayout(voice_details, 1)
+        layout.addLayout(voice_row)
+        voice_controls = QHBoxLayout()
+        self.hud_talk = self.button(voice_controls, 'Talk once', self.listen_to_user)
+        self.button(voice_controls, 'Voice settings', lambda: self.open_section('Voice / Hey Jarvis'))
+        read_replies = QCheckBox('Read replies')
+        read_replies.setChecked(self.read_replies.isChecked())
+        read_replies.toggled.connect(self.read_replies.setChecked)
+        self.read_replies.toggled.connect(read_replies.setChecked)
+        voice_controls.addWidget(read_replies)
+        layout.addLayout(voice_controls)
+
+        meters = QHBoxLayout()
+        self.hud_meters = {}
+        for label, key in (('CPU', 'cpu_usage_percent'), ('RAM', 'ram_usage_percent')):
+            card = QGroupBox(label)
+            card_layout = QVBoxLayout(card)
+            value = QLabel('Collecting…')
+            value.setObjectName('hudValue')
+            card_layout.addWidget(value)
+            meter = QProgressBar()
+            meter.setRange(0, 1000)
+            meter.setTextVisible(False)
+            card_layout.addWidget(meter)
+            self.hud_meters[key] = (value, meter)
+            meters.addWidget(card, 1)
+        layout.addLayout(meters)
         self.dashboard_metrics = QLabel()
         self.dashboard_metrics.setWordWrap(True)
         self.dashboard_metrics.setObjectName('systemMetrics')
@@ -446,23 +510,91 @@ class Window(QMainWindow):
         layout.addStretch()
         return page
 
+    def toggle_fullscreen(self):
+        self.setWindowState(self.windowState() ^ Qt.WindowState.WindowFullScreen)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange:
+            self.fullscreen_button.setText('Exit full screen' if self.isFullScreen() else 'Full screen')
+
     def refresh_system_metrics(self):
-        """Read-only hardware counters; never opens a network connection."""
-        if hasattr(self, 'system_metrics_label'):
-            try:
-                data = snapshot(self.root, self.cpu_sampler)
-                data['network_status'] = format_network(self.network_sampler.sample())
-                summary = format_snapshot(data)
-            except (OSError, ValueError):
-                summary = 'System metrics unavailable.'
-            self.system_metrics_label.setText(summary)
-            self.dashboard_metrics.setText(summary)
+        """Refresh the HUD and cache the same snapshot for local chat commands."""
+        data = snapshot(self.root, self.cpu_sampler)
+        data['network_status'] = format_network(self.network_sampler.sample())
+        self.system_summary = format_snapshot(data)
+        self.system_metrics_label.setText(self.system_summary)
+        self.dashboard_metrics.setText(self.system_summary)
+        self.hud_clock.setText(datetime.now().strftime('%H:%M'))
+        for key, (value, meter) in self.hud_meters.items():
+            percent = data[key]
+            value.setText(f'{percent:.1f}%' if percent is not None else 'Unavailable')
+            meter.setVisible(percent is not None)
+            if percent is not None:
+                meter.setValue(round(percent * 10))
+
+    def local_system_reply(self, text):
+        command = ' '.join(text.casefold().split()).strip('?!.,')
+        if command in ('time', '/time', 'current time', 'what time is it', 'what is the time', "what's the time",
+                       'இப்போ நேரம் என்ன', 'நேரம்',
+                       'quelle heure est-il'):
+            return datetime.now().astimezone().strftime('%H:%M %Z')
+        if command in ('status', '/status', 'system status', 'system stats', 'cpu', 'ram',
+                       'கணினி நிலை', 'état du système'):
+            phone_status = 'Running' if self.bridge.listener.running else 'Stopped'
+            return f'{self.state.text()}\nPhone Remote: {phone_status}\n\n{self.system_summary}'
+        return None
 
     def set_ai_visual_state(self, state):
-        """Show actual chat worker activity, not microphone or AI permissions."""
-        if hasattr(self, 'orb'):
-            self.orb.set_state(state)
-            self.orb_status.setText('AI STATUS  /  ' + state.upper())
+        """Keep model work separate from microphone and playback activity."""
+        self.ai_visual_state = state
+        self.refresh_voice_hud()
+
+    def refresh_voice_hud(self):
+        if not self.voice_panel.consent.listening and self.hands_free_voice.isChecked():
+            self.hands_free_voice.setChecked(False)
+        if self.policy.stopped:
+            state = 'stopped'
+        elif self.voice_panel.speaking:
+            state = 'speaking'
+        elif self.ai_visual_state != 'idle':
+            state = self.ai_visual_state
+        elif self.voice_panel.listening:
+            state = 'listening'
+        else:
+            state = 'idle'
+        label = {
+            'idle': 'STANDBY', 'listening': 'LISTENING', 'thinking': 'PROCESSING',
+            'responding': 'RESPONDING', 'speaking': 'SPEAKING', 'stopped': 'STOPPED',
+        }[state]
+        self.orb.set_state(state)
+        self.hud_orb.set_state(state)
+        self.orb_status.setText('JARVIS  /  ' + label)
+        self.hud_voice_status.setText(label)
+        self.hud_talk.setEnabled(state not in ('stopped', 'listening', 'speaking')
+                                 and not self.voice_panel.playback_busy)
+
+    def answer_spoken_system_command(self, command):
+        if self.worker is not None:
+            return False
+        reply = self.local_system_reply(command)
+        if reply is None:
+            return False
+        self.show_local_system_reply(command, reply)
+        return True
+
+    def show_local_system_reply(self, command, reply):
+        self.store.message(self.session, 'local command', command)
+        self.store.message(self.session, 'system', reply)
+        self.render_chat()
+        self.refresh_archives()
+        self.show_hud_text(reply)
+        if self.read_replies.isChecked():
+            self.voice_panel.speak_response(reply)
+
+    def show_hud_text(self, text):
+        self.hud_voice_reply.setText(text if len(text) <= 600 else text[:600] + '…')
+        self.hud_voice_reply.show()
 
     def chat_page(self):
         page, layout = self.page('Home & Chat', 'Ask in Tamil, Tanglish, English or French.')
@@ -471,7 +603,7 @@ class Window(QMainWindow):
         self.orb.setFixedSize(52, 52)
         hero.addWidget(self.orb)
         details = QVBoxLayout()
-        self.orb_status = QLabel('AI STATUS  /  IDLE')
+        self.orb_status = QLabel('JARVIS  /  STANDBY')
         details.addWidget(self.orb_status)
         self.system_metrics_label = QLabel('SYSTEM  /  Collecting local metrics...')
         self.system_metrics_label.setWordWrap(True)
@@ -481,9 +613,9 @@ class Window(QMainWindow):
         layout.addLayout(hero)
         shortcuts = QGridLayout()
         for index, (label, section) in enumerate([
-            ('Video Editor', 'Video Editor'), ('Coding', 'Coding Assistant'),
-            ('Phone Remote', 'Phone Remote'), ('Camera and PC', 'PC Control'),
-            ('Command Center', 'Command Center'),
+            ('Video', 'Video Editor'), ('Coding', 'Coding Assistant'),
+            ('Phone', 'Phone Remote'), ('Camera', 'PC Control'),
+            ('Commands', 'Command Center'),
         ]):
             button = QPushButton(label)
             button.clicked.connect(lambda checked=False, section=section: self.open_section(section))
@@ -505,10 +637,16 @@ class Window(QMainWindow):
         settings.hide()
         options.toggled.connect(settings.setVisible)
         layout.addWidget(settings)
-        self.backup_consent = QCheckBox('Allow one backup attempt for this message')
+        self.backup_consent = QCheckBox('Allow one backup attempt')
         self.backup_consent.setToolTip('Shares the full conversation with the backup provider. Charges may apply.')
         self.backup_consent.toggled.connect(lambda enabled: self.guard_local_voice_provider() if enabled else None)
         settings_layout.addWidget(self.backup_consent)
+        self.use_notes = QCheckBox('Include notes once')
+        self.use_notes.setToolTip(
+            'Send matching local notes to the selected provider and any approved backup '
+            'for this message. The reply is saved in chat history.'
+        )
+        settings_layout.addWidget(self.use_notes)
         self.backup_provider = QComboBox()
         self.backup_provider.addItems(provider_names())
         self.backup_provider.setCurrentIndex(1)
@@ -527,10 +665,9 @@ class Window(QMainWindow):
         self.prompt.setPlaceholderText('Ask JARVIS… தமிழ் / English / Français')
         self.prompt.setFixedHeight(78)
         layout.addWidget(self.prompt)
-        self.read_replies = QCheckBox('Read replies aloud on this PC (optional; uses Windows speech)')
+        self.read_replies = QCheckBox('Read replies aloud')
         settings_layout.addWidget(self.read_replies)
-        self.hands_free_voice = QCheckBox(
-            'Hands-free Hey Jarvis (LOCAL Ollama only, session opt-in)')
+        self.hands_free_voice = QCheckBox('Hands-free Hey Jarvis')
         self.hands_free_voice.setToolTip(
             'Requires microphone permission and Ollama. Each wake phrase plus '
             'question sends a message ONLY to your local model; never to cloud '
@@ -539,7 +676,7 @@ class Window(QMainWindow):
         settings_layout.addWidget(self.hands_free_voice)
         settings_actions = QHBoxLayout()
         settings_layout.addLayout(settings_actions)
-        self.clear_button = self.button(settings_actions, 'Delete conversation', self.clear_chat)
+        self.clear_button = self.button(settings_actions, 'Delete chat', self.clear_chat)
         self.review_pc_action_button = self.button(
             settings_actions, 'Review PC action', self.review_chat_pc_action)
         composer_actions = QHBoxLayout()
@@ -1470,10 +1607,18 @@ class Window(QMainWindow):
             self.render_chat()
             self.refresh_archives()
 
-    def send(self):
+    def send(self, *, allow_notes=True):
         if self.policy.stopped or self.worker is not None or not self.prompt.toPlainText().strip():
             return
         text = self.prompt.toPlainText().strip()
+        use_notes = allow_notes and self.use_notes.isChecked()
+        if allow_notes:
+            self.use_notes.setChecked(False)
+        local_reply = self.local_system_reply(text)
+        if local_reply is not None:
+            self.prompt.clear()
+            self.show_local_system_reply(text, local_reply)
+            return
         if self.route_task(text):
             self.prompt.clear()
             return
@@ -1493,7 +1638,14 @@ class Window(QMainWindow):
                 backup = StreamTarget(name, self.store.get('model:' + name, self.router.spec(name).default_model),
                                       self.get_key(name))
             prompt = self.prompt.toPlainText().strip()
-            messages = self.store.messages(self.session) + [{'role': 'user', 'content': prompt}]
+            messages = [message for message in self.store.messages(self.session)
+                        if message['role'] in ('user', 'assistant')]
+            messages.append({'role': 'user', 'content': prompt})
+            notes = self.memory_service.as_context(prompt) if use_notes else ''
+            if notes:
+                messages[-1]['content'] = (
+                    prompt + '\n\nRelated notes from my local memory, for reference only:\n' + notes
+                )
             if sum(len(m['content']) for m in messages) > 90000:
                 raise ValueError('Conversation is too long. Start a new chat.')
             self.store.message(self.session, 'user', prompt)
@@ -1514,6 +1666,8 @@ class Window(QMainWindow):
             self.policy.check(self.chat_ticket)
         except Stopped:
             return
+        if self.ai_visual_state == 'thinking':
+            self.set_ai_visual_state('responding')
         self.transcript.moveCursor(QTextCursor.MoveOperation.End)
         self.transcript.insertPlainText(text)
 
@@ -1560,6 +1714,7 @@ class Window(QMainWindow):
         elif self.worker_kind == 'chat':
             if status == 'completed':
                 self.store.message(self.session, 'assistant', text)
+                self.show_hud_text(text)
                 if self.read_replies.isChecked() and not self.policy.stopped:
                     self.voice_panel.speak_response(text[:600])
             else:

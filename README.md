@@ -55,6 +55,11 @@ No administrator rights are required. Do not run JARVIS as administrator. A Pyth
 
 A ChatGPT subscription is separate from provider API access. No keys are provisioned by this project. Credentials belong in the application's masked field, never in chat, source files or screenshots.
 
+Open **Commands** from Home & Chat to view the Command Center. Its CPU and
+RAM meters read local operating system counters. Select **Full screen** or
+press **F11** to toggle the view. Type `/time` or `/status` in chat for a local
+reply.
+
 ## Implemented
 
 - Native Qt interface with command center, chat, app launcher, task queue, editor, history, provider manager, usage and permissions.
@@ -77,10 +82,10 @@ A ChatGPT subscription is separate from provider API access. No keys are provisi
 
 ## Voice
 
-- **Voice page** in the desktop: allow the microphone, type the wake phrase, listen once or wait for the wake phrase, and let JARVIS speak. The wake phrase can be given in English, Tamil or French, and the matcher is a faithful port of the Android one, so a transcript is judged the same way on both platforms.
-- **The microphone stays closed until you allow it.** The permission is shown on the page, unchecking the box withdraws it, and the stop button closes the microphone at once. Resuming does not silently reopen it: you allow it again yourself.
-- **The recognition runs on a worker thread**, so the interface never freezes and a widget is never touched from another thread. The recognised text is shown, and a wake call is marked with the phrase that matched and the command that followed it.
-- **On a machine that is not Windows** the speech adapters are not available, and the page says so instead of pretending. They have to be exercised on the owner's Windows machine before they are trusted.
+- In **Commands**, use **Talk once** and **Read replies**. The orb shows when JARVIS is listening, waiting for the AI, streaming a response or speaking. Speech recognition and playback use the installed Windows speech tools.
+- In **Voice settings**, allow the microphone and choose **Keep listening for Hey Jarvis**. Say the wake phrase, then speak your request. Listening pauses for playback and resumes after the reply.
+- Time and system status requests can be answered directly on the PC. Other spoken requests open as drafts for review under the existing chat and approval rules. The separate **Hands-free Hey Jarvis** chat option can send general requests automatically to local Ollama.
+- **Stop voice**, revoking microphone access, or **Emergency Stop** ends the wake session. A recognition call already in progress releases the microphone when that call returns.
 
 ## Mobile bridge
 

@@ -64,7 +64,7 @@ def collect(root: str) -> list[str]:
         for name in sorted(files):
             path = os.path.join(directory, name)
             relative = os.path.relpath(path, root).replace(os.sep, '/')
-            if relative == MANIFEST.replace(os.sep, '/'):
+            if relative in (MANIFEST.replace(os.sep, '/'), '.git'):
                 continue
             found.append(relative)
     return sorted(found)

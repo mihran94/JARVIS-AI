@@ -33,6 +33,10 @@ QTabWidget::pane { border: 1px solid #364150; border-radius: 8px; }
 QTabBar::tab { background: #161b22; padding: 9px 13px; color: #cbd5e1; }
 QTabBar::tab:selected { background: #1d3930; color: #9df9d4; }
 QHeaderView::section { background: #1c222b; color: #cbd5e1; padding: 7px; border: 0; }
+QLabel#hudClock { color: #a8b6c9; font-size: 20px; font-weight: 600; }
+QLabel#hudValue { color: #9df9d4; font-size: 25px; font-weight: 700; }
+QProgressBar { background: #1c222b; border: 0; border-radius: 4px; max-height: 8px; }
+QProgressBar::chunk { background: #34d399; border-radius: 4px; }
 QLabel#systemMetrics { color: #cbd5e1; padding: 6px; }
 QStatusBar { border-top: 1px solid #27303b; color: #a8b6c9; }
 QScrollArea { border: 0; }

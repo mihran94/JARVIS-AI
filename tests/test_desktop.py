@@ -10,8 +10,8 @@ def test_desktop_navigation_stop_and_editor(tmp_path):
     window = Window(tmp_path)
     window.show()
     app.processEvents()
-    assert window.pages.count() == 14
-    assert window.nav.count() == 8
+    assert window.pages.count() == 15
+    assert window.nav.count() == 9
     for index in range(window.nav.count()):
         window.nav.setCurrentRow(index)
         app.processEvents()
@@ -260,7 +260,7 @@ def test_local_hands_free_wake_auto_sends_only_to_ollama(tmp_path):
     window = Window(tmp_path)
     window.voice_panel.listen = lambda mode='once': None
     sent = []
-    window.send = lambda: sent.append((window.chat_provider.currentText(),
+    window.send = lambda **kwargs: sent.append((window.chat_provider.currentText(),
                                        window.prompt.toPlainText()))
     try:
         window.voice_panel.allow.setChecked(True)
@@ -351,5 +351,27 @@ def test_hands_free_never_reopens_microphone_during_speech(tmp_path):
         window.voice_panel.speaker_worker = None
     finally:
         window.voice_panel.speaker_worker = None
+        window.close()
+        app.processEvents()
+
+
+def test_chat_only_includes_memory_on_explicit_one_message_opt_in(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
+    calls = []
+    window.get_key = lambda _: 'test-key'
+    window.start_worker = lambda provider, model, key, messages, *args, **kwargs: calls.append(messages)
+    window.memory_service.remember('படத்தொகுப்பு', 'Private editing note')
+    try:
+        for use_notes in (False, True, False):
+            window.prompt.setPlainText('படத்தொகுப்பு')
+            if use_notes:
+                window.use_notes.setChecked(True)
+            window.send_button.click()
+            assert ('Private editing note' in calls[-1][-1]['content']) == use_notes
+            assert not window.use_notes.isChecked()
+        assert all('Private editing note' not in row['content']
+                   for row in window.store.messages(window.session))
+    finally:
         window.close()
         app.processEvents()

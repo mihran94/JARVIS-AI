@@ -1,0 +1,641 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>J.A.R.V.I.S. // QUANTUM CORE</title>
+<script type="text/javascript" src="/eel.js"></script>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #02060d; --cyan: #00f3ff; --gold: #ffbe3b; --violet: #b829ff;
+    --ink: #e6f7ff; --muted: #8aa8bb; --edge: #163040; --glass: #07111de0;
+    --mono: "IBM Plex Mono", "Cascadia Code", Consolas, monospace;
+    --sans: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: radial-gradient(ellipse at 49% 36%, #0a1b2d 0, transparent 54%), var(--bg);
+    color: var(--ink); font: 14px var(--sans);
+    background-attachment: fixed;
+  }
+  button, input { font: inherit; }
+  button:focus-visible, input:focus-visible, canvas[tabindex]:focus-visible { outline: 2px solid var(--gold); outline-offset: 4px; }
+  .hud {
+    min-height: 100vh; min-height: 100dvh; max-width: 1920px; margin: auto;
+    padding: clamp(14px, 2vw, 34px); display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; gap: 16px;
+  }
+  .masthead, .brand, .session, .panel-head, .core-foot, .command { display: flex; align-items: center; }
+  .masthead { justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--edge); padding: 0 2px 17px; }
+  .brand { gap: 15px; min-width: 0; }
+  .brand-mark {
+    width: 43px; height: 43px; flex: none; display: grid; place-items: center;
+    color: var(--cyan); background: #092232; border: 1px solid #265466;
+    clip-path: polygon(25% 0, 75% 0, 100% 25%, 100% 75%, 75% 100%, 25% 100%, 0 75%, 0 25%);
+    font: 700 22px var(--mono); text-shadow: 0 0 14px #00f3ff99;
+  }
+  h1, h2, p { margin: 0; }
+  h1 { font-size: clamp(16px, 2.25vw, 30px); line-height: 1.15; letter-spacing: .045em; }
+  h1 span { color: var(--cyan); font-weight: 500; }
+  .session { flex: none; gap: 16px; font: 600 11px var(--mono); letter-spacing: .11em; }
+  .mode { padding: 7px 9px; border: 1px solid #394630; border-radius: 4px; color: var(--gold); }
+  .mode.live { color: var(--cyan); border-color: #1e5560; }
+  .clock { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .panes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2.3fr) minmax(0, 1.13fr); gap: 15px; min-height: 0; }
+  .side { min-width: 0; min-height: 0; display: grid; gap: 15px; grid-template-rows: minmax(0, 1.15fr) minmax(0, 1fr); }
+  .side.right { grid-template-rows: minmax(0, .72fr) minmax(0, 1fr); }
+  .panel {
+    position: relative; isolation: isolate; min-width: 0; min-height: 0;
+    display: flex; flex-direction: column; border: 1px solid var(--edge); background: var(--glass);
+    backdrop-filter: blur(10px); border-radius: 5px; overflow: hidden;
+  }
+  .panel::before {
+    content: ""; position: absolute; z-index: 2; inset: 0; pointer-events: none;
+    background: linear-gradient(var(--cyan),var(--cyan)) top left / 15px 1px,
+                linear-gradient(var(--cyan),var(--cyan)) top left / 1px 15px,
+                linear-gradient(var(--cyan),var(--cyan)) bottom right / 15px 1px,
+                linear-gradient(var(--cyan),var(--cyan)) bottom right / 1px 15px;
+    background-repeat: no-repeat; opacity: .68;
+  }
+  .panel-head { justify-content: space-between; gap: 8px; padding: 14px 14px 11px; flex: none; border-bottom: 1px solid #122739; }
+  h2 { font: 650 11px var(--mono); letter-spacing: .15em; text-transform: uppercase; }
+  .tag { color: var(--muted); font: 10px var(--mono); white-space: nowrap; }
+  .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 11px #00f3ff9c; vertical-align: 1px; margin-right: 7px; }
+  .instrument-view { position: relative; flex: 1; min-height: 85px; }
+  .instrument { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .legend, .core-foot { color: var(--muted); font: 10px var(--mono); letter-spacing: .09em; }
+  .legend { padding: 10px 14px; border-top: 1px solid #122739; }
+  .meters { flex: 1; display: grid; grid-template-columns: 1fr 1fr; align-content: center; gap: 10px; padding: 13px; }
+  .gauge { min-width: 0; text-align: center; }
+  .gauge-ring {
+    --level: 0%; --meter-color: var(--cyan); margin: 0 auto 10px;
+    width: min(100%, 103px); aspect-ratio: 1; position: relative;
+    display: grid; place-items: center; border-radius: 50%;
+    background: conic-gradient(var(--meter-color) 0 var(--level), #172f42 var(--level) 100%);
+    box-shadow: 0 0 18px #00f3ff10;
+  }
+  .gauge:nth-child(2) .gauge-ring { --meter-color: var(--violet); }
+  .gauge-ring::before { content: ""; position: absolute; inset: 4px; background: #07121e; border-radius: inherit; border: 1px solid #213746; }
+  .gauge output { position: relative; font: 700 clamp(12px, 1.65vw, 23px) var(--mono); letter-spacing: -.05em; }
+  .gauge-label { color: var(--muted); font: 650 11px var(--mono); letter-spacing: .14em; }
+  .core {
+    --active: var(--cyan); background:
+      radial-gradient(ellipse at 50% 45%, #0b2944cc, #07111d21 65%),
+      repeating-linear-gradient(0deg, transparent 0 27px, #33556a25 28px),
+      repeating-linear-gradient(90deg, transparent 0 27px, #33556a25 28px),
+      #040b15;
+  }
+  .core[data-state="speaking"] { --active: var(--gold); }
+  .core[data-state="listening"] { --active: #ed65ff; }
+  .core .panel-head { background: #06101acb; }
+  .core-stage { flex: 1; min-height: 0; display: flex; position: relative; }
+  #sphere { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: pan-y; cursor: grab; }
+  #sphere:active { cursor: grabbing; }
+  .core-status { padding: 5px 12px 16px; text-align: center; }
+  #state { color: var(--active); font: 650 clamp(20px, 3vw, 40px) var(--mono); letter-spacing: .12em; text-shadow: 0 0 24px color-mix(in srgb, var(--active), transparent 60%); overflow-wrap: anywhere; }
+  .core-foot { justify-content: space-between; gap: 10px; padding: 11px 14px; border-top: 1px solid #172c41; }
+  .log { margin: 0; list-style: none; padding: 6px 13px 12px; min-height: 0; overflow-y: auto; scrollbar-color: #285066 transparent; flex: 1; }
+  .log li { display: grid; grid-template-columns: 4.5em minmax(0, 1fr); gap: 7px; padding: 8px 0; border-bottom: 1px solid #122334; font: 11px/1.55 var(--mono); }
+  .log time { color: var(--muted); }
+  .log li span { overflow-wrap: anywhere; white-space: pre-wrap; }
+  .log li[data-kind="error"] span { color: #ff9fbe; }
+  .log li[data-kind="reply"] span { color: #96f9ff; }
+  .workspace { padding: 11px 14px; min-width: 0; overflow: auto; max-height: 30vh; }
+  .workspace summary { cursor: pointer; color: var(--muted); font: 650 12px var(--mono); }
+  .workspace-links { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+  .workspace a { color: var(--cyan); }
+  .workspace textarea { display: block; width: 100%; min-height: 72px; margin-top: 12px; color: var(--ink); background: var(--bg); border: 1px solid var(--edge); font: 12px var(--mono); }
+  .workspace [hidden] { display: none; }
+  .workspace p { color: var(--muted); margin-top: 8px; overflow-wrap: anywhere; }
+  .command { gap: 10px; flex-direction: row; padding: 10px 12px; min-height: 62px; }
+  .prompt-mark { color: var(--cyan); padding: 0 6px; font: 700 18px var(--mono); }
+  .command input { flex: 1; min-width: 0; color: var(--ink); padding: 10px 5px; background: transparent; border: 0; font-family: var(--mono); }
+  .command input::placeholder { color: var(--muted); opacity: 1; }
+  .command button {
+    min-height: 40px; min-width: 112px; border-radius: 3px; border: 1px solid #7afaff; padding: 8px 15px;
+    background: var(--cyan); color: #02131c; font: 800 11px var(--mono); letter-spacing: .15em; cursor: pointer;
+  }
+  .command button:hover { background: #abfbff; box-shadow: 0 0 18px #00f3ff4d; }
+  .command button:disabled { opacity: .65; cursor: wait; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  @media (min-width: 1001px) and (min-height: 680px) { .hud { height: 100vh; height: 100dvh; } }
+  @media (max-width: 1000px), (max-height: 679px) {
+    .core-stage { min-height: 360px; }
+    .instrument-view { min-height: 135px; }
+    .log { max-height: 290px; }
+  }
+  @media (max-width: 760px) {
+    .hud { gap: 12px; }
+    .panes { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+    .core { grid-row: 1; grid-column: 1 / -1; }
+    .core-stage { min-height: clamp(220px, 64vw, 375px); }
+    .side { gap: 12px; grid-template-rows: auto auto; }
+    .side.right { grid-template-rows: auto minmax(170px, auto); }
+    .clock { display: none; }
+    .command { position: sticky; bottom: 8px; z-index: 3; }
+  }
+  @media (max-width: 430px) {
+    .masthead { gap: 8px; }
+    .brand { gap: 8px; }
+    .brand-mark { width: 32px; height: 32px; font-size: 17px; }
+    h1 span { display: block; }
+    .panel-head, .legend { padding-inline: 9px; }
+    .side .tag { display: none; }
+    .meters { gap: 5px; padding: 9px; }
+    .log { padding-inline: 9px; }
+    .log li { grid-template-columns: 1fr; gap: 0; }
+    .command button { min-width: 83px; padding-inline: 8px; }
+  }
+</style>
+</head>
+<body>
+<main class="hud">
+  <header class="masthead">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">◇</span><h1>J.A.R.V.I.S. <span>// QUANTUM CORE</span></h1></div>
+    <div class="session"><span class="mode" id="bridge-mode">PREVIEW</span><time class="clock" id="clock"></time></div>
+  </header>
+
+  <div class="panes">
+    <div class="side">
+      <section class="panel" aria-labelledby="radar-title">
+        <header class="panel-head"><h2 id="radar-title"><i class="dot"></i>Spatial radar</h2><span class="tag">SYNTHETIC</span></header>
+        <div class="instrument-view"><canvas id="radar" class="instrument" aria-label="Animated synthetic radar sweep" role="img"></canvas></div>
+        <p class="legend">360° SWEEP</p>
+      </section>
+      <section class="panel" aria-labelledby="metrics-title">
+        <header class="panel-head"><h2 id="metrics-title"><i class="dot"></i>System load</h2><span class="tag">2 S</span></header>
+        <div class="meters">
+          <div class="gauge"><div class="gauge-ring" id="cpu-ring"><output id="cpu" aria-label="CPU usage">—</output></div><div class="gauge-label">CPU</div></div>
+          <div class="gauge"><div class="gauge-ring" id="ram-ring"><output id="ram" aria-label="RAM usage">—</output></div><div class="gauge-label">RAM</div></div>
+        </div>
+        <p class="legend" id="metrics-source">SIMULATED METRICS</p>
+      </section>
+    </div>
+
+    <section id="core" class="panel core" aria-labelledby="core-title">
+      <header class="panel-head"><h2 id="core-title"><i class="dot"></i>Neural core</h2><span class="tag">480 NODES</span></header>
+      <div class="core-stage"><canvas id="sphere" tabindex="0" aria-label="Rotating 3D particle sphere. Drag or use arrow keys to rotate."></canvas></div>
+      <div class="core-status"><p id="state" role="status">STANDBY</p></div>
+      <footer class="core-foot"><span>CORE ACTIVITY</span><span>DRAG TO ROTATE</span></footer>
+    </section>
+
+    <div class="side right">
+      <section class="panel" aria-labelledby="spectrum-title">
+        <header class="panel-head"><h2 id="spectrum-title"><i class="dot"></i>Audio spectrum</h2><span class="tag">VISUAL</span></header>
+        <div class="instrument-view"><canvas id="spectrum" class="instrument" aria-label="Voice-state waveform visualization" role="img"></canvas></div>
+        <p class="legend" id="audio-state">IDLE SIGNAL</p>
+      </section>
+      <section class="panel" aria-labelledby="log-title">
+        <header class="panel-head"><h2 id="log-title"><i class="dot"></i>Diagnostics</h2></header>
+        <ol class="log" id="log" role="log" aria-label="Diagnostic messages"></ol>
+      </section>
+    </div>
+  </div>
+
+  <details class="panel workspace" id="workspace">
+    <summary>Creative &amp; business workspaces</summary>
+    <div class="workspace-links">
+      <a href="https://labs.google/fx/tools/flow" target="_blank" rel="noopener noreferrer">Google Flow</a>
+      <a href="https://higgsfield.ai/" target="_blank" rel="noopener noreferrer">Higgsfield</a>
+      <a href="https://www.fiverr.com/" target="_blank" rel="noopener noreferrer">Fiverr</a>
+      <a id="download-draft" download="index.html" hidden>Download HTML draft</a>
+    </div>
+    <p>Type <code>/flow</code>, <code>/higgsfield</code>, <code>/fiverr</code>, <code>/website</code>, or <code>/app</code>, followed by your brief.</p>
+    <textarea id="draft" aria-label="Draft to review and copy" readonly hidden></textarea>
+  </details>
+
+  <form class="panel command" id="command-form">
+    <span class="prompt-mark" aria-hidden="true">&gt;_</span>
+    <label class="sr-only" for="command">Command</label>
+    <input id="command" type="text" placeholder="Enter a command…" autocomplete="off" spellcheck="false" maxlength="4000" required>
+    <button id="execute" type="submit">EXECUTE</button>
+  </form>
+</main>
+
+<script>
+'use strict';
+
+const byId = id => document.getElementById(id);
+const bridgeMode = byId('bridge-mode');
+const log = byId('log');
+const core = byId('core');
+const stateLabel = byId('state');
+const audioState = byId('audio-state');
+const timeLabel = byId('clock');
+const commandInput = byId('command');
+const execute = byId('execute');
+const metricsSource = byId('metrics-source');
+const hasEel = Boolean(window.eel);
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+
+let activity = 'idle';
+let stateRevision = 0;
+let commandPending = false;
+let draftUrl;
+let metricsPending = false;
+let metricFailure = false;
+let cpuPreview = 22;
+let ramPreview = 51;
+
+const clockFormat = new Intl.DateTimeFormat('en-GB', {
+  hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+});
+function updateClock() {
+  const now = new Date();
+  timeLabel.textContent = clockFormat.format(now);
+  timeLabel.dateTime = now.toISOString();
+}
+
+function appendLog(message, kind = 'info') {
+  const entry = document.createElement('li');
+  const stamp = document.createElement('time');
+  const body = document.createElement('span');
+  const now = new Date();
+  entry.dataset.kind = kind;
+  stamp.dateTime = now.toISOString();
+  stamp.textContent = clockFormat.format(now);
+  body.textContent = String(message);
+  entry.append(stamp, body);
+  log.append(entry);
+  while (log.children.length > 100) log.firstElementChild.remove();
+  log.scrollTop = log.scrollHeight;
+}
+
+function update_hud_state(state, logMessage) {
+  const label = String(state ?? '').trim() || 'STANDBY';
+  const normalized = label.toUpperCase().replace(/[.\s…]+$/, '');
+  const visualState = normalized === 'THINKING' ? 'PROCESSING' : normalized;
+  activity = ['SPEAKING', 'LISTENING', 'PROCESSING', 'ACTIVE'].includes(visualState)
+    ? visualState.toLowerCase()
+    : 'idle';
+  stateRevision += 1;
+  core.dataset.state = activity;
+  stateLabel.textContent = label;
+  audioState.textContent = {
+    listening: 'LISTENING SIGNAL', speaking: 'PLAYBACK SIGNAL',
+    processing: 'PROCESSING SIGNAL', active: 'ACTIVE SIGNAL', idle: 'IDLE SIGNAL'
+  }[activity];
+  if (logMessage != null && String(logMessage).trim()) {
+    appendLog(logMessage, activity === 'speaking' ? 'reply' : 'info');
+  }
+}
+
+if (window.eel) {
+  eel.expose(update_hud_state);
+}
+
+function updateGauge(id, reading) {
+  const valid = typeof reading === 'number' && Number.isFinite(reading);
+  const percent = valid ? Math.max(0, Math.min(100, reading)) : 0;
+  byId(id + '-ring').style.setProperty('--level', percent + '%');
+  byId(id).textContent = valid ? Math.round(percent) + '%' : '—';
+}
+
+async function refreshMetrics() {
+  if (metricsPending) return;
+  metricsPending = true;
+  try {
+    if (hasEel) {
+      const stats = await eel.get_system_stats()();
+      if (!stats || !Number.isFinite(stats.cpu) || !Number.isFinite(stats.ram)) {
+        throw new Error('The backend returned an invalid CPU or RAM reading.');
+      }
+      updateGauge('cpu', stats.cpu);
+      updateGauge('ram', stats.ram);
+      metricsSource.textContent = 'LIVE PC METRICS';
+      bridgeMode.textContent = 'EEL CONNECTED';
+      bridgeMode.classList.add('live');
+      if (metricFailure) appendLog('PC telemetry restored.');
+      metricFailure = false;
+    } else {
+      cpuPreview = Math.max(8, Math.min(68, cpuPreview + (Math.random() - .48) * 13));
+      ramPreview = Math.max(36, Math.min(79, ramPreview + (Math.random() - .5) * 5));
+      updateGauge('cpu', cpuPreview);
+      updateGauge('ram', ramPreview);
+    }
+  } catch (error) {
+    updateGauge('cpu', null);
+    updateGauge('ram', null);
+    metricsSource.textContent = 'TELEMETRY UNAVAILABLE';
+    bridgeMode.classList.remove('live');
+    bridgeMode.textContent = 'EEL CHECK';
+    if (!metricFailure) appendLog('Telemetry unavailable. ' + (error?.message || 'Check the Eel application.'), 'error');
+    metricFailure = true;
+  } finally {
+    metricsPending = false;
+  }
+}
+
+function showDraft(text, html) {
+  const field = byId('draft');
+  const download = byId('download-draft');
+  if (draftUrl) URL.revokeObjectURL(draftUrl);
+  draftUrl = html ? URL.createObjectURL(new Blob([text], {type: 'text/html'})) : undefined;
+  if (draftUrl) download.href = draftUrl;
+  else download.removeAttribute('href');
+  download.hidden = !draftUrl;
+  field.value = text;
+  field.hidden = false;
+  byId('workspace').open = true;
+}
+
+async function runCommand(event) {
+  event.preventDefault();
+  const text = commandInput.value.trim();
+  if (!text || commandPending) return;
+
+  commandPending = true;
+  execute.disabled = true;
+  commandInput.value = '';
+  appendLog('YOU: ' + text);
+  update_hud_state('PROCESSING...', '');
+  const requestRevision = stateRevision;
+  try {
+    const draft = text.match(/^(\/(?:flow|higgsfield|fiverr|website|app))(?:\s+([\s\S]+))?$/i);
+    if (hasEel && draft) {
+      const kind = draft[1].toLowerCase();
+      const result = await eel.create_draft(kind, draft[2] || '')();
+      if (result?.error) appendLog(result.error, 'error');
+      else if (typeof result?.text === 'string' && result.text) {
+        showDraft(result.text, kind === '/app');
+        appendLog('Draft ready in Creative & business workspaces.', 'reply');
+      }
+    } else if (hasEel) {
+      const reply = await eel.process_jarvis_command(text)();
+      if (reply != null && String(reply).trim()) {
+        const line = 'JARVIS: ' + String(reply);
+        if (log.lastElementChild?.lastElementChild?.textContent !== line) appendLog(line, 'reply');
+      }
+    } else {
+      const local = text.toLowerCase();
+      const reply = /^(\/time|time|what time is it[?]?)$/.test(local)
+        ? 'Local time is ' + clockFormat.format(new Date()) + '.'
+        : /^(\/status|status|system status)$/.test(local)
+          ? 'Preview mode. CPU and RAM values are simulated.'
+          : 'Preview received your command. Connect the Eel backend to process it.';
+      appendLog('PREVIEW: ' + reply, 'reply');
+    }
+  } catch (error) {
+    appendLog('Command failed. ' + (error?.message || 'Check the Eel application.'), 'error');
+  } finally {
+    if (stateRevision === requestRevision) update_hud_state(hasEel ? 'ONLINE' : 'STANDBY', '');
+    commandPending = false;
+    execute.disabled = false;
+    commandInput.focus();
+  }
+}
+
+byId('command-form').addEventListener('submit', runCommand);
+if (hasEel) {
+  bridgeMode.textContent = 'EEL STARTING';
+  metricsSource.textContent = 'WAITING FOR PC METRICS';
+  appendLog('Eel bridge detected. Waiting for PC telemetry.');
+} else {
+  appendLog('Browser preview active. CPU and RAM are simulated.');
+}
+updateClock();
+setInterval(updateClock, 1000);
+refreshMetrics();
+setInterval(refreshMetrics, 2000);
+
+function surface(id) {
+  const canvas = byId(id);
+  const ctx = canvas.getContext('2d');
+  const view = { canvas, ctx, width: 0, height: 0 };
+  function resize() {
+    const bounds = canvas.getBoundingClientRect();
+    const scale = Math.min(window.devicePixelRatio || 1, 2);
+    view.width = bounds.width;
+    view.height = bounds.height;
+    canvas.width = Math.round(bounds.width * scale);
+    canvas.height = Math.round(bounds.height * scale);
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  }
+  new ResizeObserver(resize).observe(canvas);
+  resize();
+  return view;
+}
+
+function circle(ctx, x, y, radius) {
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+}
+
+function line(ctx, x1, y1, x2, y2) {
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+}
+
+const sphere = surface('sphere');
+const radar = surface('radar');
+const spectrum = surface('spectrum');
+const nodeCount = 480;
+const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+const tau = 2 * Math.PI;
+const palette = {
+  idle: [0, 243, 255], speaking: [255, 190, 59], listening: [237, 101, 255],
+  processing: [184, 41, 255], active: [134, 250, 255]
+};
+const nodes = Array.from({ length: nodeCount }, (_, i) => {
+  const y = 1 - 2 * (i + .5) / nodeCount;
+  const r = Math.sqrt(1 - y * y);
+  return { x: r * Math.cos(i * goldenAngle), y, z: r * Math.sin(i * goldenAngle) };
+});
+const projected = nodes.map(() => ({ x: 0, y: 0, z: 0, scale: 1 }));
+const edges = [];
+for (let i = 0; i < nodes.length; i += 1) {
+  const a = nodes[i];
+  for (let j = i + 1; j < nodes.length; j += 1) {
+    const b = nodes[j];
+    const distance = (a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2;
+    if (distance < .045) edges.push([i, j]);
+  }
+}
+
+let yaw = .3;
+let pitch = -.18;
+let pointer = null;
+let previousTime;
+let intensity = 0;
+let color = [...palette.idle];
+
+sphere.canvas.addEventListener('pointerdown', event => {
+  if (!event.isPrimary || event.button !== 0) return;
+  pointer = { id: event.pointerId, x: event.clientX, y: event.clientY };
+  sphere.canvas.setPointerCapture(event.pointerId);
+});
+sphere.canvas.addEventListener('pointermove', event => {
+  if (pointer?.id !== event.pointerId) return;
+  yaw += (event.clientX - pointer.x) * .009;
+  pitch += (event.clientY - pointer.y) * .009;
+  pointer.x = event.clientX;
+  pointer.y = event.clientY;
+});
+function endDrag(event) {
+  if (pointer?.id === event.pointerId) pointer = null;
+}
+sphere.canvas.addEventListener('pointerup', endDrag);
+sphere.canvas.addEventListener('pointercancel', endDrag);
+sphere.canvas.addEventListener('lostpointercapture', endDrag);
+sphere.canvas.addEventListener('keydown', event => {
+  if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+  event.preventDefault();
+  if (event.key === 'ArrowLeft') yaw -= .14;
+  if (event.key === 'ArrowRight') yaw += .14;
+  if (event.key === 'ArrowUp') pitch -= .14;
+  if (event.key === 'ArrowDown') pitch += .14;
+});
+
+function drawSphere(time, dt) {
+  const { ctx, width: w, height: h } = sphere;
+  if (!w || !h) return;
+  const x = w / 2;
+  const y = h / 2;
+  const motion = reducedMotion.matches ? 0 : 1;
+  const target = activity === 'speaking' || activity === 'listening' ? 1 : activity === 'idle' ? 0 : .36;
+  const blend = Math.min(1, dt * 8);
+  intensity += (target - intensity) * blend;
+  color = color.map((value, i) => value + (palette[activity][i] - value) * blend);
+  const rgb = color.map(Math.round).join(',');
+  const radius = Math.min(w, h) * .33 * (1 + Math.sin(time * (2.3 + intensity * 4)) * (.012 + intensity * .055) * motion);
+  if (!pointer) yaw += dt * (.18 + intensity * .48) * motion;
+
+  ctx.clearRect(0, 0, w, h);
+  const halo = ctx.createRadialGradient(x, y, 0, x, y, radius * 1.65);
+  halo.addColorStop(0, 'rgba(' + rgb + ',.16)');
+  halo.addColorStop(.62, 'rgba(' + rgb + ',.07)');
+  halo.addColorStop(1, 'rgba(' + rgb + ',0)');
+  ctx.fillStyle = halo;
+  ctx.fillRect(0, 0, w, h);
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(' + rgb + ',.23)';
+  circle(ctx, x, y, radius * 1.28);
+  ctx.stroke();
+  ctx.setLineDash([2, 7]);
+  circle(ctx, x, y, radius * 1.43);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  line(ctx, x - radius * 1.53, y, x - radius * 1.36, y);
+  line(ctx, x + radius * 1.36, y, x + radius * 1.53, y);
+
+  const ca = Math.cos(yaw), sa = Math.sin(yaw);
+  const cb = Math.cos(pitch), sb = Math.sin(pitch);
+  for (let i = 0; i < nodes.length; i += 1) {
+    const p = nodes[i];
+    const rx = p.x * ca + p.z * sa;
+    const rz = p.z * ca - p.x * sa;
+    const ry = p.y * cb - rz * sb;
+    const depth = p.y * sb + rz * cb;
+    const perspective = 3.8 / (3.8 - depth);
+    const q = projected[i];
+    q.x = x + rx * radius * perspective;
+    q.y = y + ry * radius * perspective;
+    q.z = depth;
+    q.scale = perspective;
+  }
+
+  for (const front of [false, true]) {
+    ctx.beginPath();
+    for (const [a, b] of edges) {
+      const p = projected[a], q = projected[b];
+      if ((p.z + q.z > 0) !== front) continue;
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(q.x, q.y);
+    }
+    ctx.lineWidth = front ? 1 : .55;
+    ctx.strokeStyle = 'rgba(' + rgb + (front ? ',.30)' : ',.10)');
+    ctx.stroke();
+    ctx.beginPath();
+    for (const p of projected) {
+      if ((p.z > 0) !== front) continue;
+      const size = p.scale * (front ? 1.65 : .85);
+      ctx.moveTo(p.x + size, p.y);
+      ctx.arc(p.x, p.y, size, 0, tau);
+    }
+    ctx.fillStyle = 'rgba(' + rgb + (front ? ',.95)' : ',.35)');
+    ctx.shadowColor = 'rgb(' + rgb + ')';
+    ctx.shadowBlur = front ? 11 : 0;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+}
+
+const radarPoints = [[.46, .14], [.73, 1.66], [.56, 2.6], [.83, 3.56], [.35, 5.31], [.72, 5.6]];
+function drawRadar(time) {
+  const { ctx, width: w, height: h } = radar;
+  const r = Math.min(w, h) * .38;
+  if (r <= 0) return;
+  const x = w / 2, y = h / 2;
+  const angle = (time * .8) % tau;
+  ctx.clearRect(0, 0, w, h);
+  ctx.strokeStyle = '#21495e';
+  for (let i = 1; i <= 4; i += 1) {
+    circle(ctx, x, y, r * i / 4);
+    ctx.stroke();
+  }
+  line(ctx, x - r, y, x + r, y);
+  line(ctx, x, y - r, x, y + r);
+  for (let i = 17; i >= 0; i -= 1) {
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.arc(x, y, r, angle - (i + 1) * .048, angle - i * .048);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(0,243,255,' + (.015 + (17 - i) * .009) + ')';
+    ctx.fill();
+  }
+  ctx.strokeStyle = '#00f3ff';
+  line(ctx, x, y, x + r * Math.cos(angle), y + r * Math.sin(angle));
+  for (const [distance, bearing] of radarPoints) {
+    const fade = ((angle - bearing) % tau + tau) % tau;
+    ctx.fillStyle = 'rgba(255,190,59,' + (.23 + .75 * Math.exp(-fade * 1.25)) + ')';
+    circle(ctx, x + r * distance * Math.cos(bearing), y + r * distance * Math.sin(bearing), 2.7);
+    ctx.fill();
+  }
+}
+
+function drawSpectrum(time) {
+  const { ctx, width: w, height: h } = spectrum;
+  if (!w || !h) return;
+  ctx.clearRect(0, 0, w, h);
+  ctx.strokeStyle = '#143243';
+  for (let x = 15; x < w; x += 24) line(ctx, x, 0, x, h);
+  for (let y = h / 2 % 21; y < h; y += 21) line(ctx, 0, y, w, y);
+  const voices = ['#00f3ff', '#b829ff', '#ffbe3b'];
+  const span = Math.max(1, w - 16);
+  for (let track = 0; track < voices.length; track += 1) {
+    ctx.beginPath();
+    for (let x = 0; x <= span; x += 2) {
+      const progress = x / span;
+      const wave = Math.sin(progress * tau * (2.5 + track) + time * (2.2 + track))
+        + Math.sin(progress * tau * 8 - time * 3 + track) * .34;
+      const envelope = Math.sin(progress * Math.PI) ** 1.8;
+      const amplitude = h * (.045 + intensity * .20) * (1 - track * .12);
+      const y = h / 2 + wave * envelope * amplitude;
+      if (x === 0) ctx.moveTo(8, y);
+      else ctx.lineTo(8 + x, y);
+    }
+    ctx.lineWidth = track === 0 ? 1.7 : 1.15;
+    ctx.globalAlpha = track === 0 ? .94 : .69;
+    ctx.strokeStyle = voices[track];
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function frame(now) {
+  const dt = Math.min(.05, (now - (previousTime ?? now - 16)) / 1000);
+  previousTime = now;
+  const time = reducedMotion.matches ? 1 : now / 1000;
+  drawSphere(time, dt);
+  drawRadar(time);
+  drawSpectrum(time);
+  requestAnimationFrame(frame);
+}
+
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

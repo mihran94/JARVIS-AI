@@ -118,7 +118,8 @@ class Store:
             return [dict(row) for row in db.execute('''
                 SELECT session, MIN(id) AS first_id, MAX(id) AS last_id,
                        substr((SELECT content FROM messages first_message
-                               WHERE first_message.session=history.session AND role='user'
+                               WHERE first_message.session=history.session
+                               AND role IN ('user', 'local command')
                                ORDER BY id LIMIT 1),1,60) AS title,
                        COUNT(*) AS count
                 FROM messages history GROUP BY session ORDER BY last_id DESC LIMIT 100

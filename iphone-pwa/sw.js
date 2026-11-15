@@ -5,7 +5,7 @@
 // always go to the network, and a cached answer could show a stale state or
 // leak a message.
 
-const CACHE = 'jarvis-iphone-shell-v2';
+const CACHE = 'jarvis-iphone-shell-v3';
 
 const SHELL = [
   './',

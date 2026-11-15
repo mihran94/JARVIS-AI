@@ -1,62 +1,26 @@
-"""Read-only local system snapshot using Python's standard library.
-
-No network requests, background subprocesses, credentials, or elevated privileges.
-"""
-import ctypes
+"""Read local OS counters for the desktop HUD without opening network connections."""
 import os
 from pathlib import Path
 import shutil
-import sys
 
-
-class FILETIME(ctypes.Structure):
-    _fields_ = [('dwLowDateTime', ctypes.c_ulong), ('dwHighDateTime', ctypes.c_ulong)]
-
-
-def _filetime_value(value):
-    return (value.dwHighDateTime << 32) | value.dwLowDateTime
+import psutil
 
 
 class CpuSampler:
-    """Non-blocking Windows CPU usage sampler based on GetSystemTimes deltas."""
+    """Use the first non-blocking read as the baseline for subsequent samples."""
+
     def __init__(self):
-        self.previous = None
+        self.ready = False
 
     def sample(self):
-        if sys.platform != 'win32':
-            return None
-        idle, kernel, user = FILETIME(), FILETIME(), FILETIME()
         try:
-            success = ctypes.windll.kernel32.GetSystemTimes(
-                ctypes.byref(idle), ctypes.byref(kernel), ctypes.byref(user))
-        except (AttributeError, OSError):
+            usage = psutil.cpu_percent(interval=None)
+        except (OSError, RuntimeError, psutil.Error):
+            self.ready = False
             return None
-        if not success:
-            return None
-        current = (_filetime_value(idle), _filetime_value(kernel), _filetime_value(user))
-        previous = self.previous
-        self.previous = current
-        if previous is None:
-            return None
-        idle_delta = current[0] - previous[0]
-        total_delta = current[1] + current[2] - previous[1] - previous[2]
-        if total_delta <= 0 or idle_delta < 0:
-            return None
-        return round(max(0.0, min(100.0, 100.0 * (1.0 - idle_delta / total_delta))), 1)
-
-
-class MEMORYSTATUSEX(ctypes.Structure):
-    _fields_ = [
-        ("dwLength", ctypes.c_ulong),
-        ("dwMemoryLoad", ctypes.c_ulong),
-        ("ullTotalPhys", ctypes.c_ulonglong),
-        ("ullAvailPhys", ctypes.c_ulonglong),
-        ("ullTotalPageFile", ctypes.c_ulonglong),
-        ("ullAvailPageFile", ctypes.c_ulonglong),
-        ("ullTotalVirtual", ctypes.c_ulonglong),
-        ("ullAvailVirtual", ctypes.c_ulonglong),
-        ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
-    ]
+        was_ready = self.ready
+        self.ready = True
+        return usage if was_ready else None
 
 
 def _gib(value):
@@ -69,6 +33,7 @@ def snapshot(path=None, cpu_sampler=None):
     data = {
         "cpu_cores": os.cpu_count(),
         "cpu_usage_percent": cpu_sampler.sample() if cpu_sampler is not None else None,
+        "ram_usage_percent": None,
         "ram_used_gib": None,
         "ram_total_gib": None,
         "disk_used_gib": None,
@@ -81,15 +46,13 @@ def snapshot(path=None, cpu_sampler=None):
         data["disk_total_gib"] = _gib(usage.total)
     except (OSError, ValueError):
         pass
-    if sys.platform == "win32":
-        try:
-            status = MEMORYSTATUSEX()
-            status.dwLength = ctypes.sizeof(status)
-            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
-                data["ram_used_gib"] = _gib(status.ullTotalPhys - status.ullAvailPhys)
-                data["ram_total_gib"] = _gib(status.ullTotalPhys)
-        except (AttributeError, OSError, ValueError):
-            pass
+    try:
+        memory = psutil.virtual_memory()
+        data["ram_usage_percent"] = memory.percent
+        data["ram_used_gib"] = _gib(memory.total - memory.available)
+        data["ram_total_gib"] = _gib(memory.total)
+    except (OSError, RuntimeError, psutil.Error):
+        pass
     return data
 
 
@@ -102,10 +65,13 @@ def format_snapshot(data):
     cores = data.get("cpu_cores")
     usage = data.get("cpu_usage_percent")
     usage_text = f"{usage:.1f}%" if usage is not None else "Collecting / unavailable"
+    ram_text = ratio(data.get('ram_used_gib'), data.get('ram_total_gib'))
+    if data.get('ram_usage_percent') is not None:
+        ram_text += f"  ·  {data['ram_usage_percent']:.1f}% usage"
     return (
         f"CPU  /  {cores if cores is not None else 'Unavailable'} logical processors"
         f"  ·  {usage_text} usage\n"
-        f"RAM  /  {ratio(data.get('ram_used_gib'), data.get('ram_total_gib'))}\n"
+        f"RAM  /  {ram_text}\n"
         f"DISK  /  {ratio(data.get('disk_used_gib'), data.get('disk_total_gib'))}\n"
         f"NETWORK  /  {data.get('network_status', 'Not measured')}"
     )

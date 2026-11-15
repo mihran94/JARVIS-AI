@@ -12,7 +12,7 @@ adapters. Three rules shape it:
 """
 import sys
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
     QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
@@ -65,7 +65,7 @@ class VoiceWorker(QThread):
             self.failed.emit(str(error))
             return
         try:
-            if self._mode == 'dialogue':
+            if self._mode in ('dialogue', 'continuous'):
                 # One supervised turn: idle on the local wake recognizer,
                 # then capture an utterance with the dictation grammar.
                 # The desktop decides whether to send it; this worker never
@@ -79,18 +79,14 @@ class VoiceWorker(QThread):
                             self.wake_call.emit(wake, (command or '').strip()[:4000])
                         break
                     QThread.msleep(120)
-            elif self._mode in ('wake', 'continuous'):
-                while self.consent.listening and not self.isInterruptionRequested():
-                    transcript, command = recognizer.wait_for_wake_phrase(self._timeout)
-                    if transcript:
-                        self.wake_call.emit(transcript, command or '')
-                    if self._mode == 'wake':
-                        break
-                    # Avoid spinning on devices that return instantly with no
-                    # speech. The owner can stop listening at any point.
-                    QThread.msleep(120)
+            elif self._mode == 'wake':
+                transcript, command = recognizer.wait_for_wake_phrase(self._timeout)
+                if transcript and not self.isInterruptionRequested():
+                    self.wake_call.emit(transcript, command or '')
             else:
-                self.transcript.emit(recognizer.recognize_once(self._timeout))
+                transcript = recognizer.recognize_once(self._timeout)
+                if not self.isInterruptionRequested():
+                    self.transcript.emit(transcript)
         except VoiceError as error:
             self.failed.emit(str(error))
         except Exception:
@@ -106,6 +102,7 @@ class VoiceSpeakerWorker(QThread):
     """SAPI playback off the UI thread, on its own initialized COM apartment."""
 
     failed = Signal(str)
+    playing = Signal()
 
     def __init__(self, speaker_factory, text):
         super().__init__()
@@ -124,6 +121,9 @@ class VoiceSpeakerWorker(QThread):
             if self.isInterruptionRequested():
                 return
             speaker = self._speaker_factory()
+            if self.isInterruptionRequested():
+                return
+            self.playing.emit()
             if hasattr(speaker, 'speak_interruptibly'):
                 speaker.speak_interruptibly(self._text, self.isInterruptionRequested)
             elif not self.isInterruptionRequested():
@@ -147,6 +147,9 @@ class VoicePanel(QWidget):
     utterance_detected = Signal(str)
     cycle_finished = Signal()
     speech_finished = Signal()
+    activity_changed = Signal()
+    recognition_failed = Signal()
+    feedback = Signal(str)
 
     def __init__(self, *, consent=None, recognizer_factory=None, speaker_factory=None,
                  matcher=None, parent=None):
@@ -157,6 +160,14 @@ class VoicePanel(QWidget):
         self._speaker_factory = speaker_factory or default_speaker_factory
         self.worker = None
         self.speaker_worker = None
+        self.muted = False
+        self.speaking = False
+        self.pending_speech = ''
+        self.continuous = False
+        self.discard_recognition = False
+        self.wake_timer = QTimer(self)
+        self.wake_timer.setSingleShot(True)
+        self.wake_timer.timeout.connect(self.rearm_continuous)
         self._build()
         self.refresh()
 
@@ -226,10 +237,27 @@ class VoicePanel(QWidget):
         self.speak_button = QPushButton('Say it')
         self.speak_button.clicked.connect(self.speak)
         speak_layout.addRow(self.speak_button)
+        self.mute_button = QPushButton('Mute replies')
+        self.mute_button.setCheckable(True)
+        self.mute_button.toggled.connect(self.set_muted)
+        speak_layout.addRow(self.mute_button)
+        self.privacy = QLabel()
+        self.privacy.setWordWrap(True)
+        speak_layout.addRow('Privacy', self.privacy)
         layout.addWidget(speak_box)
         layout.addStretch()
 
     # ---------------------------------------------------------------- actions
+
+    def set_muted(self, muted):
+        """Turn the spoken answers off without touching the microphone."""
+        self.muted = muted
+        self.mute_button.setText('Unmute replies' if muted else 'Mute replies')
+        if muted:
+            self.pending_speech = ''
+            if self.playback_busy:
+                self.speaker_worker.requestInterruption()
+        self.refresh()
 
     def set_phrase(self, phrase):
         """The wake phrase the owner typed."""
@@ -244,6 +272,9 @@ class VoicePanel(QWidget):
                 self.consent.grant()
             else:
                 self.consent.revoke()
+                self.discard_recognition = True
+                self.stop_continuous()
+                self.cancel_listening()
         except VoiceError as error:
             self.allow.blockSignals(True)
             self.allow.setChecked(False)
@@ -254,6 +285,9 @@ class VoicePanel(QWidget):
 
     def listen(self, mode='once'):
         """Start one recognition request on a worker thread."""
+        if self.playback_busy:
+            self.status('Wait for JARVIS to finish speaking.')
+            return
         if self.worker is not None and self.worker.isRunning():
             self.status('The microphone is busy.')
             return
@@ -262,18 +296,60 @@ class VoicePanel(QWidget):
         except VoiceError as error:
             self.status(str(error))
             return
+        if mode == 'continuous':
+            self.continuous = True
+        self.discard_recognition = False
         self.worker = VoiceWorker(self.consent, self._recognizer_factory, mode=mode)
         self.worker.transcript.connect(self.on_transcript)
         self.worker.wake_call.connect(self.on_wake_call)
-        self.worker.failed.connect(self.status)
-        self.worker.finished.connect(self.refresh)
-        self.worker.finished.connect(self.cycle_finished.emit)
+        self.worker.failed.connect(self.on_recognition_failed)
+        self.worker.finished.connect(self.on_recognition_finished)
         self.worker.start()
-        self.status('Listening for Hey Jarvis (owner allowed).' if mode == 'continuous'
-                    else 'Listening…')
+        self.refresh()
+
+    @property
+    def playback_busy(self):
+        return self.speaker_worker is not None and self.speaker_worker.isRunning()
+
+    @property
+    def listening(self):
+        return (self.consent.listening and self.worker is not None and self.worker.isRunning()
+                and not self.worker.isInterruptionRequested())
+
+    def stop_continuous(self):
+        self.continuous = False
+        self.wake_timer.stop()
+
+    def rearm_continuous(self):
+        if self.continuous and self.consent.listening and not self.playback_busy:
+            self.listen('continuous')
+
+    def on_recognition_failed(self, message):
+        if self.sender() is self.worker:
+            self.stop_continuous()
+            self.status(message)
+            self.recognition_failed.emit()
+
+    def on_recognition_finished(self):
+        if self.sender() is not self.worker:
+            return
+        pending, self.pending_speech = self.pending_speech, ''
+        if pending:
+            self.speak_response(pending)
+        self.refresh()
+        self.cycle_finished.emit()
+        if self.continuous and not self.playback_busy:
+            self.wake_timer.start(350)
+
+    def accepts_recognition(self):
+        source = self.sender()
+        return (self.consent.listening and
+                (source is None or (source is self.worker and not self.discard_recognition)))
 
     def on_transcript(self, text):
         """Show what was heard and whether it was a wake call."""
+        if self.sender() is not None and not self.accepts_recognition():
+            return
         match = self.matcher.match(text)
         if match.is_wake_call:
             command = self.matcher.extract_command(text)
@@ -283,7 +359,7 @@ class VoicePanel(QWidget):
         else:
             line = f'{text}\nNot a wake call.'
         self.append(line)
-        if not self.consent.listening:
+        if not self.accepts_recognition():
             return
         if match.is_wake_call:
             self.wake_detected.emit(text, command or '')
@@ -292,7 +368,7 @@ class VoicePanel(QWidget):
 
     def on_wake_call(self, transcript, command):
         """Show a wake call and offer it to the desktop as a draft only."""
-        if not transcript or not self.consent.listening:
+        if not transcript or not self.accepts_recognition():
             return
         line = f'{transcript}\nWake call.'
         if command:
@@ -309,15 +385,39 @@ class VoicePanel(QWidget):
         text = (text or '').strip()[:600]
         if not text:
             return
-        if self.speaker_worker is not None and self.speaker_worker.isRunning():
-            self.status('JARVIS is already speaking. Use Stop voice to interrupt.')
+        if self.muted:
+            self.status('The voice is muted, so nothing was said.')
+            return
+        if self.consent.stopped:
+            return
+        if self.playback_busy or self.pending_speech:
+            self.status('A reply is already scheduled for playback.')
+            return
+        self.wake_timer.stop()
+        if self.worker is not None and self.worker.isRunning():
+            self.pending_speech = text
+            self.cancel_listening()
             return
         self.speaker_worker = VoiceSpeakerWorker(self._speaker_factory, text)
         self.speaker_worker.failed.connect(self.status)
-        self.speaker_worker.finished.connect(self.refresh)
-        self.speaker_worker.finished.connect(self.speech_finished.emit)
+        self.speaker_worker.playing.connect(self.on_playback_started)
+        self.speaker_worker.finished.connect(self.on_playback_finished)
         self.speaker_worker.start()
-        self.status('Speaking…')
+        self.refresh()
+
+    def on_playback_started(self):
+        if self.sender() is self.speaker_worker and not self.muted and not self.consent.stopped:
+            self.speaking = True
+            self.refresh()
+
+    def on_playback_finished(self):
+        if self.sender() is not self.speaker_worker:
+            return
+        self.speaking = False
+        self.refresh()
+        self.speech_finished.emit()
+        if self.continuous:
+            self.wake_timer.start(350)
 
     def cancel_listening(self):
         """Stop an in-flight listen without revoking the owner's mic consent.
@@ -326,11 +426,16 @@ class VoicePanel(QWidget):
         return. Pending worker output is ignored by desktop opt-in guards.
         """
         if self.worker is not None and self.worker.isRunning():
+            self.discard_recognition = True
             self.worker.requestInterruption()
+            self.refresh()
 
     def stop_voice(self):
         """Revoke microphone consent and request worker interruption."""
         self.consent.stop()
+        self.discard_recognition = True
+        self.stop_continuous()
+        self.pending_speech = ''
         self.cancel_listening()
         if self.speaker_worker is not None and self.speaker_worker.isRunning():
             self.speaker_worker.requestInterruption()
@@ -353,6 +458,19 @@ class VoicePanel(QWidget):
     def status(self, message):
         """Show a line of feedback."""
         self.append(message)
+        self.feedback.emit(message)
+
+    def privacy_line(self):
+        """What the voice is doing with the microphone, in words."""
+        if self.worker is not None and self.worker.isRunning() and not self.listening:
+            return 'Stopping the active listening session.'
+        if self.consent.stopped:
+            return 'Stopped: the microphone is closed until the owner allows it again.'
+        if self.listening:
+            return 'A listening session is active.'
+        if self.consent.granted:
+            return 'Microphone access is allowed for listening sessions.'
+        return 'The microphone is closed. Nothing is recorded.'
 
     def append(self, line):
         """Add a line to the transcript area."""
@@ -361,18 +479,20 @@ class VoicePanel(QWidget):
     def refresh(self):
         """Update the state that the owner sees."""
         self.permission.setText(self.consent.listener)
+        self.privacy.setText(self.privacy_line())
         self.allow.blockSignals(True)
         self.allow.setChecked(self.consent.granted)
         self.allow.blockSignals(False)
         self.stop_button.setEnabled(not self.consent.stopped)
         self.resume_button.setEnabled(self.consent.stopped)
-        self.listen_button.setEnabled(self.consent.listening)
-        self.wake_button.setEnabled(self.consent.listening)
-        self.continuous_button.setEnabled(
-            self.consent.listening and not (
-                self.worker is not None and self.worker.isRunning()))
-        self.speak_button.setEnabled(
-            self.speaker_worker is None or not self.speaker_worker.isRunning())
+        microphone_ready = (self.consent.listening and not self.playback_busy and
+                            not (self.worker is not None and self.worker.isRunning()))
+        self.listen_button.setEnabled(microphone_ready)
+        self.wake_button.setEnabled(microphone_ready)
+        self.continuous_button.setEnabled(microphone_ready and not self.continuous)
+        self.speak_button.setEnabled(not self.muted and not self.consent.stopped and
+                                     not self.playback_busy and not self.pending_speech)
+        self.activity_changed.emit()
 
 
 __all__ = ['VoicePanel', 'VoiceWorker', 'VoiceSpeakerWorker',
