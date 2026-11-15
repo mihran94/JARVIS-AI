@@ -173,9 +173,9 @@ short digest of the body. The body itself is never recorded, because a chat
 message and a memory entry are private content. The log is in memory and
 bounded.
 
-## The iPhone pairing code
+## The pairing code
 
-The desktop can show a pairing code that the iPhone scans:
+The desktop can show a pairing code that a phone scans or pastes:
 
 ```
 JARVIS-BRIDGE-v1
@@ -183,11 +183,36 @@ bridge=https://pc.example.lan:8765
 key=jarvis-iphone-v1
 secret=<the one time secret>
 expires=1764000000
+fp=<the SHA-256 of the server certificate>
 ```
 
 The code expires, the secret is shown once, and the phone holds it in memory
 only. The iPhone has its own key id, so revoking the Android phone does not
 revoke the iPhone.
+
+The same code is read by the iPhone page and by the Android app, so there is
+only one format in the ecosystem. The `fp=` line is the fingerprint of the
+certificate the listener serves. It is optional, so a code without it still
+reads.
+
+## Certificate pinning
+
+The listener refuses to serve without TLS, and the certificate usually
+belongs to one machine on one private network. A phone that reaches it over
+a VPN therefore meets a certificate that no public authority signed.
+
+- The **Android** client pins that fingerprint. It accepts the certificate
+  whose SHA-256 matches the one in the pairing code and refuses every other
+  one. The host name is not checked on purpose: the certificate belongs to a
+  private address, and the pin is the stronger gate.
+- A **browser** cannot be told to trust one certificate. The iPhone page
+  needs a certificate from an authority the phone already trusts, or the
+  certificate has to be installed on the phone by hand. The fingerprint is
+  shown with the pairing code so it can be compared by eye.
+
+`remote/certificate.py` computes the fingerprint from the PEM file alone, so
+the desktop can show it before the listener is started, and it can create a
+self-signed certificate for the listener when the owner has none.
 
 ## Status
 
