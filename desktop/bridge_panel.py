@@ -19,6 +19,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
+    QSizePolicy,
     QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
     QLineEdit, QPlainTextEdit, QPushButton, QScrollArea, QLayout, QTabWidget, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
@@ -31,6 +32,7 @@ from desktop.bridge_pairing import (
 )
 from desktop.bridge_status import PlatformMetrics
 from providers.registry import specs
+from remote.certificate import CertificateError, ensure_certificate, fingerprint_from_file
 from remote.listener import BridgeListener, ListenerConfig, ListenerError
 from remote.pairing import PairingStore
 from remote.protocol import KEY_ID
@@ -41,6 +43,12 @@ from security.policy import Action
 #: The key id an iPhone uses. It is different from the Android one, so that
 #: revoking one phone does not affect the other.
 IPHONE_KEY_ID = 'jarvis-iphone-v1'
+
+
+def _readable(digest: str) -> str:
+    """A fingerprint in groups, so a long value can still wrap on a narrow page."""
+    digest = (digest or '').strip()
+    return ' '.join(digest[index:index + 8] for index in range(0, len(digest), 8))
 
 
 class BridgePanel(QWidget):
@@ -93,6 +101,20 @@ class BridgePanel(QWidget):
         listener_layout.addRow('Port', self.port)
         listener_layout.addRow('TLS certificate', self.certificate)
         listener_layout.addRow('TLS private key', self.key)
+        certificate_row = QHBoxLayout()
+        self.create_certificate_button = QPushButton('Create cert')
+        self.create_certificate_button.setToolTip(
+            'Create a self-signed certificate for this private listener. The key '
+            'stays on this machine and the phone pins the certificate by its '
+            'fingerprint.')
+        self.create_certificate_button.clicked.connect(self.create_certificate)
+        certificate_row.addWidget(self.create_certificate_button)
+        self.certificate_status = QLabel('')
+        self.certificate_status.setWordWrap(True)
+        self.certificate_status.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        certificate_row.addWidget(self.certificate_status, 1)
+        listener_layout.addRow(certificate_row)
         listener_layout.addRow(self.plaintext)
         row = QHBoxLayout()
         self.start_button = QPushButton('Start listener')
@@ -148,10 +170,10 @@ class BridgePanel(QWidget):
         self.phone_key = QLineEdit(IPHONE_KEY_ID)
         code_layout.addRow('Device key id', self.phone_key)
         code_row = QHBoxLayout()
-        self.pair_iphone_button = QPushButton('Pair this iPhone')
+        self.pair_iphone_button = QPushButton('Pair iPhone')
         self.pair_iphone_button.clicked.connect(self.pair_iphone)
         code_row.addWidget(self.pair_iphone_button)
-        self.code_button = QPushButton('Show the pairing code')
+        self.code_button = QPushButton('Show code')
         self.code_button.clicked.connect(self.show_pairing_code)
         code_row.addWidget(self.code_button)
         code_layout.addRow(code_row)
@@ -160,6 +182,11 @@ class BridgePanel(QWidget):
         self.code_qr.setMinimumHeight(180)
         self.code_qr.hide()
         code_layout.addRow(self.code_qr)
+        self.code_fingerprint = QLabel('')
+        self.code_fingerprint.setWordWrap(True)
+        self.code_fingerprint.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        code_layout.addRow('Certificate', self.code_fingerprint)
         self.code_text = QPlainTextEdit()
         self.code_text.setReadOnly(True)
         self.code_text.setMaximumHeight(110)
@@ -248,6 +275,21 @@ class BridgePanel(QWidget):
             return 'Bridge listener started on ' + address
         self.notify(operation)
 
+    def create_certificate(self):
+        """Create a certificate for the private listener when there is none."""
+        def operation():
+            cert = self.certificate.text().strip()
+            key = self.key.text().strip()
+            if not cert or not key:
+                raise ValueError('Give the certificate and key a place first.')
+            digest = ensure_certificate(cert, key)
+            self.certificate_status.setText('SHA-256 ' + _readable(digest))
+            self.certificate_status.setToolTip(digest)
+            return ('Certificate ready. Its SHA-256 fingerprint is ' + digest +
+                    '. The pairing code carries it, so the phone pins this exact '
+                    'certificate.')
+        self.notify(operation)
+
     def stop_listener(self):
         def operation():
             self.listener.stop()
@@ -283,9 +325,21 @@ class BridgePanel(QWidget):
             secret = self.pairing.secret_for(key_id)
             if not secret:
                 raise ValueError('Pair this phone first, then show the pairing code.')
+            digest = ''
+            cert = self.certificate.text().strip()
+            if cert:
+                try:
+                    digest = fingerprint_from_file(cert)
+                except CertificateError:
+                    digest = ''
             payload = pairing_payload(address, key_id, secret,
-                                      expires_at(lifetime_seconds=DEFAULT_LIFETIME_SECONDS))
+                                      expires_at(lifetime_seconds=DEFAULT_LIFETIME_SECONDS),
+                                      fingerprint=digest)
             self.code_text.setPlainText(payload)
+            self.code_fingerprint.setText(
+                'SHA-256 ' + _readable(digest) if digest else
+                'No certificate is set, so the code carries no fingerprint.')
+            self.code_fingerprint.setToolTip(digest)
             self._draw_qr(payload)
             if self.chat is not None:
                 self.chat.configure(self.chat_provider.currentData(),

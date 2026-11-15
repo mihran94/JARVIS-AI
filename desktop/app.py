@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QPushButton, QListWidget, QStackedWidget, QPlainTextEdit, QLineEdit,
     QComboBox, QMessageBox, QFormLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QCheckBox, QDialog, QFileDialog, QScrollArea, QLayout, QGridLayout,
+    QSizePolicy,
 )
 from core.store import Store
 from desktop.bridge_panel import BridgePanel
@@ -480,12 +481,15 @@ class Window(QMainWindow):
         hero.addLayout(details, 1)
         layout.addLayout(hero)
         shortcuts = QGridLayout()
-        for index, (label, section) in enumerate([
-            ('Video Editor', 'Video Editor'), ('Coding', 'Coding Assistant'),
-            ('Phone Remote', 'Phone Remote'), ('Camera and PC', 'PC Control'),
-            ('Command Center', 'Command Center'),
+        for index, (label, section, tip) in enumerate([
+            ('Video', 'Video Editor', 'Open the video editor'),
+            ('Coding', 'Coding Assistant', 'Open the coding assistant'),
+            ('Phone', 'Phone Remote', 'Set up and use the phone remote'),
+            ('Camera', 'PC Control', 'Watch and read a camera, and control this PC'),
+            ('Commands', 'Command Center', 'Open the command center'),
         ]):
             button = QPushButton(label)
+            button.setToolTip(tip)
             button.clicked.connect(lambda checked=False, section=section: self.open_section(section))
             shortcuts.addWidget(button, index // 3, index % 3)
         layout.addLayout(shortcuts)
@@ -505,7 +509,14 @@ class Window(QMainWindow):
         settings.hide()
         options.toggled.connect(settings.setVisible)
         layout.addWidget(settings)
-        self.backup_consent = QCheckBox('Allow one backup attempt for this message')
+        self.backup_consent = QCheckBox('One backup attempt')
+        self.backup_consent.setToolTip(
+            'If the answer fails once, JARVIS may try the backup provider once.')
+        # The row has to fit a narrow window, so the box may be clipped. The
+        # tooltip keeps the meaning.
+        self.backup_consent.setMinimumWidth(0)
+        self.backup_consent.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.backup_consent.setToolTip('Shares the full conversation with the backup provider. Charges may apply.')
         self.backup_consent.toggled.connect(lambda enabled: self.guard_local_voice_provider() if enabled else None)
         settings_layout.addWidget(self.backup_consent)
@@ -516,7 +527,8 @@ class Window(QMainWindow):
         archives = QHBoxLayout()
         self.archives = QComboBox()
         archives.addWidget(self.archives, 1)
-        self.archive_button = self.button(archives, 'Open saved chat', self.open_chat)
+        self.archive_button = self.button(archives, 'Saved chats', self.open_chat)
+        self.archive_button.setToolTip('Open a conversation that was saved earlier.')
         settings_layout.addLayout(archives)
         self.refresh_archives()
         self.transcript = QPlainTextEdit()
@@ -527,10 +539,13 @@ class Window(QMainWindow):
         self.prompt.setPlaceholderText('Ask JARVIS… தமிழ் / English / Français')
         self.prompt.setFixedHeight(78)
         layout.addWidget(self.prompt)
-        self.read_replies = QCheckBox('Read replies aloud on this PC (optional; uses Windows speech)')
+        self.read_replies = QCheckBox('Read replies aloud')
+        self.read_replies.setToolTip(
+            'Optional. The answers are spoken on this PC with the Windows voice.')
+        self.read_replies.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         settings_layout.addWidget(self.read_replies)
-        self.hands_free_voice = QCheckBox(
-            'Hands-free Hey Jarvis (LOCAL Ollama only, session opt-in)')
+        self.hands_free_voice = QCheckBox('Hands-free Hey Jarvis')
         self.hands_free_voice.setToolTip(
             'Requires microphone permission and Ollama. Each wake phrase plus '
             'question sends a message ONLY to your local model; never to cloud '
@@ -539,9 +554,12 @@ class Window(QMainWindow):
         settings_layout.addWidget(self.hands_free_voice)
         settings_actions = QHBoxLayout()
         settings_layout.addLayout(settings_actions)
-        self.clear_button = self.button(settings_actions, 'Delete conversation', self.clear_chat)
+        self.clear_button = self.button(settings_actions, 'Delete chat', self.clear_chat)
+        self.clear_button.setToolTip('Delete this conversation from the history.')
         self.review_pc_action_button = self.button(
-            settings_actions, 'Review PC action', self.review_chat_pc_action)
+            settings_actions, 'Review action', self.review_chat_pc_action)
+        self.review_pc_action_button.setToolTip(
+            'See what the answer wants to do on this PC and approve it.')
         composer_actions = QHBoxLayout()
         layout.addLayout(composer_actions)
         self.button(composer_actions, 'Speak', self.listen_to_user)
