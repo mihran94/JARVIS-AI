@@ -2183,6 +2183,7 @@ class Window(QMainWindow):
 
     def stop(self):
         self.policy.stop()
+        self.release_checker.cancel_source()
         if self.omega is not None:
             self.omega.on_stop()
         if self.news_panel is not None:
@@ -2272,7 +2273,7 @@ class Window(QMainWindow):
             if not self.confirm(Action('discard_unsaved_editor_changes', self.filename.text())):
                 event.ignore()
                 return
-        if self.worker is not None:
+        if self.worker is not None or self.release_checker.source_worker is not None:
             self.close_when_done = True
             self.stop()
             self.statusBar().showMessage('Waiting for the current task to exit safely…')

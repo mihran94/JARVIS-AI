@@ -2,18 +2,51 @@
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-import sqlite3
-import uuid
+import os
+import sys
 from PySide6.QtWidgets import QCheckBox, QDialog, QVBoxLayout, QLabel, QPushButton, QFileDialog, QPlainTextEdit
-from PySide6.QtCore import QObject, QTimer, Qt, QUrl, Signal
+from PySide6.QtCore import QObject, QThread, QTimer, Qt, QUrl, Signal
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from core.updates import (installation_root, inspect_zip, changed_files, read_state,
-                          release_path, activate_zip, rollback)
+                          release_path, activate_zip, backup_history, rollback, UpdateError)
+from core.source_updates import stage_latest
 from security.policy import Action, Stopped
+
+
+class SourceUpdateWorker(QThread):
+    result = Signal(str)
+
+    def __init__(self, root, running_root, history, policy, ticket, parent):
+        super().__init__(parent)
+        self.root = root
+        self.running_root = running_root
+        self.history = history
+        self.policy = policy
+        self.ticket = ticket
+
+    def check(self):
+        if self.isInterruptionRequested():
+            raise Stopped()
+        self.policy.check(self.ticket)
+
+    def run(self):
+        try:
+            message = stage_latest(
+                self.root, self.running_root, self.history, check=self.check,
+                publish=lambda operation: self.policy.run_if_current(self.ticket, operation),
+            )
+        except Stopped:
+            message = 'Source update cancelled.'
+        except UpdateError as error:
+            message = str(error)
+        except OSError:
+            message = 'Could not read or write the source update files. Check installation permissions.'
+        self.result.emit(message)
 
 
 class ReleaseChecker(QObject):
     status_changed = Signal(str)
+    source_status_changed = Signal(str)
     PERIOD = 24 * 60 * 60
 
     def __init__(self, window):
@@ -29,6 +62,83 @@ class ReleaseChecker(QObject):
         if self.enabled:
             self.timer.start(60_000)
             QTimer.singleShot(0, self.check_if_due)
+
+        self.source_worker = None
+        self.source_status = self.store.get('source_update_status', '')
+        self.source_timer = QTimer(self)
+        self.source_timer.timeout.connect(self.check_source_if_due)
+        if self.source_enabled and self.source_supported:
+            self.source_timer.start(60_000)
+            QTimer.singleShot(0, self.check_source_if_due)
+
+    @property
+    def source_enabled(self):
+        return bool(self.store.get('automatic_source_updates', False))
+
+    @property
+    def source_supported(self):
+        return (not getattr(sys, 'frozen', False) and 'JARVIS_INSTALL_ROOT' in os.environ
+                and (installation_root() / 'scripts' / 'launch.py').is_file())
+
+    def set_source_enabled(self, enabled):
+        if not enabled:
+            self.store.set('automatic_source_updates', False)
+            self.source_timer.stop()
+            self.cancel_source()
+            return
+        if not self.source_supported:
+            return
+        action = Action('Enable automatic source updates', 'Stage future code from mihran94/JARVIS-AI main '
+                        'and load it the next time JARVIS starts via START_JARVIS.cmd.')
+        self.window.gateway.run(action, self.window.confirm,
+                                lambda: self.store.set('automatic_source_updates', True))
+        self.source_timer.start(60_000)
+        self.check_source()
+
+    def check_source_if_due(self):
+        now = datetime.now(timezone.utc).timestamp()
+        if self.source_enabled and now - self.store.get('source_update_attempt', 0) >= self.PERIOD:
+            self.check_source()
+
+    def check_source(self):
+        if (not self.source_supported or self.source_worker is not None
+                or self.window.policy.stopped or self.window.close_when_done):
+            return
+        if not self.source_enabled:
+            action = Action('Check and stage a source update', 'GitHub mihran94/JARVIS-AI main')
+            self.window.gateway.run(action, self.window.confirm, self.start_source_worker)
+        else:
+            self.start_source_worker()
+
+    def start_source_worker(self):
+        if self.source_worker is not None:
+            return
+        ticket = self.window.policy.ticket()
+        worker = SourceUpdateWorker(installation_root(), Path(__file__).resolve().parents[1],
+                                    self.store.path, self.window.policy, ticket, self)
+        self.store.set('source_update_attempt', datetime.now(timezone.utc).timestamp())
+        self.source_worker = worker
+        worker.result.connect(self.finish_source_result)
+        worker.finished.connect(self.finish_source_worker)
+        self.source_status = 'Checking GitHub main for a source update…'
+        self.source_status_changed.emit(self.source_status)
+        worker.start()
+
+    def cancel_source(self):
+        if self.source_worker is not None:
+            self.source_worker.requestInterruption()
+
+    def finish_source_result(self, message):
+        self.source_status = message
+        self.store.set('source_update_status', message)
+        self.source_status_changed.emit(message)
+        self.window.statusBar().showMessage(message, 15000)
+
+    def finish_source_worker(self):
+        self.source_worker.deleteLater()
+        self.source_worker = None
+        if self.window.close_when_done:
+            self.window.close()
 
     @property
     def enabled(self):
@@ -103,8 +213,8 @@ class ReleaseChecker(QObject):
 
 def open_updates(window):
     dialog = QDialog(window)
-    dialog.setWindowTitle('Review a JARVIS source update')
-    dialog.resize(760, 550)
+    dialog.setWindowTitle('JARVIS updates & rollback')
+    dialog.resize(760, 650)
     layout = QVBoxLayout(dialog)
     note = QLabel('Download the source ZIP from your trusted GitHub repository, then select it here. '
                   'ZIP hashes detect changes after review; they do NOT prove publisher identity. '
@@ -121,6 +231,27 @@ def open_updates(window):
     layout.addWidget(report)
     check = QPushButton('Check for a published release')
     checker = window.release_checker
+    source_auto = QCheckBox('Automatically stage source updates from GitHub main')
+    source_auto.setChecked(checker.source_enabled)
+    source_auto.setEnabled(checker.source_supported)
+    source_now = QPushButton('Check and stage source update now')
+    source_now.setEnabled(checker.source_supported)
+    source_status = QLabel(checker.source_status if checker.source_supported else
+                           'Automatic source updates require the source installation launched with START_JARVIS.cmd.')
+    source_status.setTextFormat(Qt.TextFormat.PlainText)
+    source_status.setWordWrap(True)
+    for widget in (source_auto, source_now, source_status):
+        layout.addWidget(widget)
+    checker.source_status_changed.connect(source_status.setText)
+
+    def toggle_source(enabled):
+        window.notify(lambda: checker.set_source_enabled(enabled))
+        blocked = source_auto.blockSignals(True)
+        source_auto.setChecked(checker.source_enabled)
+        source_auto.blockSignals(blocked)
+
+    source_auto.toggled.connect(toggle_source)
+    source_now.clicked.connect(lambda: window.notify(checker.check_source))
     automatic = QCheckBox('Check GitHub once a day while JARVIS is open')
     automatic.setChecked(checker.enabled)
     automatic.toggled.connect(checker.set_enabled)
@@ -162,14 +293,13 @@ def open_updates(window):
     def install():
         if not reviewed: return
         def operation():
-            if window.worker is not None:
-                raise ValueError('Wait for the current request to finish before updating.')
+            if window.worker is not None or checker.source_worker is not None:
+                raise ValueError('Wait for the current request or update check to finish before updating.')
             action = Action('activate_reviewed_source_update', 'Includes any listed permission/update changes', reviewed['digest'])
             def activate():
-                # Consistent SQLite backup, separate from the install tree and never sent anywhere.
-                backup = Path(window.store.path).parent / ('history-before-update-' + uuid.uuid4().hex + '.sqlite3')
-                with sqlite3.connect(window.store.path) as source, sqlite3.connect(backup) as target:
-                    source.backup(target)
+                if checker.source_worker is not None:
+                    raise UpdateError('Wait for the source update check to finish.')
+                backup_history(window.store.path)
                 return activate_zip(root, reviewed['path'], reviewed['digest'])
             result = window.gateway.run(action, window.confirm, activate)
             report.appendPlainText('\n' + result)
@@ -178,10 +308,14 @@ def open_updates(window):
 
     def restore():
         def operation():
-            if window.worker is not None:
-                raise ValueError('Wait for the current request to finish before rollback.')
+            if window.worker is not None or checker.source_worker is not None:
+                raise ValueError('Wait for the current request or update check to finish before rollback.')
+            def restore_previous():
+                if checker.source_worker is not None:
+                    raise UpdateError('Wait for the source update check to finish.')
+                return rollback(root)
             result = window.gateway.run(Action('rollback_code', 'Select previous version; data remains unchanged'),
-                                        window.confirm, lambda: rollback(root))
+                                        window.confirm, restore_previous)
             report.appendPlainText('\n' + result)
         window.notify(operation)
     check.clicked.connect(lambda: checker.check())

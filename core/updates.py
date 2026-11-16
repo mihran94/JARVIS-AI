@@ -1,12 +1,15 @@
 """Owner-approved source ZIP staging; no download, dependency install or code execution."""
+from contextlib import closing
 import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
+import sqlite3
 import stat
 import tempfile
+import uuid
 import zipfile
 
 MAX_ARCHIVE = 50_000_000
@@ -82,6 +85,8 @@ def inspect_zip(path):
                         *('COM'+str(i) for i in range(1,10)), *('LPT'+str(i) for i in range(1,10))}
                     for p in parts)):
                 raise UpdateError('Unsafe path in ZIP.')
+            if item.flag_bits & 1:
+                raise UpdateError('Encrypted files are not permitted in an update.')
             if stat.S_ISLNK(item.external_attr >> 16):
                 raise UpdateError('Links are not permitted in an update.')
             if item.is_dir():
@@ -127,17 +132,38 @@ def _write_state(root, state):
         if os.path.exists(tmp): os.unlink(tmp)
 
 
-def activate_zip(root, archive, expected_digest):
-    root = Path(root).resolve()
-    digest, files = inspect_zip(archive)
-    if digest != expected_digest:
-        raise UpdateError('ZIP changed after review; review it again.')
+def backup_history(path):
+    backup = Path(path).parent / ('history-before-update-' + uuid.uuid4().hex + '.sqlite3')
+    try:
+        with closing(sqlite3.connect(path)) as source, closing(sqlite3.connect(backup)) as target:
+            source.backup(target)
+    except (OSError, sqlite3.Error):
+        backup.unlink(missing_ok=True)
+        raise UpdateError('Could not back up local history before updating.') from None
+
+
+def check_compatibility(root, files):
     if files['requirements.txt'].strip() != (root / 'requirements.txt').read_bytes().strip():
         raise UpdateError('Dependencies changed. Install this release separately with setup.cmd.')
     if files['core/store.py'] != (root / 'core/store.py').read_bytes():
         raise UpdateError('Database code changed. Use a separate installation for this release.')
+
+
+def activate_zip(root, archive, expected_digest):
+    digest, files = inspect_zip(archive)
+    if digest != expected_digest:
+        raise UpdateError('ZIP changed after review; review it again.')
+    return stage_snapshot(root, digest, files)
+
+
+def stage_snapshot(root, digest, files, *, revision=None, expected_state=None, check=lambda: None,
+                   publish=lambda operation: operation()):
+    root = Path(root).resolve()
+    check_compatibility(root, files)
     state = read_state(root)
-    if state['active'] == digest:
+    if expected_state is not None and state != expected_state:
+        raise UpdateError('Another update changed the selected version. Check again.')
+    if state['active'] == digest and revision is None:
         raise UpdateError('This release is already selected.')
     target = release_path(root, digest)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -155,13 +181,26 @@ def activate_zip(root, archive, expected_digest):
         staging = Path(tempfile.mkdtemp(prefix='stage-', dir=target.parent))
         try:
             for name, content in files.items():
+                check()
                 out = staging / PurePosixPath(name)
                 out.parent.mkdir(parents=True, exist_ok=True)
                 out.write_bytes(content)
             os.replace(staging, target)
         finally:
             if staging.exists(): shutil.rmtree(staging)
-    _write_state(root, {'active': digest, 'previous': state['active']})
+    selected = dict(state)
+    if state['active'] != digest:
+        selected.update(active=digest, previous=state['active'])
+    if revision is not None:
+        selected['last_source_revision'] = revision
+
+    def select():
+        check()
+        if read_state(root) != state:
+            raise UpdateError('Another update changed the selected version. Check again.')
+        _write_state(root, selected)
+
+    publish(select)
     return 'Update staged. Close JARVIS and use START_JARVIS.cmd. Previous code is retained.'
 
 
@@ -170,5 +209,5 @@ def rollback(root):
     previous = state.get('previous')
     if previous is None or not (release_path(root, previous) / 'main.py').is_file():
         raise UpdateError('No retained previous release is available.')
-    _write_state(root, {'active': previous, 'previous': state['active']})
+    _write_state(root, dict(state, active=previous, previous=state['active']))
     return 'Previous code selected for next startup. User data was not restored or changed.'
