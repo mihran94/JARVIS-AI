@@ -11,12 +11,17 @@ from gevent.lock import Semaphore
 from gevent.threadpool import ThreadPool
 import psutil
 
-from device_tools import DEVICE_ACTIONS, DeviceError, run_device_action
-from local_diagnostics import DiagnosticError, REPORTS, read_network_report
-from studio_project import STUDIO_NAME, STUDIO_URL, studio_update_prompt
+if __package__:
+    from .device_tools import DEVICE_ACTIONS, DeviceError, run_device_action
+    from .local_diagnostics import DiagnosticError, REPORTS, read_network_report
+    from .studio_project import STUDIO_NAME, STUDIO_URL, studio_update_prompt
+else:
+    from device_tools import DEVICE_ACTIONS, DeviceError, run_device_action
+    from local_diagnostics import DiagnosticError, REPORTS, read_network_report
+    from studio_project import STUDIO_NAME, STUDIO_URL, studio_update_prompt
 
 
-MODEL = 'gemini-2.5-flash'
+MODEL = 'gemini-3.5-flash-lite'
 MAX_COMMAND_LENGTH = 4000
 SYSTEM_INSTRUCTION = (
     'You are J.A.R.V.I.S., a capable AI assistant. Reply in the user’s language '

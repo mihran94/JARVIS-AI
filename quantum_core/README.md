@@ -13,7 +13,7 @@ $env:GEMINI_API_KEY = [System.Net.NetworkCredential]::new('', $key).Password
 
 Time and system status also work with an empty key. Try `/time`, `/status` or
 `கணினி நிலை`. General questions go to Gemini and the chat retains context
-until you exit. The default model is `gemini-2.5-flash`. Set `GEMINI_MODEL`
+until you exit. The default model is `gemini-3.5-flash-lite`. Set `GEMINI_MODEL`
 in PowerShell to use another model available to your key.
 
 Spoken replies use local text-to-speech. Add `--no-voice` for text only. To
@@ -93,3 +93,17 @@ in the HUD.
 
 Type `/upgrade` and a feature brief to draft a Gemini review plan with tests and
 rollback notes. The proposal appears in **Creative & business workspaces**.
+
+
+## Spatial Edition
+
+From the full JARVIS source folder, run the HUD with:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r quantum_core/requirements.txt
+.\.venv\Scripts\python.exe main.py --hud
+```
+
+The dock switches between **Core**, **Creative**, **Business**, **Dev Lab**
+and **Devices**. The HUD runs in a browser on the PC. Run `START_JARVIS.cmd`
+to use the Windows desktop app, including Tamil news and its existing updater.

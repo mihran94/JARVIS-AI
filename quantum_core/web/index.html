@@ -24,7 +24,7 @@
   button:focus-visible, input:focus-visible, canvas[tabindex]:focus-visible { outline: 2px solid var(--gold); outline-offset: 4px; }
   .hud {
     min-height: 100vh; min-height: 100dvh; max-width: 1920px; margin: auto;
-    padding: clamp(14px, 2vw, 34px); display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; gap: 16px;
+    padding: clamp(14px, 2vw, 34px); display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto auto; gap: 16px;
   }
   .masthead, .brand, .session, .panel-head, .core-foot, .command { display: flex; align-items: center; }
   .masthead { justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--edge); padding: 0 2px 17px; }
@@ -130,6 +130,45 @@
   .command button:hover { background: #abfbff; box-shadow: 0 0 18px #00f3ff4d; }
   .command button:disabled { opacity: .65; cursor: wait; }
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  :root {
+    --bg: #03050a; --edge: #ffffff26; --glass: #101728b8;
+    --muted: #a0b7cc;
+  }
+  body {
+    background: radial-gradient(ellipse at 47% 40%, #1d224a 0, transparent 54%),
+                radial-gradient(ellipse at 75% 90%, #201139 0, transparent 36%), var(--bg);
+    background-attachment: fixed;
+  }
+  .panel {
+    border-radius: 20px;
+    -webkit-backdrop-filter: blur(22px) saturate(145%);
+    backdrop-filter: blur(22px) saturate(145%);
+    box-shadow: inset 0 1px 0 #ffffff1c, 0 12px 32px #0005;
+  }
+  .panel::before { content: none; }
+  .core {
+    background: radial-gradient(ellipse at 50% 46%, #163054, #101327 65%, #090e18);
+  }
+  .workspace-dock {
+    justify-self: center; display: flex; flex-wrap: wrap; justify-content: center;
+    gap: 5px; padding: 6px; border-radius: 18px;
+    border: 1px solid var(--edge); background: #121929da;
+    box-shadow: inset 0 1px 0 #ffffff20, 0 12px 24px #0006;
+  }
+  .workspace-dock button {
+    border: 1px solid transparent; border-radius: 12px; padding: 7px 12px;
+    color: var(--muted); background: transparent; cursor: pointer; font-weight: 650;
+  }
+  .workspace-dock button[aria-pressed="true"] {
+    color: #e9faff; background: #233c58; border-color: #80cafa55;
+  }
+  .tool-drawer { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .workspace [data-tools][data-filtered], .tool-drawer[hidden],
+  .tool-drawer > details[hidden] { display: none; }
+  @media (max-width: 430px) {
+    .workspace-dock { gap: 3px; }
+    .workspace-dock button { padding: 6px 8px; font-size: 12px; }
+  }
   @media (min-width: 1001px) and (min-height: 680px) { .hud { height: 100vh; height: 100dvh; } }
   @media (max-width: 1000px), (max-height: 679px) {
     .core-stage { min-height: 360px; }
@@ -205,17 +244,26 @@
     </div>
   </div>
 
-  <div class="tool-drawer">
+  <nav class="workspace-dock" aria-label="JARVIS workspaces">
+    <button type="button" data-workspace="core" aria-pressed="true">Core</button>
+    <button type="button" data-workspace="creative" aria-pressed="false">Creative</button>
+    <button type="button" data-workspace="business" aria-pressed="false">Business</button>
+    <button type="button" data-workspace="dev" aria-pressed="false">Dev Lab</button>
+    <button type="button" data-workspace="devices" aria-pressed="false">Devices</button>
+  </nav>
+  <div class="tool-drawer" hidden>
   <details class="panel workspace" id="workspace">
-    <summary>Creative &amp; business workspaces</summary>
+    <summary id="workspace-title">Creative &amp; business workspaces</summary>
     <div class="workspace-links">
-      <a href="https://labs.google/fx/tools/flow" target="_blank" rel="noopener noreferrer">Google Flow</a>
-      <a href="https://higgsfield.ai/" target="_blank" rel="noopener noreferrer">Higgsfield</a>
-      <a href="https://www.fiverr.com/" target="_blank" rel="noopener noreferrer">Fiverr</a>
-      <a id="business-site" target="_blank" rel="noopener noreferrer" hidden></a>
+      <a data-tools="creative" href="https://labs.google/fx/tools/flow" target="_blank" rel="noopener noreferrer">Google Flow</a>
+      <a data-tools="creative" href="https://higgsfield.ai/" target="_blank" rel="noopener noreferrer">Higgsfield</a>
+      <a data-tools="business" href="https://www.fiverr.com/" target="_blank" rel="noopener noreferrer">Fiverr</a>
+      <a data-tools="business" id="business-site" target="_blank" rel="noopener noreferrer" hidden></a>
       <a id="download-draft" download="index.html" hidden>Download HTML draft</a>
     </div>
-    <p>Type <code>/flow</code>, <code>/higgsfield</code>, <code>/fiverr</code>, <code>/website</code>, <code>/app</code>, <code>/upgrade</code>, or <code>/studio</code> followed by your brief.</p>
+    <p data-tools="creative">Use <code>/flow</code> or <code>/higgsfield</code> followed by your creative brief.</p>
+    <p data-tools="business">Use <code>/fiverr</code>, <code>/website</code>, or <code>/studio</code> followed by your brief.</p>
+    <p data-tools="dev">Use <code>/app</code> to draft HTML or <code>/upgrade</code> to prepare a reviewable upgrade proposal.</p>
     <textarea id="draft" aria-label="Draft to review and copy" readonly hidden></textarea>
   </details>
   <details class="panel workspace" id="device-workspace">
@@ -374,7 +422,43 @@ async function refreshMetrics() {
   }
 }
 
-function showDraft(text, html) {
+const dock = document.querySelector('.workspace-dock');
+const draftWorkspaces = {
+  '/flow': 'creative', '/higgsfield': 'creative',
+  '/fiverr': 'business', '/website': 'business', '/studio': 'business',
+  '/app': 'dev', '/upgrade': 'dev',
+};
+const workspaceTitles = {creative: 'Creative Studio', business: 'Business', dev: 'Dev Lab'};
+function selectWorkspace(name) {
+  document.querySelector('.tool-drawer').hidden = name === 'core';
+  const tools = byId('workspace');
+  const devices = byId('device-workspace');
+  tools.hidden = !Object.hasOwn(workspaceTitles, name);
+  devices.hidden = name !== 'devices';
+  if (!tools.hidden) {
+    tools.open = true;
+    byId('workspace-title').textContent = workspaceTitles[name];
+  }
+  if (!devices.hidden) devices.open = true;
+  for (const element of tools.querySelectorAll('[data-tools]')) {
+    element.toggleAttribute('data-filtered', element.dataset.tools !== name);
+  }
+  for (const button of dock.querySelectorAll('button')) {
+    button.setAttribute('aria-pressed', String(button.dataset.workspace === name));
+  }
+  const draft = byId('draft');
+  const show = draft.dataset.workspace === name;
+  draft.hidden = !show;
+  byId('download-draft').hidden = !show || !draftUrl;
+}
+dock.addEventListener('click', event => {
+  const button = event.target.closest('button[data-workspace]');
+  if (button) selectWorkspace(button.dataset.workspace);
+});
+selectWorkspace('core');
+
+function showDraft(text, kind) {
+  const html = kind === '/app';
   const field = byId('draft');
   const download = byId('download-draft');
   if (draftUrl) URL.revokeObjectURL(draftUrl);
@@ -383,8 +467,8 @@ function showDraft(text, html) {
   else download.removeAttribute('href');
   download.hidden = !draftUrl;
   field.value = text;
-  field.hidden = false;
-  byId('workspace').open = true;
+  field.dataset.workspace = draftWorkspaces[kind];
+  selectWorkspace(field.dataset.workspace);
 }
 
 async function runCommand(event) {
@@ -405,7 +489,7 @@ async function runCommand(event) {
       const result = await eel.create_draft(kind, draft[2] || '')();
       if (result?.error) appendLog(result.error, 'error');
       else if (typeof result?.text === 'string' && result.text) {
-        showDraft(result.text, kind === '/app');
+        showDraft(result.text, kind);
         appendLog('Draft ready in Creative & business workspaces.', 'reply');
       }
     } else if (hasEel) {
