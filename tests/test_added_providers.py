@@ -46,3 +46,22 @@ def test_all_selectors_include_new_providers(tmp_path):
     for combo in (window.provider,window.chat_provider,window.backup_provider):
         assert all(combo.findText(name)>=0 for name in NEW)
     window.close()
+
+
+def test_gemini_404_points_to_recommended_model_without_printing_provider_response():
+    import httpx
+
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(404, json={'error': {'message': 'provider-private-value'}})
+
+    with pytest.raises(ProviderError, match='gemini-3.5-flash-lite') as failure:
+        stream_chat('Gemini', 'gemini-2.5-flash', 'test-secret',
+                    [{'role': 'user', 'content': 'OK'}], lambda: None, lambda _: None,
+                    transport=httpx.MockTransport(respond))
+    assert len(requests) == 1
+    assert 'provider-private-value' not in str(failure.value)
+    assert 'test-secret' not in str(failure.value)
+    assert PROVIDERS['Gemini'].default_model == 'gemini-3.5-flash-lite'

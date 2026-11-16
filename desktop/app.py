@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 from core.store import Store
 from quantum_core.studio_project import STUDIO_URL, studio_update_prompt, validate_studio_url
 from desktop.memory_page import MemoryPanel
+from desktop.studio_inbox import StudioInboxDialog
 from memory.memory_service import MemoryService
 from desktop.bridge_panel import BridgePanel
 from desktop.camera_reader import open_camera_reader
@@ -933,6 +934,7 @@ class Window(QMainWindow):
         website_row.addWidget(self.website_project_url, 1)
         self.button(website_row, 'Open in AI Studio', self.open_website_project)
         layout.addLayout(website_row)
+        self.button(layout, 'Client inbox & replies', self.open_client_inbox)
         self.business_task = QComboBox()
         self.business_task.addItems(BUSINESS_TASKS)
         layout.addWidget(self.business_task)
@@ -973,6 +975,14 @@ class Window(QMainWindow):
         self.website_project_url.textChanged.connect(self.clear_business_draft)
         self.site_language.currentIndexChanged.connect(self.clear_business_draft)
         return page
+
+    def open_client_inbox(self):
+        if not self.policy.stopped:
+            dialog = StudioInboxDialog(self)
+            try:
+                dialog.exec()
+            finally:
+                dialog.deleteLater()
 
     def generate_site_preview(self):
         if self.worker is not None or self.policy.stopped:
@@ -1330,7 +1340,7 @@ class Window(QMainWindow):
         layout.addWidget(self.provider_advanced_panel)
         self.provider_advanced_panel.hide()
         self.advanced_provider.toggled.connect(self.provider_advanced_panel.setVisible)
-        self.button(layout, 'Save API key', self.save_provider)
+        self.button(layout, 'Save provider settings', self.save_provider)
         self.button(layout, 'Remove stored key', self.remove_key)
         self.probe_button = self.button(layout, 'Test saved provider connection (uses API)', self.test_connection)
         self.provider_health = QLabel()

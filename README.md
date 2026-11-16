@@ -49,6 +49,19 @@ workflow after review.
 
 For voice input, start an existing voice session and say “Hey Jarvis, Fiverr gig, …”, “Hey Jarvis, Fiverr client reply, …”, “Hey Jarvis, Fiverr delivery, …”, or “Hey Jarvis, website update, …”. Review the recognized text before generating. Review the resulting draft before using it in the account dashboard.
 
+Open **Business → Client inbox & replies** to draft a client response with
+Gemini, review it, and copy it into Fiverr. For a website backend that supports
+authenticated inbox access, this dialog also reads new messages and sends
+a reply after you confirm the exact order and text. See
+[business/STUDIO-INBOX.md](business/STUDIO-INBOX.md).
+
+**Gemini model access.** If a Gemini connection test reports HTTP 404, open
+**API Providers → Gemini → Advanced settings** and select **Use recommended
+model**, then **Save provider settings** and test again. The recommended model
+is `gemini-3.5-flash-lite`. An empty API key field retains the key in Windows
+Credential Manager. The saved model is used by the desktop Business and
+Video Editor features too.
+
 ## Codex project review
 
 For Python drafts and fixes, choose **MiniMax** under **Coding AI**. Use **MiniMax API settings** to save your key and model. The coding preference is remembered separately from Chat. Use **Generate Python draft** for a new task or **Draft a code fix** with the editor code and its error.

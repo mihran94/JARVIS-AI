@@ -12,6 +12,9 @@ class Provider:
     default_model: str
 
 
+GEMINI_RECOMMENDED_MODEL = 'gemini-3.5-flash-lite'
+
+
 PROVIDERS = {
     'OpenAI': Provider('https://api.openai.com/v1/chat/completions', 'gpt-4.1-mini'),
     'MiniMax': Provider('https://api.minimax.io/v1/chat/completions', 'MiniMax-M3'),
@@ -19,7 +22,7 @@ PROVIDERS = {
     'Groq': Provider('https://api.groq.com/openai/v1/chat/completions', 'openai/gpt-oss-120b'),
     'OpenRouter': Provider('https://openrouter.ai/api/v1/chat/completions', 'openai/gpt-4.1-mini'),
     'Gemini': Provider('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
-                       'gemini-2.5-flash'),
+                       GEMINI_RECOMMENDED_MODEL),
 }
 
 
@@ -53,6 +56,12 @@ def stream_chat(provider, model, key, messages, check, emit, transport=None, met
                                headers={'Authorization': f'Bearer {key}'}, json=payload) as response:
                 if response.status_code in (502, 503, 504):
                     raise TransientProviderError(f'{provider} temporarily unavailable (HTTP {response.status_code}).')
+                if provider == 'Gemini' and response.status_code == 404:
+                    raise ProviderError(
+                        'Gemini HTTP 404. The selected model was not available for this request. '
+                        'In API Providers → Advanced settings, try the recommended model '
+                        f'{GEMINI_RECOMMENDED_MODEL}, save, and test the connection again.'
+                    )
                 if response.status_code != 200:
                     raise ProviderError(f'{provider} HTTP {response.status_code}. Check key, model, quota and access.')
                 for line in response.iter_lines():
