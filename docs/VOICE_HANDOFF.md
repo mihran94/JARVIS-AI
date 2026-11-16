@@ -29,7 +29,7 @@ This optional mode lets JARVIS rearm the wake listener after each local-model
 answer, without cloud API costs:
 
 1. Install and start **Ollama** on the Windows PC and download the model ID
-   selected in JARVIS (the default is `llama3.2`). JARVIS does not silently
+   selected in JARVIS (the default is `qwen3:8b`). JARVIS does not silently
    download models or run installers.
 2. Visit **Voice / Hey Jarvis**, enable **Allow the microphone**. Make sure
    your Windows speech recognition and output voices work on this PC.

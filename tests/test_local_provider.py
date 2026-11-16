@@ -31,7 +31,7 @@ def test_loopback_detection():
 
 def test_a_remote_address_is_refused():
     with pytest.raises(ProviderError):
-        stream_local('llama3.2', [{'role': 'user', 'content': 'Hi'}], lambda: None,
+        stream_local('qwen3:8b', [{'role': 'user', 'content': 'Hi'}], lambda: None,
                      lambda _: None, endpoint='http://192.168.1.10:11434/v1/chat/completions')
 
 
@@ -44,7 +44,7 @@ def test_the_local_provider_never_sends_a_key():
                               headers={'content-type': 'text/event-stream'})
 
     pieces = []
-    result = stream_local('llama3.2', [{'role': 'user', 'content': 'Hi'}], lambda: None,
+    result = stream_local('qwen3:8b', [{'role': 'user', 'content': 'Hi'}], lambda: None,
                           pieces.append, transport=httpx.MockTransport(handler))
 
     assert result == 'வணக்கம்'
@@ -52,7 +52,7 @@ def test_the_local_provider_never_sends_a_key():
     assert 'authorization' not in requests[0].headers
     assert str(requests[0].url) == 'http://127.0.0.1:11434/v1/chat/completions'
     body = json.loads(requests[0].content)
-    assert body['model'] == 'llama3.2'
+    assert body['model'] == 'qwen3:8b'
     assert body['stream'] is True
 
 
@@ -68,7 +68,7 @@ def test_offline_selection_reaches_the_local_adapter():
         return httpx.Response(200, text=openai_style_stream(),
                               headers={'content-type': 'text/event-stream'})
 
-    result = router.stream(spec, 'llama3.2', 'a-key-that-must-not-be-sent',
+    result = router.stream(spec, 'qwen3:8b', 'a-key-that-must-not-be-sent',
                             [{'role': 'user', 'content': 'Hi'}], lambda: None, lambda _: None,
                             transport=httpx.MockTransport(handler))
 

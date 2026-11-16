@@ -33,7 +33,7 @@ def test_provider_auth_error_never_contains_body(name):
 
 
 def test_openrouter_default_and_empty_request_validation():
-    assert PROVIDERS['OpenRouter'].default_model=='openai/gpt-4.1-mini'
+    assert PROVIDERS['OpenRouter'].default_model=='openai/gpt-6-luna'
     with pytest.raises(ProviderError,match='Configure'):
         stream_chat('OpenRouter','','fake',[],lambda:None,lambda _:None)
 
