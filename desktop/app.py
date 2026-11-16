@@ -4,7 +4,6 @@ import sys
 import uuid
 import time
 from datetime import datetime, timezone
-from urllib.parse import urlsplit
 
 from PySide6.QtCore import QProcess, QThread, Signal, QTimer, Qt, QLockFile, QUrl, QEvent
 from PySide6.QtGui import QDesktopServices, QFont, QTextCursor, QKeySequence, QShortcut
@@ -16,6 +15,7 @@ from PySide6.QtWidgets import (
     QProgressBar, QGroupBox,
 )
 from core.store import Store
+from quantum_core.studio_project import STUDIO_URL, studio_update_prompt, validate_studio_url
 from desktop.memory_page import MemoryPanel
 from memory.memory_service import MemoryService
 from desktop.bridge_panel import BridgePanel
@@ -50,6 +50,7 @@ from video_studio.planning import (
     VIDEO_ENGINES, english_srt, flow_instructions, parse_plan, plan_json,
     planning_messages, spoken_brief, suggest_workflow,
 )
+from business.site_preview import LANGUAGES, WebsiteExport
 from business.drafting import TASKS as BUSINESS_TASKS, draft_messages, spoken_business_request
 from agents.gateway import Gateway
 from agents.queue import TaskQueue
@@ -124,6 +125,9 @@ class Window(QMainWindow):
         self.active_model = None
         self.workspace = Workspace(self.root / 'workspace')
         self.video_plan = None
+        self.site_export = None
+        self.site_draft = None
+        self.site_preview_path = None
         self.worker = None
         self.close_when_done = False
         self.session = self.store.get('session') or uuid.uuid4().hex
@@ -921,13 +925,13 @@ class Window(QMainWindow):
 
     def business_page(self):
         page, layout = self.page(
-            'Business', 'Draft Fiverr work for Editopro or prepare a website update. '
-            'Generate sends the displayed brief to Gemini and may incur API charges.')
+            'Business', 'Open AI Creative Studio in Google AI Studio or prepare a business draft. '
+            'Generate business draft uses your Gemini settings.')
         website_row = QHBoxLayout()
-        self.website_project_url = QLineEdit(self.store.get('website_ai_studio_url', ''))
+        self.website_project_url = QLineEdit(self.store.get('website_ai_studio_url', '') or STUDIO_URL)
         self.website_project_url.setPlaceholderText('Paste your Google AI Studio project URL')
         website_row.addWidget(self.website_project_url, 1)
-        self.button(website_row, 'Save & open AI Studio', self.open_website_project)
+        self.button(website_row, 'Open in AI Studio', self.open_website_project)
         layout.addLayout(website_row)
         self.business_task = QComboBox()
         self.business_task.addItems(BUSINESS_TASKS)
@@ -938,24 +942,101 @@ class Window(QMainWindow):
             'site name, page and requested changes.')
         layout.addWidget(self.business_brief)
         self.business_generate = self.button(layout, 'Generate business draft', self.generate_business)
+        studio_row = QHBoxLayout()
+        self.button(studio_row, 'Prepare site update prompt', self.prepare_website_update)
+        self.business_copy = self.button(studio_row, 'Copy draft', self.copy_business_draft)
+        self.business_copy.setEnabled(False)
+        layout.addLayout(studio_row)
+        preview_row = QHBoxLayout()
+        self.site_language = QComboBox()
+        for code, label in LANGUAGES.items():
+            self.site_language.addItem(label, code)
+        preview_row.addWidget(self.site_language)
+        self.site_generate = self.button(preview_row, 'Generate website preview', self.generate_site_preview)
+        layout.addLayout(preview_row)
+        export_row = QHBoxLayout()
+        self.site_open_preview = self.button(export_row, 'Open preview', self.open_site_preview)
+        self.site_save = self.button(export_row, 'Save updated site ZIP', self.save_site_draft)
+        self.site_open_preview.setEnabled(False)
+        self.site_save.setEnabled(False)
+        layout.addLayout(export_row)
         self.business_status = QLabel('Review and copy the draft into Fiverr or your website editor.')
         self.business_status.setWordWrap(True)
         layout.addWidget(self.business_status)
         self.business_preview = QPlainTextEdit()
         self.business_preview.setReadOnly(True)
+        self.business_preview.textChanged.connect(
+            lambda: self.business_copy.setEnabled(bool(self.business_preview.toPlainText().strip())))
         layout.addWidget(self.business_preview, 2)
         self.business_task.currentTextChanged.connect(self.clear_business_draft)
         self.business_brief.textChanged.connect(self.clear_business_draft)
+        self.website_project_url.textChanged.connect(self.clear_business_draft)
+        self.site_language.currentIndexChanged.connect(self.clear_business_draft)
         return page
+
+    def generate_site_preview(self):
+        if self.worker is not None or self.policy.stopped:
+            return
+        brief = self.business_brief.toPlainText().strip()
+        if not brief:
+            self.business_status.setText('Enter the homepage copy change to preview.')
+            return
+        source, _ = QFileDialog.getOpenFileName(
+            self, 'Select your AI Studio website source ZIP', '', 'Website ZIP (*.zip)')
+        if not source:
+            return
+
+        def operation():
+            website = WebsiteExport.load(source, self.site_language.currentData())
+            messages = website.messages(brief)
+            provider = 'Gemini'
+            model = self.store.get('model:' + provider, self.router.spec(provider).default_model)
+            key = self.get_key(provider)
+            self.chat_ticket = self.policy.ticket()
+            self.clear_business_draft()
+            self.site_export = website
+            self.business_status.setText('Generating homepage copy with Gemini…')
+            self.start_worker(provider, model, key, messages, 'website_preview')
+
+        self.notify(operation)
+
+    def store_site_preview(self, response):
+        draft = self.site_export.draft(response)
+        draft.updated_files()
+        folder = self.root / 'website-previews'
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / (uuid.uuid4().hex + '.html')
+        path.write_text(draft.preview_html(), encoding='utf-8')
+        self.site_draft = draft
+        self.site_preview_path = path
+        self.business_preview.setPlainText('\n\n'.join(
+            field + '\n' + value for field, value in draft.changes.items()))
+        self.business_status.setText('Open the before-and-after preview, then save the updated website ZIP.')
+        self.site_open_preview.setEnabled(True)
+        self.site_save.setEnabled(True)
+
+    def open_site_preview(self):
+        if self.site_preview_path is not None and not self.policy.stopped:
+            if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.site_preview_path.resolve()))):
+                self.business_status.setText('Could not open the browser preview.')
+
+    def save_site_draft(self):
+        if self.site_draft is None or self.policy.stopped:
+            return
+        destination, _ = QFileDialog.getSaveFileName(
+            self, 'Save updated website source', 'AI-Creative-Studio-draft.zip', 'Website ZIP (*.zip)')
+        if destination:
+            self.notify(lambda: self.save_site_draft_to(destination))
+
+    def save_site_draft_to(self, destination):
+        self.site_draft.export_zip(destination)
+        self.business_status.setText('Updated source ZIP saved.')
+        return 'Updated source ZIP saved.'
 
     def open_website_project(self):
         def operation():
             self.policy.ticket()
-            url = self.website_project_url.text().strip()
-            parsed = urlsplit(url)
-            if (parsed.scheme != 'https' or parsed.netloc != 'aistudio.google.com'
-                    or not parsed.path.startswith('/apps/') or not parsed.path.removeprefix('/apps/').strip('/')):
-                raise ValueError('Paste the HTTPS project URL from the AI Studio Build address bar.')
+            url = validate_studio_url(self.website_project_url.text())
             self.store.set('website_ai_studio_url', url)
             if not QDesktopServices.openUrl(QUrl(url)):
                 raise ValueError('Project URL saved. Windows could not open your browser.')
@@ -963,7 +1044,32 @@ class Window(QMainWindow):
 
         self.notify(operation)
 
+    def prepare_website_update(self):
+        if self.business_brief.isReadOnly():
+            return
+
+        def operation():
+            self.policy.ticket()
+            prompt = studio_update_prompt(
+                self.business_brief.toPlainText(), self.website_project_url.text())
+            self.business_preview.setPlainText(prompt)
+            self.business_status.setText('Copy the prompt and paste it into AI Studio Build.')
+            return 'AI Studio update prompt prepared.'
+
+        self.notify(operation)
+
+    def copy_business_draft(self):
+        if not self.policy.stopped:
+            draft = self.business_preview.toPlainText()
+            if draft.strip():
+                QApplication.clipboard().setText(draft)
+                self.statusBar().showMessage('Business draft copied.', 5000)
+
     def clear_business_draft(self):
+        self.site_draft = None
+        self.site_preview_path = None
+        self.site_open_preview.setEnabled(False)
+        self.site_save.setEnabled(False)
         self.business_preview.clear()
         self.business_status.setText('Review the brief and select Generate business draft.')
 
@@ -1418,7 +1524,7 @@ class Window(QMainWindow):
         self.refresh_draft_buttons()
         if kind == 'video_plan':
             self.video_brief.setReadOnly(True)
-        if kind == 'business_draft':
+        if kind in ('business_draft', 'website_preview'):
             self.business_brief.setReadOnly(True)
             self.business_task.setEnabled(False)
         self.chat_provider.setEnabled(False)
@@ -1712,6 +1818,15 @@ class Window(QMainWindow):
                         'Shot plan ready. Verify historical details and sync captions to the recorded voiceover.')
             else:
                 self.video_status.setText(status + ': ' + text)
+        elif self.worker_kind == 'website_preview':
+            if status == 'completed':
+                try:
+                    self.store_site_preview(text)
+                except (OSError, ValueError) as error:
+                    status = 'failed'
+                    self.business_status.setText(str(error))
+            else:
+                self.business_status.setText(status + ': ' + text)
         elif self.worker_kind == 'business_draft':
             if status == 'completed' and text.strip():
                 self.business_preview.setPlainText(text.strip())
@@ -1774,6 +1889,10 @@ class Window(QMainWindow):
         self.video_generate_button.setEnabled(ready)
         self.video_engine.setEnabled(ready)
         self.business_generate.setEnabled(ready)
+        self.site_generate.setEnabled(ready)
+        self.site_language.setEnabled(ready)
+        self.site_open_preview.setEnabled(ready and self.site_preview_path is not None)
+        self.site_save.setEnabled(ready and self.site_draft is not None)
         for button in self.video_export_buttons:
             button.setEnabled(ready and self.video_plan is not None)
         self.video_render_button.setEnabled(ready and self.video_plan is not None)

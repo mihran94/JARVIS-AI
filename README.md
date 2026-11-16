@@ -31,7 +31,21 @@ MP4 export runs locally and requires an FFmpeg build with `ffmpeg` and `ffprobe`
 
 ## Fiverr and website drafts
 
-Open **Business**, choose a task, enter a brief and select **Generate business draft**. The app uses the Gemini configuration from **AI providers**. It can draft Editopro gig packages, client replies, delivery and revision messages, or copy and SEO metadata for a named website page. For a Google AI Studio project, mention Build Mode to get a prompt you can paste there.
+Open **Business**, choose a task, enter a brief and select **Generate business draft**. The app uses the Gemini configuration from **AI providers**. It can draft Editopro gig packages, client replies, delivery and revision messages, or copy and SEO metadata for a named website page.
+
+**AI Creative Studio.** The Business page comes with your AI Studio project
+link. Write the requested change, choose **Prepare site update prompt**, then
+**Copy draft**. Choose **Open in AI Studio**, paste the prompt into Build mode,
+and review the resulting preview.
+
+**Direct homepage preview.** Save your Gemini key under **API Providers**, open
+**Business**, and describe the homepage copy change. Select the language and
+choose **Generate website preview**. Select your AI Studio source ZIP when
+asked. JARVIS drafts edits to the homepage badge, headline, subtitle and button
+labels. **Open preview** opens a local before-and-after HTML preview. **Save
+updated site ZIP** exports a separate copy of the site source with the approved
+text changes. Use your website's existing AI Studio or GitHub deployment
+workflow after review.
 
 For voice input, start an existing voice session and say “Hey Jarvis, Fiverr gig, …”, “Hey Jarvis, Fiverr client reply, …”, “Hey Jarvis, Fiverr delivery, …”, or “Hey Jarvis, website update, …”. Review the recognized text before generating. Review the resulting draft before using it in the account dashboard.
 

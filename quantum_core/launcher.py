@@ -13,6 +13,7 @@ import psutil
 
 from device_tools import DEVICE_ACTIONS, DeviceError, run_device_action
 from local_diagnostics import DiagnosticError, REPORTS, read_network_report
+from studio_project import STUDIO_NAME, STUDIO_URL, studio_update_prompt
 
 
 MODEL = 'gemini-2.5-flash'
@@ -181,11 +182,17 @@ class QuantumCore:
             except DiagnosticError as error:
                 return {'error': str(error)}
 
+    @staticmethod
+    def business_site():
+        return {'name': STUDIO_NAME, 'url': STUDIO_URL}
+
     def create_draft(self, command, brief):
-        if not isinstance(command, str) or command not in DRAFT_INSTRUCTIONS:
+        if not isinstance(command, str) or (command != '/studio' and command not in DRAFT_INSTRUCTIONS):
             return {'error': 'Choose a workspace draft command.'}
         if not isinstance(brief, str) or not brief.strip() or len(brief) > MAX_COMMAND_LENGTH:
             return {'error': 'Enter a brief of 1 to 4,000 characters.'}
+        if command == '/studio':
+            return {'text': studio_update_prompt(brief)}
         if not self.chat.key:
             return {'error': 'Set GEMINI_API_KEY and restart to create drafts.'}
         with self.turn:
@@ -330,6 +337,7 @@ def main():
     eel.expose('create_draft')(hud.create_draft)
     eel.expose('device_action')(hud.device_action)
     eel.expose('network_report')(hud.network_report)
+    eel.expose('business_site')(hud.business_site)
     eel.start(
         'index.html', host='127.0.0.1', port=args.port,
         mode=None if args.browser == 'none' else args.browser, size=(1366, 768),

@@ -38,9 +38,14 @@ Use the HUD command bar with a brief after the command.
 | `/higgsfield` | A draft prompt to copy into Higgsfield |
 | `/fiverr` | A reply to review before sending to a client |
 | `/website` | Draft copy for your website |
+| `/studio` | Prepare a prompt to update AI Creative Studio in Google AI Studio Build |
 | `/app` | An HTML draft you can download and review in VS Code |
 
-Drafts use Gemini without adding the briefs to general chat history. The HUD
+The workspace also links to the AI Creative Studio Build project. Copy the
+`/studio` prompt into Build mode and review the resulting preview. JARVIS
+formats this prompt locally.
+
+The other drafts use Gemini without adding the briefs to general chat history. The HUD
 shows the draft as text. For an app draft, **Download HTML draft** saves a file
 for review. The coding model defaults to `gemini-2.5-pro`. Set
 `GEMINI_CODING_MODEL` if your key uses another coding model.

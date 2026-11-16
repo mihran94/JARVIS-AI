@@ -212,9 +212,10 @@
       <a href="https://labs.google/fx/tools/flow" target="_blank" rel="noopener noreferrer">Google Flow</a>
       <a href="https://higgsfield.ai/" target="_blank" rel="noopener noreferrer">Higgsfield</a>
       <a href="https://www.fiverr.com/" target="_blank" rel="noopener noreferrer">Fiverr</a>
+      <a id="business-site" target="_blank" rel="noopener noreferrer" hidden></a>
       <a id="download-draft" download="index.html" hidden>Download HTML draft</a>
     </div>
-    <p>Type <code>/flow</code>, <code>/higgsfield</code>, <code>/fiverr</code>, <code>/website</code>, <code>/app</code>, or <code>/upgrade</code> followed by your brief.</p>
+    <p>Type <code>/flow</code>, <code>/higgsfield</code>, <code>/fiverr</code>, <code>/website</code>, <code>/app</code>, <code>/upgrade</code>, or <code>/studio</code> followed by your brief.</p>
     <textarea id="draft" aria-label="Draft to review and copy" readonly hidden></textarea>
   </details>
   <details class="panel workspace" id="device-workspace">
@@ -398,7 +399,7 @@ async function runCommand(event) {
   update_hud_state('PROCESSING...', '');
   const requestRevision = stateRevision;
   try {
-    const draft = text.match(/^(\/(?:flow|higgsfield|fiverr|website|app|upgrade))(?:\s+([\s\S]+))?$/i);
+    const draft = text.match(/^(\/(?:flow|higgsfield|fiverr|website|app|upgrade|studio))(?:\s+([\s\S]+))?$/i);
     if (hasEel && draft) {
       const kind = draft[1].toLowerCase();
       const result = await eel.create_draft(kind, draft[2] || '')();
@@ -510,8 +511,21 @@ networkControls.addEventListener('click', async event => {
   }
 });
 
+async function loadBusinessSite() {
+  try {
+    const project = await eel.business_site()();
+    const link = byId('business-site');
+    link.href = project.url;
+    link.textContent = project.name + ' · AI Studio';
+    link.hidden = false;
+  } catch {
+    appendLog('The AI Studio project link could not be loaded.', 'error');
+  }
+}
+
 byId('command-form').addEventListener('submit', runCommand);
 if (hasEel) {
+  loadBusinessSite();
   bridgeMode.textContent = 'EEL STARTING';
   metricsSource.textContent = 'WAITING FOR PC METRICS';
   appendLog('Eel bridge detected. Waiting for PC telemetry.');
