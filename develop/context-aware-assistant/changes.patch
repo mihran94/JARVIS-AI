@@ -1,0 +1,1391 @@
+diff --git a/desktop/app.py b/desktop/app.py
+index 5f9ea37..14077bb 100644
+--- a/desktop/app.py
++++ b/desktop/app.py
+@@ -14,6 +14,8 @@ from PySide6.QtWidgets import (
+     QHeaderView, QCheckBox, QDialog, QFileDialog, QScrollArea, QLayout,
+     QProgressBar, QGroupBox, QSizePolicy,
+ )
++from dataclasses import replace
++
+ from core.store import Store
+ from quantum_core.studio_project import STUDIO_URL, studio_update_prompt, validate_studio_url
+ from desktop.memory_page import MemoryPanel
+@@ -55,7 +57,13 @@ from developer_studio.codex_cli import codex_executable, run_codex
+ from developer_studio.editors import (
+     CAPABILITY_LABELS, editor_from_text, editor_status, editor_names, open_project_in_editor,
+ )
+-from developer_studio.intents import parse_coding_request
++from developer_studio.context import (
++    ConversationMemory, TaskRecord, describe_task, task_is_resumable,
++)
++from developer_studio.intents import (
++    LANGUAGE_NAMES, detect_reply_language, match_projects, parse_coding_request,
++    parse_follow_up, strip_language_marker, summary_labels,
++)
+ from developer_studio.projects import (
+     SavedProject, assistant_language, configured_launchers, find_project, load_projects,
+     project_status, routine_allowed, save_projects, set_assistant_language,
+@@ -276,6 +284,9 @@ class Window(QMainWindow):
+         self.coding_worker = None
+         self.test_worker = None
+         self.chat_task_id = None
++        self.memory = ConversationMemory(self.store)
++        self.pending_clarification = None
++        self.assistant_language = assistant_language(self.store)
+         self.site_export = None
+         self.news_panel = None
+         self.site_draft = None
+@@ -2298,19 +2309,170 @@ class Window(QMainWindow):
+         if project is not None:
+             set_trusted_routine(self.store, 'tests:' + project.name, enabled)
+ 
++    # ── follow-ups about the task already in flight ─────────────────────────
++
++    def handle_follow_up(self, kind, text):
++        """Answer 'continue that task', 'show the diff', 'run the tests again'
++        or 'stop this task' against the task this conversation remembers."""
++        context = self.memory.load()
++        record = context.last_task
++        if kind == 'stop':
++            self.stop_saved_task(context, text)
++            return
++        if kind == 'show_diff':
++            self.show_saved_diff(context, text)
++            return
++        if kind == 'run_tests':
++            self.rerun_saved_tests(context, text)
++            return
++        self.resume_saved_task(context, text)
++
++    def _saved_project(self, context):
++        """The saved project a remembered task belongs to, or None."""
++        record = context.last_task
++        if not record or not record.project:
++            return None
++        return find_project(load_projects(self.store), record.project)
++
++    def show_saved_diff(self, context, text):
++        """Show the diff of the remembered task, read back from its worktree."""
++        record = context.last_task
++        allowed, reason = task_is_resumable(record)
++        if not allowed:
++            self.show_local_system_reply(text, reason)
++            return
++        from developer_studio.codex_task import reviewable_diff
++        diff = reviewable_diff(record.worktree, record.starting_commit)
++        if not diff.strip():
++            self.show_local_system_reply(
++                text, f'There is no difference in {record.worktree} against '
++                      f'{record.starting_commit[:8]}.')
++            return
++        self.show_local_system_reply(text, diff)
++
++    def rerun_saved_tests(self, context, text):
++        """Run the remembered task's tests again, in its worktree."""
++        record = context.last_task
++        allowed, reason = task_is_resumable(record)
++        if not allowed:
++            self.show_local_system_reply(text, reason)
++            return
++        project = self._saved_project(context)
++        if project is None:
++            self.show_local_system_reply(
++                text, f'The project {record.project} is not saved any more.')
++            return
++        command = project.test_command
++        if not command:
++            self.show_local_system_reply(
++                text, f'No test command is configured for {project.name}.')
++            return
++        action = Action('run_project_tests', f'{project.name}: {command}')
++        self.coding_action_gate(
++            action,
++            lambda: self.start_test_run(project, Path(record.worktree), command),
++            trusted=self.test_command_trusted(project, command))
++
++    def stop_saved_task(self, context, text):
++        """Stop the remembered task without stopping the whole assistant."""
++        record = context.last_task
++        if self.coding_worker is not None:
++            self.coding_worker.requestInterruption()
++        if self.test_worker is not None:
++            self.test_worker.requestInterruption()
++        if record and record.ident:
++            self.store.finish(record.ident, 'cancelled', 'Cancelled by the owner.')
++        self.show_local_system_reply(
++            text, 'The task is stopped. Nothing was pushed, merged or published.')
++
++    def resume_saved_task(self, context, text):
++        """Bring the remembered task back, after checking it is still valid."""
++        record = context.last_task
++        allowed, reason = task_is_resumable(record)
++        if not allowed:
++            self.show_local_system_reply(text, reason)
++            return
++        project = self._saved_project(context)
++        if project is None:
++            self.show_local_system_reply(
++                text, f'The project {record.project} is not saved any more, so the task '
++                      'cannot be continued. Save it again in Settings & Plugins.')
++            return
++        # The card comes back with what is known about the task, so the owner
++        # can carry on with it.
++        steps = [{'key': 'resume', 'done': True, 'state': 'done',
++                  'label': f'Continue {record.project}: {record.change or "the saved task"}',
++                  'approval': False}]
++        self.coding = {
++            'request': parse_coding_request(record.change or record.project,
++                                            [project], editor_from_text),
++            'project': project, 'editor': record.editor or project.editor,
++            'editor_status': editor_status(record.editor or project.editor, None,
++                                           self.assistant_language),
++            'steps': steps, 'index': len(steps), 'outcome': None, 'text': text,
++        }
++        self.chat_task_id = record.ident
++        self.render_coding_card()
++        self.show_local_system_reply(
++            text, f'Continuing {record.project}. The worktree is {record.worktree}. '
++                  'Say what to change next, or use Review diff, Run tests or Open project.')
++
+     def coding_request(self, text):
+         """The coding request in a chat sentence, or None.
+ 
+         A sentence is only a coding request when it names a saved project.
+         Anything else is ordinary chat and goes to the assistant, because a
+         request that might be a coding task must never swallow a question.
++
++        When the sentence names more than one saved project, JARVIS does not
++        guess: it asks which one, and the answer is treated as the answer to
++        that question.
+         """
+         projects = load_projects(self.store)
++        if not projects:
++            return None
++        matches = match_projects(text, projects)
++        if len(matches) > 1:
++            self.ask_which_project(text, matches)
++            return None
+         request = parse_coding_request(text, projects, editor_from_text)
++        if not request.project:
++            # No project was named: use the one this conversation is about.
++            remembered = self.memory.load().project
++            if remembered and find_project(projects, remembered) is not None:
++                request = replace(request, project=remembered)
+         if request.project and (request.open_project or request.make_change or request.run_tests):
+             return request
+         return None
+ 
++    def ask_which_project(self, text, candidates):
++        """Ask a short question when more than one project could be meant."""
++        names = ', '.join(project.name for project in candidates)
++        self.pending_clarification = {'text': text, 'candidates': list(candidates)}
++        self.show_local_system_reply(
++            text, f'Which project do you mean? Choose one: {names}.')
++
++    def answer_clarification(self, text):
++        """Use the owner's answer to pick the project, and start the task."""
++        pending = self.pending_clarification
++        self.pending_clarification = None
++        if pending is None:
++            return False
++        candidates = pending['candidates']
++        matches = match_projects(text, candidates)
++        if len(matches) != 1:
++            self.pending_clarification = pending
++            self.show_local_system_reply(
++                text, 'Say the project name exactly, one of: '
++                + ', '.join(project.name for project in candidates) + '.')
++            return True
++        project = matches[0]
++        request = parse_coding_request(pending['text'], [project], editor_from_text)
++        if not request.project:
++            request = replace(request, project=project.name)
++        self.start_coding_task(request, pending['text'])
++        return True
++
+     def coding_task_active(self):
+         """True when a coding task is running or waiting for approval.
+ 
+@@ -2343,25 +2505,28 @@ class Window(QMainWindow):
+         launchers = configured_launchers(self.store)
+         editor = request.editor or project.editor
+         configured = next((item for item in launchers if item['name'] == editor), None)
+-        status = editor_status(editor, configured)
++        status = editor_status(editor, configured, self.assistant_language)
+         routines = trusted_routines(self.store)
+         steps = []
+         if request.open_project:
+             steps.append({
+                 'key': 'open', 'done': False, 'state': 'waiting',
+-                'label': f'Open {project.name} in {editor}',
++                'label': summary_labels(self.assistant_language)['step_open'].format(
++                    project=project.name, editor=editor),
+                 'approval': not routines.get('open:' + project.name),
+             })
+         if request.make_change:
+             steps.append({
+                 'key': 'change', 'done': False, 'state': 'waiting',
+-                'label': f'Ask Codex to: {request.change or project.name}',
++                'label': summary_labels(self.assistant_language)['step_change'].format(
++                    change=request.change or project.name),
+                 'approval': True,
+             })
+         if request.run_tests:
+             steps.append({
+                 'key': 'tests', 'done': False, 'state': 'waiting',
+-                'label': f"Run the configured tests: {project.test_command or '(none configured)'}",
++                'label': summary_labels(self.assistant_language)['step_tests'].format(
++                    command=project.test_command or '(none configured)'),
+                 # A test command the owner has not trusted is approved on its
+                 # own, separately from the change that produced it.
+                 'approval': not (routines.get('tests:' + project.name)
+@@ -2377,6 +2542,13 @@ class Window(QMainWindow):
+         self.chat_task_id = self.store.task(
+             'codex_task', f'{project.name} · {project.path} · {request.change or project.name}')
+         self.store.finish(self.chat_task_id, 'running')
++        # Remember what this conversation is about, so a follow-up that names
++        # no project still knows where to go.
++        language = detect_reply_language(text) or self.assistant_language
++        if language:
++            self.assistant_language = language
++            set_assistant_language(self.store, language)
++        self.memory.remember(project=project.name, editor=editor, language=language)
+         self.render_coding_card()
+         self.advance_coding_task()
+ 
+@@ -2405,35 +2577,39 @@ class Window(QMainWindow):
+         project = coding['project']
+         request = coding['request']
+         status = coding['editor_status']
+-        lines = [f'Task · {project.name}', f'Folder: {project.path}']
+-        editor_line = f"Editor: {coding['editor']}"
++        labels = summary_labels(self.assistant_language)
++        lines = [f"{labels['task']} · {project.name}", f"{labels['folder']}: {project.path}"]
++        editor_line = f"{labels['editor']}: {coding['editor']}"
+         if status['installed']:
+             editor_line += f" — {status['path']}"
+         else:
+-            editor_line += ' — SETUP NEEDED'
++            editor_line += ' — ' + labels['setup_needed']
+         lines.append(editor_line)
+         if not status['installed'] and status['setup']:
+             lines.append(status['setup'])
+         if request.change:
+-            lines.append('Change: ' + request.change)
++            lines.append(labels['change'] + ': ' + request.change)
+         lines.append('')
+         for number, step in enumerate(coding['steps'], 1):
+-            mark = {'done': 'done', 'running': 'running', 'waiting': 'waiting',
+-                    'declined': 'declined', 'failed': 'failed'}.get(step['state'], 'waiting')
++            mark = {'done': labels['done'], 'running': labels['running'],
++                    'waiting': labels['waiting'], 'declined': labels['declined'],
++                    'failed': labels['failed']}.get(step['state'], labels['waiting'])
+             if step['state'] == 'waiting' and coding.get('pending_step') is step:
+-                mark = 'awaiting approval'
++                mark = labels['awaiting_approval']
+             lines.append(f'{number}. {step["label"]}  [{mark}]')
+         outcome = coding.get('outcome')
+         if outcome is not None:
++            labels = summary_labels(self.assistant_language)
+             lines.append('')
+             lines.append(outcome.message)
+             if outcome.changed_files:
+-                lines.append('Changed files: ' + ', '.join(outcome.changed_files))
++                lines.append(labels['changed'] + ': ' + ', '.join(outcome.changed_files))
++            else:
++                lines.append(labels['changed'] + ': ' + labels['none'])
+             if outcome.test_status not in ('', 'not run'):
+-                lines.append(f'Tests: {outcome.test_status}')
++                lines.append(f"{labels['tests']}: {outcome.test_status}")
+             if outcome.protected:
+-                lines.append('Your uncommitted work was untouched: '
+-                             + ', '.join(outcome.protected))
++                lines.append(labels['protected'] + ': ' + ', '.join(outcome.protected))
+         self.chat_task_text.setText('\n'.join(lines))
+         self.chat_task_card.show()
+         self.chat_task_diff.setEnabled(bool(outcome and outcome.diff))
+@@ -2654,7 +2830,8 @@ class Window(QMainWindow):
+         task = CodexTask(project, request.change or project.name,
+                          test_command='',
+                          worktree_root=self.root / 'worktrees',
+-                         codex_path=None)
++                         codex_path=None,
++                         language=self.assistant_language)
+         self.worker_kind = 'coding'
+         self.coding_worker = CodingTaskWorker(task, self.policy, self.policy.ticket())
+         self.coding_worker.progress.connect(self.on_coding_progress)
+@@ -2730,25 +2907,61 @@ class Window(QMainWindow):
+         self.store.finish(self.chat_task_id, status, detail)
+ 
+     def finish_coding_task(self):
+-        """Close the task card with the result in the conversation."""
++        """Close the task card with the result in the conversation.
++
++        The report says what actually happened: the files that changed, the
++        diff to review, the test outcome and where the work was saved. It is
++        written in the language the owner asked the answer in.
++        """
+         coding = self.coding
+         if coding is None:
+             return
+         outcome = coding.get('outcome')
+         if outcome is not None:
++            labels = summary_labels(self.assistant_language)
+             summary = outcome.message
+             if outcome.changed_files:
+-                summary += '\nChanged files: ' + ', '.join(outcome.changed_files)
++                summary += '\n' + labels['changed'] + ': ' + ', '.join(outcome.changed_files)
++            else:
++                summary += '\n' + labels['changed'] + ': ' + labels['none']
+             # The test result is ALWAYS in the final result, pass or fail.
+-            summary += '\nTests: ' + (outcome.test_status or 'not run')
++            summary += '\n' + labels['tests'] + ': ' + (outcome.test_status or 'not run')
++            if outcome.diff:
++                # The whole diff goes in, but it is bounded so one enormous
++                # change cannot fill the conversation.
++                diff = outcome.diff
++                if len(diff) > 8000:
++                    diff = diff[:8000] + '\n… the diff was shortened. Use Review diff for all of it.'
++                summary += '\n' + labels['diff'] + ':\n' + diff
+             if outcome.worktree:
+-                summary += '\nWorktree: ' + outcome.worktree
++                summary += '\n' + labels['saved'] + ': ' + outcome.worktree
+             self.store.message(self.session, 'system', summary)
+             self.render_chat()
+         self.record_coding_history(outcome)
++        self.remember_finished_task(outcome)
+         self.refresh_archives()
+         self.refresh_history()
+ 
++    def remember_finished_task(self, outcome):
++        """Keep the finished task so the owner can continue it later."""
++        coding = self.coding
++        if coding is None or outcome is None:
++            return
++        project = coding['project']
++        record = TaskRecord(
++            ident=self.chat_task_id or '',
++            project=project.name,
++            folder=project.path,
++            editor=coding.get('editor') or project.editor,
++            worktree=outcome.worktree,
++            starting_commit=outcome.starting_commit,
++            change=coding['request'].change or project.name,
++            test_command=project.test_command,
++            status=outcome.status,
++            created=datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),
++        )
++        self.memory.remember_task(record)
++
+     def review_coding_diff(self):
+         """Show the reviewable diff of the last task.
+ 
+@@ -3153,6 +3366,16 @@ class Window(QMainWindow):
+             self.prompt.clear()
+             self.show_local_system_reply(text, local_reply)
+             return
++        follow_up = parse_follow_up(text)
++        if follow_up:
++            self.prompt.clear()
++            self.open_section('JARVIS Chat')
++            self.handle_follow_up(follow_up, text)
++            return
++        if self.pending_clarification is not None and self.answer_clarification(text):
++            self.prompt.clear()
++            self.open_section('JARVIS Chat')
++            return
+         coding = self.coding_request(text)
+         if coding is not None:
+             self.prompt.clear()
+@@ -3213,9 +3436,15 @@ class Window(QMainWindow):
+             self.render_chat()
+             self.transcript.appendPlainText('\nJARVIS\n')
+             self.prompt.clear()
++            language = detect_reply_language(text) or self.assistant_language
++            if language:
++                self.assistant_language = language
++                set_assistant_language(self.store, language)
+             system = {'role': 'system', 'content':
+                 'You are JARVIS, a helpful assistant. Reply in the user language. '
+                 'You cannot execute tools or control this computer. Never claim actions were executed.'}
++            if language:
++                system['content'] += ' Answer in ' + LANGUAGE_NAMES.get(language, language) + '.'
+             self.start_worker(provider, model, key, [system] + messages, 'chat', backup=backup)
+             self.backup_consent.setChecked(False)
+         self.notify(operation)
+diff --git a/developer_studio/codex_task.py b/developer_studio/codex_task.py
+index a395906..74a9095 100644
+--- a/developer_studio/codex_task.py
++++ b/developer_studio/codex_task.py
+@@ -45,6 +45,7 @@ import time
+ import uuid
+ 
+ from developer_studio.codex_cli import codex_executable, run_codex
++from developer_studio.intents import summary_labels
+ 
+ 
+ #: The steps a task goes through. The card shows them and marks them done.
+@@ -207,8 +208,9 @@ class CodexTask:
+ 
+     def __init__(self, project, change: str, *, test_command: str = '',
+                  worktree_root=None, progress=None, check_cancelled=None,
+-                 codex_path=None):
++                 codex_path=None, language: str = ''):
+         self.project = project
++        self.language = (language or '').strip().casefold()
+         self.change = (change or '').strip()
+         self.test_command = (test_command or '').strip()
+         self.worktree_root = Path(worktree_root) if worktree_root else None
+@@ -254,7 +256,7 @@ class CodexTask:
+                 'was changed. Check that Git can write to this repository.')
+         self.outcome.worktree = str(worktree)
+         self._step('isolate_worktree',
+-                   f'Isolated worktree ready at {worktree}. Your uncommitted work is untouched.')
++                   summary_labels(self.language)['worktree_ready'].format(worktree=worktree))
+         # The commit the task starts from. Every change is reported against
+         # it, so a task that commits as well as edits still shows the whole
+         # difference and not just the last edit.
+@@ -310,12 +312,18 @@ class CodexTask:
+             self.outcome.test_output = ('No test command is configured for this project, so no '
+                                         'tests were run.')
+ 
+-        self._step('report', 'Reporting the changed files, the diff and the test results.')
++        self._step('report', summary_labels(self.language)['step_report'])
+         self.outcome.status = 'completed'
+         against = self.outcome.starting_commit[:8] if self.outcome.starting_commit else 'HEAD'
+-        self.outcome.message = (
+-            f'{len(changed)} file(s) changed against {against}. The diff is below and the '
+-            f'worktree is at {worktree}. Nothing was pushed, merged or installed.')
++        if self.language == 'ta':
++            self.outcome.message = (
++                f'{against} முற்பட்ட நிலைக்கு எதிராக {len(changed)} கோப்பு(கள்) மாற்றப்பட்டன. '
++                f'வேறுபாடு கீழே உள்ளது, வேலைப்பாதை {worktree}. '
++                'எதுவும் push, merge அல்லது install செய்யப்படவில்லை.')
++        else:
++            self.outcome.message = (
++                f'{len(changed)} file(s) changed against {against}. The diff is below and the '
++                f'worktree is at {worktree}. Nothing was pushed, merged or installed.')
+         return self.outcome
+ 
+     # -- internals --------------------------------------------------------
+@@ -362,3 +370,18 @@ class CodexTask:
+     def _run_tests(self, worktree: Path):
+         """Run the project's configured local tests, without a shell."""
+         return run_local_tests(worktree, self.test_command)
++
++
++def reviewable_diff(worktree, starting_commit: str = '') -> str:
++    """The diff of a worktree against the commit the task started from.
++
++    This is how "show the diff" is answered later: the diff is not stored, it
++    is read back from the worktree, so it is always the truth about what is
++    on disk.
++    """
++    folder = Path(worktree)
++    if not folder.is_dir():
++        return ''
++    subprocess.run(['git', '-C', str(folder), 'add', '-A'], capture_output=True, timeout=60)
++    base = [starting_commit] if starting_commit else []
++    return git_output(folder, 'diff', '--cached', *base) or ''
+diff --git a/developer_studio/context.py b/developer_studio/context.py
+new file mode 100644
+index 0000000..5dba1a1
+--- /dev/null
++++ b/developer_studio/context.py
+@@ -0,0 +1,203 @@
++"""What JARVIS remembers between messages, and what it can resume.
++
++WHY THIS EXISTS
++    "Continue that task" only means something if JARVIS still knows which task.
++    "Open it in VS Code" only means something if it still knows which project.
++    Both have to survive the window closing, because the owner closes the
++    application and comes back to it, so the memory is stored in the local
++    settings database rather than kept in a widget.
++
++WHAT IS STORED
++    Only what is needed to continue: the project that was chosen, the editor
++    that was used, the language the owner wants the answer in, and a record of
++    the last task — which folder it works in, which worktree it used, the
++    commit it started from and how it ended.
++
++    Nothing secret is stored here. API keys stay in Windows Credential
++    Manager, and the worktree path is a local folder path.
++
++WHY A RESUME CHECKS BEFORE IT CONTINUES
++    The worktree is a real folder on the disk and the project is a real Git
++    repository. Between one message and the next, the owner may have deleted
++    the worktree, cleaned the branches, or moved the project. Resuming into
++    something that is not there any more would report a result for work that
++    never ran. So a resume checks the worktree and the starting commit first,
++    and says plainly what is missing.
++"""
++from __future__ import annotations
++
++from dataclasses import asdict, dataclass
++import subprocess
++from pathlib import Path
++
++
++#: Where the conversation context lives in the settings store.
++CONTEXT_KEY = 'assistant_context'
++
++#: The task states that are finished and are not resumed.
++FINISHED_STATES = ('completed', 'failed', 'cancelled', 'declined')
++
++
++@dataclass(frozen=True)
++class TaskRecord:
++    """One task, remembered well enough to continue it."""
++
++    ident: str = ''
++    project: str = ''
++    folder: str = ''
++    editor: str = ''
++    worktree: str = ''
++    starting_commit: str = ''
++    change: str = ''
++    test_command: str = ''
++    status: str = ''
++    created: str = ''
++
++    def as_dict(self) -> dict:
++        return asdict(self)
++
++    @classmethod
++    def from_dict(cls, raw) -> 'TaskRecord':
++        if not isinstance(raw, dict):
++            return cls()
++        fields = {name: raw.get(name, '') for name in cls.__dataclass_fields__}
++        return cls(**{name: (value if isinstance(value, str) else str(value))
++                       for name, value in fields.items()})
++
++
++@dataclass(frozen=True)
++class ConversationContext:
++    """The conversation's memory."""
++
++    project: str = ''
++    editor: str = ''
++    language: str = ''
++    last_task: TaskRecord | None = None
++
++    def as_dict(self) -> dict:
++        return {
++            'project': self.project,
++            'editor': self.editor,
++            'language': self.language,
++            'last_task': self.last_task.as_dict() if self.last_task else None,
++        }
++
++    @classmethod
++    def from_dict(cls, raw) -> 'ConversationContext':
++        if not isinstance(raw, dict):
++            return cls()
++        task = raw.get('last_task')
++        return cls(
++            project=str(raw.get('project', '') or ''),
++            editor=str(raw.get('editor', '') or ''),
++            language=str(raw.get('language', '') or ''),
++            last_task=TaskRecord.from_dict(task) if task else None,
++        )
++
++
++class ConversationMemory:
++    """Reads and writes the conversation context in the settings store."""
++
++    def __init__(self, store):
++        self.store = store
++
++    def load(self) -> ConversationContext:
++        """The remembered context, or an empty one."""
++        try:
++            raw = self.store.get(CONTEXT_KEY)
++        except Exception:
++            return ConversationContext()
++        return ConversationContext.from_dict(raw)
++
++    def save(self, context: ConversationContext) -> None:
++        """Remember the context."""
++        self.store.set(CONTEXT_KEY, context.as_dict())
++
++    def remember(self, *, project: str = '', editor: str = '', language: str = '',
++                task: TaskRecord | None = None) -> ConversationContext:
++        """Update and store the context, keeping what was not changed."""
++        current = self.load()
++        updated = ConversationContext(
++            project=project or current.project,
++            editor=editor or current.editor,
++            language=language or current.language,
++            last_task=task if task is not None else current.last_task,
++        )
++        self.save(updated)
++        return updated
++
++    def remember_task(self, task: TaskRecord) -> ConversationContext:
++        """Remember a task as the last one."""
++        current = self.load()
++        updated = ConversationContext(project=task.project or current.project,
++                                      editor=task.editor or current.editor,
++                                      language=current.language,
++                                      last_task=task)
++        self.save(updated)
++        return updated
++
++    def clear_task(self) -> ConversationContext:
++        """Forget the last task but keep the chosen project."""
++        current = self.load()
++        updated = ConversationContext(project=current.project, editor=current.editor,
++                                      language=current.language, last_task=None)
++        self.save(updated)
++        return updated
++
++    def forget(self) -> ConversationContext:
++        """Forget everything."""
++        empty = ConversationContext()
++        self.save(empty)
++        return empty
++
++
++def _git(folder: Path, *args):
++    try:
++        result = subprocess.run(['git', '-C', str(folder), *args], capture_output=True,
++                                text=True, timeout=20)
++    except (OSError, subprocess.SubprocessError):
++        return None
++    if result.returncode:
++        return None
++    return result.stdout
++
++
++def task_is_resumable(record: TaskRecord) -> tuple[bool, str]:
++    """Check that a task can still be continued.
++
++    Returns the answer and the reason. The reason is a sentence the owner
++    can act on, not a status code.
++    """
++    if not record or not record.ident:
++        return False, 'There is no saved task to continue.'
++    if not record.worktree:
++        return False, ('That task never started a worktree, so there is nothing to continue. '
++                       'Ask for it again.')
++    worktree = Path(record.worktree)
++    if not worktree.is_dir():
++        return False, (f'The worktree for that task is gone ({worktree}). '
++                       'Start the task again.')
++    if record.starting_commit:
++        listed = _git(worktree, 'cat-file', '-e', record.starting_commit + '^{commit}')
++        if listed is None:
++            return False, (f'The commit that task started from ({record.starting_commit[:8]}) '
++                           'is no longer in this repository. Start the task again.')
++    return True, 'The task and its worktree are still there.'
++
++
++def describe_task(record: TaskRecord) -> str:
++    """One line about a remembered task, for the owner to read."""
++    if not record or not record.ident:
++        return 'There is no saved task.'
++    parts = [f'{record.project or "task"}']
++    if record.change:
++        parts.append(record.change)
++    if record.status:
++        parts.append(record.status)
++    if record.worktree:
++        parts.append(record.worktree)
++    return ' · '.join(parts)
++
++
++__all__ = ['CONTEXT_KEY', 'ConversationContext', 'ConversationMemory', 'TaskRecord',
++           'describe_task', 'task_is_resumable']
+diff --git a/developer_studio/editors.py b/developer_studio/editors.py
+index 854d86a..f6030f8 100644
+--- a/developer_studio/editors.py
++++ b/developer_studio/editors.py
+@@ -35,6 +35,8 @@ import shutil
+ import subprocess
+ import sys
+ 
++from developer_studio.intents import summary_labels
++
+ 
+ #: What an editor can be asked to do. The interface shows these individually.
+ CAP_OPEN_PROJECT = 'open_project'
+@@ -186,7 +188,7 @@ def resolve_launcher(command: str):
+     return Path(shutil.which(command)) if shutil.which(command) else None
+ 
+ 
+-def editor_status(name: str, configured=None) -> dict:
++def editor_status(name: str, configured=None, language: str = '') -> dict:
+     """What the interface shows about one editor.
+ 
+     `configured` is an optional configured launcher: a dictionary with
+@@ -203,7 +205,10 @@ def editor_status(name: str, configured=None) -> dict:
+             'path': str(path) if path else None,
+             'installed': path is not None,
+             'capabilities': list(configured.get('capabilities', [])),
+-            'setup': '' if path else f'Set up {name}: the command was not found.',
++            'setup': '' if path else (
++                (summary_labels(language)['setup_set_up'] + f' {name}: '
++                 + summary_labels(language)['setup_not_found'])
++                if language else f'Set up {name}: the command was not found.'),
+         }
+     try:
+         found = spec(name)
+@@ -211,7 +216,11 @@ def editor_status(name: str, configured=None) -> dict:
+         return {
+             'name': name, 'kind': 'unknown', 'command': '', 'path': None,
+             'installed': False, 'capabilities': [],
+-            'setup': f'Setup needed for {name}: choose its executable in Settings.',
++            'setup': (
++                (summary_labels(language)['setup_needed'] + f' {name}: '
++                 + summary_labels(language)['setup_choose'])
++                if language else
++                f'Setup needed for {name}: choose its executable in Settings.'),
+         }
+     path = find_editor(name)
+     return {
+@@ -222,6 +231,9 @@ def editor_status(name: str, configured=None) -> dict:
+         'installed': path is not None,
+         'capabilities': list(found.capabilities),
+         'setup': '' if path else (
++            (summary_labels(language)['setup_needed'] + f' {found.name}: '
++             + summary_labels(language)['setup_install'].format(command=found.command))
++            if language else
+             f'Setup needed for {found.name}: install it, or add "{found.command}" to PATH, '
+             'or configure it as a launcher in Settings.'),
+     }
+diff --git a/developer_studio/intents.py b/developer_studio/intents.py
+index 83721f0..c13e127 100644
+--- a/developer_studio/intents.py
++++ b/developer_studio/intents.py
+@@ -30,6 +30,10 @@ from dataclasses import dataclass
+ import re
+ 
+ 
++#: The Tamil Unicode block, used to spot a request written in Tamil script.
++TAMIL_SCRIPT = re.compile(r'[\u0b80-\u0bff]')
++
++
+ #: Phrases that mean "open this project".
+ OPEN_PHRASES = (
+     'open panni', 'open pannu', 'open pann', 'open the project',
+@@ -61,7 +65,8 @@ WAKE_WORDS = ('hey jarvis', 'jarvis,', 'jarvis:', 'jarvis')
+ 
+ #: Words removed from the request once the intent has been recognised.
+ _NOISE = re.compile(
+-    r'\b(?:my|the|a|an|please|kindly|naan|na|ennakku|and|then|also|okay|ok|hey)\b',
++    r'\b(?:my|the|a|an|please|kindly|naan|na|ennakku|and|then|also|okay|ok|hey'
++    r'|enna|pannina|nu|jarvis|la|il|va)\b',
+     re.IGNORECASE)
+ 
+ #: The Tamil case suffix that clings to the word before it, as in "VS Code-la".
+@@ -170,7 +175,7 @@ def parse_coding_request(text: str, projects, editor_from_text=None) -> CodingRe
+     if 'test' in working.casefold() and not make_change:
+         run_tests = True
+ 
+-    change = working
++    change = strip_language_marker(working)
+     if project is not None:
+         change = _strip_phrases(change, (project.name,))
+         change = _CASE_SUFFIX.sub(' ', change)
+@@ -182,7 +187,7 @@ def parse_coding_request(text: str, projects, editor_from_text=None) -> CodingRe
+     change = _strip_phrases(change, REPORT_PHRASES)
+     change = _strip_phrases(change, CHANGE_PHRASES)
+     change = _NOISE.sub(' ', change)
+-    change = ' '.join(change.replace(',', ' ').replace('.', ' ').split()).strip(' -')
++    change = ' '.join(change.replace(',', ' ').replace('.', ' ').split()).strip(' -—,;:')
+ 
+     question = ''
+     if project is None:
+@@ -203,3 +208,190 @@ def parse_coding_request(text: str, projects, editor_from_text=None) -> CodingRe
+         report=report,
+         question=question,
+     )
++
++# ── Follow-ups ───────────────────────────────────────────────────────────────
++
++#: A follow-up is a short message that refers to the task already running.
++#: The phrases are the ones a person actually types, in the three languages
++#: the owner uses.
++FOLLOW_UPS = {
++    'continue': (
++        'continue that task', 'continue the task', 'continue', 'resume that task',
++        'resume', 'carry on', 'continue pannu', 'continue panni', 'vatathu',
++        'தொடர்ந்து செய்', 'தொடர்',
++    ),
++    'show_diff': (
++        'show the diff', 'show diff', 'show me the diff', 'diff kaattu',
++        'diff காட்டு', 'kaattu', 'காட்டு',
++    ),
++    'run_tests': (
++        'run the tests again', 'run tests again', 'run the tests', 'run tests',
++        'tests run pannu', 'tests again', 'tests mathiri', 'மீண்டும் ஓடு',
++    ),
++    'stop': (
++        'stop this task', 'stop the task', 'stop that task', 'stop', 'cancel the task',
++        'stop pannu', 'நிறுத்து',
++    ),
++}
++
++#: Words that may sit in front of a follow-up without changing it.
++FOLLOW_UP_PREFIXES = ('jarvis', 'please', 'ok', 'okay', 'and', 'na', 'hey jarvis', 'now')
++
++
++def parse_follow_up(text):
++    """Return 'continue', 'show_diff', 'run_tests', 'stop' or None.
++
++    A follow-up has to BE the request. "add a stopwatch to the project" is a
++    new task, not a request to stop one, so the phrase only counts when the
++    message is essentially nothing else.
++    """
++    if not isinstance(text, str) or not text.strip():
++        return None
++    normalized = ' '.join(text.casefold().split()).strip(' .!?।,')
++    for name, phrases in FOLLOW_UPS.items():
++        for phrase in phrases:
++            if normalized == phrase:
++                return name
++            if normalized.endswith(' ' + phrase):
++                prefix = normalized[: -len(phrase)].strip(' ,.')
++                if prefix in FOLLOW_UP_PREFIXES:
++                    return name
++    return None
++
++
++# ── The language the owner wants the answer in ────────────────────────────────
++
++#: Phrases that ask for the answer in a particular language.
++REPLY_LANGUAGES = (
++    ('ta', ('tamil-la', 'tamil la', 'in tamil', 'tamil irundhu', 'தமிழ்ல', 'தமிழாக')),
++    ('fr', ('french-la', 'french la', 'in french', 'en français', 'en francais',
++            'français-la', 'francais-la')),
++    ('en', ('english-la', 'english la', 'in english')),
++)
++
++
++def detect_reply_language(text):
++    """The language the owner asked the answer in, or '' when they did not say."""
++    if not isinstance(text, str) or not text.strip():
++        return ''
++    lowered = text.casefold()
++    for code, markers in REPLY_LANGUAGES:
++        for marker in markers:
++            if marker in lowered:
++                return code
++    if TAMIL_SCRIPT.search(text):
++        return 'ta'
++    return ''
++
++
++def strip_language_marker(text):
++    """Remove the language marker from a request, so it is not part of the change."""
++    result = text
++    for _, markers in REPLY_LANGUAGES:
++        for marker in markers:
++            pattern = re.compile(r'(?<![a-z])' + re.escape(marker) + r'(?![a-z])',
++                                 re.IGNORECASE)
++            result = pattern.sub(' ', result)
++    return ' '.join(result.split())
++
++
++# ── Which project did the owner mean? ─────────────────────────────────────────
++
++def match_projects(text, projects):
++    """The saved projects the sentence could mean.
++
++    Returns a list. An empty list means the sentence named none. More than one
++    means the owner was not specific enough, and JARVIS has to ask.
++    """
++    if not isinstance(text, str) or not text.strip():
++        return []
++    lowered = text.casefold()
++    matches = []
++    for project in projects:
++        name = getattr(project, 'name', '')
++        if not name:
++            continue
++        letters = [char for char in name if char.isalnum()]
++        if not letters:
++            continue
++        pattern = re.compile(r'[\s\-_]*'.join(re.escape(char) for char in letters),
++                             re.IGNORECASE)
++        if pattern.search(lowered):
++            matches.append(project)
++    return matches
++
++
++#: The headings of the final report, in the language the owner asked for.
++SUMMARY_LABELS = {
++    'en': {
++        'changed': 'Changed files', 'tests': 'Tests', 'saved': 'Saved to',
++        'diff': 'Reviewable diff', 'setup': 'Setup needed', 'none': 'no files changed',
++        'task': 'Task', 'folder': 'Folder', 'editor': 'Editor', 'change': 'Change',
++        'setup_needed': 'SETUP NEEDED',
++        'protected': 'Your uncommitted work was untouched',
++        'step_open': 'Open {project} in {editor}',
++        'step_change': 'Ask Codex to: {change}',
++        'step_tests': 'Run the configured tests: {command}',
++        'step_report': 'Reporting the changed files, the diff and the test results.',
++        'worktree_ready': ('Isolated worktree ready at {worktree}. '
++                           'Your uncommitted work is untouched.'),
++        'done': 'done', 'running': 'running', 'waiting': 'waiting',
++        'declined': 'declined', 'failed': 'failed',
++        'awaiting_approval': 'awaiting approval',
++        'setup_set_up': 'Set up',
++        'setup_not_found': 'the command was not found.',
++        'setup_choose': 'choose its executable in Settings.',
++        'setup_install': 'install it, or add "{command}" to PATH, or configure it as a launcher in Settings.',
++    },
++    'ta': {
++        'changed': 'மாற்றப்பட்ட கோப்புகள்', 'tests': 'பரிட்சை முடிவு',
++        'saved': 'சேமிக்கப்பட்ட இடம்', 'diff': 'பார்க்கக்கூடிய வேறுபாடு',
++        'setup': 'அமைப்பு தேவை', 'none': 'கோப்புகள் மாற்றப்படவில்லை',
++        'task': 'பணி', 'folder': 'கோப்புறை', 'editor': 'திருத்தி', 'change': 'மாற்றம்',
++        'setup_needed': 'அமைப்பு தேவை',
++        'protected': 'உங்கள் சேமிக்கப்படாத மாற்றங்கள் பாதுகாக்கப்பட்டன',
++        'step_open': '{project} திறக்க — {editor}',
++        'step_change': 'Codex-க்கு சொல்ல: {change}',
++        'step_tests': 'அமைக்கப்பட்ட பரிட்சைகள்: {command}',
++        'step_report': 'மாற்றப்பட்ட கோப்புகள், வேறுபாடு மற்றும் பரிட்சை முடிவுகளை அறிக்கிறது.',
++        'worktree_ready': ('தனி வேலைப்பாதை {worktree} இல் தயாராக உள்ளது. '
++                           'உங்கள் சேமிக்கப்படாத மாற்றங்கள் பாதுகாக்கப்பட்டன.'),
++        'done': 'முடிந்தது', 'running': 'நடக்கிறது', 'waiting': 'காத்திருக்கிறது',
++        'declined': 'நிராகரிக்கப்பட்டது', 'failed': 'தோல்வி',
++        'awaiting_approval': 'ஒப்புதலுக்காக காத்திருக்கிறது',
++        'setup_set_up': 'அமைக்கவும்',
++        'setup_not_found': 'கமாண்ட் கிடைக்கவில்லை.',
++        'setup_choose': 'Settings-இல் அதன் executable தேர்வு செய்யவும்.',
++        'setup_install': 'அதை நிறுவியவும், அல்லது "{command}" ஐ PATH-இல் சேர்க்கவும், அல்லது Settings-இல் launcher ஆக அமைக்கவும்.',
++    },
++    'fr': {
++        'changed': 'Fichiers modifiés', 'tests': 'Résultat des tests',
++        'saved': 'Enregistré dans', 'diff': 'Diff à examiner',
++        'setup': 'Configuration requise', 'none': 'aucun fichier modifié',
++        'task': 'Tâche', 'folder': 'Dossier', 'editor': 'Éditeur', 'change': 'Modification',
++        'setup_needed': 'CONFIGURATION REQUISE',
++        'protected': 'Vos modifications non enregistrées sont intactes',
++        'step_open': 'Ouvrir {project} dans {editor}',
++        'step_change': 'Demander à Codex : {change}',
++        'step_tests': 'Lancer les tests configurés : {command}',
++        'step_report': 'Rapport des fichiers modifiés, du diff et des résultats des tests.',
++        'worktree_ready': ('Copie de travail isolée prête dans {worktree}. '
++                           'Vos modifications non enregistrées sont intactes.'),
++        'done': 'terminé', 'running': 'en cours', 'waiting': 'en attente',
++        'declined': 'refusé', 'failed': 'échec',
++        'awaiting_approval': "en attente d'approbation",
++        'setup_set_up': 'Configurer',
++        'setup_not_found': 'la commande est introuvable.',
++        'setup_choose': 'choisissez son executable dans les Paramètres.',
++        'setup_install': 'installez-le, ou ajoutez "{command}" au PATH, ou configurez-le comme lanceur dans les Paramètres.',
++    },
++}
++
++
++def summary_labels(language):
++    """The report headings for a language, falling back to English."""
++    return SUMMARY_LABELS.get((language or '').casefold(), SUMMARY_LABELS['en'])
++
++
++#: The name of each language, for the instruction sent to the model.
++LANGUAGE_NAMES = {'ta': 'Tamil', 'en': 'English', 'fr': 'French'}
+diff --git a/tests/test_context_assistant.py b/tests/test_context_assistant.py
+new file mode 100644
+index 0000000..f9a1ace
+--- /dev/null
++++ b/tests/test_context_assistant.py
+@@ -0,0 +1,360 @@
++"""The context-aware task assistant: one conversation, many turns.
++
++WHAT IS COVERED
++    * The demo workflow, in Tanglish, is understood end to end.
++    * A follow-up refers to the task this conversation remembers, not to a
++      new one: continue, show the diff, run the tests again, stop this task.
++    * A resume checks that the worktree and the task are still there before
++      it continues.
++    * More than one matching project produces a short question, not a guess.
++    * A failed test is visible in the final report.
++    * The final report carries the changed files, the diff, the test outcome
++      and where the work was saved.
++    * A missing tool is reported as setup needed.
++    * The preferences stay editable and survive a restart.
++"""
++import os
++os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
++import shutil
++import subprocess
++import time
++
++import pytest
++from PySide6.QtWidgets import QApplication
++
++import desktop.app as desktop
++from developer_studio.context import ConversationMemory, TaskRecord, task_is_resumable
++from developer_studio.intents import (
++    detect_reply_language, match_projects, parse_coding_request, parse_follow_up,
++)
++from developer_studio.projects import (
++    SavedProject, assistant_language, configured_launchers, find_project, load_projects,
++    save_configured_launchers, save_projects, set_assistant_language, set_trusted_routine,
++    trusted_routines,
++)
++
++DEMO = ('JARVIS, website project-a VS Code-la open pannu. Contact form validation '
++        'fix panni tests run pannu. Enna change pannina nu Tamil-la sollu.')
++
++
++def git(folder, *args):
++    return subprocess.run(
++        ['git', '-C', str(folder), '-c', 'user.name=Test', '-c', 'user.email=test@example.com',
++         *args], capture_output=True, text=True, check=True)
++
++
++@pytest.fixture
++def project(tmp_path):
++    folder = tmp_path / 'project-a'
++    folder.mkdir()
++    git(folder, 'init', '-b', 'main')
++    (folder / 'app.py').write_text('def login():\n    return True\n', encoding='utf-8')
++    git(folder, 'add', '-A')
++    git(folder, 'commit', '-m', 'first')
++    return folder
++
++
++@pytest.fixture
++def jarvis(tmp_path, monkeypatch):
++    """A JARVIS window with the provider key stubbed out.
++
++    The window is destroyed, not just closed: a closed window keeps its
++    widgets and its OpenGL resources alive, and twenty of them make the
++    rest of the suite crawl.
++    """
++    app = QApplication.instance() or QApplication([])
++    window = desktop.Window(tmp_path)
++    monkeypatch.setattr(window, 'get_key', lambda provider: 'fake-key')
++    monkeypatch.setattr(desktop.QMessageBox, 'warning',
++                        staticmethod(lambda *args, **kwargs: None))
++    yield window, app
++    window.close()
++    window.deleteLater()
++    app.processEvents()
++
++
++def save_project(win, name='project-a', path=None, editor='VS Code', tests='pytest -q'):
++    projects = [item for item in load_projects(win.store)
++                if item.name.casefold() != name.casefold()]
++    projects.append(SavedProject(name=name, path=str(path), editor=editor, test_command=tests))
++    save_projects(win.store, projects)
++
++
++def fake_codex(monkeypatch):
++    def run(executable, folder, prompt, check_cancelled, **kwargs):
++        with open(os.path.join(kwargs['cwd'], 'app.py'), 'w', encoding='utf-8') as handle:
++            handle.write('def login():\n    return "checked"\n')
++        return 'Codex changed app.py.'
++
++    monkeypatch.setattr('developer_studio.codex_task.run_codex', run)
++    monkeypatch.setattr('developer_studio.codex_task.codex_executable', lambda: '/usr/bin/true')
++
++
++def drive(win, app, seconds=25):
++    """Approve whatever is pending and wait until everything has settled."""
++    deadline = time.monotonic() + seconds
++    settled = 0
++    while time.monotonic() < deadline:
++        app.processEvents()
++        if win.coding_pending is not None:
++            win.finish_coding_approval(True)
++            settled = 0
++            continue
++        if win.coding_worker is None and win.test_worker is None:
++            settled += 1
++            if settled > 5:
++                break
++        else:
++            settled = 0
++        time.sleep(0.01)
++    app.processEvents()
++
++
++def run_demo(win, app, monkeypatch, project, *, test_status='passed'):
++    """Drive the demo workflow from the chat screen to the final report."""
++    save_project(win, path=project)
++    fake_codex(monkeypatch)
++    monkeypatch.setattr('developer_studio.codex_task.run_local_tests',
++                        lambda folder, command, timeout=1800, cancel=None, observer=None:
++                        (test_status, '2 passed' if test_status == 'passed' else '1 failed'))
++    win.prompt.setPlainText(DEMO)
++    win.send()
++    drive(win, app)
++    return win.transcript.toPlainText()
++
++
++# ── understanding the request ────────────────────────────────────────────────
++
++def test_the_demo_workflow_is_understood():
++    projects = [SavedProject('project-a', '/a', 'VS Code', 'pytest -q')]
++    request = parse_coding_request(DEMO, projects, lambda text: 'VS Code')
++    assert request.project == 'project-a'
++    assert request.editor == 'VS Code'
++    assert request.open_project is True
++    assert request.make_change is True
++    assert request.run_tests is True
++    assert 'Contact form validation' in request.change
++    assert request.question == ''
++
++
++def test_the_demo_workflow_asks_for_the_answer_in_tamil():
++    assert detect_reply_language(DEMO) == 'ta'
++    assert detect_reply_language('Enna change pannina nu Tamil-la sollu') == 'ta'
++    assert detect_reply_language('tell me in french') == 'fr'
++    assert detect_reply_language('just do it') == ''
++
++
++def test_a_follow_up_is_recognised_in_three_languages():
++    assert parse_follow_up('continue that task') == 'continue'
++    assert parse_follow_up('continue pannu') == 'continue'
++    assert parse_follow_up('show the diff') == 'show_diff'
++    assert parse_follow_up('diff kaattu') == 'show_diff'
++    assert parse_follow_up('run the tests again') == 'run_tests'
++    assert parse_follow_up('tests run pannu') == 'run_tests'
++    assert parse_follow_up('stop this task') == 'stop'
++    assert parse_follow_up('stop pannu') == 'stop'
++    # A new request is not a follow-up.
++    assert parse_follow_up('add a stopwatch to the project') is None
++    assert parse_follow_up('fix the login page') is None
++
++
++def test_two_projects_named_in_one_sentence_are_both_found():
++    projects = [SavedProject('website', '/w', 'VS Code', ''),
++                SavedProject('project-a', '/a', 'VS Code', '')]
++    assert {project.name for project in match_projects('website project-a', projects)} == {
++        'website', 'project-a'}
++
++
++# ── the complete workflow ────────────────────────────────────────────────────
++
++def test_the_complete_workflow_reports_files_diff_tests_and_where_it_saved(
++        jarvis, monkeypatch, project):
++    win, app = jarvis
++    transcript = run_demo(win, app, monkeypatch, project)
++    assert 'app.py' in transcript
++    assert 'diff --git' in transcript
++    assert 'worktrees' in transcript
++    # The report is in Tamil, because the owner asked for Tamil.
++    assert 'பரிட்சை முடிவு' in transcript
++    assert 'மாற்றப்பட்ட கோப்புகள்' in transcript
++    assert 'சேமிக்கப்பட்ட இடம்' in transcript
++
++
++def test_a_failed_test_is_visible_in_the_final_report(jarvis, monkeypatch, project):
++    win, app = jarvis
++    transcript = run_demo(win, app, monkeypatch, project, test_status='failed')
++    assert 'failed' in transcript.lower()
++    rows = [row for row in win.store.tasks() if row['kind'] == 'codex_task']
++    assert rows and rows[0]['status'] == 'failed'
++
++
++def test_a_missing_editor_is_reported_as_setup_needed(jarvis, tmp_path):
++    win, app = jarvis
++    save_project(win, path=tmp_path, editor='PyCharm')
++    request = win.coding_request('open project-a and fix the login validation')
++    win.start_coding_task(request, 'open project-a')
++    card = win.chat_task_text.text()
++    # The card is written in the language the owner asked for; the app's
++    # default language is Tamil.
++    assert 'அமைப்பு தேவை' in card
++    assert 'PyCharm' in card
++    # The owner is told what to do about it, not only that it is missing.
++    assert 'PATH' in card or 'Settings' in card
++
++
++# ── more than one project could be meant ────────────────────────────────────
++
++def test_ambiguous_project_names_ask_a_short_question(jarvis, tmp_path):
++    win, app = jarvis
++    save_project(win, name='website', path=tmp_path / 'a')
++    save_project(win, name='project-a', path=tmp_path / 'b')
++    request = win.coding_request('website project-a fix the login')
++    assert request is None, 'JARVIS guessed instead of asking'
++    transcript = win.transcript.toPlainText()
++    assert 'Which project' in transcript
++    assert 'website' in transcript and 'project-a' in transcript
++
++
++def test_answering_the_question_starts_the_task(jarvis, tmp_path, project):
++    win, app = jarvis
++    save_project(win, name='website', path=tmp_path / 'a')
++    save_project(win, name='project-a', path=project)
++    assert win.coding_request('website project-a fix the login') is None
++    win.prompt.setPlainText('project-a')
++    win.send()
++    assert win.coding is not None
++    assert win.coding['project'].name == 'project-a'
++
++
++def test_one_matching_project_is_not_ambiguous(jarvis, tmp_path, project):
++    win, app = jarvis
++    save_project(win, name='project-a', path=project)
++    save_project(win, name='project-b', path=tmp_path / 'b')
++    request = win.coding_request('open project-a and fix the login')
++    assert request is not None and request.project == 'project-a'
++
++
++# ── follow-ups ──────────────────────────────────────────────────────────────
++
++def test_the_conversation_remembers_the_project_and_the_task(jarvis, monkeypatch, project):
++    win, app = jarvis
++    run_demo(win, app, monkeypatch, project)
++    context = win.memory.load()
++    assert context.project == 'project-a'
++    assert context.language == 'ta'
++    assert context.last_task is not None
++    assert context.last_task.worktree
++    assert context.last_task.starting_commit
++
++
++def test_a_follow_up_without_a_project_still_knows_the_project(jarvis, monkeypatch, project):
++    win, app = jarvis
++    run_demo(win, app, monkeypatch, project)
++    # A request that names no project uses the one this conversation chose.
++    request = win.coding_request('also fix the logout validation')
++    assert request is not None
++    assert request.project == 'project-a'
++
++
++def test_show_the_diff_reads_the_diff_back(jarvis, monkeypatch, project):
++    win, app = jarvis
++    run_demo(win, app, monkeypatch, project)
++    win.prompt.setPlainText('show the diff')
++    win.send()
++    transcript = win.transcript.toPlainText()
++    assert 'diff --git' in transcript
++    assert 'app.py' in transcript
++
++
++def test_run_the_tests_again_asks_for_approval(jarvis, monkeypatch, project):
++    win, app = jarvis
++    run_demo(win, app, monkeypatch, project)
++    win.prompt.setPlainText('run the tests again')
++    win.send()
++    # The test command was not trusted in this flow, so it asks.
++    assert win.coding_pending is not None
++    assert win.coding_pending[2].kind == 'run_project_tests'
++
++
++def test_stop_this_task_cancels_that_task_only(jarvis, monkeypatch, project):
++    win, app = jarvis
++    run_demo(win, app, monkeypatch, project)
++    win.prompt.setPlainText('stop this task')
++    win.send()
++    transcript = win.transcript.toPlainText()
++    assert 'stopped' in transcript.lower()
++    # The assistant itself is still running.
++    assert win.policy.stopped is False
++    rows = [row for row in win.store.tasks() if row['kind'] == 'codex_task']
++    assert rows and rows[0]['status'] == 'cancelled'
++
++
++def test_continue_that_task_resumes_from_the_saved_state(jarvis, monkeypatch, project):
++    win, app = jarvis
++    run_demo(win, app, monkeypatch, project)
++    win.prompt.setPlainText('continue that task')
++    win.send()
++    transcript = win.transcript.toPlainText()
++    assert 'Continuing project-a' in transcript
++    assert win.coding is not None
++    assert win.coding['project'].name == 'project-a'
++
++
++def test_continue_says_why_when_the_worktree_is_gone(jarvis, monkeypatch, project):
++    win, app = jarvis
++    run_demo(win, app, monkeypatch, project)
++    record = win.memory.load().last_task
++    shutil.rmtree(record.worktree, ignore_errors=True)
++    win.prompt.setPlainText('continue that task')
++    win.send()
++    transcript = win.transcript.toPlainText()
++    assert 'worktree' in transcript.lower()
++    assert 'gone' in transcript.lower() or 'no longer' in transcript.lower()
++
++
++def test_a_resume_checks_the_starting_commit(tmp_path):
++    """A task whose commit is gone cannot be continued."""
++    record = TaskRecord(ident='x', project='p', worktree=str(tmp_path),
++                        starting_commit='0' * 40)
++    allowed, reason = task_is_resumable(record)
++    assert allowed is False
++    assert 'commit' in reason.lower()
++
++
++# ── preferences ─────────────────────────────────────────────────────────────
++
++def test_the_preferences_are_editable_and_survive_a_restart(jarvis, tmp_path):
++    win, app = jarvis
++    save_project(win, name='project-a', path=tmp_path / 'a')
++    set_assistant_language(win.store, 'fr')
++    set_trusted_routine(win.store, 'open:project-a', True)
++    save_configured_launchers(win.store, [
++        {'name': 'Fleet', 'command': '/usr/bin/true', 'capabilities': ['open_project']}])
++    # A second window reads the same settings.
++    again = desktop.Window(tmp_path)
++    try:
++        assert assistant_language(again.store) == 'fr'
++        assert trusted_routines(again.store).get('open:project-a') is True
++        assert configured_launchers(again.store)[0]['name'] == 'Fleet'
++        assert load_projects(again.store)[0].name == 'project-a'
++    finally:
++        again.close()
++        again.deleteLater()
++        app.processEvents()
++
++
++def test_the_language_is_remembered_from_the_request(jarvis, monkeypatch, project):
++    win, app = jarvis
++    run_demo(win, app, monkeypatch, project)
++    assert assistant_language(win.store) == 'ta'
++
++
++def test_the_memory_module_survives_a_fresh_window(jarvis):
++    win, app = jarvis
++    memory = ConversationMemory(win.store)
++    memory.remember(project='project-a', editor='VS Code', language='ta')
++    again = ConversationMemory(win.store)
++    context = again.load()
++    assert context.project == 'project-a'
++    assert context.editor == 'VS Code'
++    assert context.language == 'ta'
+diff --git a/tests/test_personal_codex_assistant.py b/tests/test_personal_codex_assistant.py
+index 89a9bd9..e26e81a 100644
+--- a/tests/test_personal_codex_assistant.py
++++ b/tests/test_personal_codex_assistant.py
+@@ -231,8 +231,12 @@ def test_the_chat_task_card_shows_the_project_the_change_and_the_steps(
+         card = win.chat_task_text.text()
+         assert 'project-a' in card
+         assert 'login page validation' in card
+-        assert 'Open project-a in VS Code' in card
+-        assert 'Ask Codex to' in card
++        # The card is written in the language the owner asked for, so both
++        # wordings are accepted here.
++        assert ('Open project-a in VS Code' in card
++                or 'project-a திறக்க' in card)
++        assert ('Ask Codex to' in card
++                or 'Codex-க்கு சொல்ல' in card)
+         assert win.chat_task_card.isVisible() or not win.chat_task_card.isHidden()
+     finally:
+         win.close()
+diff --git a/tests/test_phase1_omega.py b/tests/test_phase1_omega.py
+index c83318f..88bb028 100644
+--- a/tests/test_phase1_omega.py
++++ b/tests/test_phase1_omega.py
+@@ -151,7 +151,10 @@ def test_a_failed_test_is_visible_in_the_final_result(tmp_path, monkeypatch, pro
+     try:
+         row = run_a_task(win, app, monkeypatch, project, test_status='failed')
+         transcript = win.transcript.toPlainText()
+-        assert 'Tests: failed' in transcript, transcript[-400:]
++        # The report is now written in the language the owner asked for, so
++        # both wordings are accepted here.
++        assert ('Tests: failed' in transcript
++                or 'பரிட்சை முடிவு: failed' in transcript), transcript[-400:]
+         assert row is not None
+         assert row['status'] == 'failed'
+         assert 'tests=failed' in row['detail']

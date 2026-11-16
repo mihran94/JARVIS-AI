@@ -14,7 +14,7 @@
 #
 #     python iphone-pwa/icons/restore-icons.py
 #
-# 615 files
+# 618 files
 811427777ef27750dc4a2b86240a03943355a35c020d18347b744316119736e7  .gitattributes
 d26faca3a8885396fa0aac85ff9c11be5c83eb2c95a4d9c2959c642bead72543  .github/workflows/android-integration.yml
 08a3cef7437a7b015f04dd505103f96fce5c896b7e7cae7f7aabfd6d1f5276e1  .github/workflows/import-upstream-sources.yml
@@ -280,6 +280,9 @@ c2a9012fba976456627b1788de3c317c8f605da30877b024a8e9da97a0842248  develop/README
 a2c09b15a5d88035c9a0dc69c923e64533a3fb6000ca524ef1ff683b5106b48e  develop/ai-brain-voice/review.md
 012f6a503036cad5696e51a02f2e29fbba98d0a1afc03c7c87c2b6b5f930f19e  develop/chat-first/changes.patch
 ac21ff408c0839d6c3fd095b8f77aef1ed34f13707b003f7c138cf64175972f3  develop/chat-first/review.md
+feafb98bb6fbf47d535e3b376b757b9c730532b8e06c0319997421def55c2784  develop/context-aware-assistant/changes.patch
+53d7d91cc54966719f82d9b747e6fe3f9ace23dfeefe5c3b54578d5a9f4c0f03  develop/context-aware-assistant/demo.md
+e53b53c51f977fbc7a0edc854548cb74abfd0296836180ea8e668972ba7be21b  develop/context-aware-assistant/review.md
 38b9c92e2df8077cc7ae6bbf2ad332799039f85f7d10069e0379cd8e3a57bf7b  develop/personal-codex-assistant/changes.patch
 bb7164a6f527de796ac6f31b24bdb13d096afcf3813ab50a9ffc501e7beeff14  develop/personal-codex-assistant/review.md
 a82b87d2a86653f8604bfafd914ca05430dea81259a882da64acf0aca98e06be  develop/video-editing-studio/changes.patch
