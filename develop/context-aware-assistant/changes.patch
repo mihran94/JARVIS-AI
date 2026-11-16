@@ -1,5 +1,5 @@
 diff --git a/desktop/app.py b/desktop/app.py
-index 5f9ea37..14077bb 100644
+index 5f9ea37..530bc2e 100644
 --- a/desktop/app.py
 +++ b/desktop/app.py
 @@ -14,6 +14,8 @@ from PySide6.QtWidgets import (
@@ -36,7 +36,7 @@ index 5f9ea37..14077bb 100644
          self.site_export = None
          self.news_panel = None
          self.site_draft = None
-@@ -2298,19 +2309,170 @@ class Window(QMainWindow):
+@@ -2298,19 +2309,208 @@ class Window(QMainWindow):
          if project is not None:
              set_trusted_routine(self.store, 'tests:' + project.name, enabled)
  
@@ -160,18 +160,25 @@ index 5f9ea37..14077bb 100644
 +        that question.
          """
          projects = load_projects(self.store)
+-        request = parse_coding_request(text, projects, editor_from_text)
 +        if not projects:
 +            return None
 +        matches = match_projects(text, projects)
 +        if len(matches) > 1:
 +            self.ask_which_project(text, matches)
 +            return None
-         request = parse_coding_request(text, projects, editor_from_text)
-+        if not request.project:
-+            # No project was named: use the one this conversation is about.
-+            remembered = self.memory.load().project
-+            if remembered and find_project(projects, remembered) is not None:
-+                request = replace(request, project=remembered)
++        # The project this conversation is about is the default, so a request
++        # that names no project still knows where to go.
++        remembered = self.memory.load().project
++        if remembered and find_project(projects, remembered) is None:
++            remembered = ''
++        request = parse_coding_request(text, projects, editor_from_text,
++                                       default_project=remembered)
++        if request.question:
++            # The request is not clear enough to act on: ask one short
++            # question instead of guessing.
++            self.ask_clarification(text, request, projects)
++            return None
          if request.project and (request.open_project or request.make_change or request.run_tests):
              return request
          return None
@@ -179,16 +186,48 @@ index 5f9ea37..14077bb 100644
 +    def ask_which_project(self, text, candidates):
 +        """Ask a short question when more than one project could be meant."""
 +        names = ', '.join(project.name for project in candidates)
-+        self.pending_clarification = {'text': text, 'candidates': list(candidates)}
++        self.pending_clarification = {'kind': 'project', 'text': text,
++                                      'candidates': list(candidates)}
 +        self.show_local_system_reply(
 +            text, f'Which project do you mean? Choose one: {names}.')
 +
++    def ask_clarification(self, text, request, projects):
++        """Ask the short question the request needs before anything happens.
++
++        Two kinds: the project to work on, and what to do in it. The answer
++        is folded back into the request, so the task that starts is the one
++        the owner actually described.
++        """
++        if request.question_kind == 'project':
++            names = ', '.join(project.name for project in projects[:6])
++            self.pending_clarification = {'kind': 'project', 'text': text,
++                                          'candidates': list(projects[:6])}
++            self.show_local_system_reply(
++                text, f'Which saved project is this for? Choose one: {names}.')
++            return
++        self.pending_clarification = {'kind': 'merge', 'text': text,
++                                      'question': request.question}
++        self.show_local_system_reply(text, request.question)
++
 +    def answer_clarification(self, text):
-+        """Use the owner's answer to pick the project, and start the task."""
++        """Use the owner's answer to finish the request, and start the task.
++
++        When the question was about the project, the answer has to name one
++        of them. When the question was about what to do, the answer is
++        folded back into the request, so "fix the contact form validation"
++        becomes the change the task works on.
++        """
 +        pending = self.pending_clarification
 +        self.pending_clarification = None
 +        if pending is None:
 +            return False
++        if pending['kind'] == 'merge':
++            # The owner said what to do: read the request again with it.
++            combined = pending['text'] + ' ' + text
++            request = self.coding_request(combined)
++            if request is not None:
++                self.start_coding_task(request, combined)
++            return True
 +        candidates = pending['candidates']
 +        matches = match_projects(text, candidates)
 +        if len(matches) != 1:
@@ -207,7 +246,7 @@ index 5f9ea37..14077bb 100644
      def coding_task_active(self):
          """True when a coding task is running or waiting for approval.
  
-@@ -2343,25 +2505,28 @@ class Window(QMainWindow):
+@@ -2343,25 +2543,28 @@ class Window(QMainWindow):
          launchers = configured_launchers(self.store)
          editor = request.editor or project.editor
          configured = next((item for item in launchers if item['name'] == editor), None)
@@ -240,7 +279,7 @@ index 5f9ea37..14077bb 100644
                  # A test command the owner has not trusted is approved on its
                  # own, separately from the change that produced it.
                  'approval': not (routines.get('tests:' + project.name)
-@@ -2377,6 +2542,13 @@ class Window(QMainWindow):
+@@ -2377,6 +2580,13 @@ class Window(QMainWindow):
          self.chat_task_id = self.store.task(
              'codex_task', f'{project.name} · {project.path} · {request.change or project.name}')
          self.store.finish(self.chat_task_id, 'running')
@@ -254,7 +293,7 @@ index 5f9ea37..14077bb 100644
          self.render_coding_card()
          self.advance_coding_task()
  
-@@ -2405,35 +2577,39 @@ class Window(QMainWindow):
+@@ -2405,35 +2615,39 @@ class Window(QMainWindow):
          project = coding['project']
          request = coding['request']
          status = coding['editor_status']
@@ -305,7 +344,7 @@ index 5f9ea37..14077bb 100644
          self.chat_task_text.setText('\n'.join(lines))
          self.chat_task_card.show()
          self.chat_task_diff.setEnabled(bool(outcome and outcome.diff))
-@@ -2654,7 +2830,8 @@ class Window(QMainWindow):
+@@ -2654,7 +2868,8 @@ class Window(QMainWindow):
          task = CodexTask(project, request.change or project.name,
                           test_command='',
                           worktree_root=self.root / 'worktrees',
@@ -315,7 +354,7 @@ index 5f9ea37..14077bb 100644
          self.worker_kind = 'coding'
          self.coding_worker = CodingTaskWorker(task, self.policy, self.policy.ticket())
          self.coding_worker.progress.connect(self.on_coding_progress)
-@@ -2730,25 +2907,61 @@ class Window(QMainWindow):
+@@ -2730,25 +2945,61 @@ class Window(QMainWindow):
          self.store.finish(self.chat_task_id, status, detail)
  
      def finish_coding_task(self):
@@ -381,7 +420,7 @@ index 5f9ea37..14077bb 100644
      def review_coding_diff(self):
          """Show the reviewable diff of the last task.
  
-@@ -3153,6 +3366,16 @@ class Window(QMainWindow):
+@@ -3153,6 +3404,16 @@ class Window(QMainWindow):
              self.prompt.clear()
              self.show_local_system_reply(text, local_reply)
              return
@@ -398,7 +437,7 @@ index 5f9ea37..14077bb 100644
          coding = self.coding_request(text)
          if coding is not None:
              self.prompt.clear()
-@@ -3213,9 +3436,15 @@ class Window(QMainWindow):
+@@ -3213,9 +3474,15 @@ class Window(QMainWindow):
              self.render_chat()
              self.transcript.appendPlainText('\nJARVIS\n')
              self.prompt.clear()
@@ -755,7 +794,7 @@ index 854d86a..f6030f8 100644
              'or configure it as a launcher in Settings.'),
      }
 diff --git a/developer_studio/intents.py b/developer_studio/intents.py
-index 83721f0..c13e127 100644
+index 83721f0..96cff49 100644
 --- a/developer_studio/intents.py
 +++ b/developer_studio/intents.py
 @@ -30,6 +30,10 @@ from dataclasses import dataclass
@@ -779,7 +818,46 @@ index 83721f0..c13e127 100644
      re.IGNORECASE)
  
  #: The Tamil case suffix that clings to the word before it, as in "VS Code-la".
-@@ -170,7 +175,7 @@ def parse_coding_request(text: str, projects, editor_from_text=None) -> CodingRe
+@@ -80,6 +85,7 @@ class CodingRequest:
+     run_tests: bool = False
+     report: bool = False
+     question: str = ''
++    question_kind: str = ''
+     #: True when the sentence asked for work, whether or not a project was named.
+     mentions_work: bool = False
+ 
+@@ -139,12 +145,17 @@ def _strip_phrases(text: str, phrases) -> str:
+     return result
+ 
+ 
+-def parse_coding_request(text: str, projects, editor_from_text=None) -> CodingRequest:
++def parse_coding_request(text: str, projects, editor_from_text=None,
++                          default_project: str = '') -> CodingRequest:
+     """Read a chat sentence as a coding request.
+ 
+     `projects` is the list of saved projects. `editor_from_text` is the
+     helper that finds an editor named in the sentence; it is passed in so
+     this module does not have to know how editors are found.
++
++    `default_project` is the project this conversation is already about. It
++    is used when the sentence names no project, so "also fix the logout" is
++    understood without repeating the name.
+     """
+     if not isinstance(text, str) or not text.strip():
+         return CodingRequest()
+@@ -157,6 +168,11 @@ def parse_coding_request(text: str, projects, editor_from_text=None) -> CodingRe
+             break
+ 
+     project = _match_project(working, projects)
++    if project is None and default_project:
++        for item in projects:
++            if getattr(item, 'name', '').casefold() == default_project.casefold():
++                project = item
++                break
+     editor = editor_from_text(working) if editor_from_text else ''
+ 
+     open_project = _contains(working, OPEN_PHRASES)
+@@ -170,7 +186,7 @@ def parse_coding_request(text: str, projects, editor_from_text=None) -> CodingRe
      if 'test' in working.casefold() and not make_change:
          run_tests = True
  
@@ -788,7 +866,7 @@ index 83721f0..c13e127 100644
      if project is not None:
          change = _strip_phrases(change, (project.name,))
          change = _CASE_SUFFIX.sub(' ', change)
-@@ -182,7 +187,7 @@ def parse_coding_request(text: str, projects, editor_from_text=None) -> CodingRe
+@@ -182,15 +198,26 @@ def parse_coding_request(text: str, projects, editor_from_text=None) -> CodingRe
      change = _strip_phrases(change, REPORT_PHRASES)
      change = _strip_phrases(change, CHANGE_PHRASES)
      change = _NOISE.sub(' ', change)
@@ -796,13 +874,82 @@ index 83721f0..c13e127 100644
 +    change = ' '.join(change.replace(',', ' ').replace('.', ' ').split()).strip(' -—,;:')
  
      question = ''
++    question_kind = ''
      if project is None:
-@@ -203,3 +208,190 @@ def parse_coding_request(text: str, projects, editor_from_text=None) -> CodingRe
+-        names = ', '.join(getattr(item, 'name', '') for item in projects[:6])
+-        question = ('Which saved project is this for?' + (f' Your saved projects are: {names}.'
+-                                                          if names else ''))
++        # The sentence asks for work but names no project.
++        if open_project or make_change or run_tests:
++            names = ', '.join(getattr(item, 'name', '') for item in projects[:6])
++            question = ('Which saved project is this for?' + (f' Your saved projects are: {names}.'
++                                                              if names else ''))
++            question_kind = 'project'
+     elif not (open_project or make_change or run_tests):
+-        question = f'What should JARVIS do in {project.name}?'
++        # The sentence names a project and asks for work, but never says what.
++        if asks_for_a_task(original):
++            question = f'What should JARVIS do in {project.name}?'
++            question_kind = 'action'
++    elif make_change and change_is_unclear(change):
++        # The sentence asks for a change, but the change is never said.
++        question = f'What change should JARVIS make in {project.name}?'
++        question_kind = 'change'
+ 
+     return CodingRequest(
+         mentions_work=bool(open_project or make_change or run_tests),
+@@ -202,4 +229,236 @@ def parse_coding_request(text: str, projects, editor_from_text=None) -> CodingRe
+         run_tests=run_tests,
          report=report,
          question=question,
++        question_kind=question_kind,
      )
 +
 +# ── Follow-ups ───────────────────────────────────────────────────────────────
++
++#: The words that stand in for "something" — a change that is never said.
++PLACEHOLDER_CHANGE = {
++    'it', 'that', 'this', 'them', 'these', 'those', 'something', 'anything',
++    'some change', 'a change', 'changes', 'the change', 'change', 'code',
++    'edhavadhu', 'edhavu', 'venna', 'va', 'illa', 'theerpu',
++}
++
++#: The phrases that mean "do something" without saying what.
++TASK_INTENT_PHRASES = (
++    'work on', 'work with', 'do something', 'do something about', 'do it',
++    'do the work', 'make a change', 'make some changes', 'some change',
++    'a change', 'take a look', 'look into', 'get started', 'have a go',
++    'edhavadhu', 'edhavu', 'maathu', 'theerpu', 'thakkali', 'venna',
++)
++
++#: The words that make a sentence a question about a project, not a task.
++QUESTION_MARKERS = (
++    'what', 'who', 'why', 'how', 'when', 'where', 'which', 'explain',
++    'tell me about', 'sollanum', 'means', 'difference', 'who wrote',
++)
++
++
++def change_is_unclear(change: str) -> bool:
++    """True when the requested change is a placeholder instead of a real one."""
++    text = ' '.join((change or '').casefold().split()).strip(' .,!?')
++    if not text:
++        return True
++    return all(word in PLACEHOLDER_CHANGE for word in text.split())
++
++
++def asks_for_a_task(text: str) -> bool:
++    """True when the sentence asks for work without saying what to do.
++
++    A question about a project ("what does project-a do?") is not a task, so
++    it never becomes a request to JARVIS.
++    """
++    lowered = (text or '').casefold()
++    if '?' in (text or ''):
++        return False
++    if any(marker in lowered for marker in QUESTION_MARKERS):
++        return False
++    return any(phrase in lowered for phrase in TASK_INTENT_PHRASES)
++
 +
 +#: A follow-up is a short message that refers to the task already running.
 +#: The phrases are the ones a person actually types, in the three languages
@@ -990,10 +1137,10 @@ index 83721f0..c13e127 100644
 +LANGUAGE_NAMES = {'ta': 'Tamil', 'en': 'English', 'fr': 'French'}
 diff --git a/tests/test_context_assistant.py b/tests/test_context_assistant.py
 new file mode 100644
-index 0000000..f9a1ace
+index 0000000..bc4cf34
 --- /dev/null
 +++ b/tests/test_context_assistant.py
-@@ -0,0 +1,360 @@
+@@ -0,0 +1,408 @@
 +"""The context-aware task assistant: one conversation, many turns.
 +
 +WHAT IS COVERED
@@ -1228,6 +1375,54 @@ index 0000000..f9a1ace
 +    save_project(win, name='project-b', path=tmp_path / 'b')
 +    request = win.coding_request('open project-a and fix the login')
 +    assert request is not None and request.project == 'project-a'
++
++
++# ── when the request is not clear enough to act on ──────────────────────────
++
++def test_an_unclear_change_asks_a_short_question(jarvis, tmp_path):
++    win, app = jarvis
++    save_project(win, path=tmp_path)
++    request = win.coding_request('open project-a and fix it')
++    assert request is None, 'JARVIS acted on a change that was never said'
++    transcript = win.transcript.toPlainText()
++    assert 'What change should JARVIS make in project-a?' in transcript
++
++
++def test_answering_the_change_question_starts_the_task(jarvis, tmp_path, monkeypatch):
++    win, app = jarvis
++    save_project(win, path=tmp_path)
++    fake_codex(monkeypatch)
++    assert win.coding_request('open project-a and fix it') is None
++    win.prompt.setPlainText('fix the contact form validation')
++    win.send()
++    assert win.coding is not None
++    assert 'contact form validation' in win.coding['request'].change
++    assert win.coding['project'].name == 'project-a'
++
++
++def test_a_task_request_without_an_action_asks_what_to_do(jarvis, tmp_path):
++    win, app = jarvis
++    save_project(win, path=tmp_path)
++    request = win.coding_request('project-a-la edhavadhu sollu')
++    assert request is None
++    assert 'What should JARVIS do in project-a?' in win.transcript.toPlainText()
++
++
++def test_a_question_about_a_project_is_not_a_task(jarvis, tmp_path):
++    win, app = jarvis
++    save_project(win, path=tmp_path)
++    request = win.coding_request('what does project-a do?')
++    assert request is None
++    assert 'What should JARVIS do' not in win.transcript.toPlainText()
++    assert 'Which project' not in win.transcript.toPlainText()
++
++
++def test_a_request_that_names_no_project_asks_which_one(jarvis, tmp_path):
++    win, app = jarvis
++    save_project(win, name='project-a', path=tmp_path)
++    request = win.coding_request('fix the login validation')
++    assert request is None
++    assert 'Which saved project is this for?' in win.transcript.toPlainText()
 +
 +
 +# ── follow-ups ──────────────────────────────────────────────────────────────

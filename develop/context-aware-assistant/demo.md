@@ -95,7 +95,9 @@ task again.
 
 ---
 
-## 3. When two projects could be meant
+## 3. When JARVIS is not sure, it asks
+
+### Two projects could be meant
 
 Save a second project also called `website`, then type:
 
@@ -110,6 +112,44 @@ Which project do you mean? Choose one: website, project-a.
 ```
 
 Answer with the project name and the task starts.
+
+### The change was never said
+
+```
+open project-a and fix it
+```
+
+```
+What change should JARVIS make in project-a?
+```
+
+Answer `fix the contact form validation` and that becomes the change the task
+works on.
+
+### The action was never said
+
+```
+project-a-la edhavadhu sollu
+```
+
+```
+What should JARVIS do in project-a?
+```
+
+Answer `fix the contact form validation` and the task starts with it.
+
+### No project is remembered either
+
+```
+fix the login validation
+```
+
+```
+Which saved project is this for? Choose one: project-a, project-b.
+```
+
+**A question about a project is not a task.** `what does project-a do?` stays
+ordinary chat — JARVIS never turns a question into a request to change code.
 
 ---
 

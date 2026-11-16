@@ -39,11 +39,11 @@ Then, in the same conversation:
 | File | Change | What it does |
 |---|---|---|
 | `developer_studio/context.py` | **new** | `ConversationMemory` — the remembered project, editor, language and last task, in the settings store. `TaskRecord`, `task_is_resumable()`, `describe_task()`. |
-| `developer_studio/intents.py` | changed | Follow-up phrases (`continue` / `show_diff` / `run_tests` / `stop`) in English and Tanglish, reply-language detection, `match_projects()`, and the report labels in Tamil, English and French. |
+| `developer_studio/intents.py` | changed | Follow-up phrases (`continue` / `show_diff` / `run_tests` / `stop`) in English and Tanglish, reply-language detection, `match_projects()`, the report labels in Tamil, English and French, and the rules that decide when a request is too unclear to act on. |
 | `developer_studio/codex_task.py` | changed | The task takes a language and reports in it; `reviewable_diff()` reads the diff back out of a worktree. |
 | `developer_studio/editors.py` | changed | The "setup needed" instruction is written in the owner's language. |
 | `desktop/app.py` | changed | The conversation memory, the follow-up handlers, the clarification question, the localised final report, and the reply language that goes to the model. |
-| `tests/test_context_assistant.py` | **new** | 21 tests: the whole workflow, ambiguous names, a failed test, cancel and resume, missing tools, the preferences. |
+| `tests/test_context_assistant.py` | **new** | 26 tests: the whole workflow, ambiguous names, unclear requests, a failed test, cancel and resume, missing tools, the preferences. |
 | `tests/test_personal_codex_assistant.py` | changed | Two card assertions accept the Tamil wording too. |
 | `tests/test_phase1_omega.py` | changed | One report assertion accepts the Tamil wording too. |
 | `docs/SOURCE_INTEGRITY.sha256` | changed | Regenerated for the new files. |
@@ -59,8 +59,9 @@ Then, in the same conversation:
 1. **A follow-up?** `parse_follow_up()` only matches when the message is
    *essentially only* the follow-up phrase — "add a stopwatch to the project"
    is a new task, not a stop request.
-2. **An answer to a question JARVIS asked?** If two projects matched, the
-   answer picks the project and the task starts.
+2. **An answer to a question JARVIS asked?** If two projects matched, or the
+   change was unclear, the answer is folded back into the request and the
+   task starts.
 3. **A coding request?** A sentence that names a saved project and asks for an
    open, a change or the tests.
 4. **A launch command or `/video`.**
@@ -80,10 +81,29 @@ straight away.
 
 ### 3.3 A request that names no project
 
-The project this conversation is about is used. That is the whole point of the
-memory, and it is why "also fix the logout validation" works.
+The project this conversation is about is used — it is passed to the parser as
+the default project. That is the whole point of the memory, and it is why
+"also fix the logout validation" works.
 
-### 3.4 The reply language
+When there is no remembered project either, and the sentence asks for work,
+JARVIS asks which project it is for.
+
+### 3.4 When the request is not clear enough to act on
+
+JARVIS asks one short question instead of guessing. There are three kinds, and
+each one is answered by folding the owner's reply back into the request, so
+the task that starts is the task the owner described.
+
+| The sentence | The question | What the answer does |
+|---|---|---|
+| "open project-a and fix it" | *What change should JARVIS make in project-a?* | The reply becomes the change. |
+| "project-a-la edhavadhu sollu" | *What should JARVIS do in project-a?* | The reply becomes the action. |
+| "fix the login validation" (no project remembered) | *Which saved project is this for?* | The reply names the project. |
+
+A **question about a project** is never turned into a task: "what does
+project-a do?" has a question word in it, so it stays ordinary chat.
+
+### 3.5 The reply language
 
 `detect_reply_language()` finds the language marker in the request
 (`Tamil-la sollu`, `tell me in french`, …). It is remembered, it is passed to
@@ -93,7 +113,7 @@ the card, the steps and the report are all written in that language.
 The app's saved language preference is the fallback, and the app's default is
 Tamil, so an unadorned request is answered in Tamil.
 
-### 3.5 The final report
+### 3.6 The final report
 
 The report always carries the same four things:
 
@@ -105,7 +125,7 @@ The report always carries the same four things:
 
 Nothing was pushed, merged or installed, and the report says so.
 
-### 3.6 A resume checks first
+### 3.7 A resume checks first
 
 `task_is_resumable()` confirms that the worktree folder is still there and
 that the starting commit still exists (`git cat-file -e <sha>^{commit}`). If
@@ -120,7 +140,7 @@ A resumed task never restarts work that already ran: the code is already
 changed in the worktree, so "continue" brings the card back and waits for your
 next instruction.
 
-### 3.7 Approval still decides everything
+### 3.8 Approval still decides everything
 
 The model's suggestion is a **proposed plan**. Every launch, write, test
 command and transfer still goes through the existing approval gateway
@@ -133,7 +153,7 @@ codex_task: project-a · C:\work\project-a · website - Contact form validation
 run_project_tests: project-a: pytest -q
 ```
 
-### 3.8 What is remembered
+### 3.9 What is remembered
 
 Only what is needed, and all of it editable:
 
@@ -149,11 +169,11 @@ Only what is needed, and all of it editable:
 
 ```
 $ python -m pytest -q
-678 passed, 3 skipped, 12 subtests passed in 298.79s
+683 passed, 3 skipped, 12 subtests passed in 307.20s
 ```
 
 * **657 passed, 3 skipped** before this section (base `7ae2f12`),
-* **+21 new tests** in `tests/test_context_assistant.py`,
+* **+26 new tests** in `tests/test_context_assistant.py`,
 * **0 failures**, no new skips.
 
 The new tests cover, in order:
@@ -170,6 +190,11 @@ The new tests cover, in order:
 | `test_ambiguous_project_names_ask_a_short_question` | JARVIS asks instead of guessing. |
 | `test_answering_the_question_starts_the_task` | The answer starts the right project. |
 | `test_one_matching_project_is_not_ambiguous` | One match is not a question. |
+| `test_an_unclear_change_asks_a_short_question` | "fix it" asks what the change is. |
+| `test_answering_the_change_question_starts_the_task` | The answer becomes the change the task works on. |
+| `test_a_task_request_without_an_action_asks_what_to_do` | "edhavadhu sollu" asks what to do. |
+| `test_a_question_about_a_project_is_not_a_task` | "what does project-a do?" stays ordinary chat. |
+| `test_a_request_that_names_no_project_asks_which_one` | With no remembered project, JARVIS asks which one. |
 | `test_the_conversation_remembers_the_project_and_the_task` | The project, the language and the task are remembered. |
 | `test_a_follow_up_without_a_project_still_knows_the_project` | The remembered project is used. |
 | `test_show_the_diff_reads_the_diff_back` | The diff comes from the worktree, not from a cache. |
