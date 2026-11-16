@@ -101,6 +101,17 @@
   .log li span { overflow-wrap: anywhere; white-space: pre-wrap; }
   .log li[data-kind="error"] span { color: #ff9fbe; }
   .log li[data-kind="reply"] span { color: #96f9ff; }
+  .tool-drawer { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+  .device-controls { padding: 0; border: 0; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 9px 12px; margin-top: 12px; }
+  .device-controls label { display: inline-flex; align-items: center; gap: 6px; }
+  .device-controls button, .device-controls select, .device-controls input {
+    background: #091b29; border: 1px solid var(--edge); color: var(--ink); border-radius: 4px; padding: 6px 8px;
+  }
+  .device-controls input { width: 65px; }
+  #network-report { min-height: 95px; }
+  #camera-source { max-width: min(235px, 50vw); }
+  .device-controls button { cursor: pointer; min-height: 32px; }
+  .device-controls button:disabled { opacity: .55; cursor: default; }
   .workspace { padding: 11px 14px; min-width: 0; overflow: auto; max-height: 30vh; }
   .workspace summary { cursor: pointer; color: var(--muted); font: 650 12px var(--mono); }
   .workspace-links { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
@@ -127,6 +138,7 @@
   }
   @media (max-width: 760px) {
     .hud { gap: 12px; }
+    .tool-drawer { grid-template-columns: minmax(0, 1fr); }
     .panes { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
     .core { grid-row: 1; grid-column: 1 / -1; }
     .core-stage { min-height: clamp(220px, 64vw, 375px); }
@@ -193,6 +205,7 @@
     </div>
   </div>
 
+  <div class="tool-drawer">
   <details class="panel workspace" id="workspace">
     <summary>Creative &amp; business workspaces</summary>
     <div class="workspace-links">
@@ -201,9 +214,41 @@
       <a href="https://www.fiverr.com/" target="_blank" rel="noopener noreferrer">Fiverr</a>
       <a id="download-draft" download="index.html" hidden>Download HTML draft</a>
     </div>
-    <p>Type <code>/flow</code>, <code>/higgsfield</code>, <code>/fiverr</code>, <code>/website</code>, or <code>/app</code>, followed by your brief.</p>
+    <p>Type <code>/flow</code>, <code>/higgsfield</code>, <code>/fiverr</code>, <code>/website</code>, <code>/app</code>, or <code>/upgrade</code> followed by your brief.</p>
     <textarea id="draft" aria-label="Draft to review and copy" readonly hidden></textarea>
   </details>
+  <details class="panel workspace" id="device-workspace">
+    <summary>Camera &amp; Windows devices</summary>
+    <fieldset class="device-controls" id="device-controls" disabled>
+      <legend class="sr-only">Windows device controls</legend>
+      <label>Camera <select id="camera-source"><option value="">Default camera</option></select></label>
+      <button type="button" data-device="camera-sources">Refresh cameras</button>
+      <button type="button" data-device="camera">Face preview</button>
+      <label>Brightness <input id="brightness" type="number" min="10" max="100" value="80" step="1" required></label>
+      <button type="button" data-device="brightness">Apply brightness</button>
+      <label>Power plan
+        <select id="power-plan">
+          <option value="balanced">Balanced</option>
+          <option value="saver">Power Saver</option>
+          <option value="high">High Performance</option>
+        </select>
+      </label>
+      <button type="button" data-device="power-plan">Apply plan</button>
+      <button type="button" data-device="kali">Kali WSL</button>
+      <button type="button" data-device="whatsapp">WhatsApp</button>
+      <button type="button" data-device="phone-link">Phone Link</button>
+    </fieldset>
+    <p id="device-note">Available in the Windows launcher.</p>
+    <section aria-label="Local network diagnostics">
+      <div class="device-controls" id="network-controls">
+        <button type="button" data-network="neighbors" disabled>Cached neighbors</button>
+        <button type="button" data-network="listeners" disabled>TCP listeners</button>
+        <button type="button" data-network="connections" disabled>Established TCP</button>
+      </div>
+      <textarea id="network-report" aria-label="Local network report" readonly hidden></textarea>
+    </section>
+  </details>
+  </div>
 
   <form class="panel command" id="command-form">
     <span class="prompt-mark" aria-hidden="true">&gt;_</span>
@@ -233,6 +278,7 @@ let activity = 'idle';
 let stateRevision = 0;
 let commandPending = false;
 let draftUrl;
+let devicePending = false;
 let metricsPending = false;
 let metricFailure = false;
 let cpuPreview = 22;
@@ -352,7 +398,7 @@ async function runCommand(event) {
   update_hud_state('PROCESSING...', '');
   const requestRevision = stateRevision;
   try {
-    const draft = text.match(/^(\/(?:flow|higgsfield|fiverr|website|app))(?:\s+([\s\S]+))?$/i);
+    const draft = text.match(/^(\/(?:flow|higgsfield|fiverr|website|app|upgrade))(?:\s+([\s\S]+))?$/i);
     if (hasEel && draft) {
       const kind = draft[1].toLowerCase();
       const result = await eel.create_draft(kind, draft[2] || '')();
@@ -385,6 +431,84 @@ async function runCommand(event) {
     commandInput.focus();
   }
 }
+
+function updateCameraOptions(sources) {
+  const select = byId('camera-source');
+  const previous = select.value;
+  select.replaceChildren(new Option('Default camera', ''));
+  for (const source of sources) select.add(new Option(source.name, source.id));
+  if (sources.some(source => source.id === previous)) select.value = previous;
+  else if (sources.length === 1) select.value = sources[0].id;
+}
+
+const deviceControls = byId('device-controls');
+deviceControls.disabled = !hasEel;
+deviceControls.addEventListener('click', async event => {
+  const button = event.target.closest('button[data-device]');
+  if (!button || !hasEel || devicePending) return;
+  const action = button.dataset.device;
+  let value = null;
+  let confirmation = button.textContent.trim() + '?';
+  if (action === 'camera') {
+    const source = byId('camera-source');
+    value = source.value || null;
+    confirmation = 'Open ' + source.selectedOptions[0].textContent
+      + ' for about eight seconds? Frames stay in the local preview.';
+  } else if (action === 'brightness') {
+    const level = byId('brightness');
+    if (!level.reportValidity()) return;
+    value = level.valueAsNumber;
+    confirmation = 'Set display brightness to ' + value + '%?';
+  } else if (action === 'power-plan') {
+    const plan = byId('power-plan');
+    value = plan.value;
+    confirmation = 'Activate the ' + plan.selectedOptions[0].textContent + ' power plan?';
+  }
+  if (action !== 'camera-sources' && !window.confirm(confirmation)) return;
+  devicePending = true;
+  deviceControls.disabled = true;
+  const note = byId('device-note');
+  note.textContent = 'Waiting for Windows…';
+  try {
+    const result = await eel.device_action(action, value)();
+    if (Array.isArray(result?.sources)) {
+      updateCameraOptions(result.sources);
+      note.textContent = result.sources.length
+        ? 'Choose your camera, then select Face preview.'
+        : 'Windows found no camera. Start the phone webcam app, then refresh.';
+      appendLog(note.textContent, 'info');
+    } else {
+      note.textContent = result?.message || result?.error || 'The Windows action returned no result.';
+      appendLog(note.textContent, result?.message ? 'reply' : 'error');
+    }
+  } catch {
+    note.textContent = 'Device action failed. Check the Windows launcher.';
+    appendLog(note.textContent, 'error');
+  } finally {
+    devicePending = false;
+    deviceControls.disabled = false;
+  }
+});
+
+const networkControls = byId('network-controls');
+const networkButtons = [...networkControls.querySelectorAll('button')];
+for (const button of networkButtons) button.disabled = !hasEel;
+networkControls.addEventListener('click', async event => {
+  const button = event.target.closest('button[data-network]');
+  if (!button || button.disabled) return;
+  const output = byId('network-report');
+  output.hidden = false;
+  output.value = 'Reading the local network table…';
+  for (const entry of networkButtons) entry.disabled = true;
+  try {
+    const result = await eel.network_report(button.dataset.network)();
+    output.value = result?.text || result?.error || 'No report received.';
+  } catch {
+    output.value = 'Local diagnostics are temporarily unavailable.';
+  } finally {
+    for (const entry of networkButtons) entry.disabled = false;
+  }
+});
 
 byId('command-form').addEventListener('submit', runCommand);
 if (hasEel) {

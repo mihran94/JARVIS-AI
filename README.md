@@ -58,7 +58,8 @@ A ChatGPT subscription is separate from provider API access. No keys are provisi
 Open **Commands** from Home & Chat to view the Command Center. Its CPU and
 RAM meters read local operating system counters. Select **Full screen** or
 press **F11** to toggle the view. Type `/time` or `/status` in chat for a local
-reply.
+reply. Open **Local network diagnostics** in Command Center to read cached
+IPv4 neighbors, listening TCP sockets or established TCP connections.
 
 ## Implemented
 

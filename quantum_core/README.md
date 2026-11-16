@@ -44,3 +44,47 @@ Drafts use Gemini without adding the briefs to general chat history. The HUD
 shows the draft as text. For an app draft, **Download HTML draft** saves a file
 for review. The coding model defaults to `gemini-2.5-pro`. Set
 `GEMINI_CODING_MODEL` if your key uses another coding model.
+
+## Camera and Windows devices
+
+Open **Camera & Windows devices** in the HUD. Camera preview and brightness
+control have optional dependencies:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-device.txt
+```
+
+- **Face preview** opens the selected camera for about eight seconds. Q or Esc
+  closes it early. Frames are processed locally and discarded. A result reports
+  face presence only.
+- **Brightness** accepts 10–100%. The HUD displays values reported by the
+  connected displays.
+- **Power plan** switches among Balanced, Power Saver and High Performance if
+  available. The HUD verifies the active Windows plan.
+- **Kali WSL** opens the installed `kali-linux` console for manual use.
+- **WhatsApp** and **Phone Link** ask Windows to open the installed app.
+  Choose the contact and start the call there.
+
+
+### Use an iPhone as the camera on a Windows PC
+
+1. Install [Camo Camera on the iPhone and Camo Studio on the PC](https://camo.com/studio).
+2. Connect the iPhone directly to the PC with a USB data cable. Open both Camo
+   apps and select your iPhone in Camo Studio. Verify the live feed there.
+3. In JARVIS, open **Camera & Windows devices** and select **Refresh cameras**.
+   Choose **Camo Camera**, preferably the DirectShow entry if two appear,
+   then select **Face preview**.
+4. If Camo Camera is missing, keep Camo Studio open and select **Refresh cameras**
+   after reconnecting the phone. If one capture entry fails, try the other
+   backend entry for the same camera.
+
+An external USB webcam uses the same source selector once Windows detects it.
+
+## Local network diagnostics and upgrade proposals
+
+Under **Camera & Windows devices**, choose **Cached neighbors**, **TCP listeners**
+or **Established TCP** to read the local operating system's tables. Reports stay
+in the HUD.
+
+Type `/upgrade` and a feature brief to draft a Gemini review plan with tests and
+rollback notes. The proposal appears in **Creative & business workspaces**.

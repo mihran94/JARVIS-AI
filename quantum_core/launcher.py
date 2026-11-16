@@ -11,6 +11,9 @@ from gevent.lock import Semaphore
 from gevent.threadpool import ThreadPool
 import psutil
 
+from device_tools import DEVICE_ACTIONS, DeviceError, run_device_action
+from local_diagnostics import DiagnosticError, REPORTS, read_network_report
+
 
 MODEL = 'gemini-2.5-flash'
 MAX_COMMAND_LENGTH = 4000
@@ -46,6 +49,11 @@ DRAFT_INSTRUCTIONS = {
     '/website': (
         'Draft website copy for the brief, in the language requested. '
         'Use only supplied facts and clearly mark any missing details. Return the draft only.'
+    ),
+    '/upgrade': (
+        'Write a reviewable proposal for this JARVIS feature brief. Include intended behavior, '
+        'likely areas to inspect, tests and rollback. Flag assumptions about the source. '
+        'Return a plan for a human maintainer.'
     ),
     '/app': (
         'Draft a complete standalone HTML5 document for this app idea. Return only HTML with inline CSS '
@@ -148,6 +156,30 @@ class QuantumCore:
             return 'Enter a command of 1 to 4,000 characters, Sir.'
         with self.turn:
             return self.run_turn(command.strip())
+
+    def device_action(self, action, value=None):
+        if not isinstance(action, str) or action not in DEVICE_ACTIONS:
+            return {'error': 'Choose an available device action.'}
+        with self.turn:
+            self.state('PROCESSING...')
+            try:
+                result = self.worker.apply(run_device_action, (action, value))
+            except DeviceError as error:
+                return {'error': str(error)}
+            finally:
+                self.state('ONLINE')
+        if action == 'camera-sources':
+            return {'sources': result}
+        return {'message': result}
+
+    def network_report(self, report):
+        if not isinstance(report, str) or report not in REPORTS:
+            return {'error': 'Choose an available local network report.'}
+        with self.turn:
+            try:
+                return {'text': self.worker.apply(read_network_report, (report,))}
+            except DiagnosticError as error:
+                return {'error': str(error)}
 
     def create_draft(self, command, brief):
         if not isinstance(command, str) or command not in DRAFT_INSTRUCTIONS:
@@ -296,6 +328,8 @@ def main():
     eel.expose('get_system_stats')(hud.system_metrics)
     eel.expose('process_jarvis_command')(hud.process_command)
     eel.expose('create_draft')(hud.create_draft)
+    eel.expose('device_action')(hud.device_action)
+    eel.expose('network_report')(hud.network_report)
     eel.start(
         'index.html', host='127.0.0.1', port=args.port,
         mode=None if args.browser == 'none' else args.browser, size=(1366, 768),

@@ -26,6 +26,7 @@ from desktop.tray import BackgroundControls
 from desktop.personal_theme import PERSONAL_STYLE
 from desktop.blue_orb import BlueOrb
 from desktop.system_metrics import CpuSampler, snapshot, format_snapshot
+from desktop.network_diagnostics import NetworkDiagnostics
 from desktop.network_metrics import NetworkSampler, format_network
 from desktop.voice_commands import parse_voice_command
 from desktop.task_routing import match_task
@@ -503,12 +504,21 @@ class Window(QMainWindow):
         self.dashboard_metrics.setWordWrap(True)
         self.dashboard_metrics.setObjectName('systemMetrics')
         layout.addWidget(self.dashboard_metrics)
+        self.button(layout, 'Local network diagnostics', self.open_network_diagnostics)
         for name in ('Video Editor', 'Coding Assistant', 'Business', 'Phone Remote', 'Task Queue'):
             self.button(layout, name, lambda checked=False, section=name: self.open_section(section))
         self.button(layout, 'Back to JARVIS Chat',
                     lambda: self.open_section('JARVIS Chat'))
         layout.addStretch()
         return page
+
+    def open_network_diagnostics(self):
+        if not self.policy.stopped:
+            dialog = NetworkDiagnostics(self)
+            try:
+                dialog.exec()
+            finally:
+                dialog.deleteLater()
 
     def toggle_fullscreen(self):
         self.setWindowState(self.windowState() ^ Qt.WindowState.WindowFullScreen)
