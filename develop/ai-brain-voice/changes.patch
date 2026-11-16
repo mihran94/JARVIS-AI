@@ -1460,10 +1460,10 @@ index 78abf04..2c5554c 100644
  
 diff --git a/tests/test_ai_brain_voice.py b/tests/test_ai_brain_voice.py
 new file mode 100644
-index 0000000..e567d14
+index 0000000..f37ba38
 --- /dev/null
 +++ b/tests/test_ai_brain_voice.py
-@@ -0,0 +1,464 @@
+@@ -0,0 +1,599 @@
 +"""Tests for the AI brain and voice section.
 +
 +WHAT IS COVERED
@@ -1482,6 +1482,8 @@ index 0000000..e567d14
 +"""
 +import os
 +os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
++
++import json
 +
 +import httpx
 +import pytest
@@ -1823,6 +1825,139 @@ index 0000000..e567d14
 +    result = check_model('OpenAI', PROVIDERS['OpenAI'].endpoint, 'gpt-4.1', 'fake',
 +                         transport=httpx.MockTransport(respond))
 +    assert result.available is True
++
++
++# ── the normal JARVIS chat flow ──────────────────────────────────────────────
++
++def chat_window(tmp_path, monkeypatch, handler, *, chat_provider='OpenAI'):
++    """A window wired to a fake transport, with the key store faked out.
++
++    The real `Window.send()`, the real `ChatWorker`, the real `ProviderRouter`
++    and the real `providers.chat.stream_chat` all run. Only the HTTP
++    transport is replaced, so the provider, the model and the key that reach
++    the wire are the ones the application really uses.
++    """
++    win = window(tmp_path)
++    seen = []
++
++    def respond(request):
++        seen.append(request)
++        return handler(request)
++
++    win.router._transport = httpx.MockTransport(respond)
++    monkeypatch.setattr(win, 'get_key', lambda provider: 'fake-key')
++    monkeypatch.setattr(desktop.QMessageBox, 'warning',
++                        staticmethod(lambda *args, **kwargs: None))
++    win.provider.setCurrentText(chat_provider)
++    win.save_provider()
++    return win, seen
++
++
++def ask(win, text='hello there'):
++    """Send one message and wait for the answer."""
++    win.prompt.setPlainText(text)
++    win.send()
++    worker = win.worker
++    if worker is not None:
++        worker.wait(8000)
++    QApplication.instance().processEvents()
++
++
++STREAM_ANSWER = (
++    'data: {"choices":[{"delta":{"content":"Vanakkam"}}]}\n\n'
++    'data: [DONE]\n\n'
++)
++
++
++def test_the_chosen_provider_really_receives_the_request(tmp_path, monkeypatch):
++    """The provider chosen in settings is the one the chat flow calls."""
++    win, seen = chat_window(tmp_path, monkeypatch,
++                            lambda request: httpx.Response(200, text=STREAM_ANSWER))
++    try:
++        ask(win)
++        assert seen, 'no request reached the provider'
++        assert str(seen[0].url) == PROVIDERS['OpenAI'].endpoint
++        body = json.loads(seen[0].content)
++        assert body['model'] == PROVIDERS['OpenAI'].default_model
++        assert seen[0].headers['Authorization'] == 'Bearer fake-key'
++        assert 'Vanakkam' in win.transcript.toPlainText()
++    finally:
++        win.close()
++
++
++def test_the_profile_decides_the_model_that_is_sent(tmp_path, monkeypatch):
++    """Choosing Deep must change the model in the real request."""
++    win, seen = chat_window(tmp_path, monkeypatch,
++                            lambda request: httpx.Response(200, text=STREAM_ANSWER),
++                            chat_provider='Gemini')
++    try:
++        win.provider_profile.setCurrentIndex(win.provider_profile.findData('deep'))
++        win.model.setText(profiles.PROFILE_MODELS['Gemini']['deep'])
++        win.save_provider()
++        ask(win)
++        assert seen, 'no request reached the provider'
++        body = json.loads(seen[0].content)
++        assert body['model'] == profiles.PROFILE_MODELS['Gemini']['deep']
++    finally:
++        win.close()
++
++
++def test_the_backup_provider_is_not_used_when_it_is_not_enabled(tmp_path, monkeypatch):
++    """No consent, no second provider, and no second bill."""
++    win, seen = chat_window(tmp_path, monkeypatch,
++                            lambda request: httpx.Response(503))
++    try:
++        win.backup_consent.setChecked(False)
++        ask(win)
++        assert len(seen) == 1, 'the backup provider was called without consent'
++        assert str(seen[0].url) == PROVIDERS['OpenAI'].endpoint
++    finally:
++        win.close()
++
++
++def test_the_backup_provider_is_used_when_it_is_enabled_and_allowed(tmp_path, monkeypatch):
++    """A provider that is not answering is the one case the backup is for."""
++    win, seen = chat_window(tmp_path, monkeypatch,
++                            lambda request: httpx.Response(503))
++    try:
++        win.backup_consent.setChecked(True)
++        win.backup_provider.setCurrentText('Gemini')
++        ask(win)
++        urls = [str(request.url) for request in seen]
++        assert urls == [PROVIDERS['OpenAI'].endpoint, PROVIDERS['Gemini'].endpoint]
++        # The backup consumed the consent; it is a single attempt.
++        assert win.backup_consent.isChecked() is False
++    finally:
++        win.close()
++
++
++def test_a_rejected_key_never_reaches_the_backup_provider(tmp_path, monkeypatch):
++    """A bad key is a configuration problem, not a reason to spend the backup."""
++    win, seen = chat_window(tmp_path, monkeypatch,
++                            lambda request: httpx.Response(401, text='private-secret'))
++    try:
++        win.backup_consent.setChecked(True)
++        win.backup_provider.setCurrentText('Gemini')
++        ask(win)
++        assert len(seen) == 1, 'a rejected key reached the backup provider'
++        transcript = win.transcript.toPlainText()
++        assert 'private-secret' not in transcript
++        assert 'KEY' in transcript.upper() or 'rejected' in transcript.lower()
++    finally:
++        win.close()
++
++
++def test_an_empty_key_stops_the_chat_before_any_request(tmp_path, monkeypatch):
++    """No key, no request, and a sentence that says which key is missing."""
++    win, seen = chat_window(tmp_path, monkeypatch,
++                            lambda request: httpx.Response(200, text=STREAM_ANSWER))
++    try:
++        monkeypatch.setattr(win, 'get_key', lambda provider: '')
++        ask(win)
++        assert seen == [], 'a request was sent without a key'
++        assert 'key' in win.transcript.toPlainText().lower()
++    finally:
++        win.close()
 +
 +
 +# ── the interface ────────────────────────────────────────────────────────────

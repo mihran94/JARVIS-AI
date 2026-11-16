@@ -6,6 +6,11 @@
 **Changes:** `develop/ai-brain-voice/changes.patch`
 **Status:** Ready for Review
 
+> **The Video Editing Studio section is built on top of this one.** Its patch
+> applies after this patch, because this section is submitted but not yet
+> merged into `main`. See
+> [develop/video-editing-studio/review.md](../video-editing-studio/review.md).
+
 ---
 
 ## 1. What this section does
@@ -89,7 +94,7 @@ non-retryable; the classification keeps it.
 | `desktop/speech.py` | "Speech unavailable: RuntimeError" became a sentence the owner can act on. |
 | `quantum_core/launcher.py` | `hud_info` names the provider as well as the model. |
 | `quantum_core/web/index.html` | The Command Center HUD names the provider, and the voice line now says **Thinking** instead of nothing. |
-| `tests/test_ai_brain_voice.py` | **New.** 40 tests. |
+| `tests/test_ai_brain_voice.py` | **New.** 46 tests. |
 | `docs/SOURCE_INTEGRITY.sha256` | Refreshed. **Deliberately left out of the patch** — see §8. |
 
 ## 4. How each requirement is met
@@ -118,14 +123,19 @@ Run from a clean worktree at the baseline, with the patch applied and the
 manifest refreshed:
 
 ```
-574 passed, 3 skipped, 1 failed
+580 passed, 3 skipped, 1 failed
 ```
 
 **Baseline before the patch** (`47ac1e21`, measured on the same machine, same
 command): `534 passed, 3 skipped, 1 failed`.
 
-The 40 extra passing tests are the 40 new tests in
+The 46 extra passing tests are the 46 new tests in
 `tests/test_ai_brain_voice.py`.
+
+Six of them drive the **real** chat entry point — `Window.send()` → `ChatWorker`
+→ `providers.chat.stream_chat` — with only the HTTP transport replaced, so the
+provider, the model and the key that reach the wire are the ones the application
+really uses.
 
 The single failure is **the same failure that exists on the baseline** and is **not**
 caused by this work:
@@ -159,7 +169,7 @@ create a conflict for no gain. Merge PR #28 first and this test goes green.
 | The model check sends no prompt | `test_the_model_check_sends_no_prompt` |
 | The HUD never receives a key | `test_the_hud_status_never_carries_a_key` |
 | Voice language, the four states, a missing voice | `test_the_speech_language_can_be_chosen`, `test_the_voice_states_use_the_words_the_owner_reads`, `test_a_missing_language_voice_is_reported_clearly` |
-| The whole existing suite still passes | 574 passed |
+| The whole existing suite still passes | 580 passed |
 
 ### HUD reviewed at both widths
 
@@ -269,7 +279,7 @@ python -m pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-Expected: `574 passed, 3 skipped`, and the one pre-existing layout failure until
+Expected: `580 passed, 3 skipped`, and the one pre-existing layout failure until
 PR #28 is merged.
 
 ## 9. Interaction with the open pull requests
