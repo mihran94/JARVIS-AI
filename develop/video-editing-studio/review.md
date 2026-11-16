@@ -1,14 +1,13 @@
 # Video Editing Studio — section review
 
 **Section slug:** `video-editing-studio`
-**Source baseline:** `47ac1e21d0682502ec117b457a0f16cc718070f6` ("Integrate the JARVIS Command Center HUD", 2026-11-16)
+**Source baseline:** `954af152a263` ("Merge AI Brain & Voice, provider fixes, and manual release candidate workflow", 2026-11-16)
 **Changes:** `develop/video-editing-studio/changes.patch`
 **Status:** Ready for Review
 
-> **This patch applies on top of the AI Brain & Voice patch.**
-> `develop/ai-brain-voice/changes.patch` is already submitted and is not yet
-> merged into `main`, so this section's changes were developed on top of it.
-> Apply them in that order — see §8.
+> **This patch applies directly to `main`.** The AI Brain & Voice section it
+> was originally stacked on has been merged, so this patch no longer needs it
+> first. See §8.
 
 ---
 
@@ -40,8 +39,9 @@ Now one brief produces:
 |---|---|
 | `video_studio/planning.py` | The plan carries `camera`, `lighting`, `sound` and `higgsfield_prompt` per shot. The model is asked for both engine prompts. `parse_plan` accepts the old shape too. New: `shot_list()` and `prompt_sheet()`. |
 | `video_studio/editing.py` | **New.** `editing_checklist()` (CapCut + DaVinci Resolve), `export_davinci()`, `clip_name()`. |
-| `desktop/app.py` | The Video Editor shows the shot list, a sheet chooser (Shot list / Flow prompts / Higgsfield prompts / Editing checklist), a **Copy to clipboard** button, and **Export for DaVinci Resolve**. |
+| `desktop/app.py` | The Video Editor shows the shot list, a sheet chooser (Shot list / Flow prompts / Higgsfield prompts / Editing checklist), a **Copy to clipboard** button, and **Export for DaVinci Resolve**. The export buttons no longer force the page to scroll sideways. |
 | `tests/test_video_editing_studio.py` | **New.** 14 tests, driven through the JARVIS window. |
+| `tests/test_ai_brain_voice.py` | Six end-to-end chat-flow tests carried over — see §6. |
 
 ### The two engine prompts
 
@@ -81,30 +81,20 @@ The Command Center HUD's device panels already carried `SIMULATION` and
 ## 4. Test results
 
 Measured on the same machine, same command, from a clean checkout of the
-baseline with the patches applied:
+baseline with the patch applied:
 
 | Tree | Result |
 |---|---|
-| Baseline `main` @ `47ac1e21` | `534 passed, 3 skipped, 1 failed` |
-| AI Brain & Voice applied | `580 passed, 3 skipped, 1 failed` |
-| AI Brain & Voice + this section | **`594 passed, 3 skipped, 1 failed`** |
+| Baseline `main` @ `954af152a263` | `577 passed, 3 skipped, **0 failed** |
+| This section applied | **`597 passed, 3 skipped, 0 failed`** |
 
-The 14 extra passing tests are the 14 new tests in
-`tests/test_video_editing_studio.py`.
+The 20 extra passing tests are the 14 new Video Editing Studio tests and the 6
+carried-over chat-flow tests.
 
-**The single failure is the same failure that exists on the baseline** and is
-not caused by this work:
-
-```
-tests/test_personal_layout.py::test_chat_and_phone_stay_readable_at_narrow_desktop_size
-assert 6 == 0
-```
-
-The iPhone pairing tab asks for sideways scrolling at a 680-pixel window.
-**PR #28 (`fix/windows-test-env-20261116`) already fixes it** and is green on
-all three workflows. It is deliberately not duplicated here, because PR #28 also
-changes `docs/SOURCE_INTEGRITY.sha256` and `providers/chat.py`, and copying it
-would create a conflict for no gain. **Merge PR #28 first.**
+**The suite is fully green.** PR #28 merged into `main` while this section was
+being prepared, so the iPhone pairing-tab layout failure that was open at the
+start of this cycle is now fixed on `main` and the suite passes with no
+failures at all.
 
 ### Passed with mocks
 
@@ -116,7 +106,7 @@ would create a conflict for no gain. **Merge PR #28 first.**
 | A plan without the cinematic fields is labelled partial | `test_a_plan_without_the_cinematic_fields_is_labelled_partial` |
 | One brief produces a different prompt for each engine | `test_one_brief_produces_a_prompt_for_both_engines` |
 | A one-prompt plan still answers for both engines | `test_the_prompt_sheet_of_a_partial_plan_still_answers` |
-| The checklist covers CapCut and DaVinci Resolve and every shot | `test_the_editing_checklist_covers_capcut_and_davinci_resolve` |
+| The editing checklist covers CapCut and DaVinci Resolve and every shot | `test_the_editing_checklist_covers_capcut_and_davinci_resolve` |
 | The checklist is built from the plan alone | `test_the_checklist_is_built_from_the_plan_alone` |
 | The copy button puts the chosen sheet on the clipboard | `test_the_copy_button_puts_the_sheet_on_the_clipboard` |
 | The page offers the sheets, the copy button and the Resolve export | `test_the_video_page_offers_the_sheets_the_copy_and_the_resolve_export` |
@@ -144,20 +134,6 @@ mocked:
 | **DaVinci Resolve** | Not installed here | Import the same two files and follow the Resolve checklist |
 | A **real Tamil voiceover** | No microphone | Record the narration and check every caption against it — the checklist timings are estimates |
 
-### A narrow-window defect fixed on the way
-
-The Video Editor page asked for 486 pixels inside a 442-pixel viewport at a
-680-pixel window, so the page scrolled sideways. The cause was the long labels
-on the full-width export buttons ("Export for DaVinci Resolve" and friends),
-whose minimum width was wider than the window.
-
-This defect is **pre-existing** — the baseline `main` has the same 44-pixel
-overflow — and it was found by rendering the page at a narrow width, which is
-part of this cycle's verification. The buttons now keep their natural width
-when there is room and give some of it back when there is not, the same
-approach PR #28 uses for the iPhone pairing buttons. `test_the_video_editor_page_stays_readable_at_narrow_desktop_size`
-now guards it.
-
 ## 5. Limitations
 
 * **The caption timings are estimated.** They come from the plan, which is
@@ -177,61 +153,48 @@ now guards it.
 * **No preview/ folder.** No Google AI Studio export was supplied, so the
   existing Video Editor page was used as the UI reference.
 
-## 6. Running this section on Windows
+## 6. Six carried-over tests
 
-```cmd
-git clone https://github.com/mihran94/JARVIS-AI.git
-cd JARVIS-AI
-py -3.12 -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements.txt
-.venv\Scripts\python.exe -m pip install pythonnet==3.2.1 pywin32==312
-setup.cmd
-START_JARVIS.cmd
-```
+`tests/test_ai_brain_voice.py` gains six tests that were written for the AI
+Brain & Voice section **after** it was first submitted, so that section was
+merged without them. They drive the **real** entry point — `Window.send()` →
+`ChatWorker` → `providers.chat.stream_chat` — with only the HTTP transport
+replaced, and they prove that the chosen provider really receives the request,
+that the profile really decides the model, that the backup is used **only**
+when it is enabled, and that a rejected key never reaches it.
 
-1. Open **Video Editor**.
-2. Type the Tamil brief, for example
-   `அய்யன் மரக்கன் தொடர்பான கதை — திறப்பு தரைப்பாடு, புதிய காட்சி, முடிவு`.
-3. Choose the primary engine and press **Generate with Gemini**.
-4. The **shot list** appears below, with duration, camera, lighting, sound and
-   the English subtitle for every shot.
-5. Use the chooser to switch between **Shot list**, **Flow prompts**,
-   **Higgsfield prompts** and **Editing checklist**, and press
-   **Copy to clipboard** for the one you want to paste.
-6. **Export for CapCut Desktop** or **Export for DaVinci Resolve** to get the
-   video, the captions and the checklist in one folder.
+They are carried here rather than left on `development` because the section they
+belong to is already merged. They are additive: no existing test was changed.
 
-FFmpeg and ffprobe must be on `PATH` for the preview and the exports.
+## 7. A narrow-window defect fixed on the way
 
-## 7. How it was verified
+The Video Editor page asked for 486 pixels inside a 442-pixel viewport at a
+680-pixel window, so the page scrolled sideways. The cause was the long labels
+on the full-width export buttons ("Export for DaVinci Resolve" and friends),
+whose minimum width was wider than the window.
 
-The whole workflow was driven **through the JARVIS window**, not around it:
-the brief was typed into the Video Editor, **Generate with Gemini** was
-pressed, and the provider was reached through the real `ProviderRouter` with
-only the HTTP transport replaced. The exports were run with the real FFmpeg.
+This defect was **pre-existing** — the baseline had the same 44-pixel overflow —
+and it was found by rendering the page at a narrow width, which is part of this
+cycle's verification. The buttons now keep their natural width when there is
+room and give some of it back when there is not, the same approach PR #28 used
+for the iPhone pairing buttons.
+`test_the_video_editor_page_stays_readable_at_narrow_desktop_size` now guards
+it.
 
 ## 8. Applying and reverting the patch
-
-This section's changes were developed on top of the AI Brain & Voice section,
-which is submitted but not yet merged. Apply them in that order.
 
 **Apply**
 
 ```cmd
-git checkout 47ac1e21d0682502ec117b457a0f16cc718070f6
-git apply ..\ai-brain-voice\changes.patch
+git checkout 954af152a263
 git apply develop\video-editing-studio\changes.patch
 python scripts\source_manifest.py
 python scripts\source_manifest.py --check
 ```
 
-If the AI Brain & Voice section has already been merged into `main`, this
-patch applies on its own.
-
 The manifest step is required: the patch deliberately leaves
-`docs/SOURCE_INTEGRITY.sha256` out, because it is a generated file and PR #28
-changes the same file. A conflicting generated file would make the patch refuse
-to apply for no reason.
+`docs/SOURCE_INTEGRITY.sha256` out, because it is a generated file. A
+conflicting generated file would make the patch refuse to apply for no reason.
 
 **Revert**
 
@@ -252,22 +215,12 @@ python -m pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-Expected: `594 passed, 3 skipped`, and the one pre-existing layout failure
-until PR #28 is merged.
+Expected: `597 passed, 3 skipped`, and no failures.
 
-## 9. Interaction with the open pull requests
-
-* **PR #28** fixes the one failing test and refreshes the provider model list.
-  Its hunks in `providers/chat.py` do not overlap with this section, and this
-  section does not touch `providers/chat.py` at all. Both change
-  `docs/SOURCE_INTEGRITY.sha256`, which is why the manifest is regenerated
-  rather than patched. **Merge PR #28 first.**
-* **PR #26** (versioned release candidates) and **PR #27** (certificate
-  pinning) touch other areas and do not overlap.
-
-## 10. What was not done
+## 9. What was not done
 
 * No provider, model or endpoint was invented, and no key was read, stored,
   logged or transmitted.
 * No PC action flow, approval dialog or security policy was changed.
-* No release was published and `main` was not touched.
+* No release was published and `main` was not touched. The owner merges and
+  publishes.

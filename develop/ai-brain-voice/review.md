@@ -4,12 +4,26 @@
 **Source baseline:** `47ac1e21d0682502ec117b457a0f16cc718070f6` ("Integrate the JARVIS Command Center HUD", 2026-11-16)
 **Submission branch:** `development` (from `9b7e611`)
 **Changes:** `develop/ai-brain-voice/changes.patch`
-**Status:** Ready for Review
+**Status:** **MERGED into `main` as `954af152a263`** (2026-11-16), together with
+PR #28 and the manual release-candidate workflow.
 
-> **The Video Editing Studio section is built on top of this one.** Its patch
-> applies after this patch, because this section is submitted but not yet
-> merged into `main`. See
-> [develop/video-editing-studio/review.md](../video-editing-studio/review.md).
+> **This patch is the section's record. Do not re-apply it** — the section is
+> already in `main`, so the patch will conflict. It stays here so the section
+> can be reviewed as it was submitted.
+>
+> Two things happened when the owner merged it, and both are worth knowing:
+>
+> 1. **The owner improved the classifier.** An HTTP 404 whose body names
+>    neither a model nor a URL is now reported as `unknown` with a hint that
+>    points at model availability, instead of being guessed as a model
+>    problem. That is better than what was submitted: the old code named the
+>    model first because it was the likelier cause, and the merged version says
+>    "check model availability" and lets the new availability check settle it.
+> 2. **Six end-to-end tests were not in the merge.** They were written after
+>    this section was first submitted, and they drive the real chat entry
+>    point. They are carried in the
+>    [Video Editing Studio patch](../video-editing-studio/changes.patch) and
+>    will land with it.
 
 ---
 
@@ -125,6 +139,9 @@ manifest refreshed:
 ```
 580 passed, 3 skipped, 1 failed
 ```
+
+(This was measured before PR #28 merged. On today's `main`, which includes
+PR #28 and this section, the suite is `577 passed, 3 skipped, 0 failed`.)
 
 **Baseline before the patch** (`47ac1e21`, measured on the same machine, same
 command): `534 passed, 3 skipped, 1 failed`.
