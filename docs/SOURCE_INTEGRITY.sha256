@@ -14,7 +14,7 @@
 #
 #     python iphone-pwa/icons/restore-icons.py
 #
-# 611 files
+# 613 files
 811427777ef27750dc4a2b86240a03943355a35c020d18347b744316119736e7  .gitattributes
 d26faca3a8885396fa0aac85ff9c11be5c83eb2c95a4d9c2959c642bead72543  .github/workflows/android-integration.yml
 08a3cef7437a7b015f04dd505103f96fce5c896b7e7cae7f7aabfd6d1f5276e1  .github/workflows/import-upstream-sources.yml
@@ -278,6 +278,8 @@ ff1ade418895aac4548d8531076e145192f5fb757dc971caf954061d52fbab0c  desktop/voice_
 c2a9012fba976456627b1788de3c317c8f605da30877b024a8e9da97a0842248  develop/README.md
 91852f65bdec6baf5efb7fa6a261bd141896353b0cc9f49770c00341672a7a33  develop/ai-brain-voice/changes.patch
 a2c09b15a5d88035c9a0dc69c923e64533a3fb6000ca524ef1ff683b5106b48e  develop/ai-brain-voice/review.md
+e0f3c6d2214ef4217d724272d13aa545ddeafb9b4e6efea05d74166ec529bc9f  develop/chat-first/changes.patch
+16f9e883f2947af32b90cdfa69ae1c20ede537c2958ff103b7cec58c1ee2311d  develop/chat-first/review.md
 a82b87d2a86653f8604bfafd914ca05430dea81259a882da64acf0aca98e06be  develop/video-editing-studio/changes.patch
 47aa23d28d9d61f20b01ac6dfb2639b2d4f213090862a7a60c06965d02a09fac  develop/video-editing-studio/review.md
 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  developer_studio/__init__.py

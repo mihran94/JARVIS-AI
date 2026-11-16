@@ -1,0 +1,472 @@
+diff --git a/automation/windows.py b/automation/windows.py
+index 7432812..abb5100 100644
+--- a/automation/windows.py
++++ b/automation/windows.py
+@@ -21,3 +21,28 @@ def launch_app(name):
+         raise RuntimeError('This Windows application is not installed.')
+     process = subprocess.Popen([str(executable)], shell=False, close_fds=True)
+     return f'Launch request accepted; process ID {process.pid}. Verify the app window on your desktop.'
++
++
++EDITOR_EXECUTABLES = {
++    'CapCut': 'CapCut.exe',
++    'DaVinci Resolve': 'Resolve.exe',
++    'After Effects': 'AfterFX.exe',
++}
++
++
++def editor_executable(name, value):
++    expected = EDITOR_EXECUTABLES[name]
++    if not value:
++        raise ValueError(f'Choose the installed {expected} in Settings → Plugins.')
++    path = Path(value)
++    if not path.is_absolute() or path.name.casefold() != expected.casefold() or not path.is_file():
++        raise ValueError(f'Choose an existing {expected} in Settings → Plugins.')
++    return path.resolve(strict=True)
++
++
++def launch_editor(name, value):
++    if sys.platform != 'win32':
++        raise RuntimeError('Editor launching is available on Windows only.')
++    executable = editor_executable(name, value)
++    process = subprocess.Popen([str(executable)], shell=False, close_fds=True)
++    return f'{name} launch requested (process {process.pid}).'
+diff --git a/desktop/app.py b/desktop/app.py
+index 6eba2c4..0d334e8 100644
+--- a/desktop/app.py
++++ b/desktop/app.py
+@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
+     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+     QPushButton, QListWidget, QStackedWidget, QPlainTextEdit, QLineEdit,
+     QComboBox, QMessageBox, QFormLayout, QTableWidget, QTableWidgetItem,
+-    QHeaderView, QCheckBox, QDialog, QFileDialog, QScrollArea, QLayout, QGridLayout,
++    QHeaderView, QCheckBox, QDialog, QFileDialog, QScrollArea, QLayout,
+     QProgressBar, QGroupBox, QSizePolicy,
+ )
+ from core.store import Store
+@@ -38,7 +38,7 @@ from video_studio.after_effects import after_effects_render
+ from video_studio.after_effects_timeline import timeline_executable, timeline_script
+ from video_studio.capcut import export_capcut
+ from video_studio.preview import media_tools, render_preview
+-from security.policy import Policy, Action, Stopped
++from security.policy import Action, Denied, Policy, Stopped
+ from security.vault import Vault
+ from providers import profiles as profile_models
+ from providers.chat import ProviderError, TransientProviderError
+@@ -47,7 +47,7 @@ from providers.models import check_model
+ from providers.registry import provider_names
+ from providers.router import ProviderRouter
+ from providers.stream_fallback import StreamTarget, stream_with_fallback, FallbackBlocked
+-from automation.windows import APPS, launch_app
++from automation.windows import APPS, EDITOR_EXECUTABLES, editor_executable, launch_app, launch_editor
+ from automation.inspection import inspect_windows
+ from developer_studio.workspace import Workspace
+ from developer_studio.codex_cli import codex_executable, run_codex
+@@ -185,6 +185,8 @@ class Window(QMainWindow):
+         self.active_model = None
+         self.workspace = Workspace(self.root / 'workspace')
+         self.video_plan = None
++        self.video_chat_brief = None
++        self.chat_launch = None
+         self.site_export = None
+         self.news_panel = None
+         self.site_draft = None
+@@ -219,9 +221,20 @@ class Window(QMainWindow):
+         stop.clicked.connect(self.stop)
+         header.addWidget(stop)
+         outer.addLayout(header)
++        navigation = QHBoxLayout()
++        self.chat_home_button = self.button(
++            navigation, 'Chat', lambda: self.open_section('JARVIS Chat'))
++        self.tools_button = QPushButton('Tools')
++        self.tools_button.setCheckable(True)
++        navigation.addWidget(self.tools_button)
++        self.button(navigation, 'Settings & Plugins', lambda: self.open_section('Settings & Safety'))
++        navigation.addStretch()
++        outer.addLayout(navigation)
+         body = QHBoxLayout()
+         self.nav = QListWidget()
+         self.nav.setFixedWidth(174)
++        self.nav.hide()
++        self.tools_button.toggled.connect(self.nav.setVisible)
+         self.pages = QStackedWidget()
+         body.addWidget(self.nav)
+         body.addWidget(self.pages, 1)
+@@ -733,16 +746,6 @@ class Window(QMainWindow):
+         self.system_metrics_label.hide()
+         hero.addLayout(details, 1)
+         layout.addLayout(hero)
+-        shortcuts = QGridLayout()
+-        for index, (label, section) in enumerate([
+-            ('Video', 'Video Editor'), ('Coding', 'Coding Assistant'),
+-            ('Phone', 'Phone Remote'), ('Camera', 'PC Control'),
+-            ('Commands', 'Command Center'),
+-        ]):
+-            button = QPushButton(label)
+-            button.clicked.connect(lambda checked=False, section=section: self.open_section(section))
+-            shortcuts.addWidget(button, index // 3, index % 3)
+-        layout.addLayout(shortcuts)
+         # The active brain sits on its own line. It is information the owner
+         # needs at a glance, and keeping it out of the provider row stops a
+         # long model name from forcing the chat page to scroll sideways.
+@@ -795,8 +798,21 @@ class Window(QMainWindow):
+         self.transcript.setReadOnly(True)
+         self.transcript.setMinimumHeight(158)
+         layout.addWidget(self.transcript, 1)
++        self.chat_approval = QWidget()
++        approval_row = QHBoxLayout(self.chat_approval)
++        approval_row.setContentsMargins(0, 0, 0, 0)
++        self.chat_approval_label = QLabel()
++        self.chat_approval_label.setWordWrap(True)
++        approval_row.addWidget(self.chat_approval_label, 1)
++        self.chat_approve_button = self.button(
++            approval_row, 'Approve', lambda: self.finish_chat_launch(True))
++        self.chat_decline_button = self.button(
++            approval_row, 'Decline', lambda: self.finish_chat_launch(False))
++        self.chat_approval.hide()
++        layout.addWidget(self.chat_approval)
+         self.prompt = QPlainTextEdit()
+-        self.prompt.setPlaceholderText('Ask JARVIS… தமிழ் / English / Français')
++        self.prompt.setPlaceholderText(
++            'Ask JARVIS… e.g. Open CapCut or /video followed by a brief')
+         self.prompt.setFixedHeight(78)
+         layout.addWidget(self.prompt)
+         self.read_replies = QCheckBox('Read replies aloud')
+@@ -935,7 +951,7 @@ class Window(QMainWindow):
+             suggest_workflow(self.video_brief.toPlainText(), self.video_engine.currentText()),
+         )
+ 
+-    def generate_video_plan(self):
++    def generate_video_plan(self, *, chat_brief=None):
+         if self.worker is not None or self.policy.stopped:
+             return
+ 
+@@ -949,6 +965,7 @@ class Window(QMainWindow):
+             self.chat_ticket = self.policy.ticket()
+             self.invalidate_video_plan()
+             self.video_status.setText(f'Generating a {engine} shot plan with Gemini…')
++            self.video_chat_brief = chat_brief
+             self.start_worker(provider, model, key, messages, 'video_plan')
+ 
+         self.notify(operation)
+@@ -989,6 +1006,8 @@ class Window(QMainWindow):
+ 
+         def operation():
+             self.policy.ticket()
++            if not self.plugin_enabled(tool):
++                raise ValueError(f'{tool} is disabled in Settings → Plugins.')
+             index = self.video_handoff_shot.currentIndex()
+             prompt = ''
+             if self.video_plan is not None and index >= 0:
+@@ -1697,6 +1716,8 @@ class Window(QMainWindow):
+             return
+         session = self.archives.currentData()
+         if session:
++            if self.chat_launch is not None:
++                self.finish_chat_launch(False)
+             self.session = session
+             self.store.set('session', session)
+             self.render_chat()
+@@ -1807,6 +1828,26 @@ class Window(QMainWindow):
+             self.button(advanced, label,
+                         lambda checked=False, name=name: self.open_section(name))
+         layout.addLayout(advanced)
++        plugins = QGroupBox('Plugins')
++        plugin_layout = QVBoxLayout(plugins)
++        for name in (*VIDEO_TOOLS, *EDITOR_EXECUTABLES):
++            row = QHBoxLayout()
++            enabled = QCheckBox(name)
++            enabled.setChecked(self.plugin_enabled(name))
++            enabled.toggled.connect(
++                lambda value, name=name: self.store.set('plugin:' + name, value))
++            row.addWidget(enabled)
++            row.addStretch()
++            if name in EDITOR_EXECUTABLES:
++                configured = self.store.get('editor_path:' + name, '')
++                label = QLabel('Executable configured' if configured else 'Setup needed')
++                row.addWidget(label)
++                button = QPushButton('Choose EXE')
++                button.clicked.connect(
++                    lambda _checked=False, name=name, label=label: self.choose_editor_path(name, label))
++                row.addWidget(button)
++            plugin_layout.addLayout(row)
++        layout.addWidget(plugins)
+         text = QPlainTextEdit()
+         text.setReadOnly(True)
+         text.setPlainText(
+@@ -1837,6 +1878,67 @@ class Window(QMainWindow):
+         layout.addWidget(text)
+         return page
+ 
++    def plugin_enabled(self, name):
++        return bool(self.store.get('plugin:' + name, True))
++
++    def choose_editor_path(self, name, label):
++        current = self.store.get('editor_path:' + name, '')
++        path, _ = QFileDialog.getOpenFileName(
++            self, f'Choose {name}', current, 'Windows application (*.exe)')
++        if path:
++            def save():
++                executable = editor_executable(name, path)
++                self.store.set('editor_path:' + name, str(executable))
++                label.setText(executable.name + ' configured')
++            self.notify(save)
++
++    def queue_chat_launch(self, command, name):
++        self.open_section('JARVIS Chat')
++        try:
++            ticket = self.policy.ticket()
++            if name in APPS:
++                action = Action('launch_app', name)
++                operation = lambda: launch_app(name)
++            else:
++                if not self.plugin_enabled(name):
++                    raise ValueError(f'{name} is disabled in Settings → Plugins.')
++                if name in VIDEO_TOOLS:
++                    url, _ = VIDEO_TOOLS[name]
++                    action = Action('open_video_tool', url)
++
++                    def operation():
++                        if not QDesktopServices.openUrl(QUrl(url)):
++                            raise ValueError(f'Could not open {name} in the browser.')
++                        return f'{name} opened in the browser.'
++                else:
++                    path = editor_executable(name, self.store.get('editor_path:' + name, ''))
++                    action = Action('launch_editor', str(path))
++                    operation = lambda: launch_editor(name, path)
++        except (Stopped, ValueError, OSError) as error:
++            self.show_local_system_reply(command, str(error))
++            return
++        self.chat_launch = (name, ticket, action, operation)
++        self.show_local_system_reply(command, f'Open {name}? Approve or decline below.')
++        self.chat_approval_label.setText(action.target)
++        self.chat_approval.show()
++
++    def finish_chat_launch(self, approved):
++        pending, self.chat_launch = self.chat_launch, None
++        self.chat_approval.hide()
++        if pending is None:
++            return
++        name, ticket, action, operation = pending
++        try:
++            self.policy.check(ticket)
++            if approved and name not in APPS and not self.plugin_enabled(name):
++                raise ValueError(f'{name} is disabled in Settings → Plugins.')
++            result = self.gateway.run(action, lambda _action: approved, operation)
++        except (Denied, Stopped, ValueError, OSError, RuntimeError) as error:
++            result = str(error)
++        self.store.message(self.session, 'system', result)
++        self.render_chat()
++        self.refresh_history()
++
+     def confirm(self, action):
+         extra = ('\nContent SHA-256: ' + action.digest) if action.digest else ''
+         return QMessageBox.question(self, 'Approve one action?',
+@@ -2060,6 +2162,8 @@ class Window(QMainWindow):
+     def new_chat(self):
+         if self.worker is not None:
+             return
++        if self.chat_launch is not None:
++            self.finish_chat_launch(False)
+         self.session = uuid.uuid4().hex
+         self.store.set('session', self.session)
+         self.render_chat()
+@@ -2086,6 +2190,27 @@ class Window(QMainWindow):
+             self.prompt.clear()
+             self.show_local_system_reply(text, local_reply)
+             return
++        name = parse_voice_command(text)
++        if name:
++            if self.chat_launch is not None:
++                self.statusBar().showMessage('Approve or decline the pending action first.', 10000)
++                return
++            self.prompt.clear()
++            self.queue_chat_launch(text, name)
++            return
++        if text.casefold().startswith('/video '):
++            if not allow_notes:
++                self.statusBar().showMessage(
++                    'Review the video brief and press Ask JARVIS to send it to Gemini.', 15000)
++                return
++            brief = text[7:].strip()
++            if brief:
++                self.open_section('JARVIS Chat')
++                self.video_brief.setPlainText(brief)
++                self.generate_video_plan(chat_brief=brief)
++                if self.worker is not None:
++                    self.prompt.clear()
++                return
+         if self.route_task(text):
+             self.prompt.clear()
+             return
+@@ -2175,6 +2300,12 @@ class Window(QMainWindow):
+                         'Shot plan ready, but the model left some fields out. The missing ones are marked.')
+             else:
+                 self.video_status.setText(status + ': ' + text)
++            if self.video_chat_brief is not None:
++                brief = self.video_chat_brief
++                self.video_chat_brief = None
++                reply = (self.video_preview.toPlainText()
++                         if status == 'completed' else self.video_status.text())
++                self.show_local_system_reply('/video ' + brief, reply)
+         elif self.worker_kind == 'news_briefing':
+             data = metrics or {}
+             parts = [text]
+@@ -2274,6 +2405,8 @@ class Window(QMainWindow):
+ 
+     def stop(self):
+         self.policy.stop()
++        if self.chat_launch is not None:
++            self.finish_chat_launch(False)
+         if self.news_panel is not None:
+             self.news_panel.disable_schedule()
+         self.refresh_draft_buttons()
+diff --git a/desktop/voice_commands.py b/desktop/voice_commands.py
+index db6d97d..c34b496 100644
+--- a/desktop/voice_commands.py
++++ b/desktop/voice_commands.py
+@@ -1,6 +1,9 @@
+ """Strictly local voice-intent parser; no arbitrary commands or shell execution."""
+ import re
+ 
++from automation.windows import EDITOR_EXECUTABLES
++from video_studio.planning import VIDEO_TOOLS
++
+ COMMANDS = {
+     "open notepad": "Notepad",
+     "launch notepad": "Notepad",
+@@ -14,6 +17,16 @@ COMMANDS = {
+     "கால்குலேட்டரை திற": "Calculator",
+ }
+ 
++aliases = {name.casefold(): name for name in (*VIDEO_TOOLS, *EDITOR_EXECUTABLES)}
++aliases.update({'flow': 'Google Flow', 'davinci': 'DaVinci Resolve'})
++for alias, name in aliases.items():
++    COMMANDS.update({
++        f'open {alias}': name,
++        f'{alias} open பண்ணு': name,
++        f'{alias} open pannu': name,
++        f'{alias} திற': name,
++    })
++
+ 
+ def parse_voice_command(text):
+     """Return allowlisted app name or None; require a complete utterance match."""
+diff --git a/tests/test_chat_first.py b/tests/test_chat_first.py
+new file mode 100644
+index 0000000..1896536
+--- /dev/null
++++ b/tests/test_chat_first.py
+@@ -0,0 +1,112 @@
++import time
++
++from PySide6.QtWidgets import QApplication, QCheckBox
++
++from desktop.app import Window
++from test_video_editing_studio import detailed_draft, generate
++
++
++def test_chat_starts_with_tools_hidden_and_one_click_back(tmp_path):
++    app = QApplication.instance() or QApplication([])
++    window = Window(tmp_path)
++    try:
++        assert window.pages.currentIndex() == window.page_indices['JARVIS Chat']
++        assert window.nav.isHidden()
++        window.tools_button.click()
++        assert not window.nav.isHidden()
++        window.open_section('Video Editor')
++        window.chat_home_button.click()
++        assert window.pages.currentIndex() == window.page_indices['JARVIS Chat']
++    finally:
++        window.close()
++        app.processEvents()
++
++
++def test_chat_open_checks_approval_settings_and_stop(tmp_path, monkeypatch):
++    app = QApplication.instance() or QApplication([])
++    window = Window(tmp_path)
++    opened = []
++    monkeypatch.setattr('desktop.app.QDesktopServices.openUrl',
++                        lambda url: opened.append(url.toString()) or True)
++    try:
++        window.prompt.setPlainText('Open Google Flow')
++        window.send()
++        assert not opened
++        assert window.chat_approval_label.text() == 'https://flow.google.com/'
++        window.chat_decline_button.click()
++        assert 'Action declined.' in window.transcript.toPlainText()
++
++        window.prompt.setPlainText('Higgsfield open பண்ணு')
++        window.send()
++        assert not opened
++        window.chat_approve_button.click()
++        assert opened == ['https://higgsfield.ai/ai-video']
++        assert window.pages.currentIndex() == window.page_indices['JARVIS Chat']
++
++        window.open_section('Settings & Safety')
++        page = window.pages.currentWidget()
++        setting = next(box for box in page.findChildren(QCheckBox) if box.text() == 'Higgsfield')
++        setting.setChecked(False)
++        window.prompt.setPlainText('Open Higgsfield')
++        window.send()
++        assert len(opened) == 1
++        assert 'disabled in Settings' in window.transcript.toPlainText()
++        window.prompt.setPlainText('Open Google Flow')
++        window.send()
++        assert window.chat_launch is not None
++        window.stop()
++        assert window.chat_launch is None
++        window.resume()
++        window.chat_approve_button.click()
++        assert len(opened) == 1
++    finally:
++        window.close()
++        app.processEvents()
++
++
++def test_chat_launches_only_the_configured_editor_after_approval(tmp_path, monkeypatch):
++    app = QApplication.instance() or QApplication([])
++    window = Window(tmp_path)
++    editor = tmp_path / 'CapCut.exe'
++    editor.touch()
++    window.store.set('editor_path:CapCut', str(editor))
++    launched = []
++    monkeypatch.setattr('desktop.app.launch_editor',
++                        lambda name, path: launched.append((name, path)) or 'CapCut launched.')
++    try:
++        window.prompt.setPlainText('CapCut open pannu')
++        window.send()
++        assert not launched
++        assert window.chat_approval_label.text() == str(editor)
++        window.chat_approve_button.click()
++        assert launched == [('CapCut', editor)]
++        assert 'CapCut launched.' in window.transcript.toPlainText()
++        assert window.worker is None
++    finally:
++        window.close()
++        app.processEvents()
++
++
++def test_video_command_keeps_the_plan_in_chat(tmp_path, monkeypatch):
++    app = QApplication.instance() or QApplication([])
++    window = Window(tmp_path)
++    monkeypatch.setattr(window, 'get_key', lambda _provider: 'fake-key')
++    try:
++        generate(window, detailed_draft())
++        window.prompt.setPlainText('/video ஒரு Tamil historical reel')
++        window.send(allow_notes=False)
++        assert window.worker is None
++        assert window.prompt.toPlainText() == '/video ஒரு Tamil historical reel'
++        window.send()
++        deadline = time.monotonic() + 5
++        while window.worker is not None and time.monotonic() < deadline:
++            app.processEvents()
++            time.sleep(0.005)
++        assert window.worker is None
++        assert window.pages.currentIndex() == window.page_indices['JARVIS Chat']
++        assert 'Slow push-in' in window.transcript.toPlainText()
++        assert '/video ஒரு Tamil historical reel' in window.transcript.toPlainText()
++        assert window.video_plan is not None
++    finally:
++        window.close()
++        app.processEvents()
