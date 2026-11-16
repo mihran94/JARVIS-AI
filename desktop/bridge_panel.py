@@ -150,9 +150,16 @@ class BridgePanel(QWidget):
         code_row = QHBoxLayout()
         self.pair_iphone_button = QPushButton('Pair this iPhone')
         self.pair_iphone_button.clicked.connect(self.pair_iphone)
+        # Two buttons side by side set a wide minimum on the whole row. On a
+        # machine whose default font is wider, that minimum was larger than
+        # the tab, so the tab asked for sideways scrolling. The buttons keep
+        # their natural width whenever there is room and shrink only when
+        # there is not.
+        self.pair_iphone_button.setMinimumWidth(60)
         code_row.addWidget(self.pair_iphone_button)
         self.code_button = QPushButton('Show the pairing code')
         self.code_button.clicked.connect(self.show_pairing_code)
+        self.code_button.setMinimumWidth(60)
         code_row.addWidget(self.code_button)
         code_layout.addRow(code_row)
         self.code_qr = QLabel()
