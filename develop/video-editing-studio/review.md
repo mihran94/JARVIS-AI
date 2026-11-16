@@ -83,7 +83,10 @@ The Command Center HUD's device panels already carried `SIMULATION` and
 The original MiniMax submission recorded 597 passing tests and 3 skips.
 The corrected submission passed all 63 targeted Video Editing Studio and
 AI Brain & Voice tests. These cover the DaVinci folder picker, action approval,
-package creation with FFmpeg, and Higgsfield fallback labels.
+package creation with FFmpeg, and Higgsfield fallback labels. Another 7 tests
+cover the existing voice-to-video workflow, narrow desktop layout and After Effects.
+The voice-to-video fixture checks that a legacy Flow prompt appears as a labeled
+fallback when the selected Higgsfield prompt is missing.
 
 ```cmd
 python -m pytest -q tests/test_video_editing_studio.py tests/test_ai_brain_voice.py

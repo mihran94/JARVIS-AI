@@ -791,6 +791,29 @@ index 0000000..fe978a3
 +    finally:
 +        win.close()
 +        app.processEvents()
+diff --git a/tests/test_video_planning.py b/tests/test_video_planning.py
+index 0cd7720..219bbd2 100644
+--- a/tests/test_video_planning.py
++++ b/tests/test_video_planning.py
+@@ -38,7 +38,7 @@ def test_rejects_incomplete_timeline():
+ 
+ @pytest.mark.parametrize(("command", "brief", "engine", "label"), [
+     ("வீடியோ எடிட்டர், archive footage", "archive footage", "Google Flow", "Flow prompt"),
+-    ("Higgsfield prompts தயார் செய்", "Higgsfield prompts தயார் செய்", "Higgsfield", "Higgsfield prompt"),
++    ("Higgsfield prompts தயார் செய்", "Higgsfield prompts தயார் செய்", "Higgsfield", "Google Flow fallback (adapt for Higgsfield)"),
+ ])
+ def test_voice_drafts_then_explicit_gemini_click_exports_plan(
+     tmp_path, monkeypatch, command, brief, engine, label
+@@ -78,6 +78,9 @@ def test_voice_drafts_then_explicit_gemini_click_exports_plan(
+         assert body["messages"][-1]["content"] == brief
+         assert engine in body["messages"][0]["content"]
+         assert f"{label}: Slow push-in." in win.video_preview.toPlainText()
++        if engine == "Higgsfield":
++            assert "PARTIAL PLAN" in win.video_preview.toPlainText()
++            assert "Higgsfield prompt: (not specified)" in win.video_preview.toPlainText()
+         assert win.store.messages(win.session) == []
+ 
+         approvals = []
 diff --git a/video_studio/editing.py b/video_studio/editing.py
 new file mode 100644
 index 0000000..d84f979
