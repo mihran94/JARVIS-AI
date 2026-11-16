@@ -1,0 +1,1930 @@
+diff --git a/desktop/app.py b/desktop/app.py
+index 2184d5c..fdd0192 100644
+--- a/desktop/app.py
++++ b/desktop/app.py
+@@ -40,7 +40,10 @@ from video_studio.capcut import export_capcut
+ from video_studio.preview import media_tools, render_preview
+ from security.policy import Policy, Action, Stopped
+ from security.vault import Vault
++from providers import profiles as profile_models
+ from providers.chat import ProviderError, TransientProviderError
++from providers.errors import Diagnosis, FailureKind, diagnose
++from providers.models import check_model
+ from providers.registry import provider_names
+ from providers.router import ProviderRouter
+ from providers.stream_fallback import StreamTarget, stream_with_fallback, FallbackBlocked
+@@ -127,6 +130,40 @@ class ChatWorker(QThread):
+         self.result.emit(status, text, metrics)
+ 
+ 
++class ModelCheckWorker(QThread):
++    """Ask a provider which models this key can use.
++
++    No prompt is sent and nothing is generated, so this costs nothing and
++    puts none of the owner's words on the provider's servers. The key is held
++    only for the length of the request and is cleared in the `finally`.
++    """
++
++    result = Signal(str, str, object)
++
++    def __init__(self, provider, endpoint, model, key, policy, ticket):
++        super().__init__()
++        self.provider, self.endpoint, self.model, self.key = provider, endpoint, model, key
++        self.policy, self.ticket = policy, ticket
++
++    def check(self):
++        self.policy.check(self.ticket)
++        if self.isInterruptionRequested():
++            raise Stopped('Model check cancelled.')
++
++    def run(self):
++        try:
++            self.check()
++            answer = check_model(self.provider, self.endpoint, self.model, self.key)
++            status, text, payload = 'completed', answer.detail, answer.as_dict()
++        except Stopped:
++            status, text, payload = 'cancelled', 'Model check cancelled.', {}
++        except Exception as error:
++            status, text, payload = 'failed', str(error), {}
++        finally:
++            self.key = ''
++        self.result.emit(status, text, payload)
++
++
+ class Window(QMainWindow):
+     def __init__(self, data_root):
+         super().__init__()
+@@ -194,6 +231,13 @@ class Window(QMainWindow):
+         self.add_page('PC Control', self.automation_page())
+         self.add_page('Coding Assistant', self.editor_page())
+         self.voice_panel = VoicePanel()
++        # The speech language is remembered, so the owner does not choose it
++        # again every time the application starts.
++        saved_language = self.store.get('voice_language')
++        if saved_language:
++            self.voice_panel.set_language(saved_language)
++        self.voice_panel.language.currentTextChanged.connect(
++            lambda name: self.store.set('voice_language', self.voice_panel.language_code))
+         self.voice_panel.wake_detected.connect(self.on_wake_detected)
+         self.voice_panel.utterance_detected.connect(self.on_voice_transcript)
+         self.voice_panel.cycle_finished.connect(self.schedule_local_voice_rearm)
+@@ -214,6 +258,9 @@ class Window(QMainWindow):
+         self.add_page('Task History', self.history_page(), primary=False)
+         self.add_page('AI Providers', self.provider_page(), primary=False)
+         self.add_page('System & Usage', self.usage_page(), primary=False)
++        # The chat page is built first, so the brain label can be filled in
++        # once every provider page exists.
++        self.refresh_brain_label()
+         self.nav.currentRowChanged.connect(self.show_primary_page)
+         self.nav.setCurrentRow(0)
+         self.statusBar().showMessage('Local history • Bridge listener is off by default • Keys configured on your PC')
+@@ -621,9 +668,12 @@ class Window(QMainWindow):
+             state = 'listening'
+         else:
+             state = 'idle'
++        # The four states the owner needs to read at a glance: Idle, Listening,
++        # Thinking and Speaking. ANSWERING means the answer is arriving and
++        # has not started being read aloud yet.
+         label = {
+-            'idle': 'STANDBY', 'listening': 'LISTENING', 'thinking': 'PROCESSING',
+-            'responding': 'RESPONDING', 'speaking': 'SPEAKING', 'stopped': 'STOPPED',
++            'idle': 'IDLE', 'listening': 'LISTENING', 'thinking': 'THINKING',
++            'responding': 'ANSWERING', 'speaking': 'SPEAKING', 'stopped': 'STOPPED',
+         }[state]
+         self.orb.set_state(state)
+         self.hud_orb.set_state(state)
+@@ -679,11 +729,19 @@ class Window(QMainWindow):
+             button.clicked.connect(lambda checked=False, section=section: self.open_section(section))
+             shortcuts.addWidget(button, index // 3, index % 3)
+         layout.addLayout(shortcuts)
++        # The active brain sits on its own line. It is information the owner
++        # needs at a glance, and keeping it out of the provider row stops a
++        # long model name from forcing the chat page to scroll sideways.
++        self.brain_label = QLabel()
++        self.brain_label.setObjectName('systemMetrics')
++        self.brain_label.setWordWrap(True)
++        self.brain_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
++        layout.addWidget(self.brain_label)
+         row = QHBoxLayout()
+         self.chat_provider = QComboBox()
+         self.chat_provider.addItems(provider_names())
+-        self.chat_provider.setCurrentText('Gemini')
+-        self.chat_provider.currentTextChanged.connect(self.guard_local_voice_provider)
++        self.chat_provider.setCurrentText(self.stored_chat_provider())
++        self.chat_provider.currentTextChanged.connect(self.on_chat_provider_changed)
+         row.addWidget(self.chat_provider)
+         self.new_chat_button = self.button(row, 'New chat', self.new_chat)
+         layout.addLayout(row)
+@@ -708,6 +766,10 @@ class Window(QMainWindow):
+         self.backup_provider = QComboBox()
+         self.backup_provider.addItems(provider_names())
+         self.backup_provider.setCurrentIndex(1)
++        saved_backup = self.store.get('backup_provider')
++        if saved_backup in provider_names():
++            self.backup_provider.setCurrentText(saved_backup)
++        self.backup_provider.currentTextChanged.connect(self.on_backup_provider_changed)
+         settings_layout.addWidget(self.backup_provider)
+         archives = QHBoxLayout()
+         self.archives = QComboBox()
+@@ -1377,6 +1439,12 @@ class Window(QMainWindow):
+         layout.addWidget(self.advanced_provider)
+         self.provider_advanced_panel = QWidget()
+         advanced_form = QFormLayout(self.provider_advanced_panel)
++        self.provider_profile = QComboBox()
++        self.provider_profile.currentIndexChanged.connect(self.on_profile_changed)
++        advanced_form.addRow('Model profile', self.provider_profile)
++        self.profile_note = QLabel()
++        self.profile_note.setWordWrap(True)
++        advanced_form.addRow('Profile', self.profile_note)
+         advanced_form.addRow('Model ID', self.model)
+         advanced_form.addRow('HTTPS endpoint', self.endpoint)
+         self.button(advanced_form, 'Use recommended model', self.reset_provider_model)
+@@ -1386,6 +1454,8 @@ class Window(QMainWindow):
+         self.button(layout, 'Save provider settings', self.save_provider)
+         self.button(layout, 'Remove stored key', self.remove_key)
+         self.probe_button = self.button(layout, 'Test saved provider connection (uses API)', self.test_connection)
++        self.availability_button = self.button(
++            layout, 'Check model availability (free, no prompt sent)', self.check_model_availability)
+         self.provider_health = QLabel()
+         self.provider_health.setWordWrap(True)
+         layout.addWidget(self.provider_health)
+@@ -1534,7 +1604,7 @@ class Window(QMainWindow):
+         def operation():
+             ticket = self.policy.ticket()
+             provider = self.provider.currentText()
+-            model = self.store.get('model:' + provider, self.router.spec(provider).default_model)
++            model = self.selected_model(provider)
+             if self.secret.text() or self.model.text().strip() != model:
+                 raise ValueError('Save the provider configuration before testing.')
+             if not self.confirm(Action('provider_check',
+@@ -1548,6 +1618,37 @@ class Window(QMainWindow):
+             return 'Testing saved provider configuration…'
+         self.notify(operation)
+ 
++    def check_model_availability(self):
++        """Check that the selected model is one this key can actually use."""
++        if self.worker is not None:
++            return
++
++        def operation():
++            provider = self.provider.currentText()
++            model = self.selected_model(provider)
++            if self.secret.text() or self.model.text().strip() != model:
++                raise ValueError('Save the provider configuration before checking.')
++            self.chat_ticket = self.policy.ticket()
++            spec = self.router.spec(provider)
++            key = '' if spec.local else self.get_key(provider)
++            self.worker_kind = 'model_check'
++            self.worker = ModelCheckWorker(provider, spec.endpoint, model, key,
++                                           self.policy, self.chat_ticket)
++            self.worker.result.connect(self.on_model_check_result)
++            self.worker.finished.connect(self.on_finished)
++            self.availability_button.setEnabled(False)
++            self.worker.start()
++            return 'Checking which models this key can use…'
++        self.notify(operation)
++
++    def on_model_check_result(self, status, text, payload=None):
++        """Show the answer: which model, and whether the provider serves it."""
++        if status == 'completed':
++            self.provider_health.setText(text)
++        else:
++            self.provider_health.setText(status.capitalize() + ': ' + text)
++        self.statusBar().showMessage(text, 20000)
++
+     def get_key(self, provider):
+         if self.router.spec(provider).local:
+             # A local model needs no key and must never be given one.
+@@ -1572,7 +1673,8 @@ class Window(QMainWindow):
+         self.worker.result.connect(self.on_result)
+         self.worker.finished.connect(self.on_finished)
+         for button in (self.send_button, self.new_chat_button, self.clear_button,
+-                       self.archive_button, self.probe_button, self.generate_button, self.repair_button):
++                       self.archive_button, self.probe_button, self.generate_button,
++                       self.repair_button, self.availability_button):
+             button.setEnabled(False)
+         self.refresh_draft_buttons()
+         if kind == 'video_plan':
+@@ -1698,12 +1800,67 @@ class Window(QMainWindow):
+         self.notify(operation)
+ 
+     def reset_provider_model(self):
+-        self.model.setText(self.router.spec(self.provider.currentText()).default_model)
++        """Put the recommended model of the chosen profile back."""
++        provider = self.provider.currentText()
++        profile = self.provider_profile.currentData()
++        if profile:
++            self.model.setText(profile_models.model_for(provider, profile))
++        else:
++            self.model.setText(self.router.spec(provider).default_model)
++
++    def stored_chat_provider(self):
++        """The primary chat provider the owner chose, or the default."""
++        saved = self.store.get('chat_provider')
++        names = provider_names()
++        return saved if saved in names else 'Gemini'
++
++    def on_chat_provider_changed(self, name):
++        """Remember the primary chat provider and show what it means."""
++        self.store.set('chat_provider', name)
++        self.guard_local_voice_provider()
++        self.refresh_brain_label()
++
++    def on_backup_provider_changed(self, name):
++        """Remember the backup provider. It is only used when it is enabled."""
++        self.store.set('backup_provider', name)
++
++    def stored_profile(self, provider):
++        """The model profile the owner selected for a provider."""
++        saved = self.store.get('profile:' + provider)
++        names = profile_models.profile_names(provider)
++        return saved if saved in names else profile_models.default_profile(provider)
++
++    def selected_model(self, provider, profile=None):
++        """The model that will actually be used for a provider.
++
++        A provider with profiles uses the model of the chosen profile. A model
++        the owner typed by hand always wins, because that was a deliberate
++        choice and must not be quietly replaced by a default.
++        """
++        profile = profile if profile is not None else self.stored_profile(provider)
++        override = self.store.get('model:' + provider + ':' + profile)
++        if override:
++            return override
++        stored = self.store.get('model:' + provider)
++        if stored:
++            default = self.router.spec(provider).default_model
++            if not profile_models.supports_profiles(provider) or stored != default:
++                return stored
++        return profile_models.model_for(provider, profile,
++                                        self.router.spec(provider).default_model)
++
++    def refresh_brain_label(self):
++        """Show the provider, the profile and the model that chat will use."""
++        provider = self.chat_provider.currentText()
++        profile = self.stored_profile(provider)
++        model = self.selected_model(provider)
++        self.brain_label.setText('Active brain: ' + profile_models.describe(provider, profile, model))
+ 
+     def load_provider(self):
+         provider = self.provider.currentText()
+         spec = self.router.spec(provider)
+-        self.model.setText(self.store.get('model:' + provider) or spec.default_model)
++        self.load_provider_profiles(provider)
++        self.model.setText(self.selected_model(provider))
+         self.endpoint.setText(spec.endpoint)
+         self.secret.clear()
+         health = self.store.get('health:' + provider + ':' + self.model.text())
+@@ -1716,18 +1873,50 @@ class Window(QMainWindow):
+         except Exception:
+             self.key_status.setText('Windows vault unavailable on this system')
+ 
++    def load_provider_profiles(self, provider):
++        """Fill the profile chooser with the profiles this provider offers."""
++        self.provider_profile.blockSignals(True)
++        self.provider_profile.clear()
++        names = profile_models.profile_names(provider)
++        if names:
++            for name in names:
++                self.provider_profile.addItem(profile_models.PROFILE_LABELS.get(name, name), name)
++            current = self.stored_profile(provider)
++            index = self.provider_profile.findData(current)
++            self.provider_profile.setCurrentIndex(index if index >= 0 else 0)
++            self.profile_note.setText(
++                profile_models.PROFILE_NOTES.get(self.provider_profile.currentData(), ''))
++        else:
++            self.provider_profile.addItem('One model for this provider', '')
++            self.profile_note.setText(
++                'This provider has a single model, so there is no profile to choose.')
++        self.provider_profile.blockSignals(False)
++
++    def on_profile_changed(self):
++        """Show the model of the chosen profile."""
++        provider = self.provider.currentText()
++        profile = self.provider_profile.currentData()
++        self.profile_note.setText(profile_models.PROFILE_NOTES.get(profile, ''))
++        if profile:
++            self.model.setText(self.selected_model(provider, profile))
++        self.refresh_brain_label()
++
+     def save_provider(self):
+         def operation():
+             self.policy.ticket()
+             provider = self.provider.currentText()
+             spec = self.router.spec(provider)
++            profile = self.provider_profile.currentData()
+             model = self.model.text().strip() or spec.default_model
+             if spec.local:
+                 if self.secret.text():
+                     raise ValueError('The local model does not use an API key.')
+                 self.store.set('model:' + provider, model)
++                if profile:
++                    self.store.set('profile:' + provider, profile)
+                 self.load_provider()
+                 self.chat_provider.setCurrentText(provider)
++                self.refresh_brain_label()
+                 return 'Local model saved. Ready for chat; connection has not been tested.'
+             if self.secret.text():
+                 try:
+@@ -1737,8 +1926,14 @@ class Window(QMainWindow):
+                 finally:
+                     self.secret.clear()
+             self.store.set('model:' + provider, model)
++            if profile:
++                # The model is remembered per profile, so switching back to the
++                # other profile does not lose the owner's own model ID.
++                self.store.set('model:' + provider + ':' + profile, model)
++                self.store.set('profile:' + provider, profile)
+             self.load_provider()
+             self.chat_provider.setCurrentText(provider)
++            self.refresh_brain_label()
+             return 'Provider saved. Ready for chat; connection has not been tested.'
+         self.notify(operation)
+ 
+@@ -1795,7 +1990,7 @@ class Window(QMainWindow):
+             self.chat_ticket = self.policy.ticket()
+             provider = self.chat_provider.currentText()
+             key = self.get_key(provider)
+-            model = self.store.get('model:' + provider, self.router.spec(provider).default_model)
++            model = self.selected_model(provider)
+             backup = None
+             if self.backup_consent.isChecked():
+                 name = self.backup_provider.currentText()
+@@ -1804,7 +1999,7 @@ class Window(QMainWindow):
+                 if self.router.spec(provider).local:
+                     # A local model never falls through to a paid cloud provider.
+                     raise ValueError('The local model never falls back to a cloud provider.')
+-                backup = StreamTarget(name, self.store.get('model:' + name, self.router.spec(name).default_model),
++                backup = StreamTarget(name, self.selected_model(name),
+                                       self.get_key(name))
+             prompt = self.prompt.toPlainText().strip()
+             messages = [message for message in self.store.messages(self.session)
+@@ -1936,7 +2131,8 @@ class Window(QMainWindow):
+         self.refresh_draft_buttons()
+         self.set_ai_visual_state('stopped' if self.policy.stopped else 'idle')
+         for button in (self.send_button, self.new_chat_button, self.clear_button,
+-                       self.archive_button, self.probe_button, self.generate_button, self.repair_button):
++                       self.archive_button, self.probe_button, self.generate_button,
++                       self.repair_button, self.availability_button):
+             button.setEnabled(not self.policy.stopped)
+         self.chat_provider.setEnabled(True)
+         self.backup_provider.setEnabled(True)
+@@ -1993,7 +2189,8 @@ class Window(QMainWindow):
+         self.state.setText('● READY · MANUAL APPROVAL')
+         if self.worker is None:
+             for button in (self.send_button, self.new_chat_button, self.clear_button,
+-                       self.archive_button, self.probe_button, self.generate_button, self.repair_button):
++                       self.archive_button, self.probe_button, self.generate_button,
++                       self.repair_button, self.availability_button):
+                 button.setEnabled(True)
+         self.review_pc_action_button.setEnabled(True)
+ 
+diff --git a/desktop/speech.py b/desktop/speech.py
+index bbaf93d..87a9054 100644
+--- a/desktop/speech.py
++++ b/desktop/speech.py
+@@ -59,6 +59,11 @@ class SpeechWorker(QThread):
+                 engine.runAndWait()
+             self.completed.emit("Cancelled" if self.isInterruptionRequested() else "Speech finished")
+         except Exception as exc:
+-            self.completed.emit("Speech unavailable: " + type(exc).__name__)
++            # "Speech unavailable: RuntimeError" told the owner nothing they
++            # could act on. This says what failed and what to do instead.
++            self.completed.emit(
++                'Speech is unavailable on this machine (' + type(exc).__name__ + '). '
++                'Check that a Windows speech voice is installed and that the audio output '
++                'works, or use the text chat instead.')
+         finally:
+             self._engine = None
+diff --git a/desktop/voice_panel.py b/desktop/voice_panel.py
+index a5d68a2..6d31d2e 100644
+--- a/desktop/voice_panel.py
++++ b/desktop/voice_panel.py
+@@ -14,7 +14,7 @@ import sys
+ 
+ from PySide6.QtCore import QThread, QTimer, Signal
+ from PySide6.QtWidgets import (
+-    QCheckBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
++    QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+     QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
+ )
+ 
+@@ -25,6 +25,14 @@ from voice.windows_stt import WindowsSpeechRecognizer
+ from voice.windows_tts import WindowsTextToSpeech
+ 
+ 
++#: The languages the owner can speak and hear, and what they are called.
++LANGUAGE_NAMES = {
++    'en': 'English',
++    'ta': 'தமிழ் (Tamil)',
++    'fr': 'Français (French)',
++}
++
++
+ def default_recognizer_factory(consent, language='en'):
+     """The Windows recogniser. It raises `VoiceUnavailable` off Windows."""
+     return WindowsSpeechRecognizer(consent=consent, language=language)
+@@ -104,10 +112,11 @@ class VoiceSpeakerWorker(QThread):
+     failed = Signal(str)
+     playing = Signal()
+ 
+-    def __init__(self, speaker_factory, text):
++    def __init__(self, speaker_factory, text, language='en'):
+         super().__init__()
+         self._speaker_factory = speaker_factory
+         self._text = text
++        self._language = language
+ 
+     def run(self):
+         apartment = None
+@@ -123,14 +132,26 @@ class VoiceSpeakerWorker(QThread):
+             speaker = self._speaker_factory()
+             if self.isInterruptionRequested():
+                 return
+-            if (self._speaker_factory is default_speaker_factory
+-                    and any('஀' <= char <= '௿' for char in self._text)):
+-                speaker.select_language('ta')
++            language = self._language
++            if language != 'ta' and any('஀' <= char <= '௿' for char in self._text):
++                # No other voice can read the Tamil script, so Tamil text is
++                # always spoken with a Tamil voice when one is installed.
++                language = 'ta'
++            if hasattr(speaker, 'select_language') and not speaker.select_language(language):
++                if language != 'en':
++                    # English is the system default, so a missing English voice
++                    # is not worth refusing to speak over. A missing Tamil or
++                    # French voice is, because the text would be read wrongly.
++                    self.failed.emit(
++                        'No ' + LANGUAGE_NAMES.get(language, language) + ' speech voice is '
++                        'installed. Install the Windows speech language pack, or choose another '
++                        'language.')
++                    return
+             self.playing.emit()
+             if hasattr(speaker, 'speak_interruptibly'):
+                 speaker.speak_interruptibly(self._text, self.isInterruptionRequested)
+             elif not self.isInterruptionRequested():
+-                speaker.speak(self._text)
++                speaker.speak(self._text, language)
+         except VoiceError as error:
+             self.failed.emit(str(error))
+         except Exception:
+@@ -196,6 +217,13 @@ class VoicePanel(QWidget):
+         self.phrase = QLineEdit(self.matcher.canonical_phrase or DEFAULT_PHRASE)
+         self.phrase.textChanged.connect(self.set_phrase)
+         consent_layout.addRow('Wake phrase', self.phrase)
++        self.language = QComboBox()
++        for code, name in LANGUAGE_NAMES.items():
++            self.language.addItem(name, code)
++        self.language.setCurrentIndex(0)
++        self.language.setToolTip(
++            'Windows speech recognition needs an installed recogniser for this language.')
++        consent_layout.addRow('Speech language', self.language)
+         self.allow = QCheckBox('Allow the microphone')
+         self.allow.toggled.connect(self.set_allowed)
+         consent_layout.addRow(self.allow)
+@@ -286,6 +314,21 @@ class VoicePanel(QWidget):
+             return
+         self.refresh()
+ 
++    @property
++    def language_code(self):
++        """The language the owner chose for recognition and playback."""
++        code = self.language.currentData() if hasattr(self, 'language') else None
++        return code if code in LANGUAGE_NAMES else 'en'
++
++    def set_language(self, code):
++        """Choose the speech language. An unknown code is refused."""
++        if code not in LANGUAGE_NAMES:
++            return False
++        index = self.language.findData(code)
++        if index >= 0:
++            self.language.setCurrentIndex(index)
++        return True
++
+     def listen(self, mode='once'):
+         """Start one recognition request on a worker thread."""
+         if self.playback_busy:
+@@ -302,7 +345,8 @@ class VoicePanel(QWidget):
+         if mode == 'continuous':
+             self.continuous = True
+         self.discard_recognition = False
+-        self.worker = VoiceWorker(self.consent, self._recognizer_factory, mode=mode)
++        self.worker = VoiceWorker(self.consent, self._recognizer_factory, mode=mode,
++                                  language=self.language_code)
+         self.worker.transcript.connect(self.on_transcript)
+         self.worker.wake_call.connect(self.on_wake_call)
+         self.worker.failed.connect(self.on_recognition_failed)
+@@ -401,7 +445,7 @@ class VoicePanel(QWidget):
+             self.pending_speech = text
+             self.cancel_listening()
+             return
+-        self.speaker_worker = VoiceSpeakerWorker(self._speaker_factory, text)
++        self.speaker_worker = VoiceSpeakerWorker(self._speaker_factory, text, self.language_code)
+         self.speaker_worker.failed.connect(self.status)
+         self.speaker_worker.playing.connect(self.on_playback_started)
+         self.speaker_worker.finished.connect(self.on_playback_finished)
+diff --git a/providers/chat.py b/providers/chat.py
+index 7412ffb..4e87794 100644
+--- a/providers/chat.py
++++ b/providers/chat.py
+@@ -3,6 +3,7 @@ from dataclasses import dataclass
+ import json
+ import time
+ import httpx
++from providers.errors import BACKUP_ELIGIBLE_KINDS, Diagnosis, FailureKind, diagnose
+ from security.policy import Stopped
+ 
+ 
+@@ -30,10 +31,58 @@ class ProviderError(RuntimeError):
+     pass
+ 
+ 
+-class TransientProviderError(ProviderError):
++class ProviderFailure(ProviderError):
++    """A provider failure that carries a classified diagnosis.
++
++    The message is the diagnosis written for a human, so the same failure
++    reads the same in a message box, in the usage log and in a screenshot.
++    The diagnosis itself is available for anything that needs the kind.
++    """
++
++    def __init__(self, diagnosis):
++        if isinstance(diagnosis, str):
++            super().__init__(diagnosis)
++            self.diagnosis = None
++            return
++        super().__init__(f'{diagnosis.title}. {diagnosis.message} {diagnosis.hint}')
++        self.diagnosis = diagnosis
++
++    @property
++    def kind(self):
++        """The failure kind, or None for a failure that was not classified."""
++        return self.diagnosis.kind if self.diagnosis else None
++
++
++class TransientProviderError(ProviderFailure):
+     """A connection failure or temporary server failure; excludes auth and quota."""
+ 
+ 
++def _raise_for_status(provider, response, model):
++    """Turn a failed HTTP answer into a classified failure.
++
++    The body is read so the failure can be classified, and it is never passed
++    on: a provider can echo the key back, and the message ends up on screen.
++    """
++    body = ''
++    try:
++        body = response.read().decode('utf-8', 'replace')
++    except Exception:
++        body = ''
++    diagnosis = diagnose(provider, status=response.status_code, body=body, model=model,
++                         recommended=PROVIDERS[provider].default_model)
++    if diagnosis.kind in BACKUP_ELIGIBLE_KINDS:
++        raise TransientProviderError(diagnosis) from None
++    raise ProviderFailure(diagnosis) from None
++
++
++def _transport_failure(provider, error, model):
++    """Classify a failure that never reached an HTTP status."""
++    diagnosis = diagnose(provider, error=error, model=model)
++    if diagnosis.kind in BACKUP_ELIGIBLE_KINDS:
++        return TransientProviderError(diagnosis)
++    return ProviderFailure(diagnosis)
++
++
+ def stream_chat(provider, model, key, messages, check, emit, transport=None, metrics=None):
+     """Fixed trusted endpoints; no redirects, retry, or silent provider fallback."""
+     if provider not in PROVIDERS:
+@@ -54,16 +103,8 @@ def stream_chat(provider, model, key, messages, check, emit, transport=None, met
+                           transport=transport) as client:
+             with client.stream('POST', PROVIDERS[provider].endpoint,
+                                headers={'Authorization': f'Bearer {key}'}, json=payload) as response:
+-                if response.status_code in (502, 503, 504):
+-                    raise TransientProviderError(f'{provider} temporarily unavailable (HTTP {response.status_code}).')
+-                if provider == 'Gemini' and response.status_code == 404:
+-                    raise ProviderError(
+-                        'Gemini HTTP 404. The selected model was not available for this request. '
+-                        'In API Providers → Advanced settings, try the recommended model '
+-                        f'{GEMINI_RECOMMENDED_MODEL}, save, and test the connection again.'
+-                    )
+                 if response.status_code != 200:
+-                    raise ProviderError(f'{provider} HTTP {response.status_code}. Check key, model, quota and access.')
++                    _raise_for_status(provider, response, model.strip())
+                 for line in response.iter_lines():
+                     check()
+                     if time.monotonic() - started > 180:
+@@ -108,11 +149,11 @@ def stream_chat(provider, model, key, messages, check, emit, transport=None, met
+         return ''.join(parts)
+     except (Stopped, ProviderError):
+         raise
+-    except httpx.TimeoutException:
+-        raise TransientProviderError('Provider timed out. Check connectivity and try again.') from None
+-    except httpx.ConnectError:
+-        raise TransientProviderError('Provider connection failed.') from None
+-    except httpx.HTTPError:
+-        raise ProviderError('Secure provider connection failed.') from None
++    except httpx.TimeoutException as exc:
++        raise _transport_failure(provider, exc, model.strip()) from None
++    except httpx.ConnectError as exc:
++        raise _transport_failure(provider, exc, model.strip()) from None
++    except httpx.HTTPError as exc:
++        raise _transport_failure(provider, exc, model.strip()) from None
+     except (ValueError, KeyError, TypeError, IndexError, AttributeError):
+         raise ProviderError('Invalid provider response.') from None
+diff --git a/providers/errors.py b/providers/errors.py
+new file mode 100644
+index 0000000..6b7279f
+--- /dev/null
++++ b/providers/errors.py
+@@ -0,0 +1,358 @@
++"""One place that turns a provider failure into a sentence the owner can act on.
++
++WHAT WAS WRONG WITH THIS
++    The chat path raised `ProviderError(f'{provider} HTTP {code}. Check key, model, '
++    'quota and access.')` for every failure that was not a 502/503/504. One
++    sentence covered five different problems.
++
++    The worst case was Gemini. Google answers HTTP 404 for a model that does
++    not exist for the API version, and HTTP 404 for an endpoint that does not
++    exist. It answers HTTP 400 for an API key that is not valid, and HTTP 429
++    for a quota that is exhausted. All four arrived as the same sentence, so
++    the only way to find out what was actually wrong was to guess and retry.
++
++    A wrong endpoint and an unavailable model have opposite fixes. One needs
++    a corrected URL, the other needs a different model ID. Telling the owner
++    to "check key, model, quota and access" is not an actionable error; it is
++    a list of things to think about.
++
++WHAT THIS DOES NOW
++    Every provider failure is classified into exactly one kind, and each kind
++    carries its own title, its own sentence and its own next step:
++
++        model_unavailable     the model ID is not served for this key or API version
++        wrong_endpoint        the URL is wrong; the provider never saw a model
++        invalid_credentials   the key is missing, malformed or not accepted
++        no_access             the key is valid but is not allowed to use this
++        quota                 the quota or billing is exhausted
++        rate_limit            the request rate is too high; retry shortly
++        bad_request           the request itself was rejected
++        empty_key             no key is configured at all
++        network               the provider could not be reached
++        timeout               the provider did not answer in time
++        transient             the provider is temporarily failing
++        unknown               something else; the status is reported as-is
++
++    The classifier reads the response body, because the status code alone
++    cannot tell a bad model from a bad URL and a bad key from an empty quota.
++    The body is only ever used to decide the KIND of failure. It is never
++    echoed back in full, because a provider body can contain the key that was
++    sent, and this text ends up in a message box and in a screenshot.
++
++WHAT THIS MODULE WILL NOT DO
++    * It never contacts a provider. It classifies what it is given, so it is
++      testable without a network and without a key.
++    * It never guesses a provider's health from one failure.
++    * It never returns the raw body, so a key cannot leak through an error
++      message.
++"""
++from __future__ import annotations
++
++from dataclasses import dataclass
++
++
++class FailureKind:
++    """The kinds of failure a provider request can end in."""
++
++    MODEL_UNAVAILABLE = 'model_unavailable'
++    WRONG_ENDPOINT = 'wrong_endpoint'
++    INVALID_CREDENTIALS = 'invalid_credentials'
++    NO_ACCESS = 'no_access'
++    QUOTA = 'quota'
++    RATE_LIMIT = 'rate_limit'
++    BAD_REQUEST = 'bad_request'
++    EMPTY_KEY = 'empty_key'
++    SERVER_ERROR = 'server_error'
++    NETWORK = 'network'
++    TIMEOUT = 'timeout'
++    TRANSIENT = 'transient'
++    UNKNOWN = 'unknown'
++
++
++#: Kinds where the same request can work if it is simply sent again.
++#:
++#: A rate limit is deliberately NOT in this set. Throttling is not a service
++#: failure, and the one backup attempt the owner can consent to is for a
++#: service that is not answering, not for a key that is being throttled.
++RETRYABLE_KINDS = frozenset({FailureKind.RATE_LIMIT, FailureKind.NETWORK,
++                              FailureKind.TIMEOUT, FailureKind.TRANSIENT})
++
++#: The kinds that justify the one backup attempt the owner can consent to.
++#:
++#: This is deliberately narrower than `RETRYABLE_KINDS`: it is the set where
++#: the provider itself is not answering, so a second provider is a sensible
++#: answer to the request rather than a way around a limit.
++BACKUP_ELIGIBLE_KINDS = frozenset({FailureKind.NETWORK, FailureKind.TIMEOUT,
++                                   FailureKind.TRANSIENT})
++
++
++@dataclass(frozen=True)
++class Diagnosis:
++    """What went wrong, and what to do about it."""
++
++    kind: str
++    title: str
++    message: str
++    hint: str
++    provider: str
++    retryable: bool = False
++    status: int | None = None
++    model: str | None = None
++
++    @property
++    def actionable(self) -> bool:
++        """True when the owner can do something specific about this."""
++        return self.kind != FailureKind.UNKNOWN
++
++    def as_dict(self) -> dict:
++        """A plain dictionary for the HUD and for the usage log."""
++        return {
++            'kind': self.kind,
++            'title': self.title,
++            'message': self.message,
++            'hint': self.hint,
++            'provider': self.provider,
++            'retryable': self.retryable,
++            'status': self.status,
++            'model': self.model,
++        }
++
++
++def _body_text(body) -> str:
++    """The body as lower-case text, or '' when there is none."""
++    if body is None:
++        return ''
++    if isinstance(body, bytes):
++        body = body.decode('utf-8', 'replace')
++    if not isinstance(body, str):
++        body = str(body)
++    return body[:4000].casefold()
++
++
++def _mentions(body: str, *needles: str) -> bool:
++    """True when the body mentions any of the phrases."""
++    return any(needle in body for needle in needles)
++
++
++def _model_in_body(body: str) -> bool:
++    """True when the body names a model, which is how a 404 says "wrong model"."""
++    if _mentions(body, 'models/', 'is not found for api version',
++                 'is not supported for generatecontent', 'model_not_found',
++                 'model not found', 'unknown model', 'does not exist'):
++        return True
++    return 'model' in body and ('not found' in body or 'not supported' in body
++                                or 'does not exist' in body)
++
++
++def _endpoint_in_body(body: str) -> bool:
++    """True when the body says the URL was not found, rather than a model."""
++    return _mentions(body, 'requested url', 'unrecognized request url', 'invalid url',
++                     'unknown path', 'unknown endpoint', 'no such endpoint',
++                     'not found on this server', 'the requested url was not found')
++
++
++def _key_in_body(body: str) -> bool:
++    """True when the body says the key is the problem."""
++    return _mentions(body, 'api key not valid', 'api key is invalid', 'invalid api key',
++                     'invalid_api_key', 'incorrect api key', 'unauthorized', 'invalid bearer token',
++                     'no auth credentials', 'missing api key', 'api key required',
++                     'authentication_error', 'invalid authentication')
++
++
++def _quota_in_body(body: str) -> bool:
++    """True when the body says the quota or the billing is the problem."""
++    return _mentions(body, 'quota', 'billing', 'payment', 'credit balance',
++                     'insufficient funds', 'exhausted', 'spending limit',
++                     'free tier', 'resource_exhausted', 'out of credit')
++
++
++def _rate_in_body(body: str) -> bool:
++    """True when the body says the request rate is the problem."""
++    return _mentions(body, 'rate limit', 'rate_limit', 'too many requests',
++                     'requests per', 'slow down')
++
++
++def diagnose(provider: str, *, status: int | None = None, body=None, model: str | None = None,
++             key: str | None = None, error: BaseException | None = None,
++             recommended: str | None = None) -> Diagnosis:
++    """Classify one provider failure.
++
++    `status` is the HTTP status, `body` the response text, `model` the model
++    that was requested, `recommended` the model the provider suggests and
++    `error` the transport exception, if any. `key` is only ever tested for
++    emptiness; it is never included in the result.
++    """
++    provider = str(provider or 'Provider')
++    text = _body_text(body)
++    name = provider
++    fallback = recommended or ''
++
++    def model_hint() -> str:
++        if fallback:
++            return ('Open API Providers, use the recommended model '
++                    f'{fallback}, or enter a model ID your account can actually use, '
++                    'then test the connection again.')
++        return ('Open API Providers, use the recommended model, or enter a model ID '
++                'your account can actually use, then test the connection again.')
++
++    def make(kind, title, message, hint, retryable=False):
++        return Diagnosis(kind=kind, title=title, message=message, hint=hint,
++                         provider=name, retryable=retryable, status=status, model=model)
++
++    # A missing key is refused before a request is ever made, so it is the
++    # first thing to rule out.
++    if key is not None and not str(key).strip() and status is None and error is None:
++        return make(FailureKind.EMPTY_KEY, 'No API key',
++                    f'{provider} has no stored key.',
++                    'Open API Providers, enter the key, and save it to Windows Credential Manager.')
++
++    # Transport failures carry no status code.
++    if error is not None:
++        return _diagnose_transport(provider, error, model)
++
++    if status is None:
++        return make(FailureKind.UNKNOWN, 'Provider failure',
++                    f'{provider} did not answer.',
++                    'Try again. If it keeps happening, check the provider status page.')
++
++    if status in (502, 503, 504):
++        return make(FailureKind.TRANSIENT, f'{provider} is temporarily unavailable',
++                    f'{provider} answered HTTP {status}.',
++                    'Wait a minute and try again. Nothing is wrong with the configuration.',
++                    retryable=True)
++
++    if status == 401:
++        return make(FailureKind.INVALID_CREDENTIALS, 'Key rejected',
++                    f'{provider} rejected the key (HTTP 401).',
++                    'The key is missing, revoked or typed incorrectly. Save it again in API Providers.')
++
++    if status == 403:
++        return make(FailureKind.NO_ACCESS, 'Key cannot use this',
++                    f'{provider} accepted the key but refused this request (HTTP 403).',
++                    'The key has no permission for this model or project. Check the provider '
++                    'console for project permissions and enabled APIs.')
++
++    if status == 404:
++        if _model_in_body(text):
++            return make(FailureKind.MODEL_UNAVAILABLE, 'Model not available',
++                        f'{provider} does not serve the model'
++                        + (f' {model}.' if model else '.'),
++                        model_hint())
++        if _endpoint_in_body(text):
++            return make(FailureKind.WRONG_ENDPOINT, 'Wrong endpoint',
++                        f'{provider} answered HTTP 404 for this URL.',
++                        'The endpoint is wrong, so the provider never saw a model. Open API '
++                        'Providers and check the HTTPS endpoint against your provider account.')
++        # Nothing in the answer says which half is wrong. The model ID is the
++        # part the owner can get wrong, so that is the half to name first.
++        return make(FailureKind.MODEL_UNAVAILABLE, 'Model not available',
++                    f'{provider} did not serve the model'
++                    + (f' {model}.' if model else '.'),
++                    model_hint())
++
++    if status == 429:
++        if _quota_in_body(text):
++            return make(FailureKind.QUOTA, 'Quota exhausted',
++                        f'{provider} refused the request because the quota is exhausted (HTTP 429).',
++                        'Add credit or raise the quota in the provider console, then try again.')
++        return make(FailureKind.RATE_LIMIT, 'Too many requests',
++                    f'{provider} is rate limiting this key (HTTP 429).',
++                    'Wait a few seconds and try again. Reduce how often JARVIS sends requests.',
++                    retryable=True)
++
++    if status == 400:
++        if _key_in_body(text):
++            return make(FailureKind.INVALID_CREDENTIALS, 'Key rejected',
++                        f'{provider} rejected the key (HTTP 400).',
++                        'The key is not valid for this provider. Save it again in API Providers '
++                        'and check that it belongs to this service.')
++        if _model_in_body(text):
++            return make(FailureKind.MODEL_UNAVAILABLE, 'Model not available',
++                        f'{provider} does not serve the model'
++                        + (f' {model}.' if model else '.'),
++                        model_hint())
++        return make(FailureKind.BAD_REQUEST, 'Request rejected',
++                    f'{provider} rejected the request (HTTP 400).',
++                    'The request itself was refused. Try a shorter message and check the model ID.')
++
++    if status == 422:
++        return make(FailureKind.BAD_REQUEST, 'Request rejected',
++                    f'{provider} rejected the request (HTTP 422).',
++                    'The request was understood but could not be processed. Check the model ID.')
++
++    if status in (500, 501, 505, 507, 508, 510, 511):
++        # A 500 is the provider failing on THIS request, not the service being
++        # down, so it does not justify the one backup attempt. 502, 503 and
++        # 504 are gateway-level and are handled above as transient.
++        return make(FailureKind.SERVER_ERROR, f'{provider} reported a server error',
++                    f'{provider} answered HTTP {status}.',
++                    'The provider rejected the request on its own side. Check the provider status '
++                    'page, then try again with a shorter message.')
++
++    if 500 <= status <= 599:
++        return make(FailureKind.TRANSIENT, f'{provider} is temporarily unavailable',
++                    f'{provider} answered HTTP {status}.',
++                    'Wait a minute and try again.', retryable=True)
++
++    if status == 200:
++        return make(FailureKind.UNKNOWN, 'Provider failure',
++                    f'{provider} answered HTTP 200 but the response was not usable.',
++                    'The provider replied but the answer could not be read. Try again.')
++
++    return make(FailureKind.UNKNOWN, f'{provider} answered HTTP {status}',
++                f'{provider} answered HTTP {status}.',
++                'Check the provider status page and your account settings.')
++
++
++def _diagnose_transport(provider: str, error: BaseException, model: str | None) -> Diagnosis:
++    """Classify a failure that never reached an HTTP status."""
++    try:
++        import httpx
++    except ImportError:
++        httpx = None
++
++    name = provider
++    text = str(error).casefold()
++
++    if httpx is not None:
++        if isinstance(error, httpx.TimeoutException):
++            return Diagnosis(FailureKind.TIMEOUT, 'Provider timed out',
++                             f'{provider} did not answer in time.',
++                             'The connection worked but the answer was too slow. Check your network '
++                             'and try again.', provider=name, retryable=True, model=model)
++        if isinstance(error, httpx.ConnectError):
++            return Diagnosis(FailureKind.NETWORK, 'Cannot reach the provider',
++                             f'{provider} could not be reached.',
++                             'Check the internet connection, a firewall, or a proxy. The key was not '
++                             'sent.', provider=name, retryable=True, model=model)
++        if isinstance(error, httpx.HTTPError):
++            return Diagnosis(FailureKind.NETWORK, 'Secure connection failed',
++                             f'The secure connection to {provider} failed.',
++                             'A proxy or TLS inspection tool may be blocking the request. '
++                             'The key was not sent.', provider=name, retryable=True, model=model)
++
++    if 'certificate' in text or 'ssl' in text or 'tls' in text:
++        return Diagnosis(FailureKind.NETWORK, 'Secure connection failed',
++                         f'The secure connection to {provider} failed.',
++                         'A proxy or TLS inspection tool may be blocking the request.',
++                         provider=name, retryable=True, model=model)
++    if 'name or service not known' in text or 'nodename nor servname' in text or 'dns' in text:
++        return Diagnosis(FailureKind.NETWORK, 'Cannot find the provider',
++                         f'The address of {provider} could not be resolved.',
++                         'Check the internet connection and the DNS settings.',
++                         provider=name, retryable=True, model=model)
++    if 'connection refused' in text:
++        return Diagnosis(FailureKind.NETWORK, 'Cannot reach the provider',
++                         f'{provider} refused the connection.',
++                         'Check the internet connection and any firewall. The key was not sent.',
++                         provider=name, retryable=True, model=model)
++
++    return Diagnosis(FailureKind.UNKNOWN, 'Provider failure',
++                     f'{provider} could not be reached.',
++                     'Try again. If it keeps happening, check the provider status page.',
++                     provider=name, model=model)
++
++
++def diagnosis_message(diagnosis: Diagnosis) -> str:
++    """One line for a status bar: the title, the sentence and the next step."""
++    return f'{diagnosis.title}. {diagnosis.message} {diagnosis.hint}'
+diff --git a/providers/models.py b/providers/models.py
+new file mode 100644
+index 0000000..a776388
+--- /dev/null
++++ b/providers/models.py
+@@ -0,0 +1,283 @@
++"""Check that the model the owner configured is one the provider actually serves.
++
++WHAT THIS IS FOR
++    The provider manager could tell the owner that a request FAILED. It could
++    not tell them WHY a model ID did not work, because the only way to find out
++    was to send a paid request and read the error.
++
++    Every provider the owner can reach lists its own models. Asking that list
++    is free, needs no generation, and answers the question exactly: is the
++    model ID the owner typed one that this key can actually use?
++
++    So this module asks the provider for its catalogue and compares.
++
++HOW EACH PROVIDER IS ASKED
++    * Gemini uses its own model list, `GET /v1beta/models`, with the key in
++      the `x-goog-api-key` header. The answer names the models as
++      `models/gemini-3.8-flash`, so the `models/` prefix is removed and only
++      the models that support `generateContent` are kept.
++    * The OpenAI compatible services use `GET .../models` with the key as a
++      bearer token, which is the same shape for OpenAI, OpenRouter, Groq,
++      DeepSeek, MiniMax and Ollama.
++    * Claude uses `GET /v1/models` with the key in the `x-api-key` header.
++
++WHAT THIS MODULE WILL NOT DO
++    * It never sends a prompt, so it never costs a generation and never puts
++      the owner's words on a provider's servers.
++    * It never returns the key, and it never puts the key in a message. The
++      failure it reports comes from the same classifier the chat path uses, so
++      a key that the provider echoes back in an error body still cannot leak
++      into a message box or a screenshot.
++    * It does not fail the check when a provider cannot list its models. Some
++      deployments disable the listing, and "I could not check" is a different
++      answer from "that model does not exist", and the caller is told which
++      one it got.
++"""
++from __future__ import annotations
++
++from dataclasses import dataclass, field
++
++import httpx
++
++from providers.errors import Diagnosis, FailureKind, diagnose
++
++
++#: How long the catalogue request may take.
++LIST_TIMEOUT = httpx.Timeout(20, connect=10)
++
++#: The model list endpoint for each provider, and how the key is sent.
++_MODEL_LISTS = {
++    'Gemini': {
++        'url': 'https://generativelanguage.googleapis.com/v1beta/models',
++        'auth': 'header',
++        'header': 'x-goog-api-key',
++    },
++    'Claude': {
++        'url': 'https://api.anthropic.com/v1/models',
++        'auth': 'header',
++        'header': 'x-api-key',
++    },
++}
++
++#: Providers whose chat endpoint ends in this suffix use the OpenAI shape.
++_OPENAI_SUFFIX = '/chat/completions'
++
++
++@dataclass(frozen=True)
++class ModelAvailability:
++    """The answer to "can this key use this model?"."""
++
++    provider: str
++    model: str
++    available: bool
++    #: True when the provider returned a catalogue, so the answer is definite.
++    known: bool
++    detail: str
++    diagnosis: Diagnosis | None = None
++    models: tuple[str, ...] = field(default=())
++
++    def as_dict(self) -> dict:
++        """A plain dictionary for the HUD and for the usage log."""
++        return {
++            'provider': self.provider,
++            'model': self.model,
++            'available': self.available,
++            'known': self.known,
++            'detail': self.detail,
++            'diagnosis': self.diagnosis.as_dict() if self.diagnosis else None,
++            'models': list(self.models),
++        }
++
++
++def model_list_endpoint(provider: str, endpoint: str) -> str | None:
++    """The catalogue URL for a provider, or None when it has no catalogue."""
++    spec = _MODEL_LISTS.get(provider)
++    if spec is not None:
++        return spec['url']
++    if endpoint.endswith(_OPENAI_SUFFIX):
++        return endpoint[: -len(_OPENAI_SUFFIX)] + '/models'
++    return None
++
++
++def _headers(provider: str, key: str) -> dict:
++    """The request headers, with the key in the header the provider expects."""
++    spec = _MODEL_LISTS.get(provider)
++    if spec is None:
++        return {'Authorization': f'Bearer {key}'} if key else {}
++    headers = {}
++    if key:
++        headers[spec['header']] = key
++    if provider == 'Claude':
++        headers['anthropic-version'] = '2023-06-01'
++    return headers
++
++
++def _normalise(model: str) -> str:
++    """A model ID in a comparable form: no prefix, no case, trimmed."""
++    text = str(model or '').strip().casefold()
++    if text.startswith('models/'):
++        text = text[len('models/'):]
++    return text
++
++
++def _matches(configured: str, offered: str) -> bool:
++    """True when an offered model satisfies the configured model ID.
++
++    Providers publish both a stable alias and dated snapshots, so
++    `gpt-4.1` and `gpt-4.1-2025-04-14` are the same model to the owner.
++    """
++    wanted = _normalise(configured)
++    candidate = _normalise(offered)
++    if not wanted or not candidate:
++        return False
++    if wanted == candidate:
++        return True
++    return candidate.startswith(wanted + '-') or wanted.startswith(candidate + '-')
++
++
++def _parse_models(provider: str, payload) -> tuple[str, ...]:
++    """Pull the model IDs out of a provider's catalogue answer."""
++    names: list[str] = []
++    if isinstance(payload, dict):
++        entries = payload.get('models')
++        if isinstance(entries, list):
++            for entry in entries:
++                if isinstance(entry, dict):
++                    name = entry.get('name')
++                    methods = entry.get('supportedGenerationMethods')
++                    if isinstance(name, str) and name:
++                        if isinstance(methods, list) and methods:
++                            if 'generateContent' not in methods:
++                                continue
++                        names.append(name)
++        data = payload.get('data')
++        if isinstance(data, list):
++            for entry in data:
++                if isinstance(entry, dict):
++                    name = entry.get('id') or entry.get('name')
++                    if isinstance(name, str) and name:
++                        names.append(name)
++    elif isinstance(payload, list):
++        for entry in payload:
++            if isinstance(entry, dict):
++                name = entry.get('id') or entry.get('name')
++                if isinstance(name, str) and name:
++                    names.append(name)
++    unique = []
++    for name in names:
++        cleaned = _normalise(name)
++        if cleaned and cleaned not in unique:
++            unique.append(cleaned)
++    return tuple(sorted(unique))
++
++
++def list_models(provider: str, endpoint: str, key: str, transport=None) -> tuple[str, ...]:
++    """The model IDs the provider serves for this key.
++
++    Raises `ProviderError` on failure; use :func:`check_model` for the form
++    that explains itself.
++    """
++    from providers.chat import ProviderError
++
++    url = model_list_endpoint(provider, endpoint)
++    if not url:
++        raise ProviderError(f'{provider} does not publish a model list.')
++    if provider != 'Ollama' and not str(key or '').strip():
++        raise ProviderError('Configure an API key first.')
++    try:
++        with httpx.Client(timeout=LIST_TIMEOUT, follow_redirects=False,
++                          transport=transport) as client:
++            response = client.get(url, headers=_headers(provider, key))
++    except httpx.TimeoutException:
++        raise ProviderError(f'{provider} did not answer the model list request in time.') from None
++    except httpx.HTTPError:
++        raise ProviderError(f'Could not reach {provider} to list its models.') from None
++
++    if response.status_code != 200:
++        # The classifier turns this into the same sentence the chat path
++        # would show, so one failure reads the same everywhere.
++        diagnosis = diagnose(provider, status=response.status_code,
++                             body=response.text, model=None)
++        from providers.chat import ProviderFailure
++        raise ProviderFailure(diagnosis) from None
++
++    try:
++        payload = response.json()
++    except ValueError:
++        raise ProviderError(f'{provider} returned an unreadable model list.') from None
++    return _parse_models(provider, payload)
++
++
++def check_model(provider: str, endpoint: str, model: str, key: str, transport=None) -> ModelAvailability:
++    """Check one model against the provider's catalogue.
++
++    The answer is always usable. When the catalogue cannot be read, the
++    result says so instead of pretending the model is fine or broken.
++    """
++    model = str(model or '').strip()
++    if not model:
++        return ModelAvailability(
++            provider=provider, model='', available=False, known=False,
++            detail='No model is selected. Open Advanced settings and choose a model.')
++
++    try:
++        models = list_models(provider, endpoint, key, transport=transport)
++    except Exception as error:
++        # A failure that already carries a diagnosis keeps it, so the owner
++        # sees the same sentence the chat path would show.
++        diagnosis = getattr(error, 'diagnosis', None)
++        if diagnosis is None:
++            diagnosis = diagnose(provider, error=error, model=model)
++        return ModelAvailability(
++            provider=provider, model=model, available=False, known=False,
++            detail=diagnosis.message + ' ' + diagnosis.hint, diagnosis=diagnosis)
++
++    if not models:
++        return ModelAvailability(
++            provider=provider, model=model, available=False, known=True,
++            detail=(f'{provider} returned an empty model list, so the model could not be '
++                    f'confirmed. Test the connection to be sure.'),
++            models=())
++
++    for offered in models:
++        if _matches(model, offered):
++            return ModelAvailability(
++                provider=provider, model=model, available=True, known=True,
++                detail=f'{model} is available to this key on {provider}.',
++                models=models)
++
++    closest = _closest(models, model)
++    suggestion = f' A similar model is "{closest}".' if closest else ''
++    return ModelAvailability(
++        provider=provider, model=model, available=False, known=True,
++        detail=(f'{provider} does not serve "{model}" to this key.{suggestion} '
++                f'Use the recommended model, or pick one from the provider list.'),
++        models=models)
++
++
++def _common_prefix(left: str, right: str) -> int:
++    """How many leading characters two strings share."""
++    count = 0
++    for first, second in zip(left, right):
++        if first != second:
++            break
++        count += 1
++    return count
++
++
++def _closest(models: tuple[str, ...], model: str) -> str | None:
++    """The offered model that shares the most with the requested one."""
++    wanted = _normalise(model)
++    if not wanted:
++        return None
++    best = None
++    best_score = 0
++    for offered in models:
++        shared = _common_prefix(wanted, offered)
++        if shared > best_score:
++            best, best_score = offered, shared
++    # A single shared character is not a suggestion.
++    return best if best_score >= 4 else None
++
++
++__all__ = ['ModelAvailability', 'check_model', 'list_models', 'model_list_endpoint']
+diff --git a/providers/profiles.py b/providers/profiles.py
+new file mode 100644
+index 0000000..76a71a5
+--- /dev/null
++++ b/providers/profiles.py
+@@ -0,0 +1,121 @@
++"""Fast and Deep model profiles, and which providers actually offer two.
++
++WHAT THIS IS FOR
++    JARVIS had two ideas of "a model" in two places. The Quantum Core HUD had
++    a Fast and a Deep Gemini model. The desktop application had one model per
++    provider. An owner who chose Fast in the HUD and then opened the desktop
++    app got a different model, and nothing in the interface said so.
++
++    So the profile idea now lives in one place, and a provider declares
++    whether it has two models or one.
++
++WHICH PROVIDERS HAVE TWO
++    Only the providers where two real, current model IDs are known are given
++    profiles. A provider with one model keeps one model. That is not a gap to
++    be filled in later with a guess: inventing a "Deep" model ID that the
++    provider does not serve would reproduce exactly the HTTP 404 problem this
++    section exists to fix.
++
++    Gemini has both. `gemini-3.5-flash-lite` is the low-latency model and
++    `gemini-3.8-flash` is the reasoning model, and both are current. The
++    previous pair, `gemini-2.5-flash` and `gemini-2.5-pro`, are deprecated and
++    are no longer selectable in AI Studio.
++
++WHAT THIS MODULE WILL NOT DO
++    * It never decides which model to use on its own. The owner chooses the
++      profile, and the profile chooses the model.
++    * It never reaches the network. Whether the model actually exists for the
++      owner's key is answered by `providers.models.check_model`.
++"""
++from __future__ import annotations
++
++
++#: The profile names, in the order they are offered.
++PROFILE_NAMES = ('fast', 'deep')
++
++#: The label the owner sees for each profile.
++PROFILE_LABELS = {
++    'fast': 'Fast',
++    'deep': 'Deep',
++}
++
++#: What each profile is for, shown next to the choice.
++PROFILE_NOTES = {
++    'fast': 'Low latency and low cost. Everyday conversation.',
++    'deep': 'Frontier reasoning and long answers.',
++}
++
++#: The providers that offer two models, and the model for each profile.
++#:
++#: A provider that is not listed here has one model and no profile choice.
++PROFILE_MODELS = {
++    'Gemini': {
++        'fast': 'gemini-3.5-flash-lite',
++        'deep': 'gemini-3.8-flash',
++    },
++}
++
++
++def profiles_for(provider: str) -> dict[str, str]:
++    """The profile models for a provider, or an empty mapping."""
++    return dict(PROFILE_MODELS.get(provider, {}))
++
++
++def supports_profiles(provider: str) -> bool:
++    """True when the provider offers more than one model."""
++    return len(PROFILE_MODELS.get(provider, {})) > 1
++
++
++def profile_names(provider: str) -> list[str]:
++    """The profile names a provider offers, in the standard order."""
++    available = PROFILE_MODELS.get(provider, {})
++    return [name for name in PROFILE_NAMES if name in available]
++
++
++def profile_for(provider: str, model: str) -> str | None:
++    """The profile that a model ID belongs to, or None when it is not one."""
++    wanted = str(model or '').strip().casefold()
++    for name, offered in PROFILE_MODELS.get(provider, {}).items():
++        if offered.casefold() == wanted:
++            return name
++    return None
++
++
++def model_for(provider: str, profile: str, fallback: str = '') -> str:
++    """The model a profile means for a provider.
++
++    A provider without profiles keeps its own single model, so the fallback
++    is returned unchanged rather than an empty string.
++    """
++    available = PROFILE_MODELS.get(provider, {})
++    if profile in available:
++        return available[profile]
++    return fallback
++
++
++def default_profile(provider: str) -> str:
++    """The profile a provider starts on."""
++    names = profile_names(provider)
++    return names[0] if names else ''
++
++
++def describe(provider: str, profile: str = '', model: str = '') -> str:
++    """One line for the interface: provider, profile and model.
++
++    A provider without profiles has no profile to show, so only the provider
++    and its model are named.
++    """
++    available = PROFILE_MODELS.get(provider, {})
++    chosen = profile if profile in available else default_profile(provider)
++    chosen_model = model or (available.get(chosen, '') if chosen else '')
++    if not chosen_model:
++        return provider
++    if not chosen:
++        return f'{provider} · {chosen_model}'
++    label = PROFILE_LABELS.get(chosen, chosen.title())
++    return f'{provider} · {label} · {chosen_model}'
++
++
++__all__ = ['PROFILE_LABELS', 'PROFILE_MODELS', 'PROFILE_NAMES', 'PROFILE_NOTES',
++           'default_profile', 'describe', 'model_for', 'profile_for', 'profile_names',
++           'profiles_for', 'supports_profiles']
+diff --git a/quantum_core/launcher.py b/quantum_core/launcher.py
+index 2716608..3ce0c62 100644
+--- a/quantum_core/launcher.py
++++ b/quantum_core/launcher.py
+@@ -194,7 +194,8 @@ class QuantumCore:
+                 return {'error': str(error)}
+ 
+     def hud_info(self):
+-        return {'model': self.chat.model, 'profile': self.chat.profile, 'version': APP_VERSION}
++        return {'model': self.chat.model, 'profile': self.chat.profile,
++                'provider': 'Gemini', 'version': APP_VERSION}
+ 
+     def set_model_profile(self, profile):
+         if not isinstance(profile, str) or profile not in self.chat.models:
+diff --git a/quantum_core/web/index.html b/quantum_core/web/index.html
+index 78abf04..2c5554c 100644
+--- a/quantum_core/web/index.html
++++ b/quantum_core/web/index.html
+@@ -496,8 +496,14 @@ function update_hud_state(state, logMessage) {
+   stateLabel.textContent = label;
+   const voice = byId('voice-state');
+   const voiceActive = activity === 'listening' || activity === 'speaking';
+-  voice.textContent = voiceActive ? (activity === 'listening' ? 'Listening' : 'Speaking') : 'Voice idle';
++  // The four states the owner must be able to read at a glance. A brain that
++  // is thinking has not failed and has not gone quiet, and saying so is the
++  // difference between "it is working" and "it is stuck".
++  voice.textContent = {
++    listening: 'Listening', speaking: 'Speaking', processing: 'Thinking'
++  }[activity] || 'Voice idle';
+   voice.dataset.active = String(voiceActive);
++  voice.dataset.state = activity;
+   audioState.textContent = {
+     listening: 'LISTENING SIGNAL', speaking: 'PLAYBACK SIGNAL',
+     processing: 'PROCESSING SIGNAL', active: 'ACTIVE SIGNAL', idle: 'IDLE SIGNAL'
+@@ -750,7 +756,11 @@ function showHudInfo(info) {
+   }
+   savedProfile = info.profile;
+   modelProfile.value = savedProfile;
+-  byId('model-label').textContent = info.model;
++  // The provider is named as well as the model, so the owner can see which
++  // brain answered without opening another screen.
++  const provider = typeof info.provider === 'string' && info.provider ? info.provider : 'Gemini';
++  byId('model-label').textContent = provider + ' · ' + info.model;
++  byId('model-label').setAttribute('aria-label', 'Active provider and model');
+   byId('hud-version').textContent = 'App v' + info.version;
+ }
+ 
+diff --git a/tests/test_ai_brain_voice.py b/tests/test_ai_brain_voice.py
+new file mode 100644
+index 0000000..e567d14
+--- /dev/null
++++ b/tests/test_ai_brain_voice.py
+@@ -0,0 +1,464 @@
++"""Tests for the AI brain and voice section.
++
++WHAT IS COVERED
++    * The provider the owner chose is remembered, and the interface says which
++      provider, profile and model will answer.
++    * Fast and Deep are preserved where a provider offers them, and the HUD's
++      own Fast and Deep pair does not drift away from the desktop one.
++    * A provider failure is classified into exactly one kind, and the kinds
++      that used to be one sentence are now distinct and actionable.
++    * An empty key, a network failure and a model the provider does not serve
++      are three different problems with three different answers.
++    * The model list is checked without sending a prompt and without putting
++      the key anywhere near the answer.
++    * Text chat and voice keep their existing flows, and the voice states use
++      the words the owner reads.
++"""
++import os
++os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
++
++import httpx
++import pytest
++from PySide6.QtWidgets import QApplication
++
++import desktop.app as desktop
++from providers import profiles
++from providers.chat import (
++    PROVIDERS, ProviderError, ProviderFailure, TransientProviderError, stream_chat,
++)
++from providers.errors import BACKUP_ELIGIBLE_KINDS, FailureKind, diagnose
++from providers.models import check_model, model_list_endpoint
++from providers.registry import provider_names
++
++
++# ── helpers ──────────────────────────────────────────────────────────────────
++
++def app():
++    return QApplication.instance() or QApplication([])
++
++
++def window(tmp_path):
++    app()
++    return desktop.Window(tmp_path)
++
++
++def chat_request(provider=None):
++    return [{'role': 'user', 'content': 'bonjour'}]
++
++
++# ── provider choice ──────────────────────────────────────────────────────────
++
++def test_every_provider_the_owner_can_choose_is_registered():
++    names = set(provider_names())
++    assert {'OpenAI', 'Gemini', 'Claude', 'MiniMax', 'DeepSeek', 'Groq',
++            'OpenRouter', 'Ollama'} <= names
++
++
++def test_the_primary_chat_provider_is_remembered(tmp_path):
++    win = window(tmp_path)
++    try:
++        win.chat_provider.setCurrentText('OpenAI')
++        assert win.store.get('chat_provider') == 'OpenAI'
++        # A fresh window reads the choice back.
++        again = window(tmp_path)
++        try:
++            assert again.chat_provider.currentText() == 'OpenAI'
++        finally:
++            again.close()
++    finally:
++        win.close()
++
++
++def test_the_active_brain_names_the_provider_profile_and_model(tmp_path):
++    win = window(tmp_path)
++    try:
++        win.chat_provider.setCurrentText('Gemini')
++        text = win.brain_label.text()
++        assert 'Gemini' in text and 'Fast' in text
++        assert profiles.PROFILE_MODELS['Gemini']['fast'] in text
++    finally:
++        win.close()
++
++
++def test_a_provider_without_profiles_shows_only_its_model(tmp_path):
++    win = window(tmp_path)
++    try:
++        win.chat_provider.setCurrentText('OpenAI')
++        text = win.brain_label.text()
++        assert 'OpenAI' in text
++        assert PROVIDERS['OpenAI'].default_model in text
++    finally:
++        win.close()
++
++
++# ── Fast and Deep ────────────────────────────────────────────────────────────
++
++def test_only_gemini_offers_two_profiles():
++    assert profiles.supports_profiles('Gemini') is True
++    for name in provider_names():
++        if name != 'Gemini':
++            assert profiles.supports_profiles(name) is False, name
++
++
++def test_the_fast_and_deep_models_are_current_ones():
++    assert profiles.PROFILE_MODELS['Gemini']['fast'] == 'gemini-3.5-flash-lite'
++    assert profiles.PROFILE_MODELS['Gemini']['deep'] == 'gemini-3.8-flash'
++
++
++def test_the_hud_keeps_the_same_fast_and_deep_pair():
++    """The HUD and the desktop must not drift into different models."""
++    import re
++    from pathlib import Path
++    source = Path('quantum_core/launcher.py').read_text(encoding='utf-8')
++    fast = re.search(r"^MODEL\s*=\s*'([^']+)'", source, re.M)
++    deep = re.search(r"^DEEP_MODEL\s*=\s*'([^']+)'", source, re.M)
++    assert fast and deep, 'the HUD must name its two models'
++    assert fast.group(1) == profiles.PROFILE_MODELS['Gemini']['fast']
++    assert deep.group(1) == profiles.PROFILE_MODELS['Gemini']['deep']
++
++
++def test_switching_the_profile_changes_the_model(tmp_path):
++    win = window(tmp_path)
++    try:
++        win.provider.setCurrentText('Gemini')
++        win.provider_profile.setCurrentIndex(
++            win.provider_profile.findData('deep'))
++        assert win.model.text() == profiles.PROFILE_MODELS['Gemini']['deep']
++        win.provider_profile.setCurrentIndex(
++            win.provider_profile.findData('fast'))
++        assert win.model.text() == profiles.PROFILE_MODELS['Gemini']['fast']
++    finally:
++        win.close()
++
++
++def test_a_model_the_owner_typed_is_not_replaced_by_a_default(tmp_path):
++    win = window(tmp_path)
++    try:
++        win.provider.setCurrentText('Gemini')
++        win.provider_profile.setCurrentIndex(
++            win.provider_profile.findData('fast'))
++        win.model.setText('gemini-3.8-flash')
++        win.save_provider()
++        assert win.selected_model('Gemini') == 'gemini-3.8-flash'
++    finally:
++        win.close()
++
++
++def test_a_provider_without_profiles_keeps_its_single_model(tmp_path):
++    win = window(tmp_path)
++    try:
++        win.provider.setCurrentText('OpenAI')
++        assert win.provider_profile.count() == 1
++        assert win.model.text() == PROVIDERS['OpenAI'].default_model
++    finally:
++        win.close()
++
++
++# ── failure classification ───────────────────────────────────────────────────
++
++def test_a_404_that_names_a_model_is_a_model_problem():
++    body = {'error': {'message': 'models/gemini-9.9 is not found for API version v1beta'}}
++    result = diagnose('Gemini', status=404, body=body, model='gemini-9.9')
++    assert result.kind == FailureKind.MODEL_UNAVAILABLE
++    assert 'gemini-9.9' in result.message
++
++
++def test_a_404_that_names_the_url_is_an_endpoint_problem():
++    body = {'error': {'message': 'The requested URL was not found on this server.'}}
++    result = diagnose('Gemini', status=404, body=body, model='gemini-3.8-flash')
++    assert result.kind == FailureKind.WRONG_ENDPOINT
++    assert 'endpoint' in result.title.lower()
++
++
++def test_a_404_with_no_evidence_names_the_model_first():
++    result = diagnose('Gemini', status=404, body={'error': {'message': 'nothing useful'}})
++    assert result.kind == FailureKind.MODEL_UNAVAILABLE
++
++
++def test_a_400_that_says_the_key_is_wrong_is_a_credential_problem():
++    body = {'error': {'message': 'API key not valid. Please pass a valid API key.'}}
++    result = diagnose('Gemini', status=400, body=body)
++    assert result.kind == FailureKind.INVALID_CREDENTIALS
++
++
++def test_a_401_and_a_403_are_different_problems():
++    assert diagnose('OpenAI', status=401).kind == FailureKind.INVALID_CREDENTIALS
++    assert diagnose('OpenAI', status=403).kind == FailureKind.NO_ACCESS
++
++
++def test_a_429_is_split_into_quota_and_rate_limit():
++    quota = diagnose('OpenAI', status=429, body={'error': {'message': 'quota exceeded'}})
++    rate = diagnose('OpenAI', status=429, body={'error': {'message': 'rate limit reached'}})
++    assert quota.kind == FailureKind.QUOTA
++    assert rate.kind == FailureKind.RATE_LIMIT
++    assert rate.retryable is True
++
++
++def test_a_500_is_not_a_transient_failure():
++    """A 500 is this request failing on the provider's side, not an outage."""
++    result = diagnose('OpenAI', status=500)
++    assert result.kind == FailureKind.SERVER_ERROR
++    assert result.retryable is False
++    assert result.kind not in BACKUP_ELIGIBLE_KINDS
++
++
++def test_a_gateway_outage_is_transient():
++    for status in (502, 503, 504):
++        result = diagnose('OpenAI', status=status)
++        assert result.kind == FailureKind.TRANSIENT
++        assert result.retryable is True
++        assert result.kind in BACKUP_ELIGIBLE_KINDS
++
++
++def test_a_network_failure_and_a_bad_key_are_different_problems():
++    network = diagnose('OpenAI', error=httpx.ConnectError('connection refused'))
++    timeout = diagnose('OpenAI', error=httpx.ReadTimeout('timed out'))
++    assert network.kind == FailureKind.NETWORK
++    assert timeout.kind == FailureKind.TIMEOUT
++    assert diagnose('OpenAI', status=401).kind != network.kind
++
++
++def test_no_key_at_all_is_its_own_problem():
++    result = diagnose('OpenAI', key='')
++    assert result.kind == FailureKind.EMPTY_KEY
++    assert 'API Providers' in result.hint
++
++
++def test_the_diagnosis_never_repeats_the_body_or_the_key():
++    result = diagnose('Gemini', status=401, body='private-secret', key='private-secret')
++    assert 'private-secret' not in result.message
++    assert 'private-secret' not in result.hint
++    assert 'private-secret' not in result.title
++
++
++# ── the chat path uses the classifier ────────────────────────────────────────
++
++def test_the_gemini_404_is_classified_and_names_the_recommended_model():
++    def respond(request):
++        return httpx.Response(404, json={'error': {'message': 'provider-private-value'}})
++
++    with pytest.raises(ProviderFailure) as failure:
++        stream_chat('Gemini', 'gemini-2.5-flash', 'test-secret', chat_request('Gemini'),
++                    lambda: None, lambda _: None, transport=httpx.MockTransport(respond))
++    assert failure.value.kind == FailureKind.MODEL_UNAVAILABLE
++    assert PROVIDERS['Gemini'].default_model in str(failure.value)
++    assert 'provider-private-value' not in str(failure.value)
++    assert 'test-secret' not in str(failure.value)
++
++
++def test_only_a_transient_failure_may_use_the_backup():
++    """A bad key or an exhausted quota must never spend the backup provider."""
++    for status, kind in ((401, FailureKind.INVALID_CREDENTIALS),
++                         (429, FailureKind.RATE_LIMIT),
++                         (500, FailureKind.SERVER_ERROR)):
++        with pytest.raises(ProviderError) as error:
++            stream_chat('OpenAI', 'm', 'fake', chat_request('OpenAI'), lambda: None, lambda _: None,
++                        transport=httpx.MockTransport(lambda _: httpx.Response(status)))
++        assert not isinstance(error.value, TransientProviderError), status
++        assert error.value.kind == kind
++
++
++def test_a_transient_failure_is_the_only_one_marked_for_the_backup():
++    with pytest.raises(TransientProviderError) as error:
++        stream_chat('OpenAI', 'm', 'fake', chat_request('OpenAI'), lambda: None, lambda _: None,
++                    transport=httpx.MockTransport(lambda _: httpx.Response(503)))
++    assert error.value.kind == FailureKind.TRANSIENT
++
++
++def test_a_network_failure_is_transient_and_never_carries_the_key():
++    def fail(request):
++        raise httpx.ConnectError('connection refused')
++
++    with pytest.raises(TransientProviderError) as error:
++        stream_chat('OpenAI', 'm', 'the-secret-key', chat_request('OpenAI'),
++                    lambda: None, lambda _: None, transport=httpx.MockTransport(fail))
++    assert error.value.kind == FailureKind.NETWORK
++    assert 'the-secret-key' not in str(error.value)
++
++
++def test_an_empty_key_is_refused_before_any_request():
++    sent = []
++
++    def respond(request):
++        sent.append(request)
++        return httpx.Response(200, text='data: [DONE]\n\n')
++
++    with pytest.raises(ProviderError, match='Configure an API key'):
++        stream_chat('OpenAI', 'm', '', chat_request('OpenAI'), lambda: None, lambda _: None,
++                    transport=httpx.MockTransport(respond))
++    assert sent == []
++
++
++# ── model availability ───────────────────────────────────────────────────────
++
++def test_the_model_list_endpoint_is_derived_per_provider():
++    assert model_list_endpoint('Gemini', PROVIDERS['Gemini'].endpoint) == \
++        'https://generativelanguage.googleapis.com/v1beta/models'
++    assert model_list_endpoint('OpenAI', PROVIDERS['OpenAI'].endpoint) == \
++        'https://api.openai.com/v1/models'
++    assert model_list_endpoint('Claude', 'https://api.anthropic.com/v1/messages') == \
++        'https://api.anthropic.com/v1/models'
++
++
++def test_a_model_the_provider_serves_is_confirmed():
++    def respond(request):
++        return httpx.Response(200, json={
++            'models': [{'name': 'models/gemini-3.8-flash',
++                        'supportedGenerationMethods': ['generateContent']}]})
++
++    result = check_model('Gemini', PROVIDERS['Gemini'].endpoint, 'gemini-3.8-flash', 'fake',
++                         transport=httpx.MockTransport(respond))
++    assert result.available is True and result.known is True
++    assert 'gemini-3.8-flash' in result.detail
++
++
++def test_a_model_the_provider_does_not_serve_is_refused():
++    def respond(request):
++        return httpx.Response(200, json={
++            'models': [{'name': 'models/gemini-3.8-flash',
++                        'supportedGenerationMethods': ['generateContent']}]})
++
++    result = check_model('Gemini', PROVIDERS['Gemini'].endpoint, 'gemini-9.9-ultra', 'fake',
++                         transport=httpx.MockTransport(respond))
++    assert result.available is False and result.known is True
++    assert 'gemini-9.9-ultra' in result.detail
++
++
++def test_a_failed_model_list_explains_itself_and_keeps_the_key_out():
++    def respond(request):
++        return httpx.Response(401, text='private-secret')
++
++    result = check_model('Gemini', PROVIDERS['Gemini'].endpoint, 'gemini-3.8-flash', 'fake-key',
++                         transport=httpx.MockTransport(respond))
++    assert result.known is False
++    assert result.diagnosis is not None
++    assert result.diagnosis.kind == FailureKind.INVALID_CREDENTIALS
++    assert 'private-secret' not in result.detail
++    assert 'fake-key' not in result.detail
++
++
++def test_the_model_check_sends_no_prompt():
++    seen = []
++
++    def respond(request):
++        seen.append(request)
++        return httpx.Response(200, json={'data': [{'id': 'gpt-4.1-mini'}]})
++
++    check_model('OpenAI', PROVIDERS['OpenAI'].endpoint, 'gpt-4.1-mini', 'fake',
++                transport=httpx.MockTransport(respond))
++    assert len(seen) == 1
++    assert seen[0].method == 'GET'
++
++
++def test_a_snapshot_model_matches_its_stable_alias():
++    def respond(request):
++        return httpx.Response(200, json={'data': [{'id': 'gpt-4.1-2025-04-14'}]})
++
++    result = check_model('OpenAI', PROVIDERS['OpenAI'].endpoint, 'gpt-4.1', 'fake',
++                         transport=httpx.MockTransport(respond))
++    assert result.available is True
++
++
++# ── the interface ────────────────────────────────────────────────────────────
++
++def test_saving_a_provider_in_the_manager_switches_the_chat_provider(tmp_path):
++    win = window(tmp_path)
++    try:
++        win.provider.setCurrentText('OpenAI')
++        win.save_provider()
++        assert win.chat_provider.currentText() == 'OpenAI'
++    finally:
++        win.close()
++
++
++def test_the_backup_provider_is_remembered_and_only_used_when_enabled(tmp_path):
++    win = window(tmp_path)
++    try:
++        win.backup_provider.setCurrentText('Groq')
++        assert win.store.get('backup_provider') == 'Groq'
++        assert win.backup_consent.isChecked() is False
++    finally:
++        win.close()
++
++
++def test_the_hud_status_never_carries_a_key():
++    """The browser must never receive a credential."""
++    import re
++    from pathlib import Path
++    source = Path('quantum_core/launcher.py').read_text(encoding='utf-8')
++    body = re.search(r"def hud_info\(self\):\n(.*?)\n\n", source, re.S)
++    assert body, 'the HUD must report its model status'
++    assert 'key' not in body.group(1).casefold()
++
++
++def test_the_hud_names_the_provider_and_the_four_voice_states():
++    from pathlib import Path
++    source = Path('quantum_core/web/index.html').read_text(encoding='utf-8')
++    for word in ('Listening', 'Thinking', 'Speaking', 'Voice idle'):
++        assert word in source, word
++    assert 'info.provider' in source
++
++
++# ── voice ────────────────────────────────────────────────────────────────────
++
++def test_the_speech_language_can_be_chosen(tmp_path):
++    win = window(tmp_path)
++    try:
++        assert win.voice_panel.language_code == 'en'
++        win.voice_panel.set_language('ta')
++        assert win.voice_panel.language_code == 'ta'
++        assert win.store.get('voice_language') == 'ta'
++        assert win.voice_panel.set_language('not-a-language') is False
++    finally:
++        win.close()
++
++
++def test_the_voice_states_use_the_words_the_owner_reads(tmp_path):
++    win = window(tmp_path)
++    try:
++        win.set_ai_visual_state('idle')
++        assert win.hud_voice_status.text() == 'IDLE'
++        win.set_ai_visual_state('thinking')
++        assert win.hud_voice_status.text() == 'THINKING'
++        win.set_ai_visual_state('listening')
++        assert win.hud_voice_status.text() == 'LISTENING'
++        win.set_ai_visual_state('speaking')
++        assert win.hud_voice_status.text() == 'SPEAKING'
++    finally:
++        win.close()
++
++
++def test_a_missing_language_voice_is_reported_clearly():
++    from desktop.voice_panel import VoiceSpeakerWorker
++
++    class Speaker:
++        def select_language(self, language):
++            return False
++
++        def speak(self, text, language=None, rate=None):
++            raise AssertionError('it must not try to speak without a voice')
++
++    worker = VoiceSpeakerWorker(Speaker, 'bonjour', 'fr')
++    messages = []
++    worker.failed.connect(messages.append)
++    worker.run()
++    assert messages and 'Français' in messages[0]
++    assert 'language pack' in messages[0]
++
++
++def test_tamil_text_is_spoken_with_a_tamil_voice():
++    from desktop.voice_panel import VoiceSpeakerWorker
++
++    chosen = []
++
++    class Speaker:
++        def select_language(self, language):
++            chosen.append(language)
++            return True
++
++        def speak(self, text, language=None, rate=None):
++            chosen.append(('spoke', language))
++
++    worker = VoiceSpeakerWorker(Speaker, 'வணக்கம்', 'en')
++    worker.run()
++    assert 'ta' in chosen
