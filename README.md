@@ -96,7 +96,7 @@ Read-aloud and automatic updates are separate opt-ins. The default interval
 is 120 minutes while JARVIS is open. Tamil playback uses an installed Windows
 Tamil voice when available.
 
-**Quantum Core Spatial HUD.** Install `quantum_core/requirements.txt` and run
+**JARVIS Command Center HUD.** Install `quantum_core/requirements.txt` and run
 `python main.py --hud` from the source folder. The workspace dock separates
 Core, Creative, Business, Dev Lab, and Devices. See
 [quantum_core/README.md](quantum_core/README.md) for Windows commands.

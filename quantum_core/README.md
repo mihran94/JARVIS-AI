@@ -47,8 +47,7 @@ formats this prompt locally.
 
 The other drafts use Gemini without adding the briefs to general chat history. The HUD
 shows the draft as text. For an app draft, **Download HTML draft** saves a file
-for review. The coding model defaults to `gemini-2.5-pro`. Set
-`GEMINI_CODING_MODEL` if your key uses another coding model.
+for review. Select **Deep** before an HTML draft when you want the deeper model.
 
 ## Camera and Windows devices
 
@@ -95,7 +94,7 @@ Type `/upgrade` and a feature brief to draft a Gemini review plan with tests and
 rollback notes. The proposal appears in **Creative & business workspaces**.
 
 
-## Spatial Edition
+## JARVIS Command Center HUD
 
 From the full JARVIS source folder, run the HUD with:
 
@@ -105,5 +104,16 @@ From the full JARVIS source folder, run the HUD with:
 ```
 
 The dock switches between **Core**, **Creative**, **Business**, **Dev Lab**
-and **Devices**. The HUD runs in a browser on the PC. Run `START_JARVIS.cmd`
+and **Devices**. The top bar shows the current model, voice activity and app
+version. **Fast** uses `gemini-3.5-flash-lite` and **Deep** uses
+`gemini-3.8-flash`. The selected profile is used for chat and AI drafts.
+Each profile has a separate chat session, and the HUD starts in Fast when
+reopened. Override the model IDs with `GEMINI_MODEL` or
+`GEMINI_CODING_MODEL` respectively. The HUD runs in a browser on the PC. Run `START_JARVIS.cmd`
 to use the Windows desktop app, including Tamil news and its existing updater.
+
+The blue-and-gold endpoint map lets you select a sample PC, phone, lights or
+sensor. Device actions ask for confirmation and Demo Pause affects the sample
+controls. The cloud sync indicator, endpoint states and latency chart use sample
+data. Existing Windows device controls and local PC CPU/RAM metrics connect
+through Eel. The spatial radar remains available under **Devices**.

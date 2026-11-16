@@ -4,218 +4,247 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>J.A.R.V.I.S. // QUANTUM CORE</title>
+<title>JARVIS AI · Command Center</title>
 <script type="text/javascript" src="/eel.js"></script>
 <style>
   :root {
     color-scheme: dark;
-    --bg: #02060d; --cyan: #00f3ff; --gold: #ffbe3b; --violet: #b829ff;
-    --ink: #e6f7ff; --muted: #8aa8bb; --edge: #163040; --glass: #07111de0;
-    --mono: "IBM Plex Mono", "Cascadia Code", Consolas, monospace;
-    --sans: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+    --bg: #070b13;
+    --panel: #0d1726e8;
+    --raised: #171e2a;
+    --edge: #273242;
+    --ink: #f2f6fc;
+    --muted: #a4b2c6;
+    --cyan: #64ccff;
+    --gold: #ffc772;
+    --sans: "Geist", "Segoe UI", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", Consolas, monospace;
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body {
-    margin: 0; background: radial-gradient(ellipse at 49% 36%, #0a1b2d 0, transparent 54%), var(--bg);
-    color: var(--ink); font: 14px var(--sans);
-    background-attachment: fixed;
-  }
-  button, input { font: inherit; }
-  button:focus-visible, input:focus-visible, canvas[tabindex]:focus-visible { outline: 2px solid var(--gold); outline-offset: 4px; }
-  .hud {
-    min-height: 100vh; min-height: 100dvh; max-width: 1920px; margin: auto;
-    padding: clamp(14px, 2vw, 34px); display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto auto; gap: 16px;
-  }
-  .masthead, .brand, .session, .panel-head, .core-foot, .command { display: flex; align-items: center; }
-  .masthead { justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--edge); padding: 0 2px 17px; }
-  .brand { gap: 15px; min-width: 0; }
-  .brand-mark {
-    width: 43px; height: 43px; flex: none; display: grid; place-items: center;
-    color: var(--cyan); background: #092232; border: 1px solid #265466;
-    clip-path: polygon(25% 0, 75% 0, 100% 25%, 100% 75%, 75% 100%, 25% 100%, 0 75%, 0 25%);
-    font: 700 22px var(--mono); text-shadow: 0 0 14px #00f3ff99;
+    margin: 0; min-height: 100vh; color: var(--ink); font: 14px var(--sans);
+    background: radial-gradient(ellipse at 50% -10%, #172330 0, transparent 56%), var(--bg);
   }
   h1, h2, p { margin: 0; }
-  h1 { font-size: clamp(16px, 2.25vw, 30px); line-height: 1.15; letter-spacing: .045em; }
-  h1 span { color: var(--cyan); font-weight: 500; }
-  .session { flex: none; gap: 16px; font: 600 11px var(--mono); letter-spacing: .11em; }
-  .mode { padding: 7px 9px; border: 1px solid #394630; border-radius: 4px; color: var(--gold); }
-  .mode.live { color: var(--cyan); border-color: #1e5560; }
-  .clock { color: var(--muted); font-variant-numeric: tabular-nums; }
-  .panes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2.3fr) minmax(0, 1.13fr); gap: 15px; min-height: 0; }
-  .side { min-width: 0; min-height: 0; display: grid; gap: 15px; grid-template-rows: minmax(0, 1.15fr) minmax(0, 1fr); }
-  .side.right { grid-template-rows: minmax(0, .72fr) minmax(0, 1fr); }
-  .panel {
-    position: relative; isolation: isolate; min-width: 0; min-height: 0;
-    display: flex; flex-direction: column; border: 1px solid var(--edge); background: var(--glass);
-    backdrop-filter: blur(10px); border-radius: 5px; overflow: hidden;
+  a { color: var(--cyan); }
+  button, input, select, textarea { font: inherit; }
+  button { cursor: pointer; }
+  button:disabled { cursor: default; opacity: .52; }
+  :is(button, input, select, textarea, canvas[tabindex], a):focus-visible {
+    outline: 2px solid var(--cyan); outline-offset: 3px;
   }
-  .panel::before {
-    content: ""; position: absolute; z-index: 2; inset: 0; pointer-events: none;
-    background: linear-gradient(var(--cyan),var(--cyan)) top left / 15px 1px,
-                linear-gradient(var(--cyan),var(--cyan)) top left / 1px 15px,
-                linear-gradient(var(--cyan),var(--cyan)) bottom right / 15px 1px,
-                linear-gradient(var(--cyan),var(--cyan)) bottom right / 1px 15px;
-    background-repeat: no-repeat; opacity: .68;
+  .hud {
+    display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px;
+    max-width: 1600px; min-height: 100dvh; margin: auto; padding: clamp(14px, 2.7vw, 40px);
   }
-  .panel-head { justify-content: space-between; gap: 8px; padding: 14px 14px 11px; flex: none; border-bottom: 1px solid #122739; }
-  h2 { font: 650 11px var(--mono); letter-spacing: .15em; text-transform: uppercase; }
-  .tag { color: var(--muted); font: 10px var(--mono); white-space: nowrap; }
-  .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 11px #00f3ff9c; vertical-align: 1px; margin-right: 7px; }
-  .instrument-view { position: relative; flex: 1; min-height: 85px; }
-  .instrument { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-  .legend, .core-foot { color: var(--muted); font: 10px var(--mono); letter-spacing: .09em; }
-  .legend { padding: 10px 14px; border-top: 1px solid #122739; }
-  .meters { flex: 1; display: grid; grid-template-columns: 1fr 1fr; align-content: center; gap: 10px; padding: 13px; }
-  .gauge { min-width: 0; text-align: center; }
-  .gauge-ring {
-    --level: 0%; --meter-color: var(--cyan); margin: 0 auto 10px;
-    width: min(100%, 103px); aspect-ratio: 1; position: relative;
-    display: grid; place-items: center; border-radius: 50%;
-    background: conic-gradient(var(--meter-color) 0 var(--level), #172f42 var(--level) 100%);
-    box-shadow: 0 0 18px #00f3ff10;
+  .masthead, .brand, .session, .panel-head, .core-foot, .command {
+    display: flex; align-items: center; gap: 12px;
   }
-  .gauge:nth-child(2) .gauge-ring { --meter-color: var(--violet); }
-  .gauge-ring::before { content: ""; position: absolute; inset: 4px; background: #07121e; border-radius: inherit; border: 1px solid #213746; }
-  .gauge output { position: relative; font: 700 clamp(12px, 1.65vw, 23px) var(--mono); letter-spacing: -.05em; }
-  .gauge-label { color: var(--muted); font: 650 11px var(--mono); letter-spacing: .14em; }
-  .core {
-    --active: var(--cyan); background:
-      radial-gradient(ellipse at 50% 45%, #0b2944cc, #07111d21 65%),
-      repeating-linear-gradient(0deg, transparent 0 27px, #33556a25 28px),
-      repeating-linear-gradient(90deg, transparent 0 27px, #33556a25 28px),
-      #040b15;
+  .masthead {
+    justify-content: space-between; flex-wrap: wrap; border-bottom: 1px solid var(--edge);
+    padding: 4px 0 17px;
   }
-  .core[data-state="speaking"] { --active: var(--gold); }
-  .core[data-state="listening"] { --active: #ed65ff; }
-  .core .panel-head { background: #06101acb; }
-  .core-stage { flex: 1; min-height: 0; display: flex; position: relative; }
-  #sphere { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: pan-y; cursor: grab; }
-  #sphere:active { cursor: grabbing; }
-  .core-status { padding: 5px 12px 16px; text-align: center; }
-  #state { color: var(--active); font: 650 clamp(20px, 3vw, 40px) var(--mono); letter-spacing: .12em; text-shadow: 0 0 24px color-mix(in srgb, var(--active), transparent 60%); overflow-wrap: anywhere; }
-  .core-foot { justify-content: space-between; gap: 10px; padding: 11px 14px; border-top: 1px solid #172c41; }
-  .log { margin: 0; list-style: none; padding: 6px 13px 12px; min-height: 0; overflow-y: auto; scrollbar-color: #285066 transparent; flex: 1; }
-  .log li { display: grid; grid-template-columns: 4.5em minmax(0, 1fr); gap: 7px; padding: 8px 0; border-bottom: 1px solid #122334; font: 11px/1.55 var(--mono); }
-  .log time { color: var(--muted); }
-  .log li span { overflow-wrap: anywhere; white-space: pre-wrap; }
-  .log li[data-kind="error"] span { color: #ff9fbe; }
-  .log li[data-kind="reply"] span { color: #96f9ff; }
-  .tool-drawer { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
-  .device-controls { padding: 0; border: 0; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 9px 12px; margin-top: 12px; }
-  .device-controls label { display: inline-flex; align-items: center; gap: 6px; }
-  .device-controls button, .device-controls select, .device-controls input {
-    background: #091b29; border: 1px solid var(--edge); color: var(--ink); border-radius: 4px; padding: 6px 8px;
+  .brand { gap: 12px; min-width: 0; }
+  .brand-mark {
+    display: grid; place-items: center; flex: none; width: 40px; aspect-ratio: 1;
+    border: 1px solid #46778a; border-radius: 12px; background: #142835; color: var(--cyan);
+    font: 650 21px var(--mono);
   }
-  .device-controls input { width: 65px; }
-  #network-report { min-height: 95px; }
-  #camera-source { max-width: min(235px, 50vw); }
-  .device-controls button { cursor: pointer; min-height: 32px; }
-  .device-controls button:disabled { opacity: .55; cursor: default; }
-  .workspace { padding: 11px 14px; min-width: 0; overflow: auto; max-height: 30vh; }
-  .workspace summary { cursor: pointer; color: var(--muted); font: 650 12px var(--mono); }
-  .workspace-links { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
-  .workspace a { color: var(--cyan); }
-  .workspace textarea { display: block; width: 100%; min-height: 72px; margin-top: 12px; color: var(--ink); background: var(--bg); border: 1px solid var(--edge); font: 12px var(--mono); }
-  .workspace [hidden] { display: none; }
-  .workspace p { color: var(--muted); margin-top: 8px; overflow-wrap: anywhere; }
-  .command { gap: 10px; flex-direction: row; padding: 10px 12px; min-height: 62px; }
-  .prompt-mark { color: var(--cyan); padding: 0 6px; font: 700 18px var(--mono); }
-  .command input { flex: 1; min-width: 0; color: var(--ink); padding: 10px 5px; background: transparent; border: 0; font-family: var(--mono); }
-  .command input::placeholder { color: var(--muted); opacity: 1; }
-  .command button {
-    min-height: 40px; min-width: 112px; border-radius: 3px; border: 1px solid #7afaff; padding: 8px 15px;
-    background: var(--cyan); color: #02131c; font: 800 11px var(--mono); letter-spacing: .15em; cursor: pointer;
+  h1 { font-size: clamp(19px, 2.4vw, 30px); line-height: 1.1; letter-spacing: -.04em; }
+  h1 span { display: block; margin-top: 4px; color: var(--muted); font: 500 11px var(--sans); letter-spacing: .08em; }
+  .session { flex-wrap: wrap; gap: 8px; color: var(--muted); font-size: 12px; }
+  .mode, .session output, .version {
+    min-height: 32px; display: inline-flex; align-items: center; padding: 4px 9px;
+    border: 1px solid var(--edge); border-radius: 8px; background: #121b27;
   }
-  .command button:hover { background: #abfbff; box-shadow: 0 0 18px #00f3ff4d; }
-  .command button:disabled { opacity: .65; cursor: wait; }
-  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  :root {
-    --bg: #03050a; --edge: #ffffff26; --glass: #101728b8;
-    --muted: #a0b7cc;
+  .mode.live { color: var(--cyan); }
+  .clock, .session output { font-variant-numeric: tabular-nums; }
+  .voice-state[data-active="true"] { color: var(--cyan); }
+  select, .device-controls button, .device-controls input {
+    min-height: 34px; padding: 6px 9px; color: var(--ink);
+    border: 1px solid #3a4657; border-radius: 8px; background: var(--raised);
   }
-  body {
-    background: radial-gradient(ellipse at 47% 40%, #1d224a 0, transparent 54%),
-                radial-gradient(ellipse at 75% 90%, #201139 0, transparent 36%), var(--bg);
-    background-attachment: fixed;
-  }
-  .panel {
-    border-radius: 20px;
-    -webkit-backdrop-filter: blur(22px) saturate(145%);
-    backdrop-filter: blur(22px) saturate(145%);
-    box-shadow: inset 0 1px 0 #ffffff1c, 0 12px 32px #0005;
-  }
-  .panel::before { content: none; }
-  .core {
-    background: radial-gradient(ellipse at 50% 46%, #163054, #101327 65%, #090e18);
-  }
+  #model-profile { max-width: 100%; }
   .workspace-dock {
-    justify-self: center; display: flex; flex-wrap: wrap; justify-content: center;
-    gap: 5px; padding: 6px; border-radius: 18px;
-    border: 1px solid var(--edge); background: #121929da;
-    box-shadow: inset 0 1px 0 #ffffff20, 0 12px 24px #0006;
+    display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+    border: 1px solid var(--edge); border-radius: 14px; background: #101620; padding: 6px;
   }
   .workspace-dock button {
-    border: 1px solid transparent; border-radius: 12px; padding: 7px 12px;
-    color: var(--muted); background: transparent; cursor: pointer; font-weight: 650;
+    border: 1px solid transparent; border-radius: 9px; padding: 8px 13px;
+    color: var(--muted); background: transparent; font-weight: 650;
   }
   .workspace-dock button[aria-pressed="true"] {
-    color: #e9faff; background: #233c58; border-color: #80cafa55;
+    color: var(--cyan); background: #1b2c39; border-color: #37586c;
   }
+  .panes {
+    min-height: min(500px, 55vh); display: grid; align-items: stretch;
+    grid-template-columns: minmax(0, .95fr) minmax(0, 2.15fr) minmax(0, 1.1fr); gap: 14px;
+  }
+  .side { display: grid; gap: 14px; min-width: 0; grid-template-rows: minmax(0, .9fr) minmax(0, 1fr); }
+  .panel {
+    display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden;
+    border: 1px solid var(--edge); border-radius: 16px; background: var(--panel);
+    backdrop-filter: blur(14px);
+  }
+  .panel-head { justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--edge); }
+  h2 { font-size: 13px; font-weight: 650; }
+  .tag, .legend, .core-foot { color: var(--muted); font: 11px var(--mono); }
+  .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--cyan); margin-right: 7px; }
+  .instrument-view { position: relative; flex: 1; min-height: 85px; }
+  .instrument { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .legend, .core-foot { padding: 10px 14px; border-top: 1px solid var(--edge); }
+  .meters { display: grid; flex: 1; grid-template-columns: 1fr 1fr; align-content: center; gap: 10px; padding: 14px; }
+  .gauge { min-width: 0; text-align: center; }
+  .gauge-ring {
+    --level: 0%; --meter-color: var(--cyan); width: min(100%, 104px); aspect-ratio: 1;
+    margin: 0 auto 9px; position: relative; display: grid; place-items: center; border-radius: 50%;
+    background: conic-gradient(var(--meter-color) 0 var(--level), #243041 var(--level) 100%);
+  }
+  .gauge:nth-child(2) .gauge-ring { --meter-color: var(--gold); }
+  .gauge-ring::before { content: ""; position: absolute; inset: 4px; background: #111925; border-radius: inherit; }
+  .gauge output { position: relative; font: 650 clamp(12px, 1.8vw, 23px) var(--mono); }
+  .gauge-label { color: var(--muted); font: 12px var(--mono); }
+  .core { --active: #b9cbdc; background: radial-gradient(ellipse at 50% 45%, #153452, #0a1321 68%); }
+  .core[data-state="speaking"], .core[data-state="listening"] { --active: var(--cyan); }
+  .core-stage {
+    position: relative; display: flex; flex: 1; min-height: 285px;
+    background-image: linear-gradient(#68caff12 1px, transparent 1px),
+      linear-gradient(90deg, #68caff12 1px, transparent 1px);
+    background-size: 26px 26px;
+  }
+  .endpoint-node {
+    position: absolute; z-index: 1; min-height: 42px; max-width: 34%;
+    padding: 5px 9px; border: 1px solid #345777; border-radius: 7px;
+    background: #0a1425f2; color: var(--ink); text-align: left; font-size: 12px;
+  }
+  .endpoint-node small { display: block; color: var(--muted); font-size: 10px; }
+  .endpoint-node[aria-pressed="true"] { border-color: var(--cyan); box-shadow: 0 0 14px #64ccff50; }
+  .endpoint-node[aria-pressed="true"] small { color: var(--cyan); }
+  .endpoint-node[data-endpoint="pc"] { top: 13%; left: 10px; }
+  .endpoint-node[data-endpoint="phone"] { top: 13%; right: 10px; }
+  .endpoint-node[data-endpoint="light"] { bottom: 13%; left: 10px; }
+  .endpoint-node[data-endpoint="sensor"] { bottom: 13%; right: 10px; border-style: dashed; }
+  .endpoint-node[data-endpoint="sensor"] small, .sample { color: var(--gold); }
+  .endpoint-info { display: grid; gap: 8px; padding: 12px; align-content: start; }
+  .endpoint-info p { color: var(--muted); font-size: 12px; }
+  .endpoint-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .hud-button, .endpoint-dialog button {
+    min-height: 38px; color: var(--ink); background: #18283e;
+    border: 1px solid #35516f; border-radius: 7px; padding: 6px 9px; font-size: 12px;
+  }
+  .hud-button:hover:not(:disabled), .endpoint-dialog button:hover { border-color: var(--cyan); }
+  .endpoint-dialog {
+    color: var(--ink); background: #0d1726; border: 1px solid #35516f; border-radius: 12px;
+    max-width: min(420px, calc(100vw - 26px));
+  }
+  .endpoint-dialog::backdrop { background: #03060cbb; }
+  .endpoint-dialog p { margin: 10px 0 14px; }
+  .right { grid-template-rows: auto minmax(95px, .65fr) minmax(90px, 1fr); }
+  .chart-copy { display: flex; justify-content: space-between; flex-wrap: wrap; padding: 0 10px 8px; gap: 5px; font-size: 11px; color: var(--muted); }
+  .relay-chart { display: block; width: 100%; height: 68px; background: repeating-linear-gradient(0deg, transparent 0 20px, #27425a 20px 21px); }
+  .telemetry-range { margin: 7px 10px; align-self: start; }
+  .radar-panel { margin-top: 12px; }
+  .radar-panel .instrument-view { min-height: 125px; }
+  #sphere { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: pan-y; cursor: grab; }
+  #sphere:active { cursor: grabbing; }
+  .core-status { padding: 4px 12px 16px; text-align: center; }
+  #state { color: var(--active); font: 650 clamp(18px, 2.4vw, 28px) var(--mono); overflow-wrap: anywhere; }
+  .core-foot { justify-content: flex-end; }
+  .log {
+    flex: 1; min-height: 0; max-height: 275px; overflow: auto; list-style: none;
+    margin: 0; padding: 4px 13px 11px; scrollbar-color: #3a5266 transparent;
+  }
+  .log li { display: grid; grid-template-columns: 4.6em minmax(0, 1fr); gap: 6px; padding: 8px 0; border-bottom: 1px solid #263241; font: 11px/1.5 var(--mono); }
+  .log time { color: var(--muted); }
+  .log li span { overflow-wrap: anywhere; white-space: pre-wrap; }
+  .log li[data-kind="error"] span { color: #ffacbb; }
+  .log li[data-kind="reply"] span { color: #b3f4ff; }
   .tool-drawer { display: grid; grid-template-columns: minmax(0, 1fr); }
-  .workspace [data-tools][data-filtered], .tool-drawer[hidden],
-  .tool-drawer > details[hidden] { display: none; }
-  @media (max-width: 430px) {
-    .workspace-dock { gap: 3px; }
-    .workspace-dock button { padding: 6px 8px; font-size: 12px; }
+  .workspace { display: block; padding: 11px 14px; min-width: 0; }
+  .workspace summary { font-weight: 650; cursor: pointer; }
+  .workspace :is(.workspace-links, .device-controls) { display: flex; flex-wrap: wrap; align-items: center; gap: 9px 12px; margin-top: 12px; }
+  .workspace [data-filtered] { display: none; }
+  .workspace textarea {
+    display: block; width: 100%; min-height: 75px; margin-top: 10px; padding: 9px;
+    color: var(--ink); background: #0b1018; border: 1px solid var(--edge); border-radius: 8px;
   }
-  @media (min-width: 1001px) and (min-height: 680px) { .hud { height: 100vh; height: 100dvh; } }
-  @media (max-width: 1000px), (max-height: 679px) {
-    .core-stage { min-height: 360px; }
-    .instrument-view { min-height: 135px; }
-    .log { max-height: 290px; }
-  }
-  @media (max-width: 760px) {
-    .hud { gap: 12px; }
-    .tool-drawer { grid-template-columns: minmax(0, 1fr); }
-    .panes { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+  .workspace p { color: var(--muted); margin-top: 8px; overflow-wrap: anywhere; }
+  .device-controls { padding: 0; border: 0; min-width: 0; }
+  .device-controls label { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .device-controls input { width: 64px; }
+  #camera-source { max-width: min(240px, 55vw); }
+  #network-report { min-height: 95px; }
+  .command { flex-direction: row; gap: 10px; padding: 8px 10px 8px 15px; min-height: 58px; }
+  .prompt-mark { color: var(--cyan); font: 650 17px var(--mono); }
+  .command input { flex: 1; min-width: 0; padding: 9px 5px; border: 0; background: transparent; color: var(--ink); }
+  .command input::placeholder { color: var(--muted); opacity: 1; }
+  .command button { min-height: 39px; padding: 8px 17px; border: 0; border-radius: 9px; color: #071923; background: var(--cyan); font-weight: 750; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  @media (max-width: 820px) {
+    .panes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .core { grid-row: 1; grid-column: 1 / -1; }
-    .core-stage { min-height: clamp(220px, 64vw, 375px); }
-    .side { gap: 12px; grid-template-rows: auto auto; }
-    .side.right { grid-template-rows: auto minmax(170px, auto); }
+    .core-stage { min-height: clamp(270px, 58vw, 355px); }
+    .side { grid-template-rows: auto auto; }
+    .log { min-height: 120px; }
     .clock { display: none; }
-    .command { position: sticky; bottom: 8px; z-index: 3; }
   }
   @media (max-width: 430px) {
-    .masthead { gap: 8px; }
-    .brand { gap: 8px; }
-    .brand-mark { width: 32px; height: 32px; font-size: 17px; }
-    h1 span { display: block; }
-    .panel-head, .legend { padding-inline: 9px; }
+    .hud, .panes, .side { gap: 9px; }
+    .workspace-dock { gap: 3px; }
+    .workspace-dock button { padding: 7px 8px; font-size: 12px; }
+    .panel-head, .legend, .core-foot { padding-inline: 8px; }
     .side .tag { display: none; }
-    .meters { gap: 5px; padding: 9px; }
-    .log { padding-inline: 9px; }
+    .meters { padding: 8px; gap: 5px; }
     .log li { grid-template-columns: 1fr; gap: 0; }
-    .command button { min-width: 83px; padding-inline: 8px; }
+    .panes { grid-template-columns: minmax(0, 1fr); }
+    .core { grid-column: 1; }
   }
 </style>
 </head>
 <body>
 <main class="hud">
   <header class="masthead">
-    <div class="brand"><span class="brand-mark" aria-hidden="true">◇</span><h1>J.A.R.V.I.S. <span>// QUANTUM CORE</span></h1></div>
-    <div class="session"><span class="mode" id="bridge-mode">PREVIEW</span><time class="clock" id="clock"></time></div>
+    <div class="brand"><span class="brand-mark" aria-hidden="true">◇</span><h1>JARVIS <span>Command Center</span></h1></div>
+    <div class="session">
+      <span class="mode" id="bridge-mode">PREVIEW</span>
+      <label for="model-profile" class="sr-only">Gemini model profile</label>
+      <select id="model-profile" disabled>
+        <option value="fast">Fast</option>
+        <option value="deep">Deep</option>
+      </select>
+      <output id="model-label" aria-label="Current model">Model unavailable</output>
+      <output id="voice-state" class="voice-state" aria-label="Voice status">Voice idle</output>
+      <span id="hud-version" class="version" aria-label="HUD version">Version unavailable</span>
+      <time class="clock" id="clock"></time>
+    </div>
   </header>
+
+  <nav class="workspace-dock" aria-label="JARVIS workspaces">
+    <button type="button" data-workspace="core" aria-pressed="true">Core</button>
+    <button type="button" data-workspace="creative" aria-pressed="false">Creative</button>
+    <button type="button" data-workspace="business" aria-pressed="false">Business</button>
+    <button type="button" data-workspace="dev" aria-pressed="false">Dev Lab</button>
+    <button type="button" data-workspace="devices" aria-pressed="false">Devices</button>
+  </nav>
 
   <div class="panes">
     <div class="side">
-      <section class="panel" aria-labelledby="radar-title">
-        <header class="panel-head"><h2 id="radar-title"><i class="dot"></i>Spatial radar</h2><span class="tag">SYNTHETIC</span></header>
-        <div class="instrument-view"><canvas id="radar" class="instrument" aria-label="Animated synthetic radar sweep" role="img"></canvas></div>
-        <p class="legend">360° SWEEP</p>
+      <section class="panel" aria-labelledby="endpoint-title">
+        <header class="panel-head"><h2 id="endpoint-title"><i class="dot"></i>Device controls</h2><span class="tag sample">SIMULATION</span></header>
+        <div class="endpoint-info">
+          <strong id="endpoint-name">Studio PC</strong>
+          <p id="endpoint-status" role="status">Online · Unlocked</p>
+          <div class="endpoint-actions">
+            <button class="hud-button" id="endpoint-action" type="button">Lock PC</button>
+            <button class="hud-button" id="endpoint-pause" type="button" aria-pressed="false">Pause demo controls</button>
+          </div>
+          <button class="hud-button" id="endpoint-sync" type="button">Simulate cloud sync</button>
+          <p id="endpoint-sync-state" role="status">3 of 4 sample endpoints online</p>
+        </div>
       </section>
       <section class="panel" aria-labelledby="metrics-title">
-        <header class="panel-head"><h2 id="metrics-title"><i class="dot"></i>System load</h2><span class="tag">2 S</span></header>
+        <header class="panel-head"><h2 id="metrics-title"><i class="dot"></i>System load</h2></header>
         <div class="meters">
           <div class="gauge"><div class="gauge-ring" id="cpu-ring"><output id="cpu" aria-label="CPU usage">—</output></div><div class="gauge-label">CPU</div></div>
           <div class="gauge"><div class="gauge-ring" id="ram-ring"><output id="ram" aria-label="RAM usage">—</output></div><div class="gauge-label">RAM</div></div>
@@ -225,13 +254,28 @@
     </div>
 
     <section id="core" class="panel core" aria-labelledby="core-title">
-      <header class="panel-head"><h2 id="core-title"><i class="dot"></i>Neural core</h2><span class="tag">480 NODES</span></header>
-      <div class="core-stage"><canvas id="sphere" tabindex="0" aria-label="Rotating 3D particle sphere. Drag or use arrow keys to rotate."></canvas></div>
+      <header class="panel-head"><h2 id="core-title"><i class="dot"></i>Endpoint network</h2><span class="tag sample">SAMPLE DEVICES</span></header>
+      <div class="core-stage">
+        <canvas id="sphere" tabindex="0" aria-label="Rotating 3D particle sphere. Drag or use arrow keys to rotate."></canvas>
+        <button class="endpoint-node" type="button" data-endpoint="pc" aria-pressed="true">Studio PC<small>Windows · Online</small></button>
+        <button class="endpoint-node" type="button" data-endpoint="phone" aria-pressed="false">Mobile Remote<small>Phone · Online</small></button>
+        <button class="endpoint-node" type="button" data-endpoint="light" aria-pressed="false">Studio Lights<small>IoT · Online</small></button>
+        <button class="endpoint-node" type="button" data-endpoint="sensor" aria-pressed="false">Room Sensor<small>IoT · Offline</small></button>
+      </div>
       <div class="core-status"><p id="state" role="status">STANDBY</p></div>
-      <footer class="core-foot"><span>CORE ACTIVITY</span><span>DRAG TO ROTATE</span></footer>
+      <footer class="core-foot"><span>DRAG TO ROTATE</span></footer>
     </section>
 
     <div class="side right">
+      <section class="panel" aria-labelledby="relay-title">
+        <header class="panel-head"><h2 id="relay-title"><i class="dot"></i>Network telemetry</h2><span class="tag sample">SIMULATED</span></header>
+        <select class="telemetry-range" id="relay-range" aria-label="Telemetry time range"><option value="hour">Last hour</option><option value="day">Last 24 hours</option></select>
+        <svg class="relay-chart" viewBox="0 0 180 68" preserveAspectRatio="none" role="img" aria-label="Sample cloud relay and IoT gateway latency from zero to 90 milliseconds">
+          <path id="relay-curve" fill="none" stroke="#64ccff" stroke-width="2" vector-effect="non-scaling-stroke"></path>
+          <path id="iot-curve" fill="none" stroke="#ffc772" stroke-width="2" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"></path>
+        </svg>
+        <div class="chart-copy"><span>━ Cloud relay</span><span class="sample">┄ IoT gateway</span><span>0–90 ms</span></div>
+      </section>
       <section class="panel" aria-labelledby="spectrum-title">
         <header class="panel-head"><h2 id="spectrum-title"><i class="dot"></i>Audio spectrum</h2><span class="tag">VISUAL</span></header>
         <div class="instrument-view"><canvas id="spectrum" class="instrument" aria-label="Voice-state waveform visualization" role="img"></canvas></div>
@@ -244,13 +288,6 @@
     </div>
   </div>
 
-  <nav class="workspace-dock" aria-label="JARVIS workspaces">
-    <button type="button" data-workspace="core" aria-pressed="true">Core</button>
-    <button type="button" data-workspace="creative" aria-pressed="false">Creative</button>
-    <button type="button" data-workspace="business" aria-pressed="false">Business</button>
-    <button type="button" data-workspace="dev" aria-pressed="false">Dev Lab</button>
-    <button type="button" data-workspace="devices" aria-pressed="false">Devices</button>
-  </nav>
   <div class="tool-drawer" hidden>
   <details class="panel workspace" id="workspace">
     <summary id="workspace-title">Creative &amp; business workspaces</summary>
@@ -288,6 +325,11 @@
       <button type="button" data-device="phone-link">Phone Link</button>
     </fieldset>
     <p id="device-note">Available in the Windows launcher.</p>
+      <section class="panel radar-panel" aria-labelledby="radar-title">
+        <header class="panel-head"><h2 id="radar-title"><i class="dot"></i>Spatial radar</h2><span class="tag">SYNTHETIC</span></header>
+        <div class="instrument-view"><canvas id="radar" class="instrument" aria-label="Animated synthetic radar sweep" role="img"></canvas></div>
+        <p class="legend">360° SWEEP</p>
+      </section>
     <section aria-label="Local network diagnostics">
       <div class="device-controls" id="network-controls">
         <button type="button" data-network="neighbors" disabled>Cached neighbors</button>
@@ -303,9 +345,17 @@
     <span class="prompt-mark" aria-hidden="true">&gt;_</span>
     <label class="sr-only" for="command">Command</label>
     <input id="command" type="text" placeholder="Enter a command…" autocomplete="off" spellcheck="false" maxlength="4000" required>
-    <button id="execute" type="submit">EXECUTE</button>
+    <button id="execute" type="submit">Send</button>
   </form>
 </main>
+<dialog class="endpoint-dialog" id="endpoint-confirm" aria-labelledby="endpoint-confirm-title">
+  <h2 id="endpoint-confirm-title">Confirm simulated action</h2>
+  <p id="endpoint-confirm-text"></p>
+  <form method="dialog" class="endpoint-actions">
+    <button value="cancel" autofocus>Cancel</button>
+    <button value="apply">Confirm</button>
+  </form>
+</dialog>
 
 <script>
 'use strict';
@@ -357,6 +407,83 @@ function appendLog(message, kind = 'info') {
   log.scrollTop = log.scrollHeight;
 }
 
+const endpoints = {
+  pc: {name: 'Studio PC', states: ['Unlocked', 'Locked'], actions: ['Lock PC', 'Unlock PC']},
+  phone: {name: 'Mobile Remote', states: ['Ready', 'Ping received'], actions: ['Ping phone', 'Ping phone']},
+  light: {name: 'Studio Lights', states: ['On', 'Off'], actions: ['Turn lights off', 'Turn lights on']},
+  sensor: {name: 'Room Sensor', states: ['Unavailable'], actions: [], offline: true},
+};
+const endpointNodes = [...core.querySelectorAll('[data-endpoint]')];
+const endpointAction = byId('endpoint-action');
+const endpointPause = byId('endpoint-pause');
+const endpointDialog = byId('endpoint-confirm');
+let currentEndpoint = 'pc';
+let endpointPaused = false;
+let endpointRequest = null;
+
+function showEndpoint() {
+  const endpoint = endpoints[currentEndpoint];
+  const state = Number(Boolean(endpoint.changed));
+  byId('endpoint-name').textContent = endpoint.name;
+  byId('endpoint-status').textContent = (endpoint.offline ? 'Offline' : 'Online') + ' · ' + endpoint.states[state];
+  endpointAction.textContent = endpoint.actions[state] ?? 'Unavailable';
+  endpointAction.disabled = Boolean(endpoint.offline) || endpointPaused;
+  for (const node of endpointNodes) {
+    node.setAttribute('aria-pressed', String(node.dataset.endpoint === currentEndpoint));
+  }
+}
+for (const node of endpointNodes) {
+  node.addEventListener('click', () => {
+    currentEndpoint = node.dataset.endpoint;
+    showEndpoint();
+  });
+}
+endpointPause.addEventListener('click', () => {
+  endpointPaused = !endpointPaused;
+  endpointPause.setAttribute('aria-pressed', String(endpointPaused));
+  endpointPause.textContent = endpointPaused ? 'Resume demo controls' : 'Pause demo controls';
+  showEndpoint();
+  appendLog('Simulation: device controls ' + (endpointPaused ? 'paused.' : 'resumed.'));
+});
+endpointAction.addEventListener('click', () => {
+  if (endpointAction.disabled) return;
+  endpointRequest = currentEndpoint;
+  endpointDialog.returnValue = '';
+  byId('endpoint-confirm-text').textContent = endpointAction.textContent + ' in the endpoint simulation?';
+  endpointDialog.showModal();
+});
+endpointDialog.addEventListener('close', () => {
+  if (endpointDialog.returnValue === 'apply' && endpointRequest && !endpointPaused) {
+    const endpoint = endpoints[endpointRequest];
+    endpoint.changed = endpointRequest === 'phone' || !endpoint.changed;
+    appendLog('Simulation: ' + endpoint.name + ' · ' + endpoint.states[Number(endpoint.changed)]);
+    showEndpoint();
+  }
+  endpointRequest = null;
+});
+byId('endpoint-sync').addEventListener('click', () => {
+  byId('endpoint-sync-state').textContent = 'Demo synced at ' + clockFormat.format(new Date());
+  appendLog('Simulation: cloud sync completed for 3 sample endpoints.');
+});
+
+const relaySeries = {
+  hour: [[33, 26, 39, 35, 52, 42, 48, 37, 55, 70, 48, 42], [17, 20, 15, 24, 20, 25, 27, 18, 26, 21, 33, 30]],
+  day: [[43, 38, 63, 57, 76, 61, 49, 54, 72, 56, 49, 42], [14, 18, 22, 39, 34, 27, 32, 24, 25, 37, 28, 30]],
+};
+const relayRange = byId('relay-range');
+function drawRelay() {
+  relaySeries[relayRange.value].forEach((series, index) => {
+    const path = series.map((latency, i) => {
+      const x = (i * 180 / (series.length - 1)).toFixed(1);
+      const y = (68 * (1 - latency / 90)).toFixed(1);
+      return (i ? 'L' : 'M') + x + ',' + y;
+    }).join(' ');
+    byId(index ? 'iot-curve' : 'relay-curve').setAttribute('d', path);
+  });
+}
+relayRange.addEventListener('change', drawRelay);
+drawRelay();
+
 function update_hud_state(state, logMessage) {
   const label = String(state ?? '').trim() || 'STANDBY';
   const normalized = label.toUpperCase().replace(/[.\s…]+$/, '');
@@ -367,6 +494,10 @@ function update_hud_state(state, logMessage) {
   stateRevision += 1;
   core.dataset.state = activity;
   stateLabel.textContent = label;
+  const voice = byId('voice-state');
+  const voiceActive = activity === 'listening' || activity === 'speaking';
+  voice.textContent = voiceActive ? (activity === 'listening' ? 'Listening' : 'Speaking') : 'Voice idle';
+  voice.dataset.active = String(voiceActive);
   audioState.textContent = {
     listening: 'LISTENING SIGNAL', speaking: 'PLAYBACK SIGNAL',
     processing: 'PROCESSING SIGNAL', active: 'ACTIVE SIGNAL', idle: 'IDLE SIGNAL'
@@ -474,9 +605,10 @@ function showDraft(text, kind) {
 async function runCommand(event) {
   event.preventDefault();
   const text = commandInput.value.trim();
-  if (!text || commandPending) return;
+  if (!text || commandPending || execute.disabled) return;
 
   commandPending = true;
+  modelProfile.disabled = true;
   execute.disabled = true;
   commandInput.value = '';
   appendLog('YOU: ' + text);
@@ -512,6 +644,7 @@ async function runCommand(event) {
   } finally {
     if (stateRevision === requestRevision) update_hud_state(hasEel ? 'ONLINE' : 'STANDBY', '');
     commandPending = false;
+    modelProfile.disabled = !modelReady;
     execute.disabled = false;
     commandInput.focus();
   }
@@ -607,9 +740,48 @@ async function loadBusinessSite() {
   }
 }
 
+const modelProfile = byId('model-profile');
+let savedProfile = 'fast';
+let modelReady = false;
+function showHudInfo(info) {
+  if (info?.error || typeof info?.model !== 'string' || !['fast', 'deep'].includes(info.profile)
+      || typeof info.version !== 'string') {
+    throw new Error(info?.error || 'HUD model status is unavailable.');
+  }
+  savedProfile = info.profile;
+  modelProfile.value = savedProfile;
+  byId('model-label').textContent = info.model;
+  byId('hud-version').textContent = 'App v' + info.version;
+}
+
+async function loadHudInfo() {
+  try {
+    showHudInfo(await eel.hud_info()());
+    modelReady = true;
+    modelProfile.disabled = commandPending;
+  } catch {
+    appendLog('HUD model status is unavailable.', 'error');
+  }
+}
+
+modelProfile.addEventListener('change', async () => {
+  modelProfile.disabled = true;
+  execute.disabled = true;
+  try {
+    showHudInfo(await eel.set_model_profile(modelProfile.value)());
+  } catch {
+    modelProfile.value = savedProfile;
+    appendLog('Could not switch model profile.', 'error');
+  } finally {
+    modelProfile.disabled = false;
+    execute.disabled = commandPending;
+  }
+});
+
 byId('command-form').addEventListener('submit', runCommand);
 if (hasEel) {
   loadBusinessSite();
+  loadHudInfo();
   bridgeMode.textContent = 'EEL STARTING';
   metricsSource.textContent = 'WAITING FOR PC METRICS';
   appendLog('Eel bridge detected. Waiting for PC telemetry.');
@@ -652,14 +824,24 @@ function line(ctx, x1, y1, x2, y2) {
 }
 
 const sphere = surface('sphere');
+let endpointLocations = [];
+const endpointLayout = new ResizeObserver(() => {
+  endpointLocations = endpointNodes.map(node => ({
+    x: node.offsetLeft + node.offsetWidth / 2,
+    y: node.offsetTop + node.offsetHeight / 2,
+    offline: node.dataset.endpoint === 'sensor',
+  }));
+});
+endpointLayout.observe(sphere.canvas.parentElement);
+for (const node of endpointNodes) endpointLayout.observe(node);
 const radar = surface('radar');
 const spectrum = surface('spectrum');
 const nodeCount = 480;
 const goldenAngle = Math.PI * (3 - Math.sqrt(5));
 const tau = 2 * Math.PI;
 const palette = {
-  idle: [0, 243, 255], speaking: [255, 190, 59], listening: [237, 101, 255],
-  processing: [184, 41, 255], active: [134, 250, 255]
+  idle: [101, 183, 255], speaking: [255, 199, 114], listening: [112, 207, 255],
+  processing: [255, 184, 93], active: [134, 236, 255]
 };
 const nodes = Array.from({ length: nodeCount }, (_, i) => {
   const y = 1 - 2 * (i + .5) / nodeCount;
@@ -717,18 +899,18 @@ function drawSphere(time, dt) {
   const x = w / 2;
   const y = h / 2;
   const motion = reducedMotion.matches ? 0 : 1;
-  const target = activity === 'speaking' || activity === 'listening' ? 1 : activity === 'idle' ? 0 : .36;
+  const target = activity === 'speaking' || activity === 'listening' ? 1 : 0;
   const blend = Math.min(1, dt * 8);
   intensity += (target - intensity) * blend;
   color = color.map((value, i) => value + (palette[activity][i] - value) * blend);
   const rgb = color.map(Math.round).join(',');
-  const radius = Math.min(w, h) * .33 * (1 + Math.sin(time * (2.3 + intensity * 4)) * (.012 + intensity * .055) * motion);
-  if (!pointer) yaw += dt * (.18 + intensity * .48) * motion;
+  const radius = Math.min(w, h) * .33 * (1 + Math.sin(time * (2.3 + intensity * 4)) * intensity * .055 * motion);
+  if (!pointer && target === 1) yaw += dt * (.18 + intensity * .48) * motion;
 
   ctx.clearRect(0, 0, w, h);
   const halo = ctx.createRadialGradient(x, y, 0, x, y, radius * 1.65);
-  halo.addColorStop(0, 'rgba(' + rgb + ',.16)');
-  halo.addColorStop(.62, 'rgba(' + rgb + ',.07)');
+  halo.addColorStop(0, 'rgba(' + rgb + ',' + (.035 + intensity * .16) + ')');
+  halo.addColorStop(.62, 'rgba(' + rgb + ',' + (intensity * .07) + ')');
   halo.addColorStop(1, 'rgba(' + rgb + ',0)');
   ctx.fillStyle = halo;
   ctx.fillRect(0, 0, w, h);
@@ -740,6 +922,14 @@ function drawSphere(time, dt) {
   circle(ctx, x, y, radius * 1.43);
   ctx.stroke();
   ctx.setLineDash([]);
+  for (const endpoint of endpointLocations) {
+    ctx.strokeStyle = endpoint.offline ? '#ffc77272' : '#64ccff7a';
+    ctx.setLineDash(endpoint.offline ? [3, 5] : []);
+    line(ctx, endpoint.x, endpoint.y, x + Math.sign(endpoint.x - x) * radius * .92,
+      y + Math.sign(endpoint.y - y) * radius * .43);
+  }
+  ctx.setLineDash([]);
+  ctx.strokeStyle = 'rgba(' + rgb + ',.23)';
   line(ctx, x - radius * 1.53, y, x - radius * 1.36, y);
   line(ctx, x + radius * 1.36, y, x + radius * 1.53, y);
 
@@ -779,7 +969,7 @@ function drawSphere(time, dt) {
     }
     ctx.fillStyle = 'rgba(' + rgb + (front ? ',.95)' : ',.35)');
     ctx.shadowColor = 'rgb(' + rgb + ')';
-    ctx.shadowBlur = front ? 11 : 0;
+    ctx.shadowBlur = front && target === 1 ? 10 : 0;
     ctx.fill();
     ctx.shadowBlur = 0;
   }
@@ -825,7 +1015,7 @@ function drawSpectrum(time) {
   ctx.strokeStyle = '#143243';
   for (let x = 15; x < w; x += 24) line(ctx, x, 0, x, h);
   for (let y = h / 2 % 21; y < h; y += 21) line(ctx, 0, y, w, y);
-  const voices = ['#00f3ff', '#b829ff', '#ffbe3b'];
+  const voices = ['#64ccff', '#337ed9', '#ffc772'];
   const span = Math.max(1, w - 16);
   for (let track = 0; track < voices.length; track += 1) {
     ctx.beginPath();

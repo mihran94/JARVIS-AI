@@ -22,6 +22,8 @@ else:
 
 
 MODEL = 'gemini-3.5-flash-lite'
+DEEP_MODEL = 'gemini-3.8-flash'
+APP_VERSION = '0.3.0'
 MAX_COMMAND_LENGTH = 4000
 SYSTEM_INSTRUCTION = (
     'You are J.A.R.V.I.S., a capable AI assistant. Reply in the user’s language '
@@ -73,12 +75,16 @@ DRAFT_INSTRUCTIONS = {
 class GeminiChat:
     """Lazily initialize a single session owned by the native worker."""
 
-    def __init__(self, key, model, coding_model='gemini-2.5-pro'):
+    def __init__(self, key, model, coding_model=DEEP_MODEL):
         self.key = key
-        self.model = model
-        self.coding_model = coding_model
+        self.models = {'fast': model, 'deep': coding_model}
+        self.profile = 'fast'
         self.client = None
-        self.session = None
+        self.sessions = {}
+
+    @property
+    def model(self):
+        return self.models[self.profile]
 
     def get_client(self):
         from google import genai
@@ -97,7 +103,7 @@ class GeminiChat:
         from google.genai import types
 
         result = self.get_client().models.generate_content(
-            model=self.coding_model if command == '/app' else self.model,
+            model=self.model,
             contents=brief,
             config=types.GenerateContentConfig(system_instruction=DRAFT_INSTRUCTIONS[command]),
         )
@@ -106,8 +112,8 @@ class GeminiChat:
     def reply(self, command):
         from google.genai import errors, types
 
-        if self.session is None:
-            self.session = self.get_client().chats.create(
+        if self.profile not in self.sessions:
+            self.sessions[self.profile] = self.get_client().chats.create(
                 model=self.model,
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_INSTRUCTION,
@@ -115,13 +121,13 @@ class GeminiChat:
                 ),
             )
         try:
-            result = self.session.send_message(command)
+            result = self.sessions[self.profile].send_message(command)
         except errors.APIError as error:
             return {
                 400: 'Gemini rejected the request. Check your API key and model settings, Sir.',
                 401: 'Gemini could not authenticate the API key, Sir.',
                 403: 'This key does not have access to Gemini, Sir.',
-                404: 'That Gemini model is unavailable for this key. Check GEMINI_MODEL, Sir.',
+                404: 'That Gemini model is unavailable for this key. Check your Fast or Deep model settings, Sir.',
                 429: 'Gemini reached a rate or quota limit, Sir. Check Google AI Studio.',
             }.get(error.code, 'Gemini is temporarily unavailable, Sir.')
         text = (result.text or '').strip()
@@ -187,6 +193,16 @@ class QuantumCore:
             except DiagnosticError as error:
                 return {'error': str(error)}
 
+    def hud_info(self):
+        return {'model': self.chat.model, 'profile': self.chat.profile, 'version': APP_VERSION}
+
+    def set_model_profile(self, profile):
+        if not isinstance(profile, str) or profile not in self.chat.models:
+            return {'error': 'Choose Fast or Deep.'}
+        with self.turn:
+            self.chat.profile = profile
+            return self.hud_info()
+
     @staticmethod
     def business_site():
         return {'name': STUDIO_NAME, 'url': STUDIO_URL}
@@ -212,7 +228,7 @@ class QuantumCore:
                         return {'error': 'The HTML draft was incomplete.'}
                 return {'text': text} if text else {'error': 'Gemini returned an empty draft.'}
             except Exception:
-                model_option = 'GEMINI_CODING_MODEL' if command == '/app' else 'GEMINI_MODEL'
+                model_option = 'GEMINI_CODING_MODEL' if self.chat.profile == 'deep' else 'GEMINI_MODEL'
                 return {'error': f'JARVIS could not create the draft. Check your Gemini key and {model_option}.'}
             finally:
                 self.state('ONLINE')
@@ -331,13 +347,15 @@ def main():
     key = os.environ.get('GEMINI_API_KEY', '').strip()
     chat = GeminiChat(
         key, os.environ.get('GEMINI_MODEL', '').strip() or MODEL,
-        os.environ.get('GEMINI_CODING_MODEL', '').strip() or 'gemini-2.5-pro',
+        os.environ.get('GEMINI_CODING_MODEL', '').strip() or DEEP_MODEL,
     )
     hud = QuantumCore(chat, speak=not args.no_voice, listen=args.listen, language=args.language)
     # Prime psutil's nonblocking CPU counter before the first browser poll.
     psutil.cpu_percent(interval=None)
     eel.init(str(Path(__file__).resolve().parent / 'web'))
     eel.expose('get_system_stats')(hud.system_metrics)
+    eel.expose('hud_info')(hud.hud_info)
+    eel.expose('set_model_profile')(hud.set_model_profile)
     eel.expose('process_jarvis_command')(hud.process_command)
     eel.expose('create_draft')(hud.create_draft)
     eel.expose('device_action')(hud.device_action)
