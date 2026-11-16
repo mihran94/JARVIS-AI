@@ -28,3 +28,38 @@ and matched the tested source tree.
 and Gemini responses used test doubles. Installed Windows apps and live video
 generation still need a PC acceptance check. This update opens the tools.
 Editor actions inside those tools are a separate integration.
+
+## Updated for JARVIS Omega
+
+`main` moved to `7a1ec8d`, which includes **JARVIS Omega**
+(`desktop/omega.py`, `desktop/omega_visuals.py`, `desktop/omega_geography.py`).
+The patch in this folder was written against the `main` before Omega landed, so
+its `desktop/app.py` hunks no longer applied: Omega moved the navigation,
+rewrote `confirm()`, `stop()` and `resume()`, and changed how the window is
+shown.
+
+The patch here is therefore **re-exported against the Omega tree**. Nothing was
+lost:
+
+* all three Omega modes — Omega, Island, Stealth — and their saved preferences
+  are intact;
+* `confirm()` still brackets the approval dialog with Omega's approval state;
+* `stop()` still calls `omega.on_stop()` and `resume()` still restores Omega's
+  feed and state;
+* the chat-first navigation, the inline Approve/Decline row, the plugin
+  switches, the chosen executables, the chat commands and `/video` are all
+  present.
+
+The port is scripted in `scripts/port_chat_first_omega.py`, so it is auditable
+and repeatable rather than a pile of hand-edited hunks.
+
+Apply order from the current `main`:
+
+```cmd
+git checkout 7a1ec8d
+git apply develop\video-editing-studio\changes.patch
+git apply develop\chat-first\changes.patch
+git apply develop\personal-codex-assistant\changes.patch
+python scripts\source_manifest.py
+python scripts\source_manifest.py --check
+```
