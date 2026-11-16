@@ -56,6 +56,17 @@ The plan now holds both, and each one is written in that engine's own style:
 Both describe **the same shot**. The prompt sheet groups the text by shot so
 the editor can copy the desired prompt.
 
+### Browser handoff
+
+Under **Video Editor → Browser handoff**, choose a shot and click
+**Open Google Flow** or **Open Higgsfield**. JARVIS copies that tool's prompt
+for the selected shot and opens the official page in the default browser.
+Paste the prompt there and start generation when ready. The tool buttons also
+open their pages before a plan is generated. If the selected shot lacks that
+tool's prompt, the clipboard keeps its current contents and JARVIS reports
+that the prompt is missing. Browser sign-in and generation take place in the
+tool's own page.
+
 ### Backwards compatibility
 
 Plans with only a Google Flow prompt remain usable. A missing Higgsfield

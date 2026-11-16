@@ -1,5 +1,5 @@
 diff --git a/desktop/app.py b/desktop/app.py
-index fdd0192..bf186c4 100644
+index fdd0192..6eba2c4 100644
 --- a/desktop/app.py
 +++ b/desktop/app.py
 @@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
@@ -19,7 +19,7 @@ index fdd0192..bf186c4 100644
  from video_studio.planning import (
 -    VIDEO_ENGINES, english_srt, flow_instructions, parse_plan, plan_json,
 -    planning_messages, spoken_brief, suggest_workflow,
-+    VIDEO_ENGINES, english_srt, parse_plan, plan_json, prompt_sheet,
++    VIDEO_ENGINES, VIDEO_TOOLS, english_srt, parse_plan, plan_json, prompt_sheet,
 +    planning_messages, shot_list, spoken_brief, suggest_workflow,
  )
  from business.site_preview import LANGUAGES, WebsiteExport
@@ -44,7 +44,7 @@ index fdd0192..bf186c4 100644
      def dashboard(self):
          page, layout = self.page('Command Center', 'Live system metrics for this computer.')
          header = QHBoxLayout()
-@@ -848,8 +862,23 @@ class Window(QMainWindow):
+@@ -848,38 +862,69 @@ class Window(QMainWindow):
          self.video_status = QLabel('Subtitle timing is estimated. Review it against the recorded voiceover.')
          self.video_status.setWordWrap(True)
          layout.addWidget(self.video_status)
@@ -66,9 +66,34 @@ index fdd0192..bf186c4 100644
          self.video_preview.setReadOnly(True)
 +        self.video_preview.setPlaceholderText('The cinematic shot list appears here once a plan is ready.')
          layout.addWidget(self.video_preview, 1)
-         flow_link = QLabel()
-         flow_link.setOpenExternalLinks(True)
-@@ -863,23 +892,29 @@ class Window(QMainWindow):
+-        flow_link = QLabel()
+-        flow_link.setOpenExternalLinks(True)
+-        layout.addWidget(flow_link)
+-        links = (
+-            '<a href="https://labs.google/fx/tools/flow">Open Google Flow</a>',
+-            '<a href="https://higgsfield.ai/">Open Higgsfield</a>',
+-        )
+-        flow_link.setText(links[0])
+-        self.video_engine.currentIndexChanged.connect(lambda index: flow_link.setText(links[index]))
++        handoff = QGroupBox('Browser handoff')
++        handoff_layout = QVBoxLayout(handoff)
++        handoff_note = QLabel('Pick a shot, then open either tool. JARVIS copies the shot’s '
++                             'prompt when available. Paste it in the browser to start.')
++        handoff_note.setWordWrap(True)
++        handoff_layout.addWidget(handoff_note)
++        self.video_handoff_shot = QComboBox()
++        self.video_handoff_shot.setAccessibleName('Shot for browser handoff')
++        self.video_handoff_shot.setPlaceholderText('Generate a shot plan first')
++        self.video_handoff_shot.setEnabled(False)
++        handoff_layout.addWidget(self.video_handoff_shot)
++        tool_row = QHBoxLayout()
++        self.video_tool_buttons = {
++            tool: self.flexible_button(
++                tool_row, f'Open {tool}', lambda _checked=False, tool=tool: self.open_video_tool(tool))
++            for tool in VIDEO_TOOLS
++        }
++        handoff_layout.addLayout(tool_row)
++        layout.addWidget(handoff)
          self.video_engine.currentIndexChanged.connect(self.invalidate_video_plan)
          row = QHBoxLayout()
          self.video_export_buttons = (
@@ -104,7 +129,7 @@ index fdd0192..bf186c4 100644
              layout, 'Build After Effects timeline', self.build_after_effects_timeline)
          self.after_effects_timeline_button.setEnabled(False)
          return page
-@@ -908,9 +943,41 @@ class Window(QMainWindow):
+@@ -908,9 +953,64 @@ class Window(QMainWindow):
  
          self.notify(operation)
  
@@ -139,14 +164,37 @@ index fdd0192..bf186c4 100644
 +        self.statusBar().showMessage(
 +            'Copied the ' + self.video_sheet_kind.currentText().lower() + ' to the clipboard.', 8000)
 +
++    def open_video_tool(self, tool):
++        url, field = VIDEO_TOOLS[tool]
++
++        def operation():
++            self.policy.ticket()
++            index = self.video_handoff_shot.currentIndex()
++            prompt = ''
++            if self.video_plan is not None and index >= 0:
++                prompt = self.video_plan[1]['shots'][index].get(field, '')
++            if prompt:
++                QApplication.clipboard().setText(prompt)
++            if not QDesktopServices.openUrl(QUrl(url)):
++                detail = ' The prompt is on your clipboard.' if prompt else ''
++                raise ValueError(f'Could not open {tool} in your browser.' + detail)
++            if prompt:
++                return f'Shot {index + 1} prompt copied. Paste it in {tool}.'
++            if index >= 0:
++                return f'Opened {tool}. Shot {index + 1} has no {tool} prompt to copy.'
++            return f'Opened {tool}. Generate a shot plan to copy a prompt from JARVIS.'
++
++        self.notify(operation)
++
      def invalidate_video_plan(self):
          self.video_plan = None
          self.video_preview.clear()
 +        self.video_sheet.clear()
++        self.video_handoff_shot.clear()
          self.refresh_draft_buttons()
  
      def save_video_draft(self, extension):
-@@ -924,7 +991,7 @@ class Window(QMainWindow):
+@@ -924,7 +1024,7 @@ class Window(QMainWindow):
              Action('save_file', name, Workspace.digest(content)),
              self.confirm, lambda: self.workspace.save(name, content)))
  
@@ -155,7 +203,7 @@ index fdd0192..bf186c4 100644
          if self.video_plan is None or self.worker is not None or self.policy.stopped:
              return
          selection = self.video_plan
-@@ -932,7 +999,7 @@ class Window(QMainWindow):
+@@ -932,7 +1032,7 @@ class Window(QMainWindow):
  
          def operation():
              media_tools()
@@ -164,7 +212,7 @@ index fdd0192..bf186c4 100644
              if dialog.exec() != QDialog.DialogCode.Accepted:
                  return
              if self.video_plan is not selection or self.worker is not None:
-@@ -940,10 +1007,13 @@ class Window(QMainWindow):
+@@ -940,10 +1040,13 @@ class Window(QMainWindow):
              clips = [field.text() for field in dialog.clips]
              output = dialog.target.text()
              narration = dialog.narration.text() or None
@@ -181,11 +229,14 @@ index fdd0192..bf186c4 100644
                  lambda: self.start_video_export(
                      output, label,
                      lambda check: exporter(plan, clips, output, check, narration=narration)))
-@@ -2061,9 +2131,12 @@ class Window(QMainWindow):
+@@ -2061,9 +2164,15 @@ class Window(QMainWindow):
                  else:
                      plan['engine'] = self.video_engine.currentText()
                      self.video_plan = uuid.uuid4().hex, plan
 -                    self.video_preview.setPlainText(flow_instructions(plan))
++                    self.video_handoff_shot.addItems(
++                        [f'Shot {number}' for number in range(1, len(plan['shots']) + 1)])
++                    self.video_handoff_shot.setCurrentIndex(0)
 +                    self.video_preview.setPlainText(shot_list(plan))
 +                    self.refresh_video_sheet()
                      self.video_status.setText(
@@ -196,7 +247,17 @@ index fdd0192..bf186c4 100644
              else:
                  self.video_status.setText(status + ': ' + text)
          elif self.worker_kind == 'news_briefing':
-@@ -2156,6 +2229,7 @@ class Window(QMainWindow):
+@@ -2147,6 +2256,9 @@ class Window(QMainWindow):
+         self.coding_provider.setEnabled(ready)
+         self.video_generate_button.setEnabled(ready)
+         self.video_engine.setEnabled(ready)
++        self.video_handoff_shot.setEnabled(ready and self.video_plan is not None)
++        for button in self.video_tool_buttons.values():
++            button.setEnabled(ready)
+         self.business_generate.setEnabled(ready)
+         self.site_generate.setEnabled(ready)
+         self.site_language.setEnabled(ready)
+@@ -2156,6 +2268,7 @@ class Window(QMainWindow):
              button.setEnabled(ready and self.video_plan is not None)
          self.video_render_button.setEnabled(ready and self.video_plan is not None)
          self.capcut_button.setEnabled(ready and self.video_plan is not None)
@@ -388,10 +449,10 @@ index 886fdcf..7570405 100644
 +# are carried here: that section is merged without them.
 diff --git a/tests/test_video_editing_studio.py b/tests/test_video_editing_studio.py
 new file mode 100644
-index 0000000..fe978a3
+index 0000000..7d5bd4d
 --- /dev/null
 +++ b/tests/test_video_editing_studio.py
-@@ -0,0 +1,399 @@
+@@ -0,0 +1,444 @@
 +"""Exercise the Video Editing Studio: one Tamil brief, two engines, two editors.
 +
 +WHAT IS COVERED
@@ -650,6 +711,51 @@ index 0000000..fe978a3
 +        win.video_sheet_kind.setCurrentText('Editing checklist')
 +        win.video_copy_button.click()
 +        assert "DaVinci Resolve" in QApplication.clipboard().text()
++    finally:
++        win.close()
++        app.processEvents()
++
++
++def test_browser_handoff_copies_only_the_selected_shots_matching_prompt(tmp_path, monkeypatch):
++    win, app = window(tmp_path, monkeypatch)
++    opened = []
++    monkeypatch.setattr('desktop.app.QDesktopServices.openUrl',
++                        lambda url: opened.append(url.toString()) or True)
++    draft = detailed_draft()
++    draft['shots'][1]['flow_prompt'] = 'Flow shot two: dolly left.'
++    draft['shots'][1]['higgsfield_prompt'] = 'Higgsfield shot two: track left.'
++    try:
++        generate(win, draft)
++        win.video_handoff_shot.setCurrentIndex(1)
++        win.video_tool_buttons['Google Flow'].click()
++        assert QApplication.clipboard().text() == 'Flow shot two: dolly left.'
++        win.video_tool_buttons['Higgsfield'].click()
++        assert QApplication.clipboard().text() == 'Higgsfield shot two: track left.'
++        assert opened == ['https://flow.google.com/', 'https://higgsfield.ai/ai-video']
++    finally:
++        win.close()
++        app.processEvents()
++
++
++def test_browser_handoff_keeps_clipboard_when_the_matching_prompt_is_missing(tmp_path, monkeypatch):
++    win, app = window(tmp_path, monkeypatch)
++    opened = []
++    monkeypatch.setattr('desktop.app.QDesktopServices.openUrl',
++                        lambda url: opened.append(url.toString()) or True)
++    QApplication.clipboard().setText('keep this text')
++    try:
++        assert not win.video_handoff_shot.isEnabled()
++        win.video_tool_buttons['Google Flow'].click()
++        assert QApplication.clipboard().text() == 'keep this text'
++        generate(win, legacy_draft())
++        win.video_tool_buttons['Higgsfield'].click()
++        assert QApplication.clipboard().text() == 'keep this text'
++        assert 'no Higgsfield prompt to copy' in win.statusBar().currentMessage()
++        assert opened == ['https://flow.google.com/', 'https://higgsfield.ai/ai-video']
++        win.video_brief.setPlainText('Updated brief')
++        assert win.video_handoff_shot.count() == 0
++        win.stop()
++        assert not win.video_tool_buttons['Google Flow'].isEnabled()
 +    finally:
 +        win.close()
 +        app.processEvents()
@@ -962,10 +1068,10 @@ index 0000000..d84f979
 +        package.rename(output)
 +    return output
 diff --git a/video_studio/planning.py b/video_studio/planning.py
-index 0aaa47a..07d64d1 100644
+index 0aaa47a..cdedbfe 100644
 --- a/video_studio/planning.py
 +++ b/video_studio/planning.py
-@@ -1,4 +1,25 @@
+@@ -1,15 +1,42 @@
 -"""Build and validate an editable 30-second cinematic production plan."""
 +"""Build and validate an editable 30-second cinematic production plan.
 +
@@ -992,7 +1098,15 @@ index 0aaa47a..07d64d1 100644
  import json
  import re
  
-@@ -9,7 +30,9 @@ _VOICE_PREFIX = re.compile(
+ DURATION_MS = 30_000
+-VIDEO_ENGINES = ("Google Flow", "Higgsfield")
++VIDEO_TOOLS = {
++    "Google Flow": ("https://flow.google.com/", "flow_prompt"),
++    "Higgsfield": ("https://higgsfield.ai/ai-video", "higgsfield_prompt"),
++}
++VIDEO_ENGINES = tuple(VIDEO_TOOLS)
+ _MAX_BRIEF = 4000
+ _VOICE_PREFIX = re.compile(
      r"^(?:video editor|cinematic reel|வீடியோ எடிட்டர்|சினிமாட்டிக் ரீல்)"
      r"(?:\s*[:：,–-]\s*|\s+)(?P<brief>\S.*)$", re.IGNORECASE | re.DOTALL
  )
@@ -1003,7 +1117,7 @@ index 0aaa47a..07d64d1 100644
      "end_ms": 0,
      "tamil_voiceover": 300,
      "english_subtitle": 84,
-@@ -18,6 +41,21 @@ _SHOT_FIELDS = {
+@@ -18,6 +45,21 @@ _SHOT_FIELDS = {
      "edit_and_sound": 350,
  }
  
@@ -1025,7 +1139,7 @@ index 0aaa47a..07d64d1 100644
  
  def spoken_brief(text):
      """Recognize an explicit mode prefix without intercepting ordinary chat."""
-@@ -38,8 +76,11 @@ def suggest_workflow(brief, engine):
+@@ -38,8 +80,11 @@ def suggest_workflow(brief, engine):
      if re.search(r"\b(?:logo|vfx|composit(?:e|ing)|motion graphics|after effects)\b|லோகோ", text):
          steps.append("Use After Effects for the logo animation or effects shot, then bring that clip into the edit.")
      steps.append("Assemble the 1080 × 1920 preview in JARVIS and check narration and caption timing.")
@@ -1037,7 +1151,7 @@ index 0aaa47a..07d64d1 100644
      return "\n\n".join(f"{index}. {step}" for index, step in enumerate(steps, 1))
  
  
-@@ -50,13 +91,15 @@ def planning_messages(brief, engine="Google Flow"):
+@@ -50,13 +95,15 @@ def planning_messages(brief, engine="Google Flow"):
      if engine not in VIDEO_ENGINES:
          raise ValueError("Choose a supported video engine.")
      clip_guidance = (
@@ -1060,7 +1174,7 @@ index 0aaa47a..07d64d1 100644
      )
      return [
          {
-@@ -77,9 +120,12 @@ def planning_messages(brief, engine="Google Flow"):
+@@ -77,9 +124,12 @@ def planning_messages(brief, engine="Google Flow"):
                  "placeholders. Finish with the small M logo if requested. "
                  "Return one JSON object with exactly title, verification_notes and shots. "
                  "title is a short string and verification_notes is a string. shots is an array of "
@@ -1076,7 +1190,7 @@ index 0aaa47a..07d64d1 100644
                  "end_ms). Each shot is at least 1500 ms. Last end_ms is exactly 30000. "
                  "Use empty voiceover and subtitle strings together for intentional silent shots."
              ),
-@@ -98,7 +144,13 @@ def _text(value, maximum, *, optional=False):
+@@ -98,7 +148,13 @@ def _text(value, maximum, *, optional=False):
  
  
  def parse_plan(raw):
@@ -1091,7 +1205,7 @@ index 0aaa47a..07d64d1 100644
      raw = raw.strip()
      fence = re.fullmatch(r"```(?:json)?\s*\n(.*?)\n```", raw, re.IGNORECASE | re.DOTALL)
      if fence:
-@@ -114,18 +166,31 @@ def parse_plan(raw):
+@@ -114,18 +170,31 @@ def parse_plan(raw):
          raise ValueError('The plan must contain 4–8 shots.')
      start = 0
      timeline = []
@@ -1128,7 +1242,7 @@ index 0aaa47a..07d64d1 100644
          timeline.append({"start_ms": start, "end_ms": end, **fields})
          start = end
      if start != DURATION_MS or not any(shot["english_subtitle"] for shot in timeline):
-@@ -136,6 +201,7 @@ def parse_plan(raw):
+@@ -136,6 +205,7 @@ def parse_plan(raw):
          "height": 1920,
          "verification_notes": _text(data["verification_notes"], 1500, optional=True),
          "shots": timeline,
@@ -1136,7 +1250,7 @@ index 0aaa47a..07d64d1 100644
      }
  
  
-@@ -148,25 +214,88 @@ def _timecode(milliseconds):
+@@ -148,25 +218,88 @@ def _timecode(milliseconds):
      return f"00:00:{seconds:02},{remainder:03}"
  
  
@@ -1155,7 +1269,7 @@ index 0aaa47a..07d64d1 100644
 +
 +
 +def _prompt_lines(shot, engine, *, show_label=True):
-+    field = 'higgsfield_prompt' if engine == 'Higgsfield' else 'flow_prompt'
++    _, field = VIDEO_TOOLS[engine]
 +    prompt = shot.get(field)
 +    if prompt:
 +        return [f"{_prompt_label(engine)}: {prompt}" if show_label else prompt]
@@ -1202,9 +1316,9 @@ index 0aaa47a..07d64d1 100644
                            "English: " + shot["english_subtitle"]])
 +        else:
 +            lines.append("English: (intentional silent shot)")
-     return "\n".join(lines)
- 
- 
++    return "\n".join(lines)
++
++
 +def prompt_sheet(plan, engine="Google Flow"):
 +    """Show per-shot prompts and label any source-engine fallback."""
 +    label = _prompt_label(engine)
@@ -1217,9 +1331,9 @@ index 0aaa47a..07d64d1 100644
 +            f"Shot {number}  ({_seconds(shot['end_ms'] - shot['start_ms'])})",
 +            *_prompt_lines(shot, engine, show_label=False),
 +        ])
-+    return "\n".join(lines)
-+
-+
+     return "\n".join(lines)
+ 
+ 
 +def flow_instructions(plan):
 +    """The shot list with the plan's own engine prompts.
 +
