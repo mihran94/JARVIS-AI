@@ -49,6 +49,7 @@ class VoiceWorker(QThread):
     transcript = Signal(str)
     wake_call = Signal(str, str)
     failed = Signal(str)
+    audio_level = Signal(int)
 
     def __init__(self, consent, recognizer_factory, mode='once', timeout=5.0, language='en'):
         super().__init__()
@@ -73,6 +74,9 @@ class VoiceWorker(QThread):
             self.failed.emit(str(error))
             return
         try:
+            set_level = getattr(recognizer, 'set_level_listener', None)
+            if callable(set_level):
+                set_level(self.audio_level.emit)
             if self._mode in ('dialogue', 'continuous'):
                 # One supervised turn: idle on the local wake recognizer,
                 # then capture an utterance with the dictation grammar.
@@ -172,6 +176,7 @@ class VoicePanel(QWidget):
     cycle_finished = Signal()
     speech_finished = Signal()
     activity_changed = Signal()
+    audio_level = Signal(int)
     recognition_failed = Signal()
     feedback = Signal(str)
 
@@ -347,6 +352,7 @@ class VoicePanel(QWidget):
         self.discard_recognition = False
         self.worker = VoiceWorker(self.consent, self._recognizer_factory, mode=mode,
                                   language=self.language_code)
+        self.worker.audio_level.connect(self.forward_audio_level)
         self.worker.transcript.connect(self.on_transcript)
         self.worker.wake_call.connect(self.on_wake_call)
         self.worker.failed.connect(self.on_recognition_failed)
@@ -371,6 +377,10 @@ class VoicePanel(QWidget):
         if self.continuous and self.consent.listening and not self.playback_busy:
             self.listen('continuous')
 
+    def forward_audio_level(self, value):
+        if self.sender() is self.worker and self.listening:
+            self.audio_level.emit(value)
+
     def on_recognition_failed(self, message):
         if self.sender() is self.worker:
             self.stop_continuous()
@@ -380,6 +390,7 @@ class VoicePanel(QWidget):
     def on_recognition_finished(self):
         if self.sender() is not self.worker:
             return
+        self.audio_level.emit(0)
         pending, self.pending_speech = self.pending_speech, ''
         if pending:
             self.speak_response(pending)
