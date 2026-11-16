@@ -33,7 +33,7 @@ def test_provider_auth_error_never_contains_body(name):
 
 
 def test_openrouter_default_and_empty_request_validation():
-    assert PROVIDERS['OpenRouter'].default_model=='openai/gpt-4.1-mini'
+    assert PROVIDERS['OpenRouter'].default_model=='openai/gpt-6-luna'
     with pytest.raises(ProviderError,match='Configure'):
         stream_chat('OpenRouter','','fake',[],lambda:None,lambda _:None)
 
@@ -55,7 +55,8 @@ def test_gemini_404_points_to_recommended_model_without_printing_provider_respon
 
     def respond(request):
         requests.append(request)
-        return httpx.Response(404, json={'error': {'message': 'provider-private-value'}})
+        return httpx.Response(404, json={'error': {'message':
+            'models/gemini-2.5-flash is not found for API version v1beta: provider-private-value'}})
 
     with pytest.raises(ProviderError, match='gemini-3.5-flash-lite') as failure:
         stream_chat('Gemini', 'gemini-2.5-flash', 'test-secret',

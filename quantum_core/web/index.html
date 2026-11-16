@@ -496,8 +496,14 @@ function update_hud_state(state, logMessage) {
   stateLabel.textContent = label;
   const voice = byId('voice-state');
   const voiceActive = activity === 'listening' || activity === 'speaking';
-  voice.textContent = voiceActive ? (activity === 'listening' ? 'Listening' : 'Speaking') : 'Voice idle';
+  // The four states the owner must be able to read at a glance. A brain that
+  // is thinking has not failed and has not gone quiet, and saying so is the
+  // difference between "it is working" and "it is stuck".
+  voice.textContent = {
+    listening: 'Listening', speaking: 'Speaking', processing: 'Thinking'
+  }[activity] || 'Voice idle';
   voice.dataset.active = String(voiceActive);
+  voice.dataset.state = activity;
   audioState.textContent = {
     listening: 'LISTENING SIGNAL', speaking: 'PLAYBACK SIGNAL',
     processing: 'PROCESSING SIGNAL', active: 'ACTIVE SIGNAL', idle: 'IDLE SIGNAL'
@@ -750,7 +756,11 @@ function showHudInfo(info) {
   }
   savedProfile = info.profile;
   modelProfile.value = savedProfile;
-  byId('model-label').textContent = info.model;
+  // The provider is named as well as the model, so the owner can see which
+  // brain answered without opening another screen.
+  const provider = typeof info.provider === 'string' && info.provider ? info.provider : 'Gemini';
+  byId('model-label').textContent = provider + ' · ' + info.model;
+  byId('model-label').setAttribute('aria-label', 'Active provider and model');
   byId('hud-version').textContent = 'App v' + info.version;
 }
 

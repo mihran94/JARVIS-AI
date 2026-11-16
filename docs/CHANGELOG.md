@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased — 16 November 2026
+- The recommended model of every provider was refreshed against the live vendor documentation. OpenAI moves from the deprecated `gpt-4.1-mini` to `gpt-6-luna`, OpenRouter follows it to `openai/gpt-6-luna`, MiniMax moves from `MiniMax-M3` to `MiniMax-M3.1-Flash`, Claude moves from `claude-sonnet-4-5` to `claude-sonnet-5-5` and the local model moves from `llama3.2` to `qwen3:8b`. DeepSeek, Groq and Gemini keep the model they already had.
+- No request shape changed. The adapters still send text only, without tools, and every provider keeps its fixed endpoint, its own key and its own trust level. `gpt-6-luna` serves the Chat Completions endpoint that the desktop already uses.
+- A saved model is never overwritten. An existing installation keeps the model that was chosen before; **Use recommended model** in the advanced provider settings selects the new one.
+
 ## Unreleased — 12 November 2026
 - Provider registry and router covering OpenAI, Gemini, Claude, MiniMax, DeepSeek, Groq, OpenRouter and Ollama, with no implicit paid fallback and offline mode restricted to the local provider.
 - Native Anthropic Messages API adapter and a loopback only local Ollama adapter. A local model never receives a key and never leaves the computer.

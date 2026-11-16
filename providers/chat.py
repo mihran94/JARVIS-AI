@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import json
 import time
 import httpx
+from providers.errors import BACKUP_ELIGIBLE_KINDS, Diagnosis, FailureKind, diagnose
 from security.policy import Stopped
 
 
@@ -16,11 +17,11 @@ GEMINI_RECOMMENDED_MODEL = 'gemini-3.5-flash-lite'
 
 
 PROVIDERS = {
-    'OpenAI': Provider('https://api.openai.com/v1/chat/completions', 'gpt-4.1-mini'),
-    'MiniMax': Provider('https://api.minimax.io/v1/chat/completions', 'MiniMax-M3'),
+    'OpenAI': Provider('https://api.openai.com/v1/chat/completions', 'gpt-6-luna'),
+    'MiniMax': Provider('https://api.minimax.io/v1/chat/completions', 'MiniMax-M3.1-Flash'),
     'DeepSeek': Provider('https://api.deepseek.com/chat/completions', 'deepseek-flash'),
     'Groq': Provider('https://api.groq.com/openai/v1/chat/completions', 'openai/gpt-oss-120b'),
-    'OpenRouter': Provider('https://openrouter.ai/api/v1/chat/completions', 'openai/gpt-4.1-mini'),
+    'OpenRouter': Provider('https://openrouter.ai/api/v1/chat/completions', 'openai/gpt-6-luna'),
     'Gemini': Provider('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
                        GEMINI_RECOMMENDED_MODEL),
 }
@@ -30,8 +31,56 @@ class ProviderError(RuntimeError):
     pass
 
 
-class TransientProviderError(ProviderError):
+class ProviderFailure(ProviderError):
+    """A provider failure that carries a classified diagnosis.
+
+    The message is the diagnosis written for a human, so the same failure
+    reads the same in a message box, in the usage log and in a screenshot.
+    The diagnosis itself is available for anything that needs the kind.
+    """
+
+    def __init__(self, diagnosis):
+        if isinstance(diagnosis, str):
+            super().__init__(diagnosis)
+            self.diagnosis = None
+            return
+        super().__init__(f'{diagnosis.title}. {diagnosis.message} {diagnosis.hint}')
+        self.diagnosis = diagnosis
+
+    @property
+    def kind(self):
+        """The failure kind, or None for a failure that was not classified."""
+        return self.diagnosis.kind if self.diagnosis else None
+
+
+class TransientProviderError(ProviderFailure):
     """A connection failure or temporary server failure; excludes auth and quota."""
+
+
+def _raise_for_status(provider, response, model):
+    """Turn a failed HTTP answer into a classified failure.
+
+    The body is read so the failure can be classified, and it is never passed
+    on: a provider can echo the key back, and the message ends up on screen.
+    """
+    body = ''
+    try:
+        body = response.read().decode('utf-8', 'replace')
+    except Exception:
+        body = ''
+    diagnosis = diagnose(provider, status=response.status_code, body=body, model=model,
+                         recommended=PROVIDERS[provider].default_model)
+    if diagnosis.kind in BACKUP_ELIGIBLE_KINDS:
+        raise TransientProviderError(diagnosis) from None
+    raise ProviderFailure(diagnosis) from None
+
+
+def _transport_failure(provider, error, model):
+    """Classify a failure that never reached an HTTP status."""
+    diagnosis = diagnose(provider, error=error, model=model)
+    if diagnosis.kind in BACKUP_ELIGIBLE_KINDS:
+        return TransientProviderError(diagnosis)
+    return ProviderFailure(diagnosis)
 
 
 def stream_chat(provider, model, key, messages, check, emit, transport=None, metrics=None):
@@ -54,16 +103,8 @@ def stream_chat(provider, model, key, messages, check, emit, transport=None, met
                           transport=transport) as client:
             with client.stream('POST', PROVIDERS[provider].endpoint,
                                headers={'Authorization': f'Bearer {key}'}, json=payload) as response:
-                if response.status_code in (502, 503, 504):
-                    raise TransientProviderError(f'{provider} temporarily unavailable (HTTP {response.status_code}).')
-                if provider == 'Gemini' and response.status_code == 404:
-                    raise ProviderError(
-                        'Gemini HTTP 404. The selected model was not available for this request. '
-                        'In API Providers → Advanced settings, try the recommended model '
-                        f'{GEMINI_RECOMMENDED_MODEL}, save, and test the connection again.'
-                    )
                 if response.status_code != 200:
-                    raise ProviderError(f'{provider} HTTP {response.status_code}. Check key, model, quota and access.')
+                    _raise_for_status(provider, response, model.strip())
                 for line in response.iter_lines():
                     check()
                     if time.monotonic() - started > 180:
@@ -108,11 +149,11 @@ def stream_chat(provider, model, key, messages, check, emit, transport=None, met
         return ''.join(parts)
     except (Stopped, ProviderError):
         raise
-    except httpx.TimeoutException:
-        raise TransientProviderError('Provider timed out. Check connectivity and try again.') from None
-    except httpx.ConnectError:
-        raise TransientProviderError('Provider connection failed.') from None
-    except httpx.HTTPError:
-        raise ProviderError('Secure provider connection failed.') from None
+    except httpx.TimeoutException as exc:
+        raise _transport_failure(provider, exc, model.strip()) from None
+    except httpx.ConnectError as exc:
+        raise _transport_failure(provider, exc, model.strip()) from None
+    except httpx.HTTPError as exc:
+        raise _transport_failure(provider, exc, model.strip()) from None
     except (ValueError, KeyError, TypeError, IndexError, AttributeError):
         raise ProviderError('Invalid provider response.') from None

@@ -4,7 +4,10 @@ The listener is exercised over real HTTP on the loopback interface, so the
 request path, the authentication and the refusal rules are all covered.
 """
 import json
+import os
+import shutil
 import socket
+import sys
 import time
 
 import httpx
@@ -159,15 +162,43 @@ def test_starting_twice_is_refused():
         listener.stop()
 
 
+def _openssl_binary():
+    """The openssl program, or None when this machine has none.
+
+    Git for Windows ships an openssl build that is not on PATH, so the
+    usual install locations are checked before the test gives up.
+    """
+    found = shutil.which('openssl')
+    if found:
+        return found
+    if sys.platform == 'win32':
+        for base in (os.environ.get('ProgramFiles'), os.environ.get('ProgramFiles(x86)')):
+            if not base:
+                continue
+            for relative in (('Git', 'usr', 'bin', 'openssl.exe'),
+                             ('Git', 'mingw64', 'bin', 'openssl.exe'),
+                             ('Git', 'ucrt64', 'bin', 'openssl.exe')):
+                candidate = os.path.join(base, *relative)
+                if os.path.isfile(candidate):
+                    return candidate
+    return None
+
+
 def _self_signed_certificate(tmp_path):
     """Create a throwaway certificate so the TLS path is really exercised."""
     import subprocess
+    openssl = _openssl_binary()
+    if openssl is None:
+        pytest.skip('openssl is not available to create a test certificate')
     cert = tmp_path / 'cert.pem'
     key = tmp_path / 'key.pem'
-    result = subprocess.run(
-        ['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
-         '-subj', '/CN=127.0.0.1', '-keyout', str(key), '-out', str(cert)],
-        capture_output=True)
+    try:
+        result = subprocess.run(
+            [openssl, 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
+             '-subj', '/CN=127.0.0.1', '-keyout', str(key), '-out', str(cert)],
+            capture_output=True)
+    except OSError:
+        pytest.skip('openssl could not be started to create a test certificate')
     if result.returncode != 0:
         pytest.skip('openssl is not available to create a test certificate')
     return str(cert), str(key)

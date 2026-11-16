@@ -14,7 +14,7 @@ import sys
 
 from PySide6.QtCore import QThread, QTimer, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+    QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
     QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
@@ -23,6 +23,14 @@ from voice.errors import VoiceError, VoiceUnavailable
 from voice.wake import DEFAULT_PHRASE, WakePhraseMatcher
 from voice.windows_stt import WindowsSpeechRecognizer
 from voice.windows_tts import WindowsTextToSpeech
+
+
+#: The languages the owner can speak and hear, and what they are called.
+LANGUAGE_NAMES = {
+    'en': 'English',
+    'ta': 'தமிழ் (Tamil)',
+    'fr': 'Français (French)',
+}
 
 
 def default_recognizer_factory(consent, language='en'):
@@ -104,10 +112,11 @@ class VoiceSpeakerWorker(QThread):
     failed = Signal(str)
     playing = Signal()
 
-    def __init__(self, speaker_factory, text):
+    def __init__(self, speaker_factory, text, language='en'):
         super().__init__()
         self._speaker_factory = speaker_factory
         self._text = text
+        self._language = language
 
     def run(self):
         apartment = None
@@ -123,14 +132,26 @@ class VoiceSpeakerWorker(QThread):
             speaker = self._speaker_factory()
             if self.isInterruptionRequested():
                 return
-            if (self._speaker_factory is default_speaker_factory
-                    and any('஀' <= char <= '௿' for char in self._text)):
-                speaker.select_language('ta')
+            language = self._language
+            if language != 'ta' and any('஀' <= char <= '௿' for char in self._text):
+                # No other voice can read the Tamil script, so Tamil text is
+                # always spoken with a Tamil voice when one is installed.
+                language = 'ta'
+            if hasattr(speaker, 'select_language') and not speaker.select_language(language):
+                if language != 'en':
+                    # English is the system default, so a missing English voice
+                    # is not worth refusing to speak over. A missing Tamil or
+                    # French voice is, because the text would be read wrongly.
+                    self.failed.emit(
+                        'No ' + LANGUAGE_NAMES.get(language, language) + ' speech voice is '
+                        'installed. Install the Windows speech language pack, or choose another '
+                        'language.')
+                    return
             self.playing.emit()
             if hasattr(speaker, 'speak_interruptibly'):
                 speaker.speak_interruptibly(self._text, self.isInterruptionRequested)
             elif not self.isInterruptionRequested():
-                speaker.speak(self._text)
+                speaker.speak(self._text, language)
         except VoiceError as error:
             self.failed.emit(str(error))
         except Exception:
@@ -196,6 +217,13 @@ class VoicePanel(QWidget):
         self.phrase = QLineEdit(self.matcher.canonical_phrase or DEFAULT_PHRASE)
         self.phrase.textChanged.connect(self.set_phrase)
         consent_layout.addRow('Wake phrase', self.phrase)
+        self.language = QComboBox()
+        for code, name in LANGUAGE_NAMES.items():
+            self.language.addItem(name, code)
+        self.language.setCurrentIndex(0)
+        self.language.setToolTip(
+            'Windows speech recognition needs an installed recogniser for this language.')
+        consent_layout.addRow('Speech language', self.language)
         self.allow = QCheckBox('Allow the microphone')
         self.allow.toggled.connect(self.set_allowed)
         consent_layout.addRow(self.allow)
@@ -286,6 +314,21 @@ class VoicePanel(QWidget):
             return
         self.refresh()
 
+    @property
+    def language_code(self):
+        """The language the owner chose for recognition and playback."""
+        code = self.language.currentData() if hasattr(self, 'language') else None
+        return code if code in LANGUAGE_NAMES else 'en'
+
+    def set_language(self, code):
+        """Choose the speech language. An unknown code is refused."""
+        if code not in LANGUAGE_NAMES:
+            return False
+        index = self.language.findData(code)
+        if index >= 0:
+            self.language.setCurrentIndex(index)
+        return True
+
     def listen(self, mode='once'):
         """Start one recognition request on a worker thread."""
         if self.playback_busy:
@@ -302,7 +345,8 @@ class VoicePanel(QWidget):
         if mode == 'continuous':
             self.continuous = True
         self.discard_recognition = False
-        self.worker = VoiceWorker(self.consent, self._recognizer_factory, mode=mode)
+        self.worker = VoiceWorker(self.consent, self._recognizer_factory, mode=mode,
+                                  language=self.language_code)
         self.worker.transcript.connect(self.on_transcript)
         self.worker.wake_call.connect(self.on_wake_call)
         self.worker.failed.connect(self.on_recognition_failed)
@@ -401,7 +445,7 @@ class VoicePanel(QWidget):
             self.pending_speech = text
             self.cancel_listening()
             return
-        self.speaker_worker = VoiceSpeakerWorker(self._speaker_factory, text)
+        self.speaker_worker = VoiceSpeakerWorker(self._speaker_factory, text, self.language_code)
         self.speaker_worker.failed.connect(self.status)
         self.speaker_worker.playing.connect(self.on_playback_started)
         self.speaker_worker.finished.connect(self.on_playback_finished)

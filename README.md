@@ -101,6 +101,27 @@ Tamil voice when available.
 Core, Creative, Business, Dev Lab, and Devices. See
 [quantum_core/README.md](quantum_core/README.md) for Windows commands.
 
+## Recommended models
+
+The provider screen preselects the model that the vendor currently recommends
+for that service. The list was last checked on 16 November 2026:
+
+| Provider | Preselected model | Note |
+| --- | --- | --- |
+| MiniMax | `MiniMax-M3.1-Flash` | 1M context, tunable thinking depth. Good for coding and long conversations. |
+| Gemini | `gemini-3.5-flash-lite` | Cheapest and fastest of the Gemini line. Used by Business, Video Editor and the news briefing. |
+| OpenAI | `gpt-6-luna` | 1.05M context at the lowest price of the current line. |
+| OpenRouter | `openai/gpt-6-luna` | The same model through the routing service. |
+| Claude | `claude-sonnet-5-5` | 1M context, the fastest of the Claude 5.5 line. |
+| DeepSeek | `deepseek-flash` | Serves the current DeepSeek V4.1 Flash model. |
+| Groq | `openai/gpt-oss-120b` | Availability depends on your Groq account. |
+| Ollama (local) | `qwen3:8b` | Runs on your own PC, no key, no network. Pull it first with `ollama pull qwen3:8b`. |
+
+A model that was saved before is never overwritten. Open **API Providers →
+the provider → Advanced settings → Use recommended model**, then **Save
+provider settings**, to move to the model above. Every model costs money
+except the local one, and a paid model is only used after your approval.
+
 ## Implemented
 
 - Native Qt interface with command center, chat, app launcher, task queue, editor, history, provider manager, usage and permissions.

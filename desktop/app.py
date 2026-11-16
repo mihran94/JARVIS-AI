@@ -40,7 +40,10 @@ from video_studio.capcut import export_capcut
 from video_studio.preview import media_tools, render_preview
 from security.policy import Policy, Action, Stopped
 from security.vault import Vault
+from providers import profiles as profile_models
 from providers.chat import ProviderError, TransientProviderError
+from providers.errors import Diagnosis, FailureKind, diagnose
+from providers.models import check_model
 from providers.registry import provider_names
 from providers.router import ProviderRouter
 from providers.stream_fallback import StreamTarget, stream_with_fallback, FallbackBlocked
@@ -127,6 +130,40 @@ class ChatWorker(QThread):
         self.result.emit(status, text, metrics)
 
 
+class ModelCheckWorker(QThread):
+    """Ask a provider which models this key can use.
+
+    No prompt is sent and nothing is generated, so this costs nothing and
+    puts none of the owner's words on the provider's servers. The key is held
+    only for the length of the request and is cleared in the `finally`.
+    """
+
+    result = Signal(str, str, object)
+
+    def __init__(self, provider, endpoint, model, key, policy, ticket):
+        super().__init__()
+        self.provider, self.endpoint, self.model, self.key = provider, endpoint, model, key
+        self.policy, self.ticket = policy, ticket
+
+    def check(self):
+        self.policy.check(self.ticket)
+        if self.isInterruptionRequested():
+            raise Stopped('Model check cancelled.')
+
+    def run(self):
+        try:
+            self.check()
+            answer = check_model(self.provider, self.endpoint, self.model, self.key)
+            status, text, payload = 'completed', answer.detail, answer.as_dict()
+        except Stopped:
+            status, text, payload = 'cancelled', 'Model check cancelled.', {}
+        except Exception as error:
+            status, text, payload = 'failed', str(error), {}
+        finally:
+            self.key = ''
+        self.result.emit(status, text, payload)
+
+
 class Window(QMainWindow):
     def __init__(self, data_root):
         super().__init__()
@@ -194,6 +231,13 @@ class Window(QMainWindow):
         self.add_page('PC Control', self.automation_page())
         self.add_page('Coding Assistant', self.editor_page())
         self.voice_panel = VoicePanel()
+        # The speech language is remembered, so the owner does not choose it
+        # again every time the application starts.
+        saved_language = self.store.get('voice_language')
+        if saved_language:
+            self.voice_panel.set_language(saved_language)
+        self.voice_panel.language.currentTextChanged.connect(
+            lambda name: self.store.set('voice_language', self.voice_panel.language_code))
         self.voice_panel.wake_detected.connect(self.on_wake_detected)
         self.voice_panel.utterance_detected.connect(self.on_voice_transcript)
         self.voice_panel.cycle_finished.connect(self.schedule_local_voice_rearm)
@@ -214,6 +258,9 @@ class Window(QMainWindow):
         self.add_page('Task History', self.history_page(), primary=False)
         self.add_page('AI Providers', self.provider_page(), primary=False)
         self.add_page('System & Usage', self.usage_page(), primary=False)
+        # The chat page is built first, so the brain label can be filled in
+        # once every provider page exists.
+        self.refresh_brain_label()
         self.nav.currentRowChanged.connect(self.show_primary_page)
         self.nav.setCurrentRow(0)
         self.statusBar().showMessage('Local history • Bridge listener is off by default • Keys configured on your PC')
@@ -621,9 +668,12 @@ class Window(QMainWindow):
             state = 'listening'
         else:
             state = 'idle'
+        # The four states the owner needs to read at a glance: Idle, Listening,
+        # Thinking and Speaking. ANSWERING means the answer is arriving and
+        # has not started being read aloud yet.
         label = {
-            'idle': 'STANDBY', 'listening': 'LISTENING', 'thinking': 'PROCESSING',
-            'responding': 'RESPONDING', 'speaking': 'SPEAKING', 'stopped': 'STOPPED',
+            'idle': 'IDLE', 'listening': 'LISTENING', 'thinking': 'THINKING',
+            'responding': 'ANSWERING', 'speaking': 'SPEAKING', 'stopped': 'STOPPED',
         }[state]
         self.orb.set_state(state)
         self.hud_orb.set_state(state)
@@ -679,11 +729,19 @@ class Window(QMainWindow):
             button.clicked.connect(lambda checked=False, section=section: self.open_section(section))
             shortcuts.addWidget(button, index // 3, index % 3)
         layout.addLayout(shortcuts)
+        # The active brain sits on its own line. It is information the owner
+        # needs at a glance, and keeping it out of the provider row stops a
+        # long model name from forcing the chat page to scroll sideways.
+        self.brain_label = QLabel()
+        self.brain_label.setObjectName('systemMetrics')
+        self.brain_label.setWordWrap(True)
+        self.brain_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(self.brain_label)
         row = QHBoxLayout()
         self.chat_provider = QComboBox()
         self.chat_provider.addItems(provider_names())
-        self.chat_provider.setCurrentText('Gemini')
-        self.chat_provider.currentTextChanged.connect(self.guard_local_voice_provider)
+        self.chat_provider.setCurrentText(self.stored_chat_provider())
+        self.chat_provider.currentTextChanged.connect(self.on_chat_provider_changed)
         row.addWidget(self.chat_provider)
         self.new_chat_button = self.button(row, 'New chat', self.new_chat)
         layout.addLayout(row)
@@ -708,6 +766,10 @@ class Window(QMainWindow):
         self.backup_provider = QComboBox()
         self.backup_provider.addItems(provider_names())
         self.backup_provider.setCurrentIndex(1)
+        saved_backup = self.store.get('backup_provider')
+        if saved_backup in provider_names():
+            self.backup_provider.setCurrentText(saved_backup)
+        self.backup_provider.currentTextChanged.connect(self.on_backup_provider_changed)
         settings_layout.addWidget(self.backup_provider)
         archives = QHBoxLayout()
         self.archives = QComboBox()
@@ -1377,6 +1439,12 @@ class Window(QMainWindow):
         layout.addWidget(self.advanced_provider)
         self.provider_advanced_panel = QWidget()
         advanced_form = QFormLayout(self.provider_advanced_panel)
+        self.provider_profile = QComboBox()
+        self.provider_profile.currentIndexChanged.connect(self.on_profile_changed)
+        advanced_form.addRow('Model profile', self.provider_profile)
+        self.profile_note = QLabel()
+        self.profile_note.setWordWrap(True)
+        advanced_form.addRow('Profile', self.profile_note)
         advanced_form.addRow('Model ID', self.model)
         advanced_form.addRow('HTTPS endpoint', self.endpoint)
         self.button(advanced_form, 'Use recommended model', self.reset_provider_model)
@@ -1386,6 +1454,8 @@ class Window(QMainWindow):
         self.button(layout, 'Save provider settings', self.save_provider)
         self.button(layout, 'Remove stored key', self.remove_key)
         self.probe_button = self.button(layout, 'Test saved provider connection (uses API)', self.test_connection)
+        self.availability_button = self.button(
+            layout, 'Check model availability (free, no prompt sent)', self.check_model_availability)
         self.provider_health = QLabel()
         self.provider_health.setWordWrap(True)
         layout.addWidget(self.provider_health)
@@ -1534,7 +1604,7 @@ class Window(QMainWindow):
         def operation():
             ticket = self.policy.ticket()
             provider = self.provider.currentText()
-            model = self.store.get('model:' + provider, self.router.spec(provider).default_model)
+            model = self.selected_model(provider)
             if self.secret.text() or self.model.text().strip() != model:
                 raise ValueError('Save the provider configuration before testing.')
             if not self.confirm(Action('provider_check',
@@ -1547,6 +1617,37 @@ class Window(QMainWindow):
                               [{'role': 'user', 'content': 'Reply with the word OK only.'}], 'provider_check')
             return 'Testing saved provider configuration…'
         self.notify(operation)
+
+    def check_model_availability(self):
+        """Check that the selected model is one this key can actually use."""
+        if self.worker is not None:
+            return
+
+        def operation():
+            provider = self.provider.currentText()
+            model = self.selected_model(provider)
+            if self.secret.text() or self.model.text().strip() != model:
+                raise ValueError('Save the provider configuration before checking.')
+            self.chat_ticket = self.policy.ticket()
+            spec = self.router.spec(provider)
+            key = '' if spec.local else self.get_key(provider)
+            self.worker_kind = 'model_check'
+            self.worker = ModelCheckWorker(provider, spec.endpoint, model, key,
+                                           self.policy, self.chat_ticket)
+            self.worker.result.connect(self.on_model_check_result)
+            self.worker.finished.connect(self.on_finished)
+            self.availability_button.setEnabled(False)
+            self.worker.start()
+            return 'Checking which models this key can use…'
+        self.notify(operation)
+
+    def on_model_check_result(self, status, text, payload=None):
+        """Show the answer: which model, and whether the provider serves it."""
+        if status == 'completed':
+            self.provider_health.setText(text)
+        else:
+            self.provider_health.setText(status.capitalize() + ': ' + text)
+        self.statusBar().showMessage(text, 20000)
 
     def get_key(self, provider):
         if self.router.spec(provider).local:
@@ -1572,7 +1673,8 @@ class Window(QMainWindow):
         self.worker.result.connect(self.on_result)
         self.worker.finished.connect(self.on_finished)
         for button in (self.send_button, self.new_chat_button, self.clear_button,
-                       self.archive_button, self.probe_button, self.generate_button, self.repair_button):
+                       self.archive_button, self.probe_button, self.generate_button,
+                       self.repair_button, self.availability_button):
             button.setEnabled(False)
         self.refresh_draft_buttons()
         if kind == 'video_plan':
@@ -1698,12 +1800,67 @@ class Window(QMainWindow):
         self.notify(operation)
 
     def reset_provider_model(self):
-        self.model.setText(self.router.spec(self.provider.currentText()).default_model)
+        """Put the recommended model of the chosen profile back."""
+        provider = self.provider.currentText()
+        profile = self.provider_profile.currentData()
+        if profile:
+            self.model.setText(profile_models.model_for(provider, profile))
+        else:
+            self.model.setText(self.router.spec(provider).default_model)
+
+    def stored_chat_provider(self):
+        """The primary chat provider the owner chose, or the default."""
+        saved = self.store.get('chat_provider')
+        names = provider_names()
+        return saved if saved in names else 'Gemini'
+
+    def on_chat_provider_changed(self, name):
+        """Remember the primary chat provider and show what it means."""
+        self.store.set('chat_provider', name)
+        self.guard_local_voice_provider()
+        self.refresh_brain_label()
+
+    def on_backup_provider_changed(self, name):
+        """Remember the backup provider. It is only used when it is enabled."""
+        self.store.set('backup_provider', name)
+
+    def stored_profile(self, provider):
+        """The model profile the owner selected for a provider."""
+        saved = self.store.get('profile:' + provider)
+        names = profile_models.profile_names(provider)
+        return saved if saved in names else profile_models.default_profile(provider)
+
+    def selected_model(self, provider, profile=None):
+        """The model that will actually be used for a provider.
+
+        A provider with profiles uses the model of the chosen profile. A model
+        the owner typed by hand always wins, because that was a deliberate
+        choice and must not be quietly replaced by a default.
+        """
+        profile = profile if profile is not None else self.stored_profile(provider)
+        override = self.store.get('model:' + provider + ':' + profile)
+        if override:
+            return override
+        stored = self.store.get('model:' + provider)
+        if stored:
+            default = self.router.spec(provider).default_model
+            if not profile_models.supports_profiles(provider) or stored != default:
+                return stored
+        return profile_models.model_for(provider, profile,
+                                        self.router.spec(provider).default_model)
+
+    def refresh_brain_label(self):
+        """Show the provider, the profile and the model that chat will use."""
+        provider = self.chat_provider.currentText()
+        profile = self.stored_profile(provider)
+        model = self.selected_model(provider)
+        self.brain_label.setText('Active brain: ' + profile_models.describe(provider, profile, model))
 
     def load_provider(self):
         provider = self.provider.currentText()
         spec = self.router.spec(provider)
-        self.model.setText(self.store.get('model:' + provider) or spec.default_model)
+        self.load_provider_profiles(provider)
+        self.model.setText(self.selected_model(provider))
         self.endpoint.setText(spec.endpoint)
         self.secret.clear()
         health = self.store.get('health:' + provider + ':' + self.model.text())
@@ -1716,18 +1873,50 @@ class Window(QMainWindow):
         except Exception:
             self.key_status.setText('Windows vault unavailable on this system')
 
+    def load_provider_profiles(self, provider):
+        """Fill the profile chooser with the profiles this provider offers."""
+        self.provider_profile.blockSignals(True)
+        self.provider_profile.clear()
+        names = profile_models.profile_names(provider)
+        if names:
+            for name in names:
+                self.provider_profile.addItem(profile_models.PROFILE_LABELS.get(name, name), name)
+            current = self.stored_profile(provider)
+            index = self.provider_profile.findData(current)
+            self.provider_profile.setCurrentIndex(index if index >= 0 else 0)
+            self.profile_note.setText(
+                profile_models.PROFILE_NOTES.get(self.provider_profile.currentData(), ''))
+        else:
+            self.provider_profile.addItem('One model for this provider', '')
+            self.profile_note.setText(
+                'This provider has a single model, so there is no profile to choose.')
+        self.provider_profile.blockSignals(False)
+
+    def on_profile_changed(self):
+        """Show the model of the chosen profile."""
+        provider = self.provider.currentText()
+        profile = self.provider_profile.currentData()
+        self.profile_note.setText(profile_models.PROFILE_NOTES.get(profile, ''))
+        if profile:
+            self.model.setText(self.selected_model(provider, profile))
+        self.refresh_brain_label()
+
     def save_provider(self):
         def operation():
             self.policy.ticket()
             provider = self.provider.currentText()
             spec = self.router.spec(provider)
+            profile = self.provider_profile.currentData()
             model = self.model.text().strip() or spec.default_model
             if spec.local:
                 if self.secret.text():
                     raise ValueError('The local model does not use an API key.')
                 self.store.set('model:' + provider, model)
+                if profile:
+                    self.store.set('profile:' + provider, profile)
                 self.load_provider()
                 self.chat_provider.setCurrentText(provider)
+                self.refresh_brain_label()
                 return 'Local model saved. Ready for chat; connection has not been tested.'
             if self.secret.text():
                 try:
@@ -1737,8 +1926,14 @@ class Window(QMainWindow):
                 finally:
                     self.secret.clear()
             self.store.set('model:' + provider, model)
+            if profile:
+                # The model is remembered per profile, so switching back to the
+                # other profile does not lose the owner's own model ID.
+                self.store.set('model:' + provider + ':' + profile, model)
+                self.store.set('profile:' + provider, profile)
             self.load_provider()
             self.chat_provider.setCurrentText(provider)
+            self.refresh_brain_label()
             return 'Provider saved. Ready for chat; connection has not been tested.'
         self.notify(operation)
 
@@ -1795,7 +1990,7 @@ class Window(QMainWindow):
             self.chat_ticket = self.policy.ticket()
             provider = self.chat_provider.currentText()
             key = self.get_key(provider)
-            model = self.store.get('model:' + provider, self.router.spec(provider).default_model)
+            model = self.selected_model(provider)
             backup = None
             if self.backup_consent.isChecked():
                 name = self.backup_provider.currentText()
@@ -1804,7 +1999,7 @@ class Window(QMainWindow):
                 if self.router.spec(provider).local:
                     # A local model never falls through to a paid cloud provider.
                     raise ValueError('The local model never falls back to a cloud provider.')
-                backup = StreamTarget(name, self.store.get('model:' + name, self.router.spec(name).default_model),
+                backup = StreamTarget(name, self.selected_model(name),
                                       self.get_key(name))
             prompt = self.prompt.toPlainText().strip()
             messages = [message for message in self.store.messages(self.session)
@@ -1936,7 +2131,8 @@ class Window(QMainWindow):
         self.refresh_draft_buttons()
         self.set_ai_visual_state('stopped' if self.policy.stopped else 'idle')
         for button in (self.send_button, self.new_chat_button, self.clear_button,
-                       self.archive_button, self.probe_button, self.generate_button, self.repair_button):
+                       self.archive_button, self.probe_button, self.generate_button,
+                       self.repair_button, self.availability_button):
             button.setEnabled(not self.policy.stopped)
         self.chat_provider.setEnabled(True)
         self.backup_provider.setEnabled(True)
@@ -1993,7 +2189,8 @@ class Window(QMainWindow):
         self.state.setText('● READY · MANUAL APPROVAL')
         if self.worker is None:
             for button in (self.send_button, self.new_chat_button, self.clear_button,
-                       self.archive_button, self.probe_button, self.generate_button, self.repair_button):
+                       self.archive_button, self.probe_button, self.generate_button,
+                       self.repair_button, self.availability_button):
                 button.setEnabled(True)
         self.review_pc_action_button.setEnabled(True)
 

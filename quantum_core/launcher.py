@@ -194,7 +194,8 @@ class QuantumCore:
                 return {'error': str(error)}
 
     def hud_info(self):
-        return {'model': self.chat.model, 'profile': self.chat.profile, 'version': APP_VERSION}
+        return {'model': self.chat.model, 'profile': self.chat.profile,
+                'provider': 'Gemini', 'version': APP_VERSION}
 
     def set_model_profile(self, profile):
         if not isinstance(profile, str) or profile not in self.chat.models:

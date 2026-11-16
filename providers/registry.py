@@ -32,7 +32,7 @@ class ProviderSpec:
 _CLAUDE = ProviderSpec(
     name='Claude',
     endpoint='https://api.anthropic.com/v1/messages',
-    default_model='claude-sonnet-4-5',
+    default_model='claude-sonnet-5-5',
     auth='anthropic',
     notes='Native Anthropic Messages API. Not OpenAI compatible.',
 )
@@ -40,7 +40,7 @@ _CLAUDE = ProviderSpec(
 _OLLAMA = ProviderSpec(
     name='Ollama',
     endpoint='http://127.0.0.1:11434/v1/chat/completions',
-    default_model='llama3.2',
+    default_model='qwen3:8b',
     auth='none',
     local=True,
     requires_key=False,

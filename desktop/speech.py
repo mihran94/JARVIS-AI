@@ -59,6 +59,11 @@ class SpeechWorker(QThread):
                 engine.runAndWait()
             self.completed.emit("Cancelled" if self.isInterruptionRequested() else "Speech finished")
         except Exception as exc:
-            self.completed.emit("Speech unavailable: " + type(exc).__name__)
+            # "Speech unavailable: RuntimeError" told the owner nothing they
+            # could act on. This says what failed and what to do instead.
+            self.completed.emit(
+                'Speech is unavailable on this machine (' + type(exc).__name__ + '). '
+                'Check that a Windows speech voice is installed and that the audio output '
+                'works, or use the text chat instead.')
         finally:
             self._engine = None

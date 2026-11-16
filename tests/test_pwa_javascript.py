@@ -31,12 +31,16 @@ def node_binary():
 @pytest.mark.skipif(node_binary() is None, reason='node is not installed on this machine')
 def test_the_phone_javascript_suite_passes():
     completed = subprocess.run([node_binary(), '--test'], cwd=PWA, capture_output=True,
-                               text=True, timeout=TIMEOUT_SECONDS)
+                               text=True, encoding='utf-8', errors='replace',
+                               timeout=TIMEOUT_SECONDS)
     output = completed.stdout + completed.stderr
     assert completed.returncode == 0, output[-6000:]
-    # Newer node prints "pass 64" with a different prefix than the older
-    # "# pass 64", so both forms are accepted.
-    passed = re.search(r'(?:^#|^\u2139)\s*pass (\d+)$', output, re.M)
+    # The summary marker depends on the node version and on where the output
+    # goes: "# pass 64" for the tap reporter, "ℹ pass 64" for the spec
+    # reporter and "✔ pass 64" for the dot reporter that a captured pipe
+    # produces, so every known marker is accepted.
+    passed = re.search(r'(?:^#|^\u2139|^\u2714|^\u2713|^\u2716|^\u00b7)\s*pass (\d+)$',
+                       output, re.M)
     assert passed is not None, output[-2000:]
     assert int(passed.group(1)) >= EXPECTED_TESTS, output[-2000:]
 
@@ -50,7 +54,8 @@ def test_the_phone_page_has_no_syntax_error():
         path = os.path.join(PWA, name)
         assert os.path.exists(path), 'The phone page is missing ' + name
         completed = subprocess.run([node_binary(), '--check', path], capture_output=True,
-                                   text=True, timeout=120)
+                                   text=True, encoding='utf-8', errors='replace',
+                                   timeout=120)
         assert completed.returncode == 0, name + ': ' + completed.stderr
 
 
