@@ -28,6 +28,8 @@ from desktop.personal_theme import PERSONAL_STYLE
 from desktop.blue_orb import BlueOrb
 from desktop.system_metrics import CpuSampler, snapshot, format_snapshot
 from desktop.network_diagnostics import NetworkDiagnostics
+from desktop.news_panel import NewsPanel
+from news.briefing import fallback_text, fetch_headlines, prompt_messages, source_text
 from desktop.network_metrics import NetworkSampler, format_network
 from desktop.voice_commands import parse_voice_command
 from desktop.task_routing import match_task
@@ -64,16 +66,33 @@ class ChatWorker(QThread):
     chunk = Signal(str)
     result = Signal(str, str, object)
 
-    def __init__(self, router, provider, model, key, messages, policy, ticket, backup=None):
+    def __init__(self, router, provider, model, key, messages, policy, ticket, backup=None, news_region=None):
         super().__init__()
         self.router, self.provider, self.model, self.key = router, provider, model, key
         self.messages, self.policy, self.ticket = messages, policy, ticket
         self.backup = backup
+        self.news_region = news_region
 
     def check(self):
         self.policy.check(self.ticket)
         if self.isInterruptionRequested():
             raise Stopped('Chat cancelled.')
+
+    def run_news(self, metrics):
+        headlines, missing = fetch_headlines(self.news_region, self.check)
+        metrics['news_sources'] = source_text(headlines, missing)
+        if self.key and headlines:
+            metrics['news_ai_used'] = True
+            try:
+                answer = self.router.stream(self.router.spec(self.provider), self.model, self.key,
+                                            prompt_messages(headlines), self.check, lambda _: None,
+                                            metrics=metrics)
+                if answer.strip() and any('஀' <= char <= '௿' for char in answer):
+                    metrics['news_tamil'] = True
+                    return answer.strip()
+            except ProviderError as error:
+                metrics['news_provider_error'] = str(error)
+        return fallback_text(headlines)
 
     def run(self):
         metrics = {'provider': self.provider, 'model': self.model}
@@ -84,7 +103,9 @@ class ChatWorker(QThread):
                 metrics.update(provider=provider, model=model)
                 return self.router.stream(self.router.spec(provider), model, key, messages,
                                           check, emit, metrics=metrics)
-            if self.backup is None:
+            if self.news_region is not None:
+                answer = self.run_news(metrics)
+            elif self.backup is None:
                 answer = attempt(self.provider, self.model, self.key, self.messages,
                                  self.check, self.chunk.emit)
             else:
@@ -127,6 +148,7 @@ class Window(QMainWindow):
         self.workspace = Workspace(self.root / 'workspace')
         self.video_plan = None
         self.site_export = None
+        self.news_panel = None
         self.site_draft = None
         self.site_preview_path = None
         self.worker = None
@@ -510,12 +532,33 @@ class Window(QMainWindow):
         self.dashboard_metrics.setObjectName('systemMetrics')
         layout.addWidget(self.dashboard_metrics)
         self.button(layout, 'Local network diagnostics', self.open_network_diagnostics)
+        self.button(layout, 'Tamil news briefing', self.open_news_briefing)
         for name in ('Video Editor', 'Coding Assistant', 'Business', 'Phone Remote', 'Task Queue'):
             self.button(layout, name, lambda checked=False, section=name: self.open_section(section))
         self.button(layout, 'Back to JARVIS Chat',
                     lambda: self.open_section('JARVIS Chat'))
         layout.addStretch()
         return page
+
+    def open_news_briefing(self):
+        if self.news_panel is None:
+            self.news_panel = NewsPanel(self)
+        self.news_panel.show()
+        self.news_panel.raise_()
+        self.news_panel.activateWindow()
+
+    def start_news_briefing(self, region):
+        if self.policy.stopped or self.worker is not None:
+            return
+        spec = self.router.spec('Gemini')
+        model = self.store.get('model:Gemini', spec.default_model)
+        try:
+            key = self.get_key('Gemini')
+        except (ValueError, RuntimeError):
+            key = ''
+        self.chat_ticket = self.policy.ticket()
+        self.news_panel.output.setPlainText('Fetching current headlines…')
+        self.start_worker('Gemini', model, key, [], 'news_briefing', news_region=region)
 
     def open_network_diagnostics(self):
         if not self.policy.stopped:
@@ -1517,14 +1560,14 @@ class Window(QMainWindow):
             raise ValueError('Add your key in API Providers first.')
         return key
 
-    def start_worker(self, provider, model, key, messages, kind, backup=None):
+    def start_worker(self, provider, model, key, messages, kind, backup=None, news_region=None):
         self.worker_kind = kind
         self.active_provider, self.active_model = provider, model
         self.chat_task = self.store.task(kind, provider + ' / ' + model)
         self.store.finish(self.chat_task, 'running')
         self.worker = ChatWorker(self.router, provider, model, key, messages, self.policy,
                                  self.chat_ticket,
-                                 backup=backup if kind == "chat" else None)
+                                 backup=backup if kind == "chat" else None, news_region=news_region)
         self.worker.chunk.connect(self.on_chunk)
         self.worker.result.connect(self.on_result)
         self.worker.finished.connect(self.on_finished)
@@ -1828,6 +1871,16 @@ class Window(QMainWindow):
                         'Shot plan ready. Verify historical details and sync captions to the recorded voiceover.')
             else:
                 self.video_status.setText(status + ': ' + text)
+        elif self.worker_kind == 'news_briefing':
+            data = metrics or {}
+            parts = [text]
+            if status == 'completed':
+                parts.extend(value for value in (
+                    data.get('news_provider_error'), data.get('news_sources')) if value)
+            self.news_panel.output.setPlainText('\n\n'.join(parts))
+            if (status == 'completed' and data.get('news_tamil')
+                    and self.news_panel.speech.isChecked() and not self.policy.stopped):
+                self.voice_panel.speak_response(text)
         elif self.worker_kind == 'website_preview':
             if status == 'completed':
                 try:
@@ -1864,7 +1917,7 @@ class Window(QMainWindow):
             self.provider_health.setText(self.active_provider + ' / ' + self.active_model + ': ' + summary)
             self.statusBar().showMessage(summary, 20000)
         self.store.finish(self.chat_task, status)
-        if self.active_provider:
+        if self.active_provider and (self.worker_kind != 'news_briefing' or (metrics or {}).get('news_ai_used')):
             actual_provider = (metrics or {}).get('provider', self.active_provider)
             actual_model = (metrics or {}).get('model', self.active_model)
             if actual_provider != self.active_provider:
@@ -1912,6 +1965,8 @@ class Window(QMainWindow):
 
     def stop(self):
         self.policy.stop()
+        if self.news_panel is not None:
+            self.news_panel.disable_schedule()
         self.refresh_draft_buttons()
         self.voice_rearm_timer.stop()
         self.hands_free_voice.setChecked(False)
@@ -1999,6 +2054,8 @@ class Window(QMainWindow):
             self.statusBar().showMessage('Waiting for the current task to exit safely…')
             event.ignore()
         else:
+            if self.news_panel is not None:
+                self.news_panel.disable_schedule()
             self.voice_rearm_timer.stop()
             self.hands_free_voice.setChecked(False)
             self.voice_panel.stop_voice()

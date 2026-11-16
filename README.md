@@ -88,6 +88,14 @@ press **F11** to toggle the view. Type `/time` or `/status` in chat for a local
 reply. Open **Local network diagnostics** in Command Center to read cached
 IPv4 neighbors, listening TCP sockets or established TCP connections.
 
+**Tamil news briefing.** In **Command Center**, choose **Tamil news briefing**
+and select France, Sri Lanka or both. **Fetch news now** reads Franceinfo
+and/or EconomyNext headlines. The saved Gemini model summarizes them in Tamil.
+When Gemini is unavailable, the panel shows original headlines and their links.
+Read-aloud and automatic updates are separate opt-ins. The default interval
+is 120 minutes while JARVIS is open. Tamil playback uses an installed Windows
+Tamil voice when available.
+
 ## Implemented
 
 - Native Qt interface with command center, chat, app launcher, task queue, editor, history, provider manager, usage and permissions.

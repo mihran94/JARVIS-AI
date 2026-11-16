@@ -123,6 +123,9 @@ class VoiceSpeakerWorker(QThread):
             speaker = self._speaker_factory()
             if self.isInterruptionRequested():
                 return
+            if (self._speaker_factory is default_speaker_factory
+                    and any('஀' <= char <= '௿' for char in self._text)):
+                speaker.select_language('ta')
             self.playing.emit()
             if hasattr(speaker, 'speak_interruptibly'):
                 speaker.speak_interruptibly(self._text, self.isInterruptionRequested)
