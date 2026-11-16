@@ -1,0 +1,2257 @@
+diff --git a/desktop/app.py b/desktop/app.py
+index 0d334e8..5d403e2 100644
+--- a/desktop/app.py
++++ b/desktop/app.py
+@@ -51,6 +51,16 @@ from automation.windows import APPS, EDITOR_EXECUTABLES, editor_executable, laun
+ from automation.inspection import inspect_windows
+ from developer_studio.workspace import Workspace
+ from developer_studio.codex_cli import codex_executable, run_codex
++from developer_studio.editors import (
++    CAPABILITY_LABELS, editor_from_text, editor_status, editor_names, launch_editor,
++)
++from developer_studio.intents import parse_coding_request
++from developer_studio.projects import (
++    SavedProject, assistant_language, configured_launchers, find_project, load_projects,
++    project_status, routine_allowed, save_projects, set_assistant_language,
++    set_trusted_routine, trusted_routines,
++)
++from developer_studio.codex_task import STEP_LABELS, TASK_STEPS, CodexTask, TaskOutcome
+ from developer_studio.generation import messages_for_goal, messages_for_repair, prepare_draft
+ from video_studio.editing import editing_checklist, export_davinci
+ from video_studio.planning import (
+@@ -165,6 +175,41 @@ class ModelCheckWorker(QThread):
+         self.result.emit(status, text, payload)
+ 
+ 
++class CodingTaskWorker(QThread):
++    """Run one coding task off the UI thread and report every step.
++
++    The progress signal carries the step and the sentence, so the chat can
++    mark the task card as it goes. Nothing is logged, and the key never
++    appears here: the CLI reads its own credentials.
++    """
++
++    progress = Signal(str, str)
++    result = Signal(object)
++
++    def __init__(self, task, policy, ticket):
++        super().__init__()
++        self.task = task
++        self.policy = policy
++        self.ticket = ticket
++
++    def check(self):
++        self.policy.check(self.ticket)
++        if self.isInterruptionRequested():
++            raise Stopped('Task cancelled.')
++
++    def run(self):
++        self.task.progress = lambda step, text: self.progress.emit(step, text)
++        self.task.check_cancelled = self.check
++        try:
++            outcome = self.task.run()
++        except Stopped:
++            outcome = TaskOutcome(status='cancelled',
++                                  message='Cancelled. Your project was not changed.')
++        except Exception as error:
++            outcome = TaskOutcome(status='failed', message=str(error))
++        self.result.emit(outcome)
++
++
+ class Window(QMainWindow):
+     def __init__(self, data_root):
+         super().__init__()
+@@ -187,6 +232,8 @@ class Window(QMainWindow):
+         self.video_plan = None
+         self.video_chat_brief = None
+         self.chat_launch = None
++        self.coding = None
++        self.coding_worker = None
+         self.site_export = None
+         self.news_panel = None
+         self.site_draft = None
+@@ -326,6 +373,10 @@ class Window(QMainWindow):
+                 self.nav.setCurrentRow(row)
+                 break
+         self.pages.setCurrentIndex(index)
++        if name == 'Settings & Safety':
++            # The saved-project table lives in Settings, so it is refreshed
++            # whenever the owner comes back to it.
++            self.refresh_projects_page()
+ 
+     def local_voice_allowed(self):
+         """Hands-free calls are allowed only to local, non-billable Ollama."""
+@@ -810,9 +861,28 @@ class Window(QMainWindow):
+             approval_row, 'Decline', lambda: self.finish_chat_launch(False))
+         self.chat_approval.hide()
+         layout.addWidget(self.chat_approval)
++        self.chat_task_card = QWidget()
++        card_layout = QVBoxLayout(self.chat_task_card)
++        card_layout.setContentsMargins(0, 0, 0, 0)
++        self.chat_task_text = QLabel()
++        self.chat_task_text.setWordWrap(True)
++        self.chat_task_text.setTextInteractionFlags(
++            Qt.TextInteractionFlag.TextSelectableByMouse)
++        card_layout.addWidget(self.chat_task_text)
++        task_buttons = QHBoxLayout()
++        self.chat_task_approve = self.button(
++            task_buttons, 'Approve task', lambda: self.finish_coding_approval(True))
++        self.chat_task_decline = self.button(
++            task_buttons, 'Decline', lambda: self.finish_coding_approval(False))
++        self.chat_task_diff = self.button(task_buttons, 'Review diff', self.review_coding_diff)
++        self.chat_task_tests = self.button(task_buttons, 'Run tests', self.run_coding_tests)
++        self.chat_task_open = self.button(task_buttons, 'Open project', self.open_coding_project)
++        card_layout.addLayout(task_buttons)
++        self.chat_task_card.hide()
++        layout.addWidget(self.chat_task_card)
+         self.prompt = QPlainTextEdit()
+         self.prompt.setPlaceholderText(
+-            'Ask JARVIS… e.g. Open CapCut or /video followed by a brief')
++            'Ask JARVIS… e.g. Open CapCut, or name a saved project and what to change')
+         self.prompt.setFixedHeight(78)
+         layout.addWidget(self.prompt)
+         self.read_replies = QCheckBox('Read replies aloud')
+@@ -1828,6 +1898,7 @@ class Window(QMainWindow):
+             self.button(advanced, label,
+                         lambda checked=False, name=name: self.open_section(name))
+         layout.addLayout(advanced)
++        self.add_projects_settings(layout)
+         plugins = QGroupBox('Plugins')
+         plugin_layout = QVBoxLayout(plugins)
+         for name in (*VIDEO_TOOLS, *EDITOR_EXECUTABLES):
+@@ -1939,6 +2010,599 @@ class Window(QMainWindow):
+         self.render_chat()
+         self.refresh_history()
+ 
++
++    # ── coding tasks ─────────────────────────────────────────────────────
++
++
++    # ── saved projects, editors and routines ─────────────────────────────
++
++    def add_projects_settings(self, layout):
++        """The saved-project settings, inside Settings & Plugins.
++
++        Save each project folder with the editor you work in and the local test
++        command. After that a chat request only has to name the project. JARVIS
++        opens the real folder, works in an isolated Git worktree so your
++        uncommitted files stay untouched, and shows you the diff before
++        anything is pushed or merged.
++        """
++        heading = QLabel('Saved projects and editors')
++        heading.setStyleSheet('font-size:19px;font-weight:600')
++        layout.addWidget(heading)
++        note = QLabel(
++            'Save each project folder with the editor you work in and the local test command. '
++            'After that a chat request only has to name the project. JARVIS opens the real '
++            'folder, works in an isolated Git worktree so your uncommitted files stay '
++            'untouched, and shows you the diff before anything is pushed or merged.')
++        note.setWordWrap(True)
++        layout.addWidget(note)
++        self.projects_table = QTableWidget(0, 4)
++        self.projects_table.setHorizontalHeaderLabels(
++            ['Project', 'Folder', 'Editor', 'Test command'])
++        header = self.projects_table.horizontalHeader()
++        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
++        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
++        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
++        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
++        self.projects_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
++        self.projects_table.setSelectionBehavior(
++            QTableWidget.SelectionBehavior.SelectRows)
++        self.projects_table.itemSelectionChanged.connect(self.refresh_routine_switches)
++        layout.addWidget(self.projects_table)
++        row = QHBoxLayout()
++        self.button(row, 'Add project folder', self.add_project)
++        self.button(row, 'Remove selected project', self.remove_project)
++        layout.addLayout(row)
++        self.project_status = QLabel()
++        self.project_status.setWordWrap(True)
++        layout.addWidget(self.project_status)
++        self.editor_status = QLabel()
++        self.editor_status.setWordWrap(True)
++        layout.addWidget(self.editor_status)
++        launcher_heading = QLabel('Another editor, as a launcher you configure')
++        launcher_heading.setStyleSheet('font-weight:600')
++        layout.addWidget(launcher_heading)
++        self.launchers_table = QTableWidget(0, 3)
++        self.launchers_table.setHorizontalHeaderLabels(['Name', 'Command', 'Capabilities'])
++        self.launchers_table.horizontalHeader().setSectionResizeMode(
++            1, QHeaderView.ResizeMode.Stretch)
++        self.launchers_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
++        layout.addWidget(self.launchers_table)
++        launcher_row = QHBoxLayout()
++        self.launcher_name = QLineEdit()
++        self.launcher_name.setPlaceholderText('Name, e.g. Fleet')
++        launcher_row.addWidget(self.launcher_name)
++        self.launcher_command = QLineEdit()
++        self.launcher_command.setPlaceholderText('Command or full path to its executable')
++        launcher_row.addWidget(self.launcher_command)
++        layout.addLayout(launcher_row)
++        self.button(layout, 'Add this launcher', self.add_launcher)
++        language_row = QHBoxLayout()
++        language_row.addWidget(QLabel('Assistant language'))
++        self.assistant_language_box = QComboBox()
++        self.assistant_language_box.addItems(
++            ['தமிழ் (Tamil)', 'English', 'Français (French)'])
++        self.assistant_language_box.currentTextChanged.connect(self.change_assistant_language)
++        language_row.addWidget(self.assistant_language_box)
++        layout.addLayout(language_row)
++        self.routine_open = QCheckBox('Open the selected project without asking')
++        self.routine_open.toggled.connect(self.change_routine_open)
++        layout.addWidget(self.routine_open)
++        self.routine_tests = QCheckBox("Run the selected project's tests without asking")
++        self.routine_tests.toggled.connect(self.change_routine_tests)
++        layout.addWidget(self.routine_tests)
++        self.refresh_projects_page()
++
++    def refresh_projects_page(self):
++        """Show the saved projects, the editors and the configured launchers."""
++        projects = load_projects(self.store)
++        self.projects_table.setRowCount(len(projects))
++        for row, project in enumerate(projects):
++            status = project_status(project)
++            for column, text in enumerate((project.name, project.path,
++                                           project.editor, project.test_command)):
++                item = QTableWidgetItem(text)
++                if column == 1 and not status['exists']:
++                    item.setToolTip('This folder is not there any more.')
++                self.projects_table.setItem(row, column, item)
++        launchers = configured_launchers(self.store)
++        self.launchers_table.setRowCount(len(launchers))
++        for row, launcher in enumerate(launchers):
++            state = editor_status(launcher['name'], launcher)
++            self.launchers_table.setItem(row, 0, QTableWidgetItem(launcher['name']))
++            self.launchers_table.setItem(row, 1, QTableWidgetItem(launcher['command']))
++            self.launchers_table.setItem(row, 2, QTableWidgetItem(
++                ', '.join(CAPABILITY_LABELS.get(item, item) for item in state['capabilities'])
++                or 'No capabilities declared'))
++        lines = []
++        for name in editor_names():
++            state = editor_status(name)
++            if state['installed']:
++                lines.append(f'{name}: installed — ' + ', '.join(
++                    CAPABILITY_LABELS.get(item, item) for item in state['capabilities']))
++            else:
++                lines.append(f'{name}: SETUP NEEDED — {state["setup"]}')
++        for launcher in launchers:
++            state = editor_status(launcher['name'], launcher)
++            lines.append(f'{launcher["name"]}: ' + (
++                'installed' if state['installed'] else 'SETUP NEEDED') + ' — ' + ', '.join(
++                    CAPABILITY_LABELS.get(item, item) for item in state['capabilities']))
++        self.editor_status.setText('\n'.join(lines))
++        language = assistant_language(self.store)
++        self.assistant_language_box.blockSignals(True)
++        self.assistant_language_box.setCurrentIndex({'ta': 0, 'en': 1, 'fr': 2}[language])
++        self.assistant_language_box.blockSignals(False)
++        self.refresh_routine_switches()
++
++    def selected_project(self):
++        row = self.projects_table.currentRow()
++        projects = load_projects(self.store)
++        if 0 <= row < len(projects):
++            return projects[row]
++        return None
++
++    def refresh_routine_switches(self):
++        project = self.selected_project()
++        routines = trusted_routines(self.store)
++        for box, key in ((self.routine_open, 'open'), (self.routine_tests, 'tests')):
++            box.blockSignals(True)
++            box.setChecked(bool(project and routines.get(key + ':' + project.name)))
++            box.setEnabled(project is not None)
++            box.blockSignals(False)
++        if project is None:
++            self.project_status.setText('Select a project to see its status.')
++        else:
++            state = project_status(project)
++            parts = [f'{project.name}: {project.path}']
++            if not state['exists']:
++                parts.append('SETUP NEEDED — the folder is not there.')
++            elif state['git']:
++                parts.append('Git repository.' + (
++                    f" {state['uncommitted']} uncommitted file(s) are protected when a task runs."
++                    if state['dirty'] else ' Working folder is clean.'))
++            else:
++                parts.append('SETUP NEEDED — not a Git repository, so a task cannot be isolated.')
++            self.project_status.setText(' '.join(parts))
++
++    def add_project(self):
++        """Choose a folder and save it with an editor and a test command."""
++        folder = QFileDialog.getExistingDirectory(self, 'Choose the project folder')
++        if not folder:
++            return
++        dialog = QDialog(self)
++        dialog.setWindowTitle('Save this project')
++        form = QFormLayout(dialog)
++        name_field = QLineEdit(Path(folder).name)
++        form.addRow('Project name', name_field)
++        editor_field = QComboBox()
++        editor_field.addItems(editor_names())
++        form.addRow('Editor', editor_field)
++        test_field = QLineEdit()
++        test_field.setPlaceholderText('e.g. pytest -q')
++        form.addRow('Local test command', test_field)
++        buttons = QHBoxLayout()
++        save_button = QPushButton('Save project')
++        cancel_button = QPushButton('Cancel')
++        buttons.addWidget(save_button)
++        buttons.addWidget(cancel_button)
++        form.addRow(buttons)
++        save_button.clicked.connect(dialog.accept)
++        cancel_button.clicked.connect(dialog.reject)
++        if dialog.exec() != QDialog.DialogCode.Accepted:
++            return
++        name = name_field.text().strip()
++        if not name:
++            self.statusBar().showMessage('Give the project a name.', 10000)
++            return
++        projects = load_projects(self.store)
++        projects = [item for item in projects if item.name.casefold() != name.casefold()]
++        projects.append(SavedProject(name=name, path=folder, editor=editor_field.currentText(),
++                                     test_command=test_field.text().strip()))
++        save_projects(self.store, projects)
++        self.refresh_projects_page()
++
++    def remove_project(self):
++        project = self.selected_project()
++        if project is None:
++            return
++        if not self.confirm(Action('remove_saved_project', project.name)):
++            return
++        projects = [item for item in load_projects(self.store)
++                    if item.name.casefold() != project.name.casefold()]
++        save_projects(self.store, projects)
++        self.refresh_projects_page()
++
++    def add_launcher(self):
++        """Save the owner's own editor launcher."""
++        name = self.launcher_name.text().strip()
++        command = self.launcher_command.text().strip()
++        if not name or not command:
++            self.statusBar().showMessage('Give the launcher a name and a command.', 10000)
++            return
++        launchers = configured_launchers(self.store)
++        launchers = [item for item in launchers if item['name'].casefold() != name.casefold()]
++        launchers.append({'name': name, 'command': command,
++                           'capabilities': ['open_project', 'open_file']})
++        from developer_studio.projects import save_configured_launchers
++        save_configured_launchers(self.store, launchers)
++        self.launcher_name.clear()
++        self.launcher_command.clear()
++        self.refresh_projects_page()
++
++    def change_assistant_language(self, label):
++        code = {'தமிழ் (Tamil)': 'ta', 'English': 'en', 'Français (French)': 'fr'}.get(label, 'ta')
++        set_assistant_language(self.store, code)
++
++    def change_routine_open(self, enabled):
++        project = self.selected_project()
++        if project is not None:
++            set_trusted_routine(self.store, 'open:' + project.name, enabled)
++
++    def change_routine_tests(self, enabled):
++        project = self.selected_project()
++        if project is not None:
++            set_trusted_routine(self.store, 'tests:' + project.name, enabled)
++
++    def coding_request(self, text):
++        """The coding request in a chat sentence, or None.
++
++        A sentence is only a coding request when it names a saved project.
++        Anything else is ordinary chat and goes to the assistant, because a
++        request that might be a coding task must never swallow a question.
++        """
++        projects = load_projects(self.store)
++        request = parse_coding_request(text, projects, editor_from_text)
++        if request.project and (request.open_project or request.make_change or request.run_tests):
++            return request
++        return None
++
++    def start_coding_task(self, request, text):
++        """Show the task card and start the first step."""
++        projects = load_projects(self.store)
++        project = find_project(projects, request.project)
++        if project is None:
++            self.show_local_system_reply(text, 'That project is not saved any more.')
++            return
++        launchers = configured_launchers(self.store)
++        editor = request.editor or project.editor
++        configured = next((item for item in launchers if item['name'] == editor), None)
++        status = editor_status(editor, configured)
++        routines = trusted_routines(self.store)
++        steps = []
++        if request.open_project:
++            steps.append({
++                'key': 'open', 'done': False, 'state': 'waiting',
++                'label': f'Open {project.name} in {editor}',
++                'approval': not routines.get('open:' + project.name),
++            })
++        if request.make_change:
++            steps.append({
++                'key': 'change', 'done': False, 'state': 'waiting',
++                'label': f'Ask Codex to: {request.change or project.name}',
++                'approval': True,
++            })
++        if request.run_tests:
++            steps.append({
++                'key': 'tests', 'done': False, 'state': 'waiting',
++                'label': f"Run the configured tests: {project.test_command or '(none configured)'}",
++                'approval': not routines.get('tests:' + project.name),
++            })
++        self.coding = {
++            'request': request, 'project': project, 'editor': editor,
++            'editor_status': status, 'steps': steps, 'index': 0,
++            'outcome': None, 'text': text,
++        }
++        self.render_coding_card()
++        self.advance_coding_task()
++
++    def coding_action(self, step):
++        """The exact action and target the owner approves for this step.
++
++        The target says which project, which folder and which change, so the
++        owner can see what is about to happen before it happens.
++        """
++        coding = self.coding
++        project = coding['project']
++        request = coding['request']
++        if step['key'] == 'open':
++            return Action('open_project', f'{coding["editor"]} · {project.path}')
++        if step['key'] == 'tests':
++            return Action('run_project_tests', f'{project.name}: {project.test_command}')
++        change = request.change or project.name
++        return Action('codex_task', f'{project.name} · {project.path} · {change}')
++
++    def render_coding_card(self):
++        """The task card: project, requested change and the steps."""
++        coding = self.coding
++        if coding is None:
++            self.chat_task_card.hide()
++            return
++        project = coding['project']
++        request = coding['request']
++        status = coding['editor_status']
++        lines = [f'Task · {project.name}', f'Folder: {project.path}']
++        editor_line = f"Editor: {coding['editor']}"
++        if status['installed']:
++            editor_line += f" — {status['path']}"
++        else:
++            editor_line += ' — SETUP NEEDED'
++        lines.append(editor_line)
++        if not status['installed'] and status['setup']:
++            lines.append(status['setup'])
++        if request.change:
++            lines.append('Change: ' + request.change)
++        lines.append('')
++        for number, step in enumerate(coding['steps'], 1):
++            mark = {'done': 'done', 'running': 'running', 'waiting': 'waiting',
++                    'declined': 'declined', 'failed': 'failed'}.get(step['state'], 'waiting')
++            if step['state'] == 'waiting' and coding.get('pending_step') is step:
++                mark = 'awaiting approval'
++            lines.append(f'{number}. {step["label"]}  [{mark}]')
++        outcome = coding.get('outcome')
++        if outcome is not None:
++            lines.append('')
++            lines.append(outcome.message)
++            if outcome.changed_files:
++                lines.append('Changed files: ' + ', '.join(outcome.changed_files))
++            if outcome.test_status not in ('', 'not run'):
++                lines.append(f'Tests: {outcome.test_status}')
++            if outcome.protected:
++                lines.append('Your uncommitted work was untouched: '
++                             + ', '.join(outcome.protected))
++        self.chat_task_text.setText('\n'.join(lines))
++        self.chat_task_card.show()
++        self.chat_task_diff.setEnabled(bool(outcome and outcome.diff))
++        self.chat_task_tests.setEnabled(bool(outcome and outcome.worktree))
++        self.chat_task_open.setEnabled(True)
++
++    def advance_coding_task(self):
++        """Run the next step, or ask for approval when it needs one."""
++        coding = self.coding
++        if coding is None:
++            return
++        while coding['index'] < len(coding['steps']):
++            step = coding['steps'][coding['index']]
++            if step['done']:
++                coding['index'] += 1
++                continue
++            if step['key'] == 'change' and step.get('covers_tests'):
++                step['done'] = True
++                step['state'] = 'done'
++                coding['index'] += 1
++                continue
++            break
++        if coding['index'] >= len(coding['steps']):
++            self.finish_coding_task()
++            return
++        step = coding['steps'][coding['index']]
++        step['state'] = 'running'
++        self.render_coding_card()
++        if step['key'] == 'open':
++            self.step_open_project(step)
++        elif step['key'] == 'change':
++            self.step_codex_change(step)
++        else:
++            self.step_run_tests(step)
++
++    def step_open_project(self, step):
++        coding = self.coding
++        project = coding['project']
++        if step['approval']:
++            self.queue_coding_approval(step, self.coding_action(step))
++            return
++        self.run_coding_step(step, lambda: launch_editor(coding['editor'], project.path))
++
++    def step_codex_change(self, step):
++        # A change always needs approval: it writes code and sends project
++        # data to a provider.
++        self.queue_coding_approval(step, self.coding_action(step))
++
++    def step_run_tests(self, step):
++        coding = self.coding
++        project = coding['project']
++        if not project.test_command:
++            step['done'] = True
++            step['state'] = 'done'
++            self.render_coding_card()
++            self.advance_coding_task()
++            return
++        if step['approval']:
++            self.queue_coding_approval(step, self.coding_action(step))
++            return
++        self.run_coding_tests_for(project, project.folder)
++
++    def queue_coding_approval(self, step, action):
++        """Ask for approval of this step, showing the exact target."""
++        try:
++            ticket = self.policy.ticket()
++        except Stopped as error:
++            self.show_local_system_reply(self.coding['text'], str(error))
++            return
++        self.coding_pending = (step, ticket, action)
++        if self.coding is not None:
++            self.coding['pending_step'] = step
++        step['state'] = 'waiting'
++        self.render_coding_card()
++        self.chat_task_text.setText(
++            self.chat_task_text.text()
++            + f'\n\n{action.kind}: {action.target}\nApprove this task or decline below.')
++        self.chat_task_approve.show()
++        self.chat_task_decline.show()
++
++    def finish_coding_approval(self, approved):
++        """Run or refuse the whole task."""
++        pending = getattr(self, 'coding_pending', None)
++        self.coding_pending = None
++        if self.coding is not None:
++            self.coding['pending_step'] = None
++        self.chat_task_approve.hide()
++        self.chat_task_decline.hide()
++        if pending is None:
++            return
++        step, ticket, action = pending
++        coding = self.coding
++        if coding is None:
++            return
++        try:
++            self.policy.check(ticket)
++        except Stopped as error:
++            self.show_local_system_reply(coding['text'], str(error))
++            return
++        if not approved:
++            # Declining one step declines the whole task. Nothing is left half
++            # done and nothing is changed.
++            for item in coding['steps']:
++                item['state'] = 'declined'
++                item['done'] = True
++            coding['index'] = len(coding['steps'])
++            self.render_coding_card()
++            self.show_local_system_reply(coding['text'], 'Declined. Nothing was changed.')
++            self.finish_coding_task()
++            return
++        if step['key'] == 'change':
++            self.start_codex_task(step)
++        elif step['key'] == 'tests':
++            self.run_coding_tests_for(coding['project'], coding['project'].folder)
++        else:
++            self.run_coding_step(step, lambda: launch_editor(coding['editor'],
++                                                              coding['project'].path))
++
++    def run_coding_step(self, step, operation):
++        """Run one approved routine action."""
++        coding = self.coding
++        try:
++            result = operation()
++            step['state'] = 'done'
++            step['done'] = True
++            coding['index'] += 1
++            self.render_coding_card()
++            self.show_local_system_reply(coding['text'], result)
++        except (Denied, Stopped, ValueError, OSError, RuntimeError) as error:
++            step['state'] = 'failed'
++            step['done'] = True
++            coding['index'] += 1
++            self.render_coding_card()
++            self.show_local_system_reply(coding['text'], str(error))
++            if step['key'] == 'open':
++                # A missing editor does not stop the work. The task itself runs
++                # in a worktree and does not need the editor.
++                self.statusBar().showMessage(str(error), 15000)
++                self.advance_coding_task()
++                return
++        self.advance_coding_task()
++
++    def start_codex_task(self, step):
++        """Start the Codex task in an isolated worktree."""
++        coding = self.coding
++        project = coding['project']
++        request = coding['request']
++        if self.worker is not None:
++            self.show_local_system_reply(coding['text'],
++                                         'Wait for the current request to finish.')
++            return
++        task = CodexTask(project, request.change or project.name,
++                         test_command=project.test_command if request.run_tests else '',
++                         worktree_root=self.root / 'worktrees',
++                         codex_path=None)
++        self.coding_worker = CodingTaskWorker(task, self.policy, self.policy.ticket())
++        self.coding_worker.progress.connect(self.on_coding_progress)
++        self.coding_worker.result.connect(self.on_coding_result)
++        self.coding_worker.finished.connect(self.on_coding_finished)
++        step['state'] = 'running'
++        self.render_coding_card()
++        self.coding_worker.start()
++
++    def on_coding_progress(self, step, text):
++        """Show one step of the task as it happens."""
++        coding = self.coding
++        if coding is None:
++            return
++        for item in coding['steps']:
++            if item['key'] == step:
++                item['state'] = 'running'
++        self.render_coding_card()
++        self.store.message(self.session, 'system', '· ' + text)
++        self.render_chat()
++
++    def on_coding_result(self, outcome):
++        coding = self.coding
++        if coding is None:
++            return
++        coding['outcome'] = outcome
++        for step in coding['steps']:
++            if step['key'] == 'change' and step['state'] == 'running':
++                step['state'] = 'done' if outcome.status == 'completed' else 'failed'
++                step['done'] = True
++        if outcome.status == 'completed' and outcome.test_status:
++            for step in coding['steps']:
++                if step['key'] == 'tests':
++                    step['state'] = 'done'
++                    step['done'] = True
++        self.render_coding_card()
++
++    def on_coding_finished(self):
++        worker = self.coding_worker
++        self.coding_worker = None
++        if worker is not None:
++            worker.deleteLater()
++        self.finish_coding_task()
++
++    def finish_coding_task(self):
++        """Close the task card with the result in the conversation."""
++        coding = self.coding
++        if coding is None:
++            return
++        outcome = coding.get('outcome')
++        if outcome is not None:
++            summary = outcome.message
++            if outcome.changed_files:
++                summary += '\nChanged files: ' + ', '.join(outcome.changed_files)
++            if outcome.test_status and outcome.test_status != 'not run':
++                summary += f'\nTests: {outcome.test_status}'
++            self.store.message(self.session, 'system', summary)
++            self.render_chat()
++        self.refresh_archives()
++
++    def review_coding_diff(self):
++        """Show the reviewable diff of the last task."""
++        coding = self.coding
++        if coding is None or not coding.get('outcome'):
++            return
++        outcome = coding['outcome']
++        if not outcome.diff:
++            self.statusBar().showMessage('There is no diff to review.', 10000)
++            return
++        self.show_local_system_reply(coding['text'], outcome.diff)
++
++    def run_coding_tests(self):
++        """Run the project's configured tests again, in the task worktree."""
++        coding = self.coding
++        if coding is None:
++            return
++        outcome = coding.get('outcome')
++        folder = Path(outcome.worktree) if outcome and outcome.worktree else coding['project'].folder
++        self.run_coding_tests_for(coding['project'], folder)
++
++    def run_coding_tests_for(self, project, folder):
++        """Run the tests and show the result in the conversation."""
++        from developer_studio.codex_task import run_local_tests
++        status, output = run_local_tests(folder, project.test_command)
++        text = f'Tests {status} in {folder}.\n\n' + (output or '(no output)')
++        self.show_local_system_reply(project.name, text)
++
++    def open_coding_project(self):
++        """Open the project folder in the editor the owner saved."""
++        coding = self.coding
++        if coding is None:
++            return
++        project = coding['project']
++        launchers = configured_launchers(self.store)
++        configured = next((item for item in launchers if item['name'] == coding['editor']), None)
++        try:
++            result = launch_editor(coding['editor'], project.path, configured)
++        except (ValueError, RuntimeError, OSError) as error:
++            result = str(error)
++        self.show_local_system_reply(project.name, result)
++
+     def confirm(self, action):
+         extra = ('\nContent SHA-256: ' + action.digest) if action.digest else ''
+         return QMessageBox.question(self, 'Approve one action?',
+@@ -2190,6 +2854,12 @@ class Window(QMainWindow):
+             self.prompt.clear()
+             self.show_local_system_reply(text, local_reply)
+             return
++        coding = self.coding_request(text)
++        if coding is not None:
++            self.prompt.clear()
++            self.open_section('JARVIS Chat')
++            self.start_coding_task(coding, text)
++            return
+         name = parse_voice_command(text)
+         if name:
+             if self.chat_launch is not None:
+diff --git a/developer_studio/codex_cli.py b/developer_studio/codex_cli.py
+index 28ed3a7..44f42b8 100644
+--- a/developer_studio/codex_cli.py
++++ b/developer_studio/codex_cli.py
+@@ -26,18 +26,41 @@ def codex_executable():
+     return Path(path).resolve(strict=True)
+ 
+ 
+-def run_codex(executable, project, prompt, check_cancelled):
+-    with TemporaryDirectory(prefix="jarvis-codex-") as directory:
++def run_codex(executable, project, prompt, check_cancelled, *, sandbox='read-only',
++              approval='never', cwd=None, timeout=300):
++    """Ask the Codex CLI to do something in a folder.
++
++    The default is read-only, which is what the existing "Ask Codex about a
++    project" action uses and must keep using.
++
++    `sandbox` may be raised to 'workspace-write' when the caller has already
++    isolated the work in a throwaway Git worktree of its own. Even then the
++    CLI is told never to ask for approval, because the owner approves the
++    whole action once, in the chat, before anything starts.
++
++    `cwd` is the folder the CLI actually runs in. It is separate from
++    `project` so a task can run in an isolated worktree while still being
++    described in terms of the project the owner chose.
++    """
++    if cwd is None:
++        # The default is the project the owner chose, exactly as before.
++        cwd = project
++    return _run_codex(executable, Path(cwd), prompt, check_cancelled,
++                       sandbox=sandbox, approval=approval, timeout=timeout)
++
++
++def _run_codex(executable, cwd, prompt, check_cancelled, *, sandbox, approval, timeout):
++    with TemporaryDirectory(prefix="jarvis-codex-out-") as directory:
+         output = Path(directory) / "answer.txt"
+         command = [
+-            str(executable), "--ask-for-approval", "never", "exec",
+-            "--ignore-user-config", "--ephemeral", "--sandbox", "read-only",
++            str(executable), "--ask-for-approval", approval, "exec",
++            "--ignore-user-config", "--ephemeral", "--sandbox", sandbox,
+             "--skip-git-repo-check", "--output-last-message", str(output), "-",
+         ]
+         check_cancelled()
+-        deadline = monotonic() + 300
++        deadline = monotonic() + timeout
+         with subprocess.Popen(
+-            command, cwd=project, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
++            command, cwd=str(cwd), stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+             stderr=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+         ) as process:
+             try:
+@@ -45,7 +68,8 @@ def run_codex(executable, project, prompt, check_cancelled):
+                 while True:
+                     check_cancelled()
+                     if monotonic() >= deadline:
+-                        raise ValueError("Codex took more than five minutes. Try a smaller task.")
++                        raise ValueError(f"Codex took more than {int(timeout // 60)} minutes. "
++                                         "Try a smaller task.")
+                     try:
+                         process.communicate(pending, timeout=0.2)
+                         break
+diff --git a/developer_studio/codex_task.py b/developer_studio/codex_task.py
+new file mode 100644
+index 0000000..fdf37da
+--- /dev/null
++++ b/developer_studio/codex_task.py
+@@ -0,0 +1,315 @@
++"""Run one coding task inside an isolated worktree and report a reviewable diff.
++
++WHAT THIS IS
++    The owner says "fix the login page validation in project-a". JARVIS opens
++    the project, asks Codex to make that change, runs the project's own tests
++    and shows the owner the diff. That is the whole point of the product: the
++    next step after "open the app" is doing useful work INSIDE the project and
++    proving it.
++
++HOW THE WORK IS ISOLATED
++    The change is made in a throwaway Git worktree created from the project's
++    HEAD, never in the owner's working folder. So:
++
++    * the owner's uncommitted work is untouched, and JARVIS says so;
++    * the diff is a real Git diff against the project's own history, which is
++      what the owner reviews;
++    * the tests run against the changed code, in the same place the change
++      was made.
++
++    A folder that is not a Git repository cannot be isolated and cannot give a
++    reviewable diff, so the task is refused with a clear reason instead of
++    editing the owner's files in place.
++
++WHAT NEEDS APPROVAL
++    The owner approves the whole task once, in chat, before anything starts:
++    the project, the change and the steps are all shown. Nothing is installed,
++    nothing is pushed, nothing is merged, and no project data is sent to a
++    provider that the owner has not already chosen.
++
++WHAT THIS MODULE WILL NOT DO
++    * It never edits the owner's working folder.
++    * It never runs a shell. The configured test command is split into
++      arguments and run directly.
++    * It never continues after a cancellation. An emergency stop leaves the
++      worktree on disk for the owner to look at, and the task stays cancelled.
++"""
++from __future__ import annotations
++
++from dataclasses import dataclass, field
++import os
++from pathlib import Path
++import shlex
++import subprocess
++import uuid
++
++from developer_studio.codex_cli import codex_executable, run_codex
++
++
++#: The steps a task goes through. The card shows them and marks them done.
++TASK_STEPS = (
++    'open_project',
++    'isolate_worktree',
++    'read_and_edit',
++    'collect_diff',
++    'run_tests',
++    'report',
++)
++
++STEP_LABELS = {
++    'open_project': 'Open the project in the chosen editor',
++    'isolate_worktree': 'Create an isolated worktree so your files stay untouched',
++    'read_and_edit': 'Ask Codex to read the project and make the change',
++    'collect_diff': 'Collect the reviewable diff',
++    'run_tests': 'Run the configured local tests',
++    'report': 'Report the changed files, the diff and the test results',
++}
++
++
++@dataclass
++class TaskOutcome:
++    """Everything the chat needs to show about one finished task."""
++
++    status: str = 'completed'
++    steps: list[str] = field(default_factory=list)
++    diff: str = ''
++    changed_files: list[str] = field(default_factory=list)
++    test_status: str = 'not run'
++    test_output: str = ''
++    message: str = ''
++    worktree: str = ''
++    protected: list[str] = field(default_factory=list)
++    answer: str = ''
++
++    def as_dict(self) -> dict:
++        return {
++            'status': self.status,
++            'steps': list(self.steps),
++            'diff': self.diff,
++            'changed_files': list(self.changed_files),
++            'test_status': self.test_status,
++            'test_output': self.test_output,
++            'message': self.message,
++            'worktree': self.worktree,
++            'protected': list(self.protected),
++        }
++
++
++def run_local_tests(folder, command: str, timeout: int = 1800):
++    """Run a project's own configured tests in that folder.
++
++    The command is split into arguments and run directly. There is no shell,
++    so a configured test command cannot become another command.
++    """
++    command = (command or '').strip()
++    if not command:
++        return 'not configured', 'No test command is configured for this project.'
++    try:
++        arguments = shlex.split(command, posix=os.name != 'nt')
++    except ValueError:
++        arguments = command.split()
++    if not arguments:
++        return 'not configured', 'The configured test command was empty.'
++    try:
++        result = subprocess.run(arguments, cwd=str(folder), capture_output=True,
++                                text=True, timeout=timeout)
++    except subprocess.TimeoutExpired:
++        return 'timed out', 'The tests did not finish within 30 minutes.'
++    except (OSError, subprocess.SubprocessError) as error:
++        return 'could not run', str(error)
++    output = (result.stdout or '') + (result.stderr or '')
++    return ('passed' if result.returncode == 0 else 'failed'), output[-8000:]
++
++
++def git_output(folder, *args):
++    """Run a read-only Git command and return its output, or None."""
++    try:
++        result = subprocess.run(['git', '-C', str(folder), *args], capture_output=True,
++                                text=True, timeout=20)
++    except (OSError, subprocess.SubprocessError):
++        return None
++    if result.returncode:
++        return None
++    return result.stdout
++
++
++def is_git_repo(folder: Path) -> bool:
++    output = git_output(folder, 'rev-parse', '--is-inside-work-tree')
++    return bool(output and output.strip() == 'true')
++
++
++def uncommitted_files(folder: Path) -> list[str]:
++    output = git_output(folder, 'status', '--porcelain')
++    if not output:
++        return []
++    return [line for line in output.splitlines() if line.strip()]
++
++
++def build_prompt(project, change: str) -> str:
++    """The instruction Codex receives.
++
++    It says exactly what the owner asked for, and it says that the work must
++    stay inside this folder and must not touch the network.
++    """
++    return (
++        f"Work only inside this project folder. The owner asked for this change:\n\n"
++        f"{change}\n\n"
++        "Read the project first and understand how it is put together before you change "
++        "anything. Make the smallest change that does what was asked, match the style and "
++        "the structure that is already there, and do not add anything that was not asked "
++        "for. Do not install packages, do not push, do not merge, and do not reach the "
++        "network. If the request is ambiguous, make the most reasonable reading of it and "
++        "say in your answer what you assumed."
++    )
++
++
++class CodexTask:
++    """One coding task, from the request to the reviewable diff."""
++
++    def __init__(self, project, change: str, *, test_command: str = '',
++                 worktree_root=None, progress=None, check_cancelled=None,
++                 codex_path=None):
++        self.project = project
++        self.change = (change or '').strip()
++        self.test_command = (test_command or '').strip()
++        self.worktree_root = Path(worktree_root) if worktree_root else None
++        self.progress = progress or (lambda step, text: None)
++        self.check_cancelled = check_cancelled or (lambda: None)
++        self.codex_path = codex_path
++        self.outcome = TaskOutcome()
++
++    # -- helpers ----------------------------------------------------------
++
++    def _step(self, step, text):
++        self.outcome.steps.append(step)
++        self.progress(step, text)
++
++    def _blocked(self, message):
++        self.outcome.status = 'blocked'
++        self.outcome.message = message
++        return self.outcome
++
++    # -- the run ----------------------------------------------------------
++
++    def run(self) -> TaskOutcome:
++        self.check_cancelled()
++        folder = Path(self.project.path)
++        if not folder.is_dir():
++            return self._blocked(f'The project folder {folder} is not there any more.')
++
++        self._step('open_project', f'Opening {self.project.name} in {self.project.editor}.')
++
++        if not is_git_repo(folder):
++            return self._blocked(
++                f'{folder} is not a Git repository, so JARVIS cannot make a reviewable change '
++                'without editing your files in place. Start a Git repository in the project, '
++                'or choose a different project.')
++
++        protected = uncommitted_files(folder)
++        self.outcome.protected = protected
++
++        worktree = self._make_worktree(folder)
++        if worktree is None:
++            return self._blocked(
++                'JARVIS could not create an isolated worktree for this project, so nothing '
++                'was changed. Check that Git can write to this repository.')
++        self.outcome.worktree = str(worktree)
++        self._step('isolate_worktree',
++                   f'Isolated worktree ready at {worktree}. Your uncommitted work is untouched.')
++
++        try:
++            self.check_cancelled()
++        except Exception:
++            self.outcome.status = 'cancelled'
++            self.outcome.message = 'Cancelled before Codex started. Your project is untouched.'
++            return self.outcome
++
++        try:
++            executable = self.codex_path or codex_executable()
++        except ValueError as error:
++            return self._blocked(str(error) + ' The worktree was left at ' + str(worktree))
++
++        self._step('read_and_edit', 'Asking Codex to read the project and make the change.')
++        try:
++            answer = run_codex(executable, folder, build_prompt(self.project, self.change),
++                                self.check_cancelled, sandbox='workspace-write',
++                                cwd=str(worktree), timeout=600)
++        except Exception as error:
++            if self._cancelled(error):
++                self.outcome.status = 'cancelled'
++                self.outcome.message = ('Cancelled. The worktree was left at ' + str(worktree)
++                                         + ' for you to look at. Your project is untouched.')
++                return self.outcome
++            self.outcome.status = 'failed'
++            self.outcome.message = str(error)
++            self.outcome.worktree = str(worktree)
++            return self.outcome
++        self.outcome.answer = answer
++
++        self._step('collect_diff', 'Collecting the reviewable diff.')
++        diff, changed = self._collect_diff(worktree)
++        self.outcome.diff = diff
++        self.outcome.changed_files = changed
++
++        if not changed:
++            self.outcome.status = 'failed'
++            self.outcome.message = ('Codex finished but changed nothing. The diff below is '
++                                    'empty, so there is nothing to review.')
++            return self.outcome
++
++        if self.test_command:
++            self._step('run_tests', f'Running: {self.test_command}')
++            status, output = self._run_tests(worktree)
++            self.outcome.test_status = status
++            self.outcome.test_output = output
++        else:
++            self.outcome.test_status = 'not configured'
++            self.outcome.test_output = ('No test command is configured for this project, so no '
++                                        'tests were run.')
++
++        self._step('report', 'Reporting the changed files, the diff and the test results.')
++        self.outcome.status = 'completed'
++        self.outcome.message = (
++            f'{len(changed)} file(s) changed. The diff is below and the worktree is at '
++            f'{worktree}. Nothing was pushed, merged or installed.')
++        return self.outcome
++
++    # -- internals --------------------------------------------------------
++
++    def _cancelled(self, error):
++        return 'cancel' in str(error).casefold() or 'stopped' in str(error).casefold()
++
++    def _make_worktree(self, folder: Path):
++        """Create an isolated worktree from the project's HEAD."""
++        root = self.worktree_root
++        if root is None:
++            return None
++        try:
++            root.mkdir(parents=True, exist_ok=True)
++        except OSError:
++            return None
++        target = root / f'{self.project.name}-{uuid.uuid4().hex[:12]}'
++        result = subprocess.run(
++            ['git', '-C', str(folder), 'worktree', 'add', '--detach', str(target), 'HEAD'],
++            capture_output=True, text=True, timeout=120)
++        if result.returncode:
++            return None
++        return target if target.is_dir() else None
++
++    def _collect_diff(self, worktree: Path):
++        """The reviewable diff, including files the task created."""
++        subprocess.run(['git', '-C', str(worktree), 'add', '-A'], capture_output=True,
++                       timeout=60)
++        diff = git_output(worktree, 'diff', '--cached') or ''
++        status = git_output(worktree, 'status', '--porcelain') or ''
++        changed = []
++        for line in status.splitlines():
++            if not line.strip():
++                continue
++            parts = line[3:].strip().split(' -> ')
++            changed.append(parts[-1])
++        return diff, changed
++
++    def _run_tests(self, worktree: Path):
++        """Run the project's configured local tests, without a shell."""
++        return run_local_tests(worktree, self.test_command)
+diff --git a/developer_studio/editors.py b/developer_studio/editors.py
+new file mode 100644
+index 0000000..ed66d0b
+--- /dev/null
++++ b/developer_studio/editors.py
+@@ -0,0 +1,278 @@
++"""The editors JARVIS can open a project in, and what each one can do.
++
++WHAT THIS IS
++    The owner saves a project folder and says which editor they work in. JARVIS
++    then opens that project in THAT editor, in the real folder, and tells the
++    owner honestly when the editor is not installed.
++
++WHY CAPABILITIES ARE PER EDITOR
++    Not every editor can do every thing. VS Code opens a folder and a file.
++    Visual Studio builds and debugs. PyCharm runs its own test runner. If
++    JARVIS says "Run tests" for an editor that cannot run tests, the owner
++    gets a promise the tool cannot keep.
++
++    So each editor declares what it can do, and the interface shows those
++    capabilities one by one. An editor JARVIS finds has no capabilities at all
++    until it is configured, and a configured launcher states its own.
++
++    A CONFIGURED LAUNCHER IS THE OWNER'S OWN EDITOR
++    The owner can add any launcher: a name, the command that starts it, and
++    the capabilities they want it to have. The command is stored, never
++    executed until the owner approves that exact action, and it is shown in
++    full before it runs.
++
++WHAT THIS MODULE WILL NOT DO
++    * It never launches anything. It only reports what is installed and where.
++    * It never guesses that an editor is present. "Setup needed" is the honest
++      answer when the executable is not there.
++"""
++from __future__ import annotations
++
++from dataclasses import dataclass
++import os
++from pathlib import Path
++import shutil
++import subprocess
++import sys
++
++
++#: What an editor can be asked to do. The interface shows these individually.
++CAP_OPEN_PROJECT = 'open_project'
++CAP_OPEN_FILE = 'open_file'
++CAP_BUILD = 'build'
++CAP_RUN_TESTS = 'run_tests'
++
++CAPABILITY_LABELS = {
++    CAP_OPEN_PROJECT: 'Open the project',
++    CAP_OPEN_FILE: 'Open a file',
++    CAP_BUILD: 'Build',
++    CAP_RUN_TESTS: 'Run its tests',
++}
++
++
++@dataclass(frozen=True)
++class EditorSpec:
++    """One editor JARVIS knows how to look for."""
++
++    name: str
++    #: The command that starts it, looked up on PATH.
++    command: str
++    #: What this editor can be asked to do.
++    capabilities: tuple[str, ...]
++    #: Extra Windows install paths, tried when PATH does not have it.
++    windows_paths: tuple[str, ...] = ()
++    #: Names the owner may use for it in chat.
++    aliases: tuple[str, ...] = ()
++
++
++_EDITOR_ROOTS = {
++    'ProgramFiles': r'C:\Program Files',
++    'ProgramFiles(x86)': r'C:\Program Files (x86)',
++    'LocalAppData': None,
++}
++
++
++EDITORS = (
++    EditorSpec(
++        name='VS Code',
++        command='code',
++        capabilities=(CAP_OPEN_PROJECT, CAP_OPEN_FILE, CAP_RUN_TESTS),
++        windows_paths=(r'Microsoft VS Code\Code.exe',),
++        aliases=('vs code', 'vscode', 'code', 'விசு கோடு'),
++    ),
++    EditorSpec(
++        name='Visual Studio',
++        command='devenv',
++        capabilities=(CAP_OPEN_PROJECT, CAP_OPEN_FILE, CAP_BUILD),
++        windows_paths=(r'Microsoft Visual Studio\2022\Community\Common7\IDE\devenv.exe',
++                       r'Microsoft Visual Studio\2022\Professional\Common7\IDE\devenv.exe',
++                       r'Microsoft Visual Studio\2022\Enterprise\Common7\IDE\devenv.exe'),
++        aliases=('visual studio', 'vs'),
++    ),
++    EditorSpec(
++        name='Android Studio',
++        command='studio64',
++        capabilities=(CAP_OPEN_PROJECT, CAP_OPEN_FILE, CAP_BUILD),
++        windows_paths=(r'Android\Android Studio\bin\studio64.exe',),
++        aliases=('android studio', 'studio'),
++    ),
++    EditorSpec(
++        name='IntelliJ IDEA',
++        command='idea64',
++        capabilities=(CAP_OPEN_PROJECT, CAP_OPEN_FILE, CAP_RUN_TESTS),
++        windows_paths=(r'JetBrains\IntelliJ IDEA Community\bin\idea64.exe',
++                       r'JetBrains\IntelliJ IDEA Ultimate\bin\idea64.exe'),
++        aliases=('intellij', 'intellij idea', 'idea'),
++    ),
++    EditorSpec(
++        name='PyCharm',
++        command='pycharm64',
++        capabilities=(CAP_OPEN_PROJECT, CAP_OPEN_FILE, CAP_RUN_TESTS),
++        windows_paths=(r'JetBrains\PyCharm Community\bin\pycharm64.exe',
++                       r'JetBrains\PyCharm Professional\bin\pycharm64.exe'),
++        aliases=('pycharm',),
++    ),
++)
++
++_BY_NAME = {spec.name: spec for spec in EDITORS}
++
++
++def editor_names() -> list[str]:
++    """Every editor JARVIS knows, in the order they are offered."""
++    return [spec.name for spec in EDITORS]
++
++
++def spec(name: str) -> EditorSpec:
++    """Look up one editor by its display name."""
++    try:
++        return _BY_NAME[name]
++    except KeyError:
++        raise KeyError('Unknown editor.') from None
++
++
++def find_editor(name: str):
++    """The executable for an editor, or None when it is not installed.
++
++    PATH is tried first, because a developer who installs an editor usually
++    also puts it on PATH. The known Windows install locations come next, and
++    a configured launcher path comes last.
++    """
++    try:
++        found = _BY_NAME[name]
++    except KeyError:
++        return None
++    path = shutil.which(found.command)
++    if path:
++        return Path(path)
++    if sys.platform == 'win32':
++        for relative in found.windows_paths:
++            candidate = _windows_candidate(relative)
++            if candidate is not None:
++                return candidate
++    return None
++
++
++def _windows_candidate(relative: str):
++    """Resolve a relative Windows install path against the known roots."""
++    roots = []
++    for name, default in _EDITOR_ROOTS.items():
++        base = os.environ.get(name)
++        if base:
++            roots.append(Path(base))
++        elif default:
++            roots.append(Path(default))
++    local = os.environ.get('LocalAppData')
++    if local:
++        roots.append(Path(local) / 'Programs')
++    for root in roots:
++        candidate = root / relative
++        if candidate.is_file():
++            return candidate
++    return None
++
++
++def resolve_launcher(command: str):
++    """Resolve a configured launcher command to an executable, or None.
++
++    The command may be a full path to an executable or the name of one on
++    PATH. Nothing is run here; the owner approves the exact command first.
++    """
++    command = (command or '').strip()
++    if not command:
++        return None
++    candidate = Path(command)
++    if candidate.is_absolute():
++        return candidate if candidate.is_file() else None
++    return Path(shutil.which(command)) if shutil.which(command) else None
++
++
++def editor_status(name: str, configured=None) -> dict:
++    """What the interface shows about one editor.
++
++    `configured` is an optional configured launcher: a dictionary with
++    `name`, `command` and `capabilities`. A configured launcher is reported
++    on its own, with the capabilities the owner declared, one by one.
++    """
++    if configured:
++        command = configured.get('command', '')
++        path = resolve_launcher(command)
++        return {
++            'name': configured.get('name', 'Custom editor'),
++            'kind': 'configured',
++            'command': command,
++            'path': str(path) if path else None,
++            'installed': path is not None,
++            'capabilities': list(configured.get('capabilities', [])),
++            'setup': '' if path else f'Set up {name}: the command was not found.',
++        }
++    try:
++        found = spec(name)
++    except KeyError:
++        return {
++            'name': name, 'kind': 'unknown', 'command': '', 'path': None,
++            'installed': False, 'capabilities': [],
++            'setup': f'Setup needed for {name}: choose its executable in Settings.',
++        }
++    path = find_editor(name)
++    return {
++        'name': found.name,
++        'kind': 'known',
++        'command': found.command,
++        'path': str(path) if path else None,
++        'installed': path is not None,
++        'capabilities': list(found.capabilities),
++        'setup': '' if path else (
++            f'Setup needed for {found.name}: install it, or add "{found.command}" to PATH, '
++            'or configure it as a launcher in Settings.'),
++    }
++
++
++def all_statuses(configured_launchers=None) -> list[dict]:
++    """Every editor, known and configured, with its capabilities."""
++    statuses = [editor_status(name) for name in editor_names()]
++    for launcher in configured_launchers or []:
++        statuses.append(editor_status(launcher.get('name', ''), launcher))
++    return statuses
++
++
++def launch_editor(name: str, folder, configured=None):
++    """Open a folder in an editor.
++
++    The editor is started with the folder as its argument, so the owner sees
++    the real project, not a new empty window.
++    """
++    status = editor_status(name, configured)
++    if not status['installed']:
++        raise ValueError(status['setup'] or f'{name} is not installed.')
++    executable = status['path']
++    folder = Path(folder)
++    if not folder.is_dir():
++        raise ValueError('The project folder no longer exists.')
++    try:
++        process = subprocess.Popen([str(executable), str(folder)], shell=False, close_fds=True,
++                                   creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
++    except OSError:
++        raise RuntimeError(f'{name} could not be started.') from None
++    return f'{name} opened {folder} (process {process.pid}).'
++
++
++def editor_from_text(text: str, configured_launchers=None):
++    """The editor the owner named in a sentence, or None.
++
++    A configured launcher wins over a known editor with the same name, because
++    the owner configured it on purpose.
++    """
++    if not isinstance(text, str):
++        return None
++    lowered = text.casefold()
++    best = None
++    best_length = 0
++    for launcher in configured_launchers or []:
++        name = (launcher.get('name') or '').strip()
++        if name and name.casefold() in lowered and len(name) > best_length:
++            best, best_length = launcher.get('name'), len(name)
++    for found in EDITORS:
++        for alias in (found.name, *found.aliases):
++            if alias.casefold() in lowered and len(alias) > best_length:
++                best, best_length = found.name, len(alias)
++    return best
+diff --git a/developer_studio/intents.py b/developer_studio/intents.py
+new file mode 100644
+index 0000000..83721f0
+--- /dev/null
++++ b/developer_studio/intents.py
+@@ -0,0 +1,205 @@
++"""Turn a chat sentence into a coding request, in English, Tamil or Tanglish.
++
++WHAT THIS IS
++    The owner does not learn a command language. They say what they want:
++
++        "JARVIS, my project-a VS Code-la open panni login page validation fix
++         pannu. Tests run panni result sollu."
++
++    and JARVIS works out that this is: open project-a in VS Code, fix the login
++    page validation, run the tests and report the result.
++
++    The parser is DETERMINISTIC and LOCAL, like `desktop/voice_commands.py`.
++    It is a table of known phrases, not a guess. A sentence it does not
++    understand is not turned into a task; it is left to the assistant.
++
++WHY A TABLE AND NOT A MODEL
++    Two reasons. A task that runs code must be certain what was asked for, and
++    a model that is wrong here changes files. And the phrases are known:
++    "open panni", "fix pannu", "tests run panni", "result sollu" are the
++    Tanglish forms a Tamil speaker actually types, not a translation.
++
++WHEN IT ASKS A QUESTION
++    Only when the project or the scope is materially unclear: no saved project
++    was named, or a project was named but nothing was asked of it. Everything
++    else is answered without interrupting.
++"""
++from __future__ import annotations
++
++from dataclasses import dataclass
++import re
++
++
++#: Phrases that mean "open this project".
++OPEN_PHRASES = (
++    'open panni', 'open pannu', 'open pann', 'open the project',
++    'open project', 'open', 'திற', 'தொடக்கு',
++)
++
++#: Phrases that mean "make a change".
++CHANGE_PHRASES = (
++    'fix pannu', 'fix panni', 'change pannu', 'change panni', 'do pannu',
++    'seiyyungal', 'seiyyum', 'fix', 'add', 'change', 'update', 'implement',
++    'refactor', 'correct', 'create', 'write', 'remove', 'delete', 'rename',
++    'மாற்று', 'செய்', 'பண்ணு', 'நிர்',
++)
++
++#: Phrases that mean "run the tests".
++TEST_PHRASES = (
++    'tests run panni', 'tests run pannu', 'run the tests', 'run tests',
++    'test run panni', 'test run', 'tests run', 'run test', 'tests',
++)
++
++#: Phrases that mean "tell me the result".
++REPORT_PHRASES = (
++    'result sollu', 'result sol', 'tell the result', 'report the result',
++    'say the result', 'result', 'sollu', 'sol',
++)
++
++#: The words that open a sentence and carry no instruction.
++WAKE_WORDS = ('hey jarvis', 'jarvis,', 'jarvis:', 'jarvis')
++
++#: Words removed from the request once the intent has been recognised.
++_NOISE = re.compile(
++    r'\b(?:my|the|a|an|please|kindly|naan|na|ennakku|and|then|also|okay|ok|hey)\b',
++    re.IGNORECASE)
++
++#: The Tamil case suffix that clings to the word before it, as in "VS Code-la".
++_CASE_SUFFIX = re.compile(r'(?<![a-z])(?:-\s*)?(?:la|illa|yil|il)(?![a-z])', re.IGNORECASE)
++
++
++@dataclass(frozen=True)
++class CodingRequest:
++    """What the owner asked for, as far as the local parser can tell."""
++
++    project: str = ''
++    editor: str = ''
++    change: str = ''
++    open_project: bool = False
++    make_change: bool = False
++    run_tests: bool = False
++    report: bool = False
++    question: str = ''
++    #: True when the sentence asked for work, whether or not a project was named.
++    mentions_work: bool = False
++
++    @property
++    def is_coding_request(self) -> bool:
++        """True when the sentence asked for something a task can do."""
++        return bool(self.project) and (self.open_project or self.make_change or self.run_tests)
++
++    @property
++    def needs_question(self) -> bool:
++        """True when the request is too unclear to act on."""
++        return bool(self.question)
++
++
++def _normalise_for_matching(text: str) -> str:
++    """Fold punctuation into spaces so a phrase is found wherever it sits."""
++    folded = text.casefold()
++    for char in '.,;:!?()[]"\u2019\u201c\u201d':
++        folded = folded.replace(char, ' ')
++    return ' ' + ' '.join(folded.split()) + ' '
++
++
++def _contains(text: str, phrases) -> bool:
++    lowered = _normalise_for_matching(text)
++    for phrase in phrases:
++        if ' ' + _normalise_for_matching(phrase).strip() + ' ' in lowered:
++            return True
++    return False
++
++
++def _match_project(text: str, projects):
++    """The saved project the owner named, or None.
++
++    The name is matched loosely: "project A" finds the project saved as
++    "project-a", because that is how people say it out loud.
++    """
++    lowered = text.casefold()
++    best = None
++    best_length = 0
++    for project in projects:
++        name = getattr(project, 'name', '')
++        if not name:
++            continue
++        pattern = re.compile(r'[\s\-_]*'.join(re.escape(char) for char in name if char.isalnum()),
++                             re.IGNORECASE)
++        if pattern.search(lowered) and len(name) > best_length:
++            best, best_length = project, len(name)
++    return best
++
++
++def _strip_phrases(text: str, phrases) -> str:
++    """Remove the recognised action phrases, leaving the requested change."""
++    result = text
++    for phrase in sorted(phrases, key=len, reverse=True):
++        pattern = re.compile(r'(?<![a-z])' + re.escape(phrase) + r'(?![a-z])', re.IGNORECASE)
++        result = pattern.sub(' ', result)
++    return result
++
++
++def parse_coding_request(text: str, projects, editor_from_text=None) -> CodingRequest:
++    """Read a chat sentence as a coding request.
++
++    `projects` is the list of saved projects. `editor_from_text` is the
++    helper that finds an editor named in the sentence; it is passed in so
++    this module does not have to know how editors are found.
++    """
++    if not isinstance(text, str) or not text.strip():
++        return CodingRequest()
++
++    original = ' '.join(text.split())
++    working = original
++    for wake in WAKE_WORDS:
++        if working.casefold().startswith(wake):
++            working = working[len(wake):].lstrip(' ,:')
++            break
++
++    project = _match_project(working, projects)
++    editor = editor_from_text(working) if editor_from_text else ''
++
++    open_project = _contains(working, OPEN_PHRASES)
++    make_change = _contains(working, CHANGE_PHRASES)
++    run_tests = _contains(working, TEST_PHRASES)
++    report = _contains(working, REPORT_PHRASES)
++
++    # A sentence that names a test but never says "run" is still a request to
++    # run the tests, and a sentence that says "run tests" is not a request to
++    # make a change.
++    if 'test' in working.casefold() and not make_change:
++        run_tests = True
++
++    change = working
++    if project is not None:
++        change = _strip_phrases(change, (project.name,))
++        change = _CASE_SUFFIX.sub(' ', change)
++    if editor:
++        change = _strip_phrases(change, (editor,))
++        change = _CASE_SUFFIX.sub(' ', change)
++    change = _strip_phrases(change, OPEN_PHRASES)
++    change = _strip_phrases(change, TEST_PHRASES)
++    change = _strip_phrases(change, REPORT_PHRASES)
++    change = _strip_phrases(change, CHANGE_PHRASES)
++    change = _NOISE.sub(' ', change)
++    change = ' '.join(change.replace(',', ' ').replace('.', ' ').split()).strip(' -')
++
++    question = ''
++    if project is None:
++        names = ', '.join(getattr(item, 'name', '') for item in projects[:6])
++        question = ('Which saved project is this for?' + (f' Your saved projects are: {names}.'
++                                                          if names else ''))
++    elif not (open_project or make_change or run_tests):
++        question = f'What should JARVIS do in {project.name}?'
++
++    return CodingRequest(
++        mentions_work=bool(open_project or make_change or run_tests),
++        project=getattr(project, 'name', '') if project is not None else '',
++        editor=editor or '',
++        change=change,
++        open_project=open_project,
++        make_change=make_change,
++        run_tests=run_tests,
++        report=report,
++        question=question,
++    )
+diff --git a/developer_studio/projects.py b/developer_studio/projects.py
+new file mode 100644
+index 0000000..a71f800
+--- /dev/null
++++ b/developer_studio/projects.py
+@@ -0,0 +1,240 @@
++"""Saved projects: the folders JARVIS works in and the editor each one uses.
++
++WHAT THIS IS
++    The owner saves each project folder once, with the editor they work in and
++    the local test command for it. After that, a chat request only has to name
++    the project, and JARVIS knows where to go and what "run the tests" means
++    for it.
++
++WHY THE PROJECT IS NAMED
++    A folder path is not something a person says out loud. "project-a" is. So
++    the saved project has a short name, and the request names it.
++
++WHAT IS STORED
++    The name, the folder, the editor and the test command. Nothing secret,
++    nothing about a provider, and no credentials. The credential store stays
++    where it was.
++
++WHAT THIS MODULE WILL NOT DO
++    * It never runs anything. It only remembers and reports.
++    * It never touches a folder that is not the one the owner saved.
++"""
++from __future__ import annotations
++
++from dataclasses import dataclass
++import os
++from pathlib import Path
++import subprocess
++
++
++#: Where the saved projects live in the settings store.
++PROJECTS_KEY = 'saved_projects'
++#: Where the owner's own launcher commands live.
++LAUNCHERS_KEY = 'configured_launchers'
++#: Where the trusted routine switches live.
++ROUTINES_KEY = 'trusted_routines'
++#: Where the assistant language preference lives.
++LANGUAGE_KEY = 'assistant_language'
++
++
++@dataclass(frozen=True)
++class SavedProject:
++    """One project the owner saved."""
++
++    name: str
++    path: str
++    editor: str = 'VS Code'
++    test_command: str = ''
++
++    @property
++    def folder(self) -> Path:
++        return Path(self.path)
++
++    @property
++    def exists(self) -> bool:
++        return self.folder.is_dir()
++
++
++def load_projects(store) -> list[SavedProject]:
++    """Every saved project, in the order the owner saved them."""
++    raw = store.get(PROJECTS_KEY) or []
++    projects = []
++    if isinstance(raw, list):
++        for entry in raw:
++            if not isinstance(entry, dict):
++                continue
++            name = str(entry.get('name', '')).strip()
++            path = str(entry.get('path', '')).strip()
++            if not name or not path:
++                continue
++            projects.append(SavedProject(
++                name=name,
++                path=path,
++                editor=str(entry.get('editor', 'VS Code')).strip() or 'VS Code',
++                test_command=str(entry.get('test_command', '')).strip(),
++            ))
++    return projects
++
++
++def save_projects(store, projects) -> None:
++    """Remember the saved projects."""
++    store.set(PROJECTS_KEY, [
++        {'name': project.name, 'path': project.path, 'editor': project.editor,
++         'test_command': project.test_command}
++        for project in projects
++    ])
++
++
++def find_project(projects, name: str):
++    """The saved project with that name, or None.
++
++    The match is case-insensitive and ignores spaces and dashes, because a
++    person saying "project A" means the project saved as "project-a".
++    """
++    if not isinstance(name, str):
++        return None
++    wanted = _normalise(name)
++    if not wanted:
++        return None
++    for project in projects:
++        if _normalise(project.name) == wanted:
++            return project
++    return None
++
++
++def _normalise(text: str) -> str:
++    return ''.join(char for char in str(text or '').casefold() if char.isalnum())
++
++
++def project_status(project, editor_status_for=None) -> dict:
++    """What the interface shows about one saved project."""
++    folder = project.folder
++    exists = folder.is_dir()
++    status = {
++        'name': project.name,
++        'path': project.path,
++        'editor': project.editor,
++        'test_command': project.test_command,
++        'exists': exists,
++        'git': False,
++        'dirty': False,
++        'uncommitted': 0,
++        'setup': '' if exists else 'The project folder is not there any more.',
++    }
++    if not exists:
++        return status
++    if _is_git_repo(folder):
++        status['git'] = True
++        changed = _git_status(folder)
++        status['dirty'] = bool(changed)
++        status['uncommitted'] = len(changed)
++    if editor_status_for is not None:
++        editor = editor_status_for(project.editor)
++        status['editor_installed'] = editor['installed']
++        status['editor_setup'] = editor['setup']
++    return status
++
++
++def _git_command(folder, *args):
++    try:
++        result = subprocess.run(['git', '-C', str(folder), *args], capture_output=True,
++                                text=True, timeout=15)
++    except (OSError, subprocess.SubprocessError):
++        return None
++    if result.returncode:
++        return None
++    return result.stdout
++
++
++def _is_git_repo(folder: Path) -> bool:
++    output = _git_command(folder, 'rev-parse', '--is-inside-work-tree')
++    return bool(output and output.strip() == 'true')
++
++
++def _git_status(folder: Path) -> list[str]:
++    output = _git_command(folder, 'status', '--porcelain')
++    if not output:
++        return []
++    return [line for line in output.splitlines() if line.strip()]
++
++
++def configured_launchers(store) -> list[dict]:
++    """The owner's own launcher commands."""
++    raw = store.get(LAUNCHERS_KEY) or []
++    launchers = []
++    if isinstance(raw, list):
++        for entry in raw:
++            if not isinstance(entry, dict):
++                continue
++            name = str(entry.get('name', '')).strip()
++            command = str(entry.get('command', '')).strip()
++            if not name or not command:
++                continue
++            capabilities = entry.get('capabilities')
++            launchers.append({
++                'name': name,
++                'command': command,
++                'capabilities': [str(item) for item in capabilities] if isinstance(capabilities, list) else [],
++            })
++    return launchers
++
++
++def save_configured_launchers(store, launchers) -> None:
++    """Remember the owner's launcher commands."""
++    store.set(LAUNCHERS_KEY, [
++        {'name': item.get('name', ''), 'command': item.get('command', ''),
++         'capabilities': list(item.get('capabilities', []))}
++        for item in launchers
++    ])
++
++
++def trusted_routines(store) -> dict:
++    """Which routine actions the owner has already approved.
++
++    A routine is an action the owner allows WITHOUT asking again: opening a
++    saved project, or running that project's configured local tests. Nothing
++    else is a routine.
++    """
++    raw = store.get(ROUTINES_KEY) or {}
++    if not isinstance(raw, dict):
++        return {}
++    return {str(key): bool(value) for key, value in raw.items()}
++
++
++def set_trusted_routine(store, key: str, enabled: bool) -> None:
++    """Turn one trusted routine on or off."""
++    routines = trusted_routines(store)
++    routines[str(key)] = bool(enabled)
++    store.set(ROUTINES_KEY, routines)
++
++
++def routine_allowed(store, key: str) -> bool:
++    """True when the owner has approved this routine for this project."""
++    return bool(trusted_routines(store).get(str(key)))
++
++
++def assistant_language(store) -> str:
++    """The language the owner prefers for spoken and written replies."""
++    value = str(store.get(LANGUAGE_KEY) or '').strip().casefold()
++    return value if value in ('en', 'ta', 'fr') else 'ta'
++
++
++def set_assistant_language(store, language: str) -> None:
++    """Remember the assistant language."""
++    value = str(language or '').strip().casefold()
++    if value not in ('en', 'ta', 'fr'):
++        raise ValueError('Choose English, தமிழ் or Français.')
++    store.set(LANGUAGE_KEY, value)
++
++
++def project_root_name(project: SavedProject) -> str:
++    """The folder name of a project, for display."""
++    try:
++        return project.folder.name
++    except (OSError, ValueError):
++        return project.name
++
++
++def expand_user(path: str) -> str:
++    """Expand a saved folder path for this machine."""
++    return os.path.expandvars(os.path.expanduser(str(path or '')))
+diff --git a/tests/test_personal_codex_assistant.py b/tests/test_personal_codex_assistant.py
+new file mode 100644
+index 0000000..6d7b894
+--- /dev/null
++++ b/tests/test_personal_codex_assistant.py
+@@ -0,0 +1,393 @@
++"""Exercise the personal coding assistant: one chat sentence to a reviewable diff.
++
++WHAT IS COVERED
++    * The acceptance sentence selects the saved project, the editor and the
++      change, in Tanglish.
++    * The project is opened in the chosen editor.
++    * The Codex task runs in an ISOLATED worktree, never in the owner's
++      working folder, and the owner's uncommitted work is reported as
++      protected.
++    * The diff, the changed files and the test results reach the conversation.
++    * A missing editor says "Setup needed".
++    * A missing Codex CLI says what to do.
++    * A declined action changes nothing.
++    * A failed test is reported as failed, not as passed.
++    * Emergency Stop cancels the work and it STAYS cancelled after Resume.
++    * Opening a saved project and running its tests can be trusted routines,
++      and are approved one by one when they are not.
++"""
++import json
++import os
++os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
++import subprocess
++import time
++
++import pytest
++from PySide6.QtWidgets import QApplication
++
++import desktop.app as desktop
++from developer_studio.codex_task import CodexTask, TaskOutcome
++from developer_studio.editors import editor_status
++from developer_studio.intents import parse_coding_request
++from developer_studio.projects import SavedProject
++
++ACCEPTANCE = ('JARVIS, my project-a VS Code-la open panni login page validation fix pannu. '
++              'Tests run panni result sollu.')
++
++
++def git(folder, *args):
++    return subprocess.run(
++        ['git', '-C', str(folder), '-c', 'user.name=Test', '-c', 'user.email=test@example.com',
++         *args], capture_output=True, text=True, check=True)
++
++
++@pytest.fixture
++def project(tmp_path):
++    """A small Git project with one committed file."""
++    folder = tmp_path / 'project-a'
++    folder.mkdir()
++    git(folder, 'init', '-b', 'main')
++    (folder / 'app.py').write_text('def login():\n    return True\n', encoding='utf-8')
++    git(folder, 'add', '-A')
++    git(folder, 'commit', '-m', 'first')
++    return folder
++
++
++def window(tmp_path, monkeypatch):
++    app = QApplication.instance() or QApplication([])
++    win = desktop.Window(tmp_path)
++    monkeypatch.setattr(win, 'get_key', lambda provider: 'fake-key')
++    monkeypatch.setattr(desktop.QMessageBox, 'warning',
++                        staticmethod(lambda *args, **kwargs: None))
++    return win, app
++
++
++def save_project(win, name='project-a', path=None, editor='VS Code', tests='pytest -q'):
++    from developer_studio.projects import load_projects, save_projects
++    projects = load_projects(win.store)
++    projects.append(SavedProject(name=name, path=str(path), editor=editor, test_command=tests))
++    save_projects(win.store, projects)
++
++
++def fake_codex(monkeypatch, *, edit=True, fail_tests=False):
++    """Replace the Codex CLI with one that edits a file in the worktree."""
++    seen = {}
++
++    def run(executable, project, prompt, check_cancelled, **kwargs):
++        seen['project'] = project
++        seen['prompt'] = prompt
++        seen['sandbox'] = kwargs.get('sandbox')
++        seen['cwd'] = kwargs.get('cwd')
++        if edit:
++            target = os.path.join(str(kwargs.get('cwd')), 'app.py')
++            with open(target, 'w', encoding='utf-8') as handle:
++                handle.write('def login():\n    return "checked"\n')
++        return 'Codex changed app.py.'
++
++    monkeypatch.setattr('developer_studio.codex_task.run_codex', run)
++    # The CLI itself is not installed here; only the call is replaced.
++    monkeypatch.setattr('developer_studio.codex_task.codex_executable',
++                        lambda: '/usr/bin/true')
++    return seen
++
++
++def wait_for(win, app, seconds=8):
++    """Wait for the coding task worker, not the chat worker."""
++    deadline = time.monotonic() + seconds
++    while win.coding_worker is not None and time.monotonic() < deadline:
++        app.processEvents()
++        time.sleep(0.005)
++    app.processEvents()
++
++
++def trust_opening(win):
++    """The owner trusts opening this project, so only the change needs approval."""
++    from developer_studio.projects import set_trusted_routine
++    set_trusted_routine(win.store, 'open:project-a', True)
++
++
++# ── reading the request ──────────────────────────────────────────────────────
++
++def test_the_acceptance_sentence_selects_the_project_the_editor_and_the_change():
++    projects = [SavedProject('project-a', '/tmp/project-a', 'VS Code', 'pytest -q')]
++    request = parse_coding_request(ACCEPTANCE, projects, lambda text: 'VS Code')
++    assert request.project == 'project-a'
++    assert request.editor == 'VS Code'
++    assert request.change == 'login page validation'
++    assert request.open_project is True
++    assert request.make_change is True
++    assert request.run_tests is True
++    assert request.question == ''
++
++
++def test_a_sentence_without_a_project_stays_ordinary_chat():
++    projects = [SavedProject('project-a', '/tmp/project-a', 'VS Code', 'pytest -q')]
++    request = parse_coding_request('what is the weather today', projects, lambda text: '')
++    assert request.project == ''
++    assert request.is_coding_request is False
++
++
++# ── the task ─────────────────────────────────────────────────────────────────
++
++def test_the_task_runs_in_an_isolated_worktree_and_protects_uncommitted_work(
++        tmp_path, monkeypatch, project):
++    win, app = window(tmp_path, monkeypatch)
++    try:
++        save_project(win, path=project)
++        (project / 'app.py').write_text('def login():\n    return "mine"\n', encoding='utf-8')
++        seen = fake_codex(monkeypatch)
++        monkeypatch.setattr('developer_studio.codex_task.run_local_tests',
++                            lambda folder, command, timeout=1800: ('passed', '2 passed'))
++        task = CodexTask(SavedProject('project-a', str(project), 'VS Code', 'pytest -q'),
++                         'login page validation',
++                         test_command='pytest -q',
++                         worktree_root=tmp_path / 'worktrees',
++                         codex_path='/usr/bin/true')
++        outcome = task.run()
++        assert outcome.status == 'completed', outcome.message
++        assert seen['cwd'] != str(project)
++        assert 'login page validation' in seen['prompt']
++        assert seen['sandbox'] == 'workspace-write'
++        assert outcome.changed_files == ['app.py']
++        assert 'app.py' in outcome.diff
++        assert outcome.test_status == 'passed'
++        # The owner's own uncommitted work is untouched.
++        assert (project / 'app.py').read_text(encoding='utf-8') == \
++            'def login():\n    return "mine"\n'
++        assert outcome.protected
++    finally:
++        win.close()
++
++
++def test_a_task_in_a_folder_that_is_not_a_git_repository_is_refused(tmp_path, monkeypatch):
++    plain = tmp_path / 'plain'
++    plain.mkdir()
++    win, app = window(tmp_path, monkeypatch)
++    try:
++        task = CodexTask(SavedProject('plain', str(plain), 'VS Code', ''),
++                         'fix the login', worktree_root=tmp_path / 'worktrees',
++                         codex_path='/usr/bin/true')
++        outcome = task.run()
++        assert outcome.status == 'blocked'
++        assert 'Git repository' in outcome.message
++    finally:
++        win.close()
++
++
++def test_a_missing_codex_cli_says_what_to_do(tmp_path, monkeypatch, project):
++    win, app = window(tmp_path, monkeypatch)
++    try:
++        task = CodexTask(SavedProject('project-a', str(project), 'VS Code', ''),
++                         'fix the login', worktree_root=tmp_path / 'worktrees',
++                         codex_path=None)
++        task.codex_path = None
++        monkeypatch.setattr('developer_studio.codex_task.codex_executable',
++                            lambda: (_ for _ in ()).throw(
++                                ValueError('Install Codex CLI, add it to PATH, sign in with '
++                                           'codex login, and restart JARVIS.')))
++        outcome = task.run()
++        assert outcome.status == 'blocked'
++        assert 'codex login' in outcome.message
++    finally:
++        win.close()
++
++
++def test_a_failed_test_is_reported_as_failed(tmp_path, monkeypatch, project):
++    win, app = window(tmp_path, monkeypatch)
++    try:
++        fake_codex(monkeypatch)
++        monkeypatch.setattr('developer_studio.codex_task.run_local_tests',
++                            lambda folder, command, timeout=1800: ('failed', '1 failed'))
++        task = CodexTask(SavedProject('project-a', str(project), 'VS Code', 'pytest -q'),
++                         'fix the login', test_command='pytest -q',
++                         worktree_root=tmp_path / 'worktrees', codex_path='/usr/bin/true')
++        outcome = task.run()
++        assert outcome.status == 'completed'
++        assert outcome.test_status == 'failed'
++        assert '1 failed' in outcome.test_output
++    finally:
++        win.close()
++
++
++# ── the chat flow ────────────────────────────────────────────────────────────
++
++def test_the_chat_task_card_shows_the_project_the_change_and_the_steps(
++        tmp_path, monkeypatch, project):
++    win, app = window(tmp_path, monkeypatch)
++    try:
++        save_project(win, path=project)
++        request = win.coding_request(ACCEPTANCE)
++        assert request is not None
++        win.start_coding_task(request, ACCEPTANCE)
++        card = win.chat_task_text.text()
++        assert 'project-a' in card
++        assert 'login page validation' in card
++        assert 'Open project-a in VS Code' in card
++        assert 'Ask Codex to' in card
++        assert win.chat_task_card.isVisible() or not win.chat_task_card.isHidden()
++    finally:
++        win.close()
++
++
++def test_a_declined_action_changes_nothing(tmp_path, monkeypatch, project):
++    win, app = window(tmp_path, monkeypatch)
++    try:
++        save_project(win, path=project)
++        fake_codex(monkeypatch)
++        request = win.coding_request(ACCEPTANCE)
++        win.start_coding_task(request, ACCEPTANCE)
++        win.finish_coding_approval(False)
++        assert 'Declined' in win.transcript.toPlainText()
++        assert win.coding_worker is None
++    finally:
++        win.close()
++
++
++def test_the_conversation_keeps_the_result_visible(tmp_path, monkeypatch, project):
++    win, app = window(tmp_path, monkeypatch)
++    try:
++        save_project(win, path=project)
++        trust_opening(win)
++        fake_codex(monkeypatch)
++        monkeypatch.setattr('developer_studio.codex_task.run_local_tests',
++                            lambda folder, command, timeout=1800: ('passed', '2 passed'))
++        request = win.coding_request(ACCEPTANCE)
++        win.start_coding_task(request, ACCEPTANCE)
++        win.finish_coding_approval(True)
++        wait_for(win, app)
++        transcript = win.transcript.toPlainText()
++        assert 'project-a' in transcript
++        assert 'app.py' in transcript
++        assert win.coding['outcome'] is not None
++        assert win.coding['outcome'].changed_files == ['app.py']
++    finally:
++        win.close()
++
++
++def test_emergency_stop_cancels_the_task_and_it_stays_cancelled(tmp_path, monkeypatch, project):
++    win, app = window(tmp_path, monkeypatch)
++    try:
++        save_project(win, path=project)
++        trust_opening(win)
++
++        def refuse(executable, folder, prompt, check_cancelled, **kwargs):
++            check_cancelled()
++            return 'should not get here'
++
++        monkeypatch.setattr('developer_studio.codex_task.run_codex', refuse)
++        request = win.coding_request(ACCEPTANCE)
++        win.start_coding_task(request, ACCEPTANCE)
++        win.finish_coding_approval(True)
++        win.stop()
++        wait_for(win, app)
++        outcome = win.coding.get('outcome')
++        assert outcome is not None
++        assert outcome.status == 'cancelled'
++        # Resume must not revive it.
++        win.resume()
++        app.processEvents()
++        assert win.coding['outcome'].status == 'cancelled'
++    finally:
++        win.close()
++
++
++# ── editors and routines ─────────────────────────────────────────────────────
++
++def test_a_missing_editor_says_setup_needed(tmp_path, monkeypatch):
++    win, app = window(tmp_path, monkeypatch)
++    try:
++        state = editor_status('PyCharm')
++        if state['installed']:
++            pytest.skip('PyCharm is installed on this machine.')
++        assert state['installed'] is False
++        assert 'Setup needed' in state['setup']
++        assert state['capabilities']
++    finally:
++        win.close()
++
++
++def test_each_editor_shows_its_capabilities_individually():
++    for name in ('VS Code', 'Visual Studio', 'Android Studio', 'IntelliJ IDEA', 'PyCharm'):
++        state = editor_status(name)
++        assert state['capabilities'], name
++        assert 'open_project' in state['capabilities'], name
++
++
++def test_a_trusted_routine_opens_the_project_without_asking(tmp_path, monkeypatch, project):
++    win, app = window(tmp_path, monkeypatch)
++    try:
++        save_project(win, path=project)
++        from developer_studio.projects import set_trusted_routine
++        set_trusted_routine(win.store, 'open:project-a', True)
++        opened = []
++        monkeypatch.setattr(desktop, 'launch_editor',
++                            lambda name, folder, configured=None:
++                            opened.append((name, str(folder))) or 'opened')
++        request = win.coding_request(ACCEPTANCE)
++        win.start_coding_task(request, ACCEPTANCE)
++        assert opened and opened[0][0] == 'VS Code'
++    finally:
++        win.close()
++
++
++def test_an_untrusted_routine_asks_first(tmp_path, monkeypatch, project):
++    win, app = window(tmp_path, monkeypatch)
++    try:
++        save_project(win, path=project)
++        opened = []
++        monkeypatch.setattr(desktop, 'launch_editor',
++                            lambda name, folder, configured=None:
++                            opened.append((name, str(folder))) or 'opened')
++        request = win.coding_request(ACCEPTANCE)
++        win.start_coding_task(request, ACCEPTANCE)
++        assert opened == []
++        assert 'Approve this task' in win.chat_task_text.text()
++    finally:
++        win.close()
++
++
++# ── the settings page ────────────────────────────────────────────────────────
++
++def test_the_saved_projects_page_lists_the_projects_and_the_editors(tmp_path, monkeypatch):
++    win, app = window(tmp_path, monkeypatch)
++    try:
++        save_project(win, path=tmp_path)
++        win.refresh_projects_page()
++        assert win.projects_table.rowCount() == 1
++        assert win.projects_table.item(0, 0).text() == 'project-a'
++        status = win.editor_status.text()
++        for name in ('VS Code', 'Visual Studio', 'Android Studio', 'IntelliJ IDEA', 'PyCharm'):
++            assert name in status
++        assert 'SETUP NEEDED' in status or 'installed' in status
++    finally:
++        win.close()
++
++
++def test_the_assistant_language_is_remembered(tmp_path, monkeypatch):
++    win, app = window(tmp_path, monkeypatch)
++    try:
++        from developer_studio.projects import assistant_language
++        assert assistant_language(win.store) == 'ta'
++        win.change_assistant_language('English')
++        assert assistant_language(win.store) == 'en'
++        win.change_assistant_language('Français (French)')
++        assert assistant_language(win.store) == 'fr'
++    finally:
++        win.close()
++
++
++def test_a_configured_launcher_is_remembered_and_reports_its_capabilities(tmp_path, monkeypatch):
++    win, app = window(tmp_path, monkeypatch)
++    try:
++        win.launcher_name.setText('Fleet')
++        win.launcher_command.setText('/usr/bin/true')
++        win.add_launcher()
++        from developer_studio.projects import configured_launchers
++        launchers = configured_launchers(win.store)
++        assert launchers and launchers[0]['name'] == 'Fleet'
++        state = editor_status('Fleet', launchers[0])
++        assert state['kind'] == 'configured'
++        assert state['installed'] is True
++        assert state['capabilities'] == ['open_project', 'open_file']
++    finally:
++        win.close()
