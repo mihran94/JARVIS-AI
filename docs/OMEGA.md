@@ -15,7 +15,7 @@ existing provider credentials, voice permission, phone pairing and approval flow
 
 Use **Settings** in the dock to select Midnight Blue, Apple Silver or Dark
 Titanium, change backgrounds and dock order, disable animation, or turn on
-always-on-top for the floating assistant. **Ctrl+D** reveals or hides the dock.
+always-on-top for the floating assistant. Startup speech uses the optional greeting you enter. **Ctrl+D** reveals or hides the dock.
 Tab or the arrow keys move focus among dock tools. The current section has a
 highlighted icon. The desktop remembers the theme, mode, dock and floating
 position settings.

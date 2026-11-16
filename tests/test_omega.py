@@ -156,3 +156,21 @@ def test_feeds_report_partial_and_missing_data_explicitly(tmp_path, monkeypatch)
         assert 'stopped' in ui.devices.text()
     finally:
         window.close()
+
+
+def test_floating_mic_shows_permissions_and_returns_voice_draft_to_chat(tmp_path):
+    _app, window, ui = launch(tmp_path)
+    try:
+        ui.switch('Island')
+        ui.toggle_mic()
+        assert ui.mode == 'Omega'
+        assert window.pages.currentIndex() == window.page_indices['Voice / Hey Jarvis']
+        window.voice_panel.allow.setChecked(True)
+        ui.switch('Stealth')
+        window.on_voice_transcript('Check the design')
+        assert ui.mode == 'Omega'
+        assert window.pages.currentIndex() == window.page_indices['JARVIS Chat']
+        assert window.prompt.toPlainText() == 'Check the design'
+        assert window.worker is None
+    finally:
+        window.close()

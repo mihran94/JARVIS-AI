@@ -424,6 +424,8 @@ class Window(QMainWindow):
         text = (transcript or '').strip()[:4000]
         if not text:
             return
+        if self.omega is not None and self.omega.mode != 'Omega':
+            self.omega.switch('Omega')
         self.show_hud_text('Heard: ' + text)
         if self.answer_spoken_system_command(text) or self.route_task(text):
             return

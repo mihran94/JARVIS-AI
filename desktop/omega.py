@@ -644,6 +644,13 @@ class Omega:
             check.toggled.connect(callback or (lambda enabled, key=key: self.store.set('omega:' + key, enabled)))
             form.addRow(check)
 
+        self.greeting = QLineEdit(self.store.get(
+            'omega:greeting', 'Welcome. JARVIS is ready for your command.'))
+        self.greeting.setMaxLength(160)
+        self.greeting.editingFinished.connect(
+            lambda: self.store.set('omega:greeting', self.greeting.text().strip()))
+        form.addRow('Startup greeting', self.greeting)
+
         self.location = QLineEdit(self.store.get('omega:location', 'Paris, France'))
         self.location.setMaxLength(80)
         self.location.editingFinished.connect(
@@ -691,8 +698,9 @@ class Omega:
             QTimer.singleShot(700, self.greet)
 
     def greet(self):
-        if not self.window.policy.stopped:
-            self.window.voice_panel.speak_response('Welcome. JARVIS is ready for your command.')
+        text = self.greeting.text().strip()
+        if text and not self.window.policy.stopped:
+            self.window.voice_panel.speak_response(text)
 
     def finish_intro(self):
         if hasattr(self, 'intro_timer'):
@@ -865,6 +873,8 @@ class Omega:
         if self.window.voice_panel.listening:
             self.window.voice_panel.cancel_listening()
         else:
+            if self.mode != 'Omega' and not self.window.voice_panel.consent.listening:
+                self.switch('Omega')
             self.window.listen_to_user()
 
     def submit(self, source):
