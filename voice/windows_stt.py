@@ -76,6 +76,14 @@ class WindowsSpeechRecognizer:
         self._language = language
         self._engine = None
         self._engine_kind = None
+        self._level_listener = None
+
+    def set_level_listener(self, listener):
+        self._level_listener = listener
+
+    def _emit_level(self, _engine, event):
+        if self._level_listener is not None and self._consent.listening:
+            self._level_listener(int(event.AudioLevel))
 
     def _culture(self):
         from System.Globalization import CultureInfo
@@ -101,6 +109,11 @@ class WindowsSpeechRecognizer:
                 engine.LoadGrammar(DictationGrammar())
             # Loading the grammar does not select the microphone.
             engine.SetInputToDefaultAudioDevice()
+            if self._level_listener is not None:
+                try:
+                    engine.AudioLevelUpdated += self._emit_level
+                except (AttributeError, TypeError):
+                    pass  # Meter availability must not prevent speech recognition.
             return engine
         except Exception:
             if engine is not None:

@@ -26,6 +26,7 @@ from desktop.voice_panel import VoicePanel
 from desktop.tray import BackgroundControls
 from desktop.personal_theme import PERSONAL_STYLE
 from desktop.blue_orb import BlueOrb
+from desktop.omega import Omega
 from desktop.system_metrics import CpuSampler, snapshot, format_snapshot
 from desktop.network_diagnostics import NetworkDiagnostics
 from desktop.news_panel import NewsPanel
@@ -189,6 +190,7 @@ class Window(QMainWindow):
         self.site_draft = None
         self.site_preview_path = None
         self.worker = None
+        self.omega = None
         self.close_when_done = False
         self.session = self.store.get('session') or uuid.uuid4().hex
         self.store.set('session', self.session)
@@ -283,6 +285,14 @@ class Window(QMainWindow):
         self.render_chat()
         self.background_controls = BackgroundControls(self)
         self.release_checker = ReleaseChecker(self)
+
+    def enable_omega(self, *, smoke=False):
+        if self.omega is None:
+            self.omega = Omega(self)
+            self.voice_panel.audio_level.connect(self.omega.audio_level)
+        self.omega.start(smoke=smoke)
+        self.refresh_system_metrics()
+        self.refresh_voice_hud()
 
     def add_page(self, name, page, *, primary=True):
         index = self.pages.count()
@@ -414,6 +424,8 @@ class Window(QMainWindow):
         text = (transcript or '').strip()[:4000]
         if not text:
             return
+        if self.omega is not None and self.omega.mode != 'Omega':
+            self.omega.switch('Omega')
         self.show_hud_text('Heard: ' + text)
         if self.answer_spoken_system_command(text) or self.route_task(text):
             return
@@ -631,6 +643,8 @@ class Window(QMainWindow):
         self.system_metrics_label.setText(self.system_summary)
         self.dashboard_metrics.setText(self.system_summary)
         self.hud_clock.setText(datetime.now().strftime('%H:%M'))
+        if self.omega is not None:
+            self.omega.update_metrics(data)
         for key, (value, meter) in self.hud_meters.items():
             percent = data[key]
             value.setText(f'{percent:.1f}%' if percent is not None else 'Unavailable')
@@ -679,6 +693,8 @@ class Window(QMainWindow):
         self.hud_orb.set_state(state)
         self.orb_status.setText('JARVIS  /  ' + label)
         self.hud_voice_status.setText(label)
+        if self.omega is not None:
+            self.omega.set_voice(state)
         self.hud_talk.setEnabled(state not in ('stopped', 'listening', 'speaking')
                                  and not self.voice_panel.playback_busy)
 
@@ -1736,10 +1752,16 @@ class Window(QMainWindow):
 
     def confirm(self, action):
         extra = ('\nContent SHA-256: ' + action.digest) if action.digest else ''
-        return QMessageBox.question(self, 'Approve one action?',
-            f'{action.kind}: {action.target}{extra}\n\nApprove this action once?',
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes
+        if self.omega is not None:
+            self.omega.set_approval(True)
+        try:
+            return QMessageBox.question(self, 'Approve one action?',
+                f'{action.kind}: {action.target}{extra}\n\nApprove this action once?',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes
+        finally:
+            if self.omega is not None:
+                self.omega.set_approval(False)
 
     def notify(self, operation):
         try:
@@ -2161,6 +2183,8 @@ class Window(QMainWindow):
 
     def stop(self):
         self.policy.stop()
+        if self.omega is not None:
+            self.omega.on_stop()
         if self.news_panel is not None:
             self.news_panel.disable_schedule()
         self.refresh_draft_buttons()
@@ -2183,6 +2207,9 @@ class Window(QMainWindow):
 
     def resume(self):
         self.policy.resume()
+        if self.omega is not None:
+            self.omega.refresh_feed.setEnabled(True)
+            self.omega.refresh_state()
         self.refresh_draft_buttons()
         self.set_ai_visual_state('idle' if self.worker is None else 'thinking')
         self.resume_button.setEnabled(False)
@@ -2258,6 +2285,8 @@ class Window(QMainWindow):
             self.voice_panel.stop_voice()
             self.voice_panel.wait_for_workers()
             self.bridge.listener.stop()
+            if self.omega is not None:
+                self.omega.shutdown()
             event.accept()
 
 
@@ -2306,7 +2335,6 @@ def main():
     if '--check-voice-runtime' in args[1:]:
         return voice_runtime_smoke_test()
     app = QApplication(args)
-    app.setStyleSheet(STYLE)
     base = Path(os.environ.get('LOCALAPPDATA', str(Path.home() / '.local' / 'share'))) / 'JarvisAI'
     base.mkdir(parents=True, exist_ok=True)
     lock = QLockFile(str(base / 'application.lock'))
@@ -2315,7 +2343,7 @@ def main():
         QMessageBox.warning(None, 'JARVIS AI', 'JARVIS is already running for this user.')
         return 1
     window = Window(base)
-    window.show()
+    window.enable_omega(smoke=smoke)
     if smoke:
         # Offline native smoke test: no provider calls or remote listener.
         def finish_smoke():
