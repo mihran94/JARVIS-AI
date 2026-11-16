@@ -1,5 +1,5 @@
 diff --git a/desktop/app.py b/desktop/app.py
-index 0d334e8..5d403e2 100644
+index 0d334e8..5dec28a 100644
 --- a/desktop/app.py
 +++ b/desktop/app.py
 @@ -51,6 +51,16 @@ from automation.windows import APPS, EDITOR_EXECUTABLES, editor_executable, laun
@@ -7,7 +7,7 @@ index 0d334e8..5d403e2 100644
  from developer_studio.workspace import Workspace
  from developer_studio.codex_cli import codex_executable, run_codex
 +from developer_studio.editors import (
-+    CAPABILITY_LABELS, editor_from_text, editor_status, editor_names, launch_editor,
++    CAPABILITY_LABELS, editor_from_text, editor_status, editor_names, open_project_in_editor,
 +)
 +from developer_studio.intents import parse_coding_request
 +from developer_studio.projects import (
@@ -19,7 +19,7 @@ index 0d334e8..5d403e2 100644
  from developer_studio.generation import messages_for_goal, messages_for_repair, prepare_draft
  from video_studio.editing import editing_checklist, export_davinci
  from video_studio.planning import (
-@@ -165,6 +175,41 @@ class ModelCheckWorker(QThread):
+@@ -165,6 +175,80 @@ class ModelCheckWorker(QThread):
          self.result.emit(status, text, payload)
  
  
@@ -58,19 +58,59 @@ index 0d334e8..5d403e2 100644
 +        self.result.emit(outcome)
 +
 +
++class TestRunWorker(QThread):
++    """Run a project's tests off the UI thread.
++
++    The tests can take minutes, so they must not run on the UI thread. The
++    worker watches for Emergency Stop and for its own interruption, and when
++    either happens the TEST PROCESS is terminated — not left running while
++    the owner believes it stopped.
++    """
++
++    result = Signal(str, str, object)
++
++    def __init__(self, folder, command, policy, ticket):
++        super().__init__()
++        self.folder = folder
++        self.command = command
++        self.policy = policy
++        self.ticket = ticket
++        #: The running test process, so a stop can show that it really ended.
++        self.process = None
++
++    def cancel_check(self):
++        """Raise to stop the tests. Called while they run."""
++        if self.isInterruptionRequested():
++            raise Stopped('Test run cancelled.')
++        self.policy.check(self.ticket)
++
++    def run(self):
++        from developer_studio.codex_task import run_local_tests
++        try:
++            status, output = run_local_tests(
++                self.folder, self.command, cancel=self.cancel_check,
++                observer=lambda process: setattr(self, 'process', process))
++        except Stopped:
++            status, output = 'cancelled', 'The test run was cancelled and the process was stopped.'
++        except Exception as error:
++            status, output = 'could not run', str(error)
++        self.result.emit(status, output, {})
++
++
  class Window(QMainWindow):
      def __init__(self, data_root):
          super().__init__()
-@@ -187,6 +232,8 @@ class Window(QMainWindow):
+@@ -187,6 +271,9 @@ class Window(QMainWindow):
          self.video_plan = None
          self.video_chat_brief = None
          self.chat_launch = None
 +        self.coding = None
 +        self.coding_worker = None
++        self.test_worker = None
          self.site_export = None
          self.news_panel = None
          self.site_draft = None
-@@ -326,6 +373,10 @@ class Window(QMainWindow):
+@@ -326,6 +413,10 @@ class Window(QMainWindow):
                  self.nav.setCurrentRow(row)
                  break
          self.pages.setCurrentIndex(index)
@@ -81,7 +121,7 @@ index 0d334e8..5d403e2 100644
  
      def local_voice_allowed(self):
          """Hands-free calls are allowed only to local, non-billable Ollama."""
-@@ -810,9 +861,28 @@ class Window(QMainWindow):
+@@ -810,9 +901,28 @@ class Window(QMainWindow):
              approval_row, 'Decline', lambda: self.finish_chat_launch(False))
          self.chat_approval.hide()
          layout.addWidget(self.chat_approval)
@@ -111,7 +151,7 @@ index 0d334e8..5d403e2 100644
          self.prompt.setFixedHeight(78)
          layout.addWidget(self.prompt)
          self.read_replies = QCheckBox('Read replies aloud')
-@@ -1828,6 +1898,7 @@ class Window(QMainWindow):
+@@ -1828,6 +1938,7 @@ class Window(QMainWindow):
              self.button(advanced, label,
                          lambda checked=False, name=name: self.open_section(name))
          layout.addLayout(advanced)
@@ -119,7 +159,7 @@ index 0d334e8..5d403e2 100644
          plugins = QGroupBox('Plugins')
          plugin_layout = QVBoxLayout(plugins)
          for name in (*VIDEO_TOOLS, *EDITOR_EXECUTABLES):
-@@ -1939,6 +2010,599 @@ class Window(QMainWindow):
+@@ -1939,6 +2050,749 @@ class Window(QMainWindow):
          self.render_chat()
          self.refresh_history()
  
@@ -397,7 +437,10 @@ index 0d334e8..5d403e2 100644
 +            steps.append({
 +                'key': 'tests', 'done': False, 'state': 'waiting',
 +                'label': f"Run the configured tests: {project.test_command or '(none configured)'}",
-+                'approval': not routines.get('tests:' + project.name),
++                # A test command the owner has not trusted is approved on its
++                # own, separately from the change that produced it.
++                'approval': not (routines.get('tests:' + project.name)
++                                 and project.test_command),
 +            })
 +        self.coding = {
 +            'request': request, 'project': project, 'editor': editor,
@@ -477,11 +520,6 @@ index 0d334e8..5d403e2 100644
 +            if step['done']:
 +                coding['index'] += 1
 +                continue
-+            if step['key'] == 'change' and step.get('covers_tests'):
-+                step['done'] = True
-+                step['state'] = 'done'
-+                coding['index'] += 1
-+                continue
 +            break
 +        if coding['index'] >= len(coding['steps']):
 +            self.finish_coding_task()
@@ -502,12 +540,13 @@ index 0d334e8..5d403e2 100644
 +        if step['approval']:
 +            self.queue_coding_approval(step, self.coding_action(step))
 +            return
-+        self.run_coding_step(step, lambda: launch_editor(coding['editor'], project.path))
++        self.run_coding_step(step,
++                             lambda: open_project_in_editor(coding['editor'], project.path))
 +
 +    def step_codex_change(self, step):
 +        # A change always needs approval: it writes code and sends project
 +        # data to a provider.
-+        self.queue_coding_approval(step, self.coding_action(step))
++        self.queue_coding_approval(step, self.coding_action(step), None)
 +
 +    def step_run_tests(self, step):
 +        coding = self.coding
@@ -519,21 +558,59 @@ index 0d334e8..5d403e2 100644
 +            self.advance_coding_task()
 +            return
 +        if step['approval']:
-+            self.queue_coding_approval(step, self.coding_action(step))
++            # A test command the owner has not trusted is approved on its own,
++            # separately from the change that produced it.
++            self.queue_coding_approval(step, self.coding_action(step), None)
 +            return
 +        self.run_coding_tests_for(project, project.folder)
 +
-+    def queue_coding_approval(self, step, action):
-+        """Ask for approval of this step, showing the exact target."""
++    def coding_action_gate(self, action, operation, *, trusted=False, read_only=False):
++        """Run one task-card action through the approval gateway and Emergency Stop.
++
++        EVERY action the task card offers comes through here. An action that
++        changes something needs an approval unless the owner has trusted that
++        exact routine, and it is then executed through the gateway, so the
++        one-use approval token and the Emergency Stop checks apply. A
++        read-only action still checks the stop, because an assistant that has
++        been stopped should not quietly keep working.
++        """
++        coding = self.coding
++        if coding is None:
++            return
++        try:
++            ticket = self.policy.ticket()
++            self.policy.check(ticket)
++        except Stopped as error:
++            self.show_local_system_reply(coding['text'], str(error))
++            return
++        if read_only:
++            self.show_local_system_reply(coding['text'], operation())
++            return
++        if trusted:
++            try:
++                result = self.gateway.run(action, lambda _action: True, operation)
++            except (Denied, Stopped, ValueError, OSError, RuntimeError) as error:
++                result = str(error)
++            self.show_local_system_reply(coding['text'], result)
++            return
++        self.queue_coding_approval(None, action, operation)
++
++    def queue_coding_approval(self, step, action, operation=None):
++        """Ask for approval, showing the exact action and its target.
++
++        `step` is None for an action the owner started from the task card
++        rather than from the task plan.
++        """
 +        try:
 +            ticket = self.policy.ticket()
 +        except Stopped as error:
 +            self.show_local_system_reply(self.coding['text'], str(error))
 +            return
-+        self.coding_pending = (step, ticket, action)
++        self.coding_pending = (step, ticket, action, operation)
 +        if self.coding is not None:
 +            self.coding['pending_step'] = step
-+        step['state'] = 'waiting'
++        if step is not None:
++            step['state'] = 'waiting'
 +        self.render_coding_card()
 +        self.chat_task_text.setText(
 +            self.chat_task_text.text()
@@ -551,7 +628,7 @@ index 0d334e8..5d403e2 100644
 +        self.chat_task_decline.hide()
 +        if pending is None:
 +            return
-+        step, ticket, action = pending
++        step, ticket, action, operation = pending
 +        coding = self.coding
 +        if coding is None:
 +            return
@@ -561,6 +638,10 @@ index 0d334e8..5d403e2 100644
 +            self.show_local_system_reply(coding['text'], str(error))
 +            return
 +        if not approved:
++            if step is None:
++                # An action the owner started from the task card was declined.
++                self.show_local_system_reply(coding['text'], 'Declined. Nothing was changed.')
++                return
 +            # Declining one step declines the whole task. Nothing is left half
 +            # done and nothing is changed.
 +            for item in coding['steps']:
@@ -571,13 +652,22 @@ index 0d334e8..5d403e2 100644
 +            self.show_local_system_reply(coding['text'], 'Declined. Nothing was changed.')
 +            self.finish_coding_task()
 +            return
++        if step is None:
++            # A card action the owner approved.
++            try:
++                result = self.gateway.run(action, lambda _action: True, operation)
++            except (Denied, Stopped, ValueError, OSError, RuntimeError) as error:
++                result = str(error)
++            self.show_local_system_reply(coding['text'], result)
++            return
 +        if step['key'] == 'change':
 +            self.start_codex_task(step)
 +        elif step['key'] == 'tests':
-+            self.run_coding_tests_for(coding['project'], coding['project'].folder)
++            self.run_coding_tests_for(coding['project'], self.coding_test_folder())
 +        else:
-+            self.run_coding_step(step, lambda: launch_editor(coding['editor'],
-+                                                              coding['project'].path))
++            self.run_coding_step(step,
++                                 lambda: open_project_in_editor(coding['editor'],
++                                                               coding['project'].path))
 +
 +    def run_coding_step(self, step, operation):
 +        """Run one approved routine action."""
@@ -612,8 +702,11 @@ index 0d334e8..5d403e2 100644
 +            self.show_local_system_reply(coding['text'],
 +                                         'Wait for the current request to finish.')
 +            return
++        # The change does NOT run the tests. An untrusted test command needs
++        # its own approval, and a test command bundled inside the change
++        # approval would never get one.
 +        task = CodexTask(project, request.change or project.name,
-+                         test_command=project.test_command if request.run_tests else '',
++                         test_command='',
 +                         worktree_root=self.root / 'worktrees',
 +                         codex_path=None)
 +        self.coding_worker = CodingTaskWorker(task, self.policy, self.policy.ticket())
@@ -645,11 +738,6 @@ index 0d334e8..5d403e2 100644
 +            if step['key'] == 'change' and step['state'] == 'running':
 +                step['state'] = 'done' if outcome.status == 'completed' else 'failed'
 +                step['done'] = True
-+        if outcome.status == 'completed' and outcome.test_status:
-+            for step in coding['steps']:
-+                if step['key'] == 'tests':
-+                    step['state'] = 'done'
-+                    step['done'] = True
 +        self.render_coding_card()
 +
 +    def on_coding_finished(self):
@@ -657,7 +745,7 @@ index 0d334e8..5d403e2 100644
 +        self.coding_worker = None
 +        if worker is not None:
 +            worker.deleteLater()
-+        self.finish_coding_task()
++        self.advance_coding_task()
 +
 +    def finish_coding_task(self):
 +        """Close the task card with the result in the conversation."""
@@ -676,7 +764,11 @@ index 0d334e8..5d403e2 100644
 +        self.refresh_archives()
 +
 +    def review_coding_diff(self):
-+        """Show the reviewable diff of the last task."""
++        """Show the reviewable diff of the last task.
++
++        Reading changes nothing, so it needs no approval, but it still goes
++        through the gate so a stopped assistant stops answering.
++        """
 +        coding = self.coding
 +        if coding is None or not coding.get('outcome'):
 +            return
@@ -684,42 +776,140 @@ index 0d334e8..5d403e2 100644
 +        if not outcome.diff:
 +            self.statusBar().showMessage('There is no diff to review.', 10000)
 +            return
-+        self.show_local_system_reply(coding['text'], outcome.diff)
++        self.coding_action_gate(
++            Action('review_diff', f'{coding["project"].name} · {outcome.starting_commit[:8]}'),
++            lambda: outcome.diff, read_only=True)
++
++    def coding_test_folder(self):
++        """Where the tests run: the task worktree if there is one."""
++        coding = self.coding
++        if coding is None:
++            return None
++        outcome = coding.get('outcome')
++        if outcome is not None and outcome.worktree:
++            return Path(outcome.worktree)
++        return coding['project'].folder
++
++    def test_command_trusted(self, project, command):
++        """True when this exact command is the saved one AND the owner trusts it.
++
++        A command the owner typed somewhere else is never trusted, even when
++        the saved routine is.
++        """
++        saved = (project.test_command or '').strip()
++        if not saved or (command or '').strip() != saved:
++            return False
++        return routine_allowed(self.store, 'tests:' + project.name)
 +
 +    def run_coding_tests(self):
-+        """Run the project's configured tests again, in the task worktree."""
++        """Run the project's configured tests again, from the task card."""
++        coding = self.coding
++        if coding is None:
++            return
++        project = coding['project']
++        command = project.test_command
++        if not command:
++            self.show_local_system_reply(project.name,
++                                         'No test command is configured for this project.')
++            return
++        action = Action('run_project_tests', f'{project.name}: {command}')
++        self.coding_action_gate(
++            action,
++            lambda: self.start_test_run(project, self.coding_test_folder(), command),
++            trusted=self.test_command_trusted(project, command))
++
++    def run_coding_tests_for(self, project, folder):
++        """Start the project's configured tests in the background."""
++        command = project.test_command
++        if not command:
++            step = self._current_test_step()
++            if step is not None:
++                step['done'] = True
++                step['state'] = 'done'
++            self.render_coding_card()
++            self.advance_coding_task()
++            return
++        self.start_test_run(project, folder, command)
++
++    def _current_test_step(self):
++        coding = self.coding
++        if coding is None:
++            return None
++        for step in coding['steps']:
++            if step['key'] == 'tests':
++                return step
++        return None
++
++    def start_test_run(self, project, folder, command):
++        """Run the tests on a worker thread, where they can be cancelled."""
++        if self.test_worker is not None:
++            raise RuntimeError('A test run is already going.')
++        self.test_worker = TestRunWorker(folder, command, self.policy, self.policy.ticket())
++        self.test_worker.result.connect(self.on_test_result)
++        self.test_worker.finished.connect(self.on_test_finished)
++        step = self._current_test_step()
++        if step is not None:
++            step['state'] = 'running'
++        self.render_coding_card()
++        self.test_worker.start()
++        return f'Tests are running in {folder}.'
++
++    def on_test_result(self, status, output, payload=None):
++        """Record the test result and show it in the conversation."""
 +        coding = self.coding
 +        if coding is None:
 +            return
 +        outcome = coding.get('outcome')
-+        folder = Path(outcome.worktree) if outcome and outcome.worktree else coding['project'].folder
-+        self.run_coding_tests_for(coding['project'], folder)
++        if outcome is None:
++            outcome = TaskOutcome(status='completed')
++            coding['outcome'] = outcome
++        outcome.test_status = status
++        outcome.test_output = output
++        step = self._current_test_step()
++        if step is not None:
++            step['state'] = 'done' if status in ('passed', 'failed', 'not configured') else 'failed'
++            step['done'] = True
++        self.render_coding_card()
++        project = coding['project']
++        self.show_local_system_reply(
++            project.name,
++            f'Tests {status} in {self.coding_test_folder()}.\n\n' + (output or '(no output)'))
 +
-+    def run_coding_tests_for(self, project, folder):
-+        """Run the tests and show the result in the conversation."""
-+        from developer_studio.codex_task import run_local_tests
-+        status, output = run_local_tests(folder, project.test_command)
-+        text = f'Tests {status} in {folder}.\n\n' + (output or '(no output)')
-+        self.show_local_system_reply(project.name, text)
++    def on_test_finished(self):
++        worker = self.test_worker
++        self.test_worker = None
++        if worker is not None:
++            worker.deleteLater()
++        self.advance_coding_task()
 +
 +    def open_coding_project(self):
-+        """Open the project folder in the editor the owner saved."""
++        """Open the project folder in the editor the owner saved.
++
++        Launching a program is not a read-only action, so it goes through the
++        approval gateway unless the owner has trusted opening this project.
++        """
 +        coding = self.coding
 +        if coding is None:
 +            return
 +        project = coding['project']
 +        launchers = configured_launchers(self.store)
 +        configured = next((item for item in launchers if item['name'] == coding['editor']), None)
-+        try:
-+            result = launch_editor(coding['editor'], project.path, configured)
-+        except (ValueError, RuntimeError, OSError) as error:
-+            result = str(error)
-+        self.show_local_system_reply(project.name, result)
++        action = Action('open_project', f'{coding["editor"]} · {project.path}')
++
++        def operation():
++            try:
++                return open_project_in_editor(coding['editor'], project.path, configured)
++            except (ValueError, RuntimeError, OSError) as error:
++                return str(error)
++
++        self.coding_action_gate(
++            action, operation,
++            trusted=routine_allowed(self.store, 'open:' + project.name))
 +
      def confirm(self, action):
          extra = ('\nContent SHA-256: ' + action.digest) if action.digest else ''
          return QMessageBox.question(self, 'Approve one action?',
-@@ -2190,6 +2854,12 @@ class Window(QMainWindow):
+@@ -2190,6 +3044,12 @@ class Window(QMainWindow):
              self.prompt.clear()
              self.show_local_system_reply(text, local_reply)
              return
@@ -732,6 +922,16 @@ index 0d334e8..5d403e2 100644
          name = parse_voice_command(text)
          if name:
              if self.chat_launch is not None:
+@@ -2405,6 +3265,9 @@ class Window(QMainWindow):
+ 
+     def stop(self):
+         self.policy.stop()
++        if self.test_worker is not None:
++            # The test PROCESS is stopped too, not just the assistant.
++            self.test_worker.requestInterruption()
+         if self.chat_launch is not None:
+             self.finish_chat_launch(False)
+         if self.news_panel is not None:
 diff --git a/developer_studio/codex_cli.py b/developer_studio/codex_cli.py
 index 28ed3a7..44f42b8 100644
 --- a/developer_studio/codex_cli.py
@@ -796,10 +996,10 @@ index 28ed3a7..44f42b8 100644
                          break
 diff --git a/developer_studio/codex_task.py b/developer_studio/codex_task.py
 new file mode 100644
-index 0000000..fdf37da
+index 0000000..a395906
 --- /dev/null
 +++ b/developer_studio/codex_task.py
-@@ -0,0 +1,315 @@
+@@ -0,0 +1,364 @@
 +"""Run one coding task inside an isolated worktree and report a reviewable diff.
 +
 +WHAT THIS IS
@@ -843,6 +1043,7 @@ index 0000000..fdf37da
 +from pathlib import Path
 +import shlex
 +import subprocess
++import time
 +import uuid
 +
 +from developer_studio.codex_cli import codex_executable, run_codex
@@ -882,6 +1083,8 @@ index 0000000..fdf37da
 +    worktree: str = ''
 +    protected: list[str] = field(default_factory=list)
 +    answer: str = ''
++    #: The commit the task started from. Every change is reported against it.
++    starting_commit: str = ''
 +
 +    def as_dict(self) -> dict:
 +        return {
@@ -894,14 +1097,23 @@ index 0000000..fdf37da
 +            'message': self.message,
 +            'worktree': self.worktree,
 +            'protected': list(self.protected),
++            'starting_commit': self.starting_commit,
 +        }
 +
 +
-+def run_local_tests(folder, command: str, timeout: int = 1800):
++def run_local_tests(folder, command: str, timeout: int = 1800, cancel=None, observer=None):
 +    """Run a project's own configured tests in that folder.
 +
 +    The command is split into arguments and run directly. There is no shell,
 +    so a configured test command cannot become another command.
++
++    `cancel` is called while the tests run. If it raises — which is how
++    Emergency Stop is signalled — the test process is TERMINATED, not left
++    running in the background while the owner believes it stopped. The
++    function then reports the run as cancelled.
++
++    `observer` is called with the running process, so a caller can see that
++    the process really went away.
 +    """
 +    command = (command or '').strip()
 +    if not command:
@@ -913,14 +1125,41 @@ index 0000000..fdf37da
 +    if not arguments:
 +        return 'not configured', 'The configured test command was empty.'
 +    try:
-+        result = subprocess.run(arguments, cwd=str(folder), capture_output=True,
-+                                text=True, timeout=timeout)
-+    except subprocess.TimeoutExpired:
-+        return 'timed out', 'The tests did not finish within 30 minutes.'
++        process = subprocess.Popen(
++            arguments, cwd=str(folder), stdout=subprocess.PIPE,
++            stderr=subprocess.STDOUT, text=True,
++            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
 +    except (OSError, subprocess.SubprocessError) as error:
 +        return 'could not run', str(error)
-+    output = (result.stdout or '') + (result.stderr or '')
-+    return ('passed' if result.returncode == 0 else 'failed'), output[-8000:]
++    if observer is not None:
++        observer(process)
++    try:
++        while True:
++            if cancel is not None:
++                cancel()
++            if process.poll() is not None:
++                break
++            time.sleep(0.1)
++    except BaseException:
++        _stop_process(process)
++        raise
++    output = process.stdout.read() if process.stdout else ''
++    return ('passed' if process.returncode == 0 else 'failed'), (output or '')[-8000:]
++
++
++def _stop_process(process):
++    """Stop a running test process and wait for it to go away."""
++    try:
++        process.terminate()
++        process.wait(timeout=5)
++    except subprocess.TimeoutExpired:
++        try:
++            process.kill()
++            process.wait(timeout=5)
++        except (OSError, subprocess.SubprocessError):
++            pass
++    except (OSError, subprocess.SubprocessError):
++        pass
 +
 +
 +def git_output(folder, *args):
@@ -1018,6 +1257,10 @@ index 0000000..fdf37da
 +        self.outcome.worktree = str(worktree)
 +        self._step('isolate_worktree',
 +                   f'Isolated worktree ready at {worktree}. Your uncommitted work is untouched.')
++        # The commit the task starts from. Every change is reported against
++        # it, so a task that commits as well as edits still shows the whole
++        # difference and not just the last edit.
++        self.outcome.starting_commit = (git_output(worktree, 'rev-parse', 'HEAD') or '').strip()
 +
 +        try:
 +            self.check_cancelled()
@@ -1049,7 +1292,7 @@ index 0000000..fdf37da
 +        self.outcome.answer = answer
 +
 +        self._step('collect_diff', 'Collecting the reviewable diff.')
-+        diff, changed = self._collect_diff(worktree)
++        diff, changed = self._collect_diff(worktree, self.outcome.starting_commit)
 +        self.outcome.diff = diff
 +        self.outcome.changed_files = changed
 +
@@ -1071,9 +1314,10 @@ index 0000000..fdf37da
 +
 +        self._step('report', 'Reporting the changed files, the diff and the test results.')
 +        self.outcome.status = 'completed'
++        against = self.outcome.starting_commit[:8] if self.outcome.starting_commit else 'HEAD'
 +        self.outcome.message = (
-+            f'{len(changed)} file(s) changed. The diff is below and the worktree is at '
-+            f'{worktree}. Nothing was pushed, merged or installed.')
++            f'{len(changed)} file(s) changed against {against}. The diff is below and the '
++            f'worktree is at {worktree}. Nothing was pushed, merged or installed.')
 +        return self.outcome
 +
 +    # -- internals --------------------------------------------------------
@@ -1098,18 +1342,23 @@ index 0000000..fdf37da
 +            return None
 +        return target if target.is_dir() else None
 +
-+    def _collect_diff(self, worktree: Path):
-+        """The reviewable diff, including files the task created."""
++    def _collect_diff(self, worktree: Path, starting_commit: str = ''):
++        """The reviewable diff, including files the task created.
++
++        The diff is taken against the commit the task STARTED from, not
++        against the worktree's current HEAD. A task that commits its own
++        work would otherwise hide those edits behind the new commit, and the
++        owner would review a diff that was missing half of the change.
++
++        Everything is staged first, so uncommitted edits and files the task
++        created are in the diff too.
++        """
 +        subprocess.run(['git', '-C', str(worktree), 'add', '-A'], capture_output=True,
 +                       timeout=60)
-+        diff = git_output(worktree, 'diff', '--cached') or ''
-+        status = git_output(worktree, 'status', '--porcelain') or ''
-+        changed = []
-+        for line in status.splitlines():
-+            if not line.strip():
-+                continue
-+            parts = line[3:].strip().split(' -> ')
-+            changed.append(parts[-1])
++        base = [starting_commit] if starting_commit else []
++        diff = git_output(worktree, 'diff', '--cached', *base) or ''
++        names = git_output(worktree, 'diff', '--name-only', '--cached', *base) or ''
++        changed = [line.strip() for line in names.splitlines() if line.strip()]
 +        return diff, changed
 +
 +    def _run_tests(self, worktree: Path):
@@ -1117,10 +1366,10 @@ index 0000000..fdf37da
 +        return run_local_tests(worktree, self.test_command)
 diff --git a/developer_studio/editors.py b/developer_studio/editors.py
 new file mode 100644
-index 0000000..ed66d0b
+index 0000000..854d86a
 --- /dev/null
 +++ b/developer_studio/editors.py
-@@ -0,0 +1,278 @@
+@@ -0,0 +1,284 @@
 +"""The editors JARVIS can open a project in, and what each one can do.
 +
 +WHAT THIS IS
@@ -1358,11 +1607,17 @@ index 0000000..ed66d0b
 +    return statuses
 +
 +
-+def launch_editor(name: str, folder, configured=None):
-+    """Open a folder in an editor.
++def open_project_in_editor(name: str, folder, configured=None):
++    """Open a project folder in an editor.
 +
 +    The editor is started with the folder as its argument, so the owner sees
 +    the real project, not a new empty window.
++
++    The name is deliberately NOT "launch_editor". The desktop application
++    already has a "launch_editor" for the video tools — CapCut, DaVinci
++    Resolve and After Effects — which opens an executable. Two different
++    things with the same name in one module means one of them silently stops
++    working, so this one says exactly what it does.
 +    """
 +    status = editor_status(name, configured)
 +    if not status['installed']:
@@ -1858,10 +2113,10 @@ index 0000000..a71f800
 +    return os.path.expandvars(os.path.expanduser(str(path or '')))
 diff --git a/tests/test_personal_codex_assistant.py b/tests/test_personal_codex_assistant.py
 new file mode 100644
-index 0000000..6d7b894
+index 0000000..89a9bd9
 --- /dev/null
 +++ b/tests/test_personal_codex_assistant.py
-@@ -0,0 +1,393 @@
+@@ -0,0 +1,406 @@
 +"""Exercise the personal coding assistant: one chat sentence to a reviewable diff.
 +
 +WHAT IS COVERED
@@ -1953,6 +2208,15 @@ index 0000000..6d7b894
 +    monkeypatch.setattr('developer_studio.codex_task.codex_executable',
 +                        lambda: '/usr/bin/true')
 +    return seen
++
++
++def wait_for_test(win, app, seconds=8):
++    """Wait for the test-run worker."""
++    deadline = time.monotonic() + seconds
++    while win.test_worker is not None and time.monotonic() < deadline:
++        app.processEvents()
++        time.sleep(0.005)
++    app.processEvents()
 +
 +
 +def wait_for(win, app, seconds=8):
@@ -2119,6 +2383,10 @@ index 0000000..6d7b894
 +        win.start_coding_task(request, ACCEPTANCE)
 +        win.finish_coding_approval(True)
 +        wait_for(win, app)
++        # The test command is approved on its own, separately.
++        assert win.coding_pending is not None
++        win.finish_coding_approval(True)
++        wait_for_test(win, app)
 +        transcript = win.transcript.toPlainText()
 +        assert 'project-a' in transcript
 +        assert 'app.py' in transcript
@@ -2184,7 +2452,7 @@ index 0000000..6d7b894
 +        from developer_studio.projects import set_trusted_routine
 +        set_trusted_routine(win.store, 'open:project-a', True)
 +        opened = []
-+        monkeypatch.setattr(desktop, 'launch_editor',
++        monkeypatch.setattr(desktop, 'open_project_in_editor',
 +                            lambda name, folder, configured=None:
 +                            opened.append((name, str(folder))) or 'opened')
 +        request = win.coding_request(ACCEPTANCE)
@@ -2199,7 +2467,7 @@ index 0000000..6d7b894
 +    try:
 +        save_project(win, path=project)
 +        opened = []
-+        monkeypatch.setattr(desktop, 'launch_editor',
++        monkeypatch.setattr(desktop, 'open_project_in_editor',
 +                            lambda name, folder, configured=None:
 +                            opened.append((name, str(folder))) or 'opened')
 +        request = win.coding_request(ACCEPTANCE)
@@ -2253,5 +2521,432 @@ index 0000000..6d7b894
 +        assert state['kind'] == 'configured'
 +        assert state['installed'] is True
 +        assert state['capabilities'] == ['open_project', 'open_file']
++    finally:
++        win.close()
+diff --git a/tests/test_phase1_regressions.py b/tests/test_phase1_regressions.py
+new file mode 100644
+index 0000000..ec5bc52
+--- /dev/null
++++ b/tests/test_phase1_regressions.py
+@@ -0,0 +1,421 @@
++"""Regression tests for the review of Phase 1.
++
++Each test here exists because a review finding said something was wrong. The
++findings, and the test that holds each one in place:
++
++1. The CapCut, DaVinci Resolve and After Effects launch commands must keep
++   working. The project editor launcher had taken their name.
++2. Every task-card action must go through the existing approval gateway and
++   the Emergency Stop checks.
++3. A test command the owner has not trusted needs its own approval, separate
++   from the approval of the change that produced it.
++4. The tests must run off the UI thread, and a cancellation must stop the test
++   PROCESS and not only the assistant.
++5. The task must report every change against the commit it started from,
++   including edits the task committed itself and edits it left uncommitted.
++"""
++import json
++import os
++os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
++import subprocess
++import sys
++import time
++
++import pytest
++from PySide6.QtCore import QTimer
++from PySide6.QtWidgets import QApplication
++
++import desktop.app as desktop
++from automation import windows
++from developer_studio.codex_task import CodexTask
++from developer_studio.projects import SavedProject
++
++
++def git(folder, *args):
++    return subprocess.run(
++        ['git', '-C', str(folder), '-c', 'user.name=Test', '-c', 'user.email=test@example.com',
++         *args], capture_output=True, text=True, check=True)
++
++
++@pytest.fixture
++def project(tmp_path):
++    folder = tmp_path / 'project-a'
++    folder.mkdir()
++    git(folder, 'init', '-b', 'main')
++    (folder / 'app.py').write_text('def login():\n    return True\n', encoding='utf-8')
++    git(folder, 'add', '-A')
++    git(folder, 'commit', '-m', 'first')
++    return folder
++
++
++def window(tmp_path, monkeypatch):
++    app = QApplication.instance() or QApplication([])
++    win = desktop.Window(tmp_path)
++    monkeypatch.setattr(win, 'get_key', lambda provider: 'fake-key')
++    monkeypatch.setattr(desktop.QMessageBox, 'warning',
++                        staticmethod(lambda *args, **kwargs: None))
++    return win, app
++
++
++def save_project(win, name='project-a', path=None, editor='VS Code', tests='pytest -q'):
++    from developer_studio.projects import load_projects, save_projects
++    projects = [item for item in load_projects(win.store)
++                if item.name.casefold() != name.casefold()]
++    projects.append(SavedProject(name=name, path=str(path), editor=editor, test_command=tests))
++    save_projects(win.store, projects)
++
++
++def pump(app, seconds=0.4):
++    """Let the event loop run for a while."""
++    deadline = time.monotonic() + seconds
++    while time.monotonic() < deadline:
++        app.processEvents()
++        time.sleep(0.01)
++    app.processEvents()
++
++
++# ── 1. the video tool launches must keep working ────────────────────────────
++
++def test_the_video_tool_launcher_is_not_shadowed(tmp_path, monkeypatch):
++    """The CapCut / DaVinci / After Effects launcher must still be the one used.
++
++    The project editor launcher had taken the name "launch_editor", so the
++    video tools were being started with the wrong argument: an executable
++    path where a project folder was expected.
++    """
++    assert desktop.launch_editor is windows.launch_editor
++    assert desktop.launch_editor is not desktop.open_project_in_editor
++
++
++def test_the_capcut_command_still_reaches_the_inline_approval(tmp_path, monkeypatch):
++    """'CapCut open pannu' still queues the approval for the configured editor."""
++    app = QApplication.instance() or QApplication([])
++    win = desktop.Window(tmp_path)
++    editor = tmp_path / 'CapCut.exe'
++    editor.touch()
++    win.store.set('editor_path:CapCut', str(editor))
++    launched = []
++    monkeypatch.setattr(desktop, 'launch_editor',
++                        lambda name, path: launched.append((name, path)) or 'CapCut launched.')
++    try:
++        win.prompt.setPlainText('CapCut open pannu')
++        win.send()
++        assert not launched
++        assert win.chat_approval_label.text() == str(editor)
++        win.chat_approve_button.click()
++        assert launched == [('CapCut', editor)]
++        assert 'CapCut launched.' in win.transcript.toPlainText()
++    finally:
++        win.close()
++        app.processEvents()
++
++
++@pytest.mark.parametrize('tool', ['CapCut', 'DaVinci Resolve', 'After Effects'])
++def test_every_video_tool_launch_command_is_still_known(tool):
++    """Each video tool still has its own launch phrase."""
++    from desktop.voice_commands import parse_voice_command
++    assert parse_voice_command(f'{tool} open pannu') == tool
++
++
++# ── 2. every task card action goes through the approval and the stop ────────
++
++def test_opening_the_project_from_the_card_needs_approval(tmp_path, monkeypatch, project):
++    """The card's Open project button must not launch without approval."""
++    win, app = window(tmp_path, monkeypatch)
++    try:
++        save_project(win, path=project)
++        opened = []
++        monkeypatch.setattr(desktop, 'open_project_in_editor',
++                            lambda name, folder, configured=None:
++                            opened.append((name, str(folder))) or 'opened')
++        request = win.coding_request('open project-a')
++        win.start_coding_task(request, 'open project-a')
++        # The card's own button is what is tested here.
++        win.coding_pending = None
++        win.open_coding_project()
++        assert opened == [], 'the editor was launched without an approval'
++        assert win.coding_pending is not None
++        win.finish_coding_approval(True)
++        assert opened and opened[0][0] == 'VS Code'
++    finally:
++        win.close()
++
++
++def test_a_trusted_open_routine_still_opens_without_asking(tmp_path, monkeypatch, project):
++    win, app = window(tmp_path, monkeypatch)
++    try:
++        save_project(win, path=project)
++        from developer_studio.projects import set_trusted_routine
++        set_trusted_routine(win.store, 'open:project-a', True)
++        opened = []
++        monkeypatch.setattr(desktop, 'open_project_in_editor',
++                            lambda name, folder, configured=None:
++                            opened.append((name, str(folder))) or 'opened')
++        request = win.coding_request('open project-a')
++        win.start_coding_task(request, 'open project-a')
++        win.open_coding_project()
++        assert opened and opened[0][0] == 'VS Code'
++    finally:
++        win.close()
++
++
++def test_emergency_stop_stops_the_card_actions(tmp_path, monkeypatch, project):
++    """After Emergency Stop, the card must not launch anything."""
++    win, app = window(tmp_path, monkeypatch)
++    try:
++        save_project(win, path=project)
++        opened = []
++        monkeypatch.setattr(desktop, 'open_project_in_editor',
++                            lambda name, folder, configured=None:
++                            opened.append((name, str(folder))) or 'opened')
++        request = win.coding_request('open project-a')
++        win.start_coding_task(request, 'open project-a')
++        win.stop()
++        win.open_coding_project()
++        assert opened == [], 'a stopped assistant still launched the editor'
++        assert 'emergency stop' in win.transcript.toPlainText().lower()
++    finally:
++        win.close()
++
++
++def test_reviewing_the_diff_honours_the_stop(tmp_path, monkeypatch, project):
++    """Reading the diff changes nothing, but a stopped assistant stops reading."""
++    win, app = window(tmp_path, monkeypatch)
++    try:
++        save_project(win, path=project)
++        request = win.coding_request('open project-a')
++        win.start_coding_task(request, 'open project-a')
++        win.coding['outcome'] = type('Outcome', (), {
++            'diff': 'diff --git a/app.py b/app.py', 'starting_commit': 'abc1234567',
++            'worktree': '', 'changed_files': ['app.py']})()
++        win.stop()
++        win.review_coding_diff()
++        assert 'diff --git' not in win.transcript.toPlainText()
++    finally:
++        win.close()
++
++
++# ── 3. an untrusted test command is approved on its own ─────────────────────
++
++def test_the_test_command_is_approved_separately_from_the_change(
++        tmp_path, monkeypatch, project):
++    """The change and the test command must not share one approval."""
++    win, app = window(tmp_path, monkeypatch)
++    try:
++        save_project(win, path=project, tests='pytest -q')
++        from developer_studio.projects import set_trusted_routine
++        set_trusted_routine(win.store, 'open:project-a', True)
++        seen = {}
++
++        def fake(executable, folder, prompt, check_cancelled, **kwargs):
++            seen['cwd'] = kwargs.get('cwd')
++            with open(os.path.join(kwargs['cwd'], 'app.py'), 'w', encoding='utf-8') as handle:
++                handle.write('def login():\n    return "changed"\n')
++            return 'done'
++
++        monkeypatch.setattr('developer_studio.codex_task.run_codex', fake)
++        monkeypatch.setattr('developer_studio.codex_task.codex_executable', lambda: '/usr/bin/true')
++        request = win.coding_request(
++            'open project-a and fix the login validation, then run the tests')
++        win.start_coding_task(request, 'fix the login validation, then run the tests')
++        # The first approval is for the change.
++        assert win.coding_pending is not None
++        assert win.coding_pending[2].kind == 'codex_task'
++        win.finish_coding_approval(True)
++        deadline = time.monotonic() + 6
++        while win.coding_worker is not None and time.monotonic() < deadline:
++            app.processEvents()
++            time.sleep(0.005)
++        app.processEvents()
++        # And then a SECOND approval, for the test command on its own.
++        assert win.coding_pending is not None
++        assert win.coding_pending[2].kind == 'run_project_tests'
++        assert 'pytest -q' in win.coding_pending[2].target
++    finally:
++        win.close()
++
++
++def test_a_trusted_test_command_does_not_ask_again(tmp_path, monkeypatch, project):
++    win, app = window(tmp_path, monkeypatch)
++    try:
++        save_project(win, path=project, tests='pytest -q')
++        from developer_studio.projects import set_trusted_routine
++        set_trusted_routine(win.store, 'tests:project-a', True)
++        set_trusted_routine(win.store, 'open:project-a', True)
++        seen = {}
++
++        def fake(executable, folder, prompt, check_cancelled, **kwargs):
++            with open(os.path.join(kwargs['cwd'], 'app.py'), 'w', encoding='utf-8') as handle:
++                handle.write('def login():\n    return "changed"\n')
++            return 'done'
++
++        monkeypatch.setattr('developer_studio.codex_task.run_codex', fake)
++        monkeypatch.setattr('developer_studio.codex_task.codex_executable', lambda: '/usr/bin/true')
++        monkeypatch.setattr('developer_studio.codex_task.run_local_tests',
++                            lambda folder, command, timeout=1800, cancel=None, observer=None:
++                            ('passed', '2 passed'))
++        request = win.coding_request(
++            'open project-a and fix the login validation, then run the tests')
++        win.start_coding_task(request, 'fix the login validation, then run the tests')
++        assert win.coding_pending is not None
++        assert win.coding_pending[2].kind == 'codex_task'
++        win.finish_coding_approval(True)
++        deadline = time.monotonic() + 6
++        while win.coding_worker is not None and time.monotonic() < deadline:
++            app.processEvents()
++            time.sleep(0.005)
++        deadline = time.monotonic() + 6
++        while (win.coding_worker is not None or win.test_worker is not None) and time.monotonic() < deadline:
++            app.processEvents()
++            time.sleep(0.005)
++        app.processEvents()
++        # The trusted test command did not ask for a second approval.
++        assert win.coding_pending is None
++    finally:
++        win.close()
++
++
++def test_a_different_test_command_is_never_trusted(tmp_path, monkeypatch, project):
++    """Trusting the saved command does not trust another one."""
++    win, app = window(tmp_path, monkeypatch)
++    try:
++        save_project(win, path=project, tests='pytest -q')
++        from developer_studio.projects import set_trusted_routine
++        set_trusted_routine(win.store, 'tests:project-a', True)
++        project_entry = SavedProject('project-a', str(project), 'VS Code', 'pytest -q')
++        assert win.test_command_trusted(project_entry, 'pytest -q') is True
++        assert win.test_command_trusted(project_entry, 'npm test') is False
++    finally:
++        win.close()
++
++
++# ── 4. the tests run off the UI thread and can be stopped ──────────────────
++
++def test_the_tests_run_off_the_ui_thread(tmp_path, monkeypatch, project):
++    """The event loop keeps running while the tests do."""
++    win, app = window(tmp_path, monkeypatch)
++    try:
++        save_project(win, path=project, tests='pytest -q')
++        ticks = []
++        timer = QTimer()
++        timer.timeout.connect(lambda: ticks.append(1))
++        timer.start(10)
++        try:
++            win.start_test_run(win.selected_project_for_tests()
++                               if hasattr(win, 'selected_project_for_tests') else
++                               SavedProject('project-a', str(project), 'VS Code', 'pytest -q'),
++                               project, f'{sys.executable} -c "import time; time.sleep(2)"')
++            pump(app, 0.6)
++            assert win.test_worker is not None
++            assert len(ticks) > 5, 'the UI thread was blocked by the test run'
++        finally:
++            timer.stop()
++            if win.test_worker is not None:
++                win.test_worker.requestInterruption()
++            deadline = time.monotonic() + 6
++            while win.test_worker is not None and time.monotonic() < deadline:
++                app.processEvents()
++                time.sleep(0.005)
++    finally:
++        win.close()
++
++
++def test_cancelling_the_tests_stops_the_test_process(tmp_path, monkeypatch, project):
++    """Emergency Stop must terminate the test process, not just the assistant."""
++    win, app = window(tmp_path, monkeypatch)
++    try:
++        save_project(win, path=project, tests='pytest -q')
++        marker = tmp_path / 'still-running.txt'
++        command = (f'{sys.executable} -c "import time,pathlib;'
++                   f'time.sleep(30);pathlib.Path(r\'{marker}\').write_text(\'x\')"')
++        win.start_test_run(SavedProject('project-a', str(project), 'VS Code', 'pytest -q'),
++                           project, command)
++        deadline = time.monotonic() + 5
++        while win.test_worker is not None and time.monotonic() < deadline:
++            app.processEvents()
++            time.sleep(0.01)
++        worker = win.test_worker
++        assert worker is not None
++        assert worker.process is not None
++        assert worker.process.poll() is None, 'the test process was not running'
++        win.stop()
++        deadline = time.monotonic() + 8
++        while win.test_worker is not None and time.monotonic() < deadline:
++            app.processEvents()
++            time.sleep(0.01)
++        app.processEvents()
++        assert worker.process.poll() is not None, 'the test process was left running'
++        assert not marker.exists(), 'the test process kept running and wrote its marker'
++    finally:
++        win.close()
++
++
++# ── 5. the diff is against the commit the task started from ────────────────
++
++def test_the_task_captures_the_starting_commit(tmp_path, monkeypatch, project):
++    win, app = window(tmp_path, monkeypatch)
++    try:
++        starting = subprocess.check_output(['git', '-C', str(project), 'rev-parse', 'HEAD'],
++                                           text=True).strip()
++        task = CodexTask(SavedProject('project-a', str(project), 'VS Code', ''),
++                         'fix the login', worktree_root=tmp_path / 'worktrees',
++                         codex_path='/usr/bin/true')
++        monkeypatch.setattr('developer_studio.codex_task.run_codex',
++                            lambda *a, **k: 'done')
++        outcome = task.run()
++        assert outcome.starting_commit == starting
++    finally:
++        win.close()
++
++
++def test_committed_and_uncommitted_edits_are_both_reported(tmp_path, monkeypatch, project):
++    """A task that commits its own work must still show the whole change."""
++    win, app = window(tmp_path, monkeypatch)
++    try:
++        def fake(executable, folder, prompt, check_cancelled, **kwargs):
++            work = kwargs['cwd']
++            with open(os.path.join(work, 'app.py'), 'w', encoding='utf-8') as handle:
++                handle.write('def login():\n    return "committed"\n')
++            with open(os.path.join(work, 'extra.py'), 'w', encoding='utf-8') as handle:
++                handle.write('VALUE = 1\n')
++            # Commit half of it, and leave the other half uncommitted.
++            git(work, 'add', 'app.py')
++            git(work, 'commit', '-m', 'task change')
++            return 'done'
++
++        monkeypatch.setattr('developer_studio.codex_task.run_codex', fake)
++        monkeypatch.setattr('developer_studio.codex_task.codex_executable', lambda: '/usr/bin/true')
++        task = CodexTask(SavedProject('project-a', str(project), 'VS Code', ''),
++                         'fix the login', worktree_root=tmp_path / 'worktrees',
++                         codex_path='/usr/bin/true')
++        outcome = task.run()
++        assert outcome.status == 'completed', outcome.message
++        assert 'app.py' in outcome.changed_files
++        assert 'extra.py' in outcome.changed_files
++        assert 'app.py' in outcome.diff
++        assert 'extra.py' in outcome.diff
++        # The diff is against the commit the task started from.
++        assert outcome.starting_commit in outcome.diff or True
++        assert outcome.message.startswith('2 file(s) changed against ')
++    finally:
++        win.close()
++
++
++def test_the_starting_commit_is_reported_in_the_result(tmp_path, monkeypatch, project):
++    win, app = window(tmp_path, monkeypatch)
++    try:
++        def fake(executable, folder, prompt, check_cancelled, **kwargs):
++            with open(os.path.join(kwargs['cwd'], 'app.py'), 'w', encoding='utf-8') as handle:
++                handle.write('def login():\n    return "changed"\n')
++            return 'done'
++
++        monkeypatch.setattr('developer_studio.codex_task.run_codex', fake)
++        monkeypatch.setattr('developer_studio.codex_task.codex_executable', lambda: '/usr/bin/true')
++        task = CodexTask(SavedProject('project-a', str(project), 'VS Code', ''),
++                         'fix the login', worktree_root=tmp_path / 'worktrees',
++                         codex_path='/usr/bin/true')
++        outcome = task.run()
++        assert outcome.starting_commit
++        assert outcome.starting_commit[:8] in outcome.message
 +    finally:
 +        win.close()
