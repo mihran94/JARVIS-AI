@@ -1,5 +1,5 @@
 diff --git a/desktop/app.py b/desktop/app.py
-index fdd0192..2cc0e61 100644
+index fdd0192..bf186c4 100644
 --- a/desktop/app.py
 +++ b/desktop/app.py
 @@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
@@ -90,10 +90,10 @@ index fdd0192..2cc0e61 100644
 -        self.capcut_button = self.button(layout, 'Export for CapCut Desktop',
 -                                         lambda: self.assemble_video(capcut=True))
 +        self.capcut_button = self.flexible_button(
-+            layout, 'Export for CapCut Desktop', lambda: self.assemble_video(capcut=True))
++            layout, 'Export for CapCut Desktop', lambda: self.assemble_video(editor='CapCut Desktop'))
          self.capcut_button.setEnabled(False)
 +        self.davinci_button = self.flexible_button(
-+            layout, 'Export for DaVinci Resolve', lambda: self.assemble_video(davinci=True))
++            layout, 'Export for DaVinci Resolve', lambda: self.assemble_video(editor='DaVinci Resolve'))
 +        self.davinci_button.setEnabled(False)
          self.after_effects_button = self.button(render_row, 'Render After Effects', self.render_after_effects)
          self.video_cancel_render = self.button(render_row, 'Cancel export', self.cancel_video_export)
@@ -151,32 +151,37 @@ index fdd0192..2cc0e61 100644
              self.confirm, lambda: self.workspace.save(name, content)))
  
 -    def assemble_video(self, *, capcut=False):
-+    def assemble_video(self, *, capcut=False, davinci=False):
++    def assemble_video(self, *, editor=None):
          if self.video_plan is None or self.worker is not None or self.policy.stopped:
              return
          selection = self.video_plan
-@@ -940,10 +1007,17 @@ class Window(QMainWindow):
+@@ -932,7 +999,7 @@ class Window(QMainWindow):
+ 
+         def operation():
+             media_tools()
+-            dialog = PreviewInputs(plan, self, capcut=capcut)
++            dialog = PreviewInputs(plan, self, editor=editor)
+             if dialog.exec() != QDialog.DialogCode.Accepted:
+                 return
+             if self.video_plan is not selection or self.worker is not None:
+@@ -940,10 +1007,13 @@ class Window(QMainWindow):
              clips = [field.text() for field in dialog.clips]
              output = dialog.target.text()
              narration = dialog.narration.text() or None
 -            exporter = export_capcut if capcut else render_preview
 -            label = 'Preparing CapCut export…' if capcut else 'Assembling local MP4 preview…'
-+            exporter = export_capcut if capcut else export_davinci if davinci else render_preview
-+            if capcut:
-+                label = 'Preparing CapCut export…'
-+            elif davinci:
-+                label = 'Preparing DaVinci Resolve export…'
-+            else:
-+                label = 'Assembling local MP4 preview…'
-+            action = ('export_for_capcut' if capcut else
-+                      'export_for_davinci' if davinci else 'start_video_preview')
++            exporter, action, label = {
++                'CapCut Desktop': (export_capcut, 'export_for_capcut', 'Preparing CapCut export…'),
++                'DaVinci Resolve': (export_davinci, 'export_for_davinci', 'Preparing DaVinci Resolve export…'),
++                None: (render_preview, 'start_video_preview', 'Assembling local MP4 preview…'),
++            }[editor]
              self.gateway.run(
 -                Action('export_for_capcut' if capcut else 'start_video_preview', output), self.confirm,
 +                Action(action, output), self.confirm,
                  lambda: self.start_video_export(
                      output, label,
                      lambda check: exporter(plan, clips, output, check, narration=narration)))
-@@ -2061,9 +2135,12 @@ class Window(QMainWindow):
+@@ -2061,9 +2131,12 @@ class Window(QMainWindow):
                  else:
                      plan['engine'] = self.video_engine.currentText()
                      self.video_plan = uuid.uuid4().hex, plan
@@ -191,7 +196,7 @@ index fdd0192..2cc0e61 100644
              else:
                  self.video_status.setText(status + ': ' + text)
          elif self.worker_kind == 'news_briefing':
-@@ -2156,6 +2233,7 @@ class Window(QMainWindow):
+@@ -2156,6 +2229,7 @@ class Window(QMainWindow):
              button.setEnabled(ready and self.video_plan is not None)
          self.video_render_button.setEnabled(ready and self.video_plan is not None)
          self.capcut_button.setEnabled(ready and self.video_plan is not None)
@@ -199,6 +204,33 @@ index fdd0192..2cc0e61 100644
          self.after_effects_button.setEnabled(ready)
          self.after_effects_timeline_button.setEnabled(ready and self.video_plan is not None)
  
+diff --git a/desktop/video_export.py b/desktop/video_export.py
+index 87d862c..c1d6cc6 100644
+--- a/desktop/video_export.py
++++ b/desktop/video_export.py
+@@ -39,7 +39,7 @@ class MediaInputs(QDialog):
+ 
+ 
+ class PreviewInputs(MediaInputs):
+-    def __init__(self, plan, parent, *, timeline=False, capcut=False):
++    def __init__(self, plan, parent, *, timeline=False, editor=None):
+         super().__init__(parent)
+         self.setWindowTitle("Build After Effects timeline" if timeline else "Assemble MP4 preview")
+         self.resize(640, 390)
+@@ -66,10 +66,10 @@ class PreviewInputs(MediaInputs):
+         self.narration = self.add_file("Narration (optional)", "Audio (*.wav *.mp3 *.m4a *.aac *.flac *.ogg)", clearable=True)
+         if timeline:
+             self.target = self.add_file("Adobe application", "After Effects (AfterFX.exe)")
+-        elif capcut:
+-            self.setWindowTitle("Export for CapCut Desktop")
++        elif editor:
++            self.setWindowTitle(f"Export for {editor}")
+             note.setText("Choose one clip per shot and an export folder. Import video.mp4 "
+-                         "and english.srt into CapCut Desktop.")
++                         f"and english.srt into {editor}.")
+             self.target = QLineEdit()
+             self.target.setReadOnly(True)
+             choose = QPushButton("Choose export folder…")
 diff --git a/tests/test_ai_brain_voice.py b/tests/test_ai_brain_voice.py
 index 886fdcf..7570405 100644
 --- a/tests/test_ai_brain_voice.py
@@ -356,10 +388,10 @@ index 886fdcf..7570405 100644
 +# are carried here: that section is merged without them.
 diff --git a/tests/test_video_editing_studio.py b/tests/test_video_editing_studio.py
 new file mode 100644
-index 0000000..8861c0f
+index 0000000..fe978a3
 --- /dev/null
 +++ b/tests/test_video_editing_studio.py
-@@ -0,0 +1,350 @@
+@@ -0,0 +1,399 @@
 +"""Exercise the Video Editing Studio: one Tamil brief, two engines, two editors.
 +
 +WHAT IS COVERED
@@ -384,17 +416,18 @@ index 0000000..8861c0f
 +from shutil import which
 +
 +import httpx
-+from PySide6.QtWidgets import QApplication
++from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QPushButton
 +import pytest
 +
 +from desktop.app import Window
++from desktop.video_export import PreviewInputs
 +from providers.router import ProviderRouter
 +from video_studio.editing import clip_name, editing_checklist
 +from video_studio.planning import (
 +    NOT_SPECIFIED, parse_plan, prompt_sheet, shot_list, spoken_brief,
 +)
 +
-+pytestmark = pytest.mark.skipif(
++requires_ffmpeg = pytest.mark.skipif(
 +    not (which("ffmpeg") and which("ffprobe")), reason="FFmpeg and ffprobe are required")
 +
 +BRIEF = "அய்யன் மரக்கன் தொடர்பான கதை — திறப்பு தரைப்பாடு, புதிய காட்சி, முடிவு"
@@ -556,15 +589,19 @@ index 0000000..8861c0f
 +        app.processEvents()
 +
 +
-+def test_the_prompt_sheet_of_a_partial_plan_still_answers(tmp_path, monkeypatch):
-+    """An older plan with one prompt still answers for both engines."""
++@pytest.mark.parametrize('make_draft', [legacy_draft, detailed_draft])
++def test_the_higgsfield_sheet_labels_a_missing_prompt(tmp_path, monkeypatch, make_draft):
++    draft = make_draft()
++    draft['shots'][0].pop('higgsfield_prompt', None)
 +    win, app = window(tmp_path, monkeypatch)
 +    try:
-+        generate(win, legacy_draft())
-+        plan = win.video_plan[1]
-+        assert "PARTIAL PLAN" in prompt_sheet(plan, 'Higgsfield')
-+        assert "Slow push-in" in prompt_sheet(plan, 'Higgsfield')
-+        assert "Slow push-in" in prompt_sheet(plan, 'Google Flow')
++        generate(win, draft)
++        win.video_sheet_kind.setCurrentText('Higgsfield prompts')
++        sheet = win.video_sheet.toPlainText()
++        assert "PARTIAL PLAN" in win.video_preview.toPlainText()
++        assert "PARTIAL PLAN" in sheet
++        assert f"Higgsfield prompt: {NOT_SPECIFIED}" in sheet
++        assert f"Google Flow fallback (adapt for Higgsfield): {draft['shots'][0]['flow_prompt']}" in sheet
 +    finally:
 +        win.close()
 +        app.processEvents()
@@ -633,23 +670,67 @@ index 0000000..8861c0f
 +    return clips
 +
 +
-+def test_the_davinci_handoff_carries_the_video_the_captions_and_the_checklist(tmp_path):
-+    from video_studio.editing import export_davinci
-+
++@requires_ffmpeg
++def test_the_davinci_button_exports_video_captions_and_checklist(tmp_path, monkeypatch):
 +    clips = make_clips(tmp_path)
-+    plan = parse_plan(json.dumps(detailed_draft()))
-+    folder = export_davinci(plan, clips, tmp_path, lambda: None)
-+    assert (folder / "video.mp4").is_file()
-+    assert (folder / "english.srt").read_text(encoding="utf-8").startswith(
-+        "1\n00:00:00,000 --> 00:00:05,000\nWhat happened?")
-+    checklist = (folder / "editing-checklist.txt").read_text(encoding="utf-8")
-+    assert "CapCut Desktop" in checklist
-+    assert "DaVinci Resolve" in checklist
-+    assert "not a Resolve XML timeline" in checklist
-+    assert (folder / "shot-prompts.txt").read_text(encoding="utf-8").startswith("Shot 1")
-+    assert not list(tmp_path.glob(".jarvis-davinci-*"))
++    win, app = window(tmp_path, monkeypatch)
++    generate(win, detailed_draft())
++    assert win.davinci_button.isEnabled()
++    seen = []
++
++    def choose_folder(_dialog, title, _initial):
++        assert title == 'Choose export folder'
++        seen.append('folder')
++        return str(tmp_path)
++
++    def accept_dialog(dialog):
++        assert dialog.windowTitle() == 'Export for DaVinci Resolve'
++        for field, clip in zip(dialog.clips, clips):
++            field.setText(str(clip))
++        button = next((button for button in dialog.findChildren(QPushButton)
++                       if button.text() == 'Choose export folder…'), None)
++        assert button is not None
++        button.click()
++        assert dialog.ok.isEnabled()
++        return QDialog.DialogCode.Accepted
++
++    def approve(action):
++        seen.append(action.kind)
++        assert action.target == str(tmp_path)
++        return True
++
++    monkeypatch.setattr(QFileDialog, 'getExistingDirectory', choose_folder)
++    monkeypatch.setattr(PreviewInputs, 'exec', accept_dialog)
++    monkeypatch.setattr(win, 'confirm', approve)
++    try:
++        win.davinci_button.click()
++        assert seen == ['folder', 'export_for_davinci']
++        deadline = time.monotonic() + 90
++        while win.worker is not None and time.monotonic() < deadline:
++            app.processEvents()
++            time.sleep(0.005)
++        assert win.worker is None
++        folders = list(tmp_path.glob("JARVIS-DaVinci-*"))
++        assert len(folders) == 1, win.video_status.text()
++        folder = folders[0]
++        assert (folder / "video.mp4").is_file()
++        assert (folder / "english.srt").read_text(encoding="utf-8").startswith(
++            "1\n00:00:00,000 --> 00:00:05,000\nWhat happened?")
++        checklist = (folder / "editing-checklist.txt").read_text(encoding="utf-8")
++        assert "CapCut Desktop" in checklist and "DaVinci Resolve" in checklist
++        assert "not a Resolve XML timeline" in checklist
++        assert "Shot 1" in (folder / "shot-prompts.txt").read_text(encoding="utf-8")
++        assert not list(tmp_path.glob(".jarvis-davinci-*"))
++    finally:
++        if win.worker is not None:
++            win.worker.requestInterruption()
++            win.worker.wait()
++            app.processEvents()
++        win.close()
++        app.processEvents()
 +
 +
++@requires_ffmpeg
 +def test_the_capcut_handoff_still_works(tmp_path):
 +    from video_studio.capcut import export_capcut
 +
@@ -712,10 +793,10 @@ index 0000000..8861c0f
 +        app.processEvents()
 diff --git a/video_studio/editing.py b/video_studio/editing.py
 new file mode 100644
-index 0000000..b1eae06
+index 0000000..d84f979
 --- /dev/null
 +++ b/video_studio/editing.py
-@@ -0,0 +1,144 @@
+@@ -0,0 +1,141 @@
 +"""Editing checklists and handoff packages for CapCut and DaVinci Resolve.
 +
 +WHAT THIS IS
@@ -740,7 +821,7 @@ index 0000000..b1eae06
 +from tempfile import TemporaryDirectory
 +from uuid import uuid4
 +
-+from video_studio.planning import NOT_SPECIFIED, english_srt, prompt_for
++from video_studio.planning import NOT_SPECIFIED, english_srt, plan_engine, prompt_sheet
 +from video_studio.preview import render_preview
 +
 +
@@ -853,15 +934,12 @@ index 0000000..b1eae06
 +        (package / "english.srt").write_text(english_srt(plan), encoding="utf-8")
 +        (package / "editing-checklist.txt").write_text(editing_checklist(plan), encoding="utf-8")
 +        (package / "shot-prompts.txt").write_text(
-+            "\n\n".join(
-+                f"Shot {number}\n{prompt_for(shot, plan.get('engine', 'Google Flow'))}"
-+                for number, shot in enumerate(plan["shots"], 1)
-+            ), encoding="utf-8")
++            prompt_sheet(plan, plan_engine(plan)), encoding="utf-8")
 +        check_cancelled()
 +        package.rename(output)
 +    return output
 diff --git a/video_studio/planning.py b/video_studio/planning.py
-index 0aaa47a..4066716 100644
+index 0aaa47a..07d64d1 100644
 --- a/video_studio/planning.py
 +++ b/video_studio/planning.py
 @@ -1,4 +1,25 @@
@@ -1022,7 +1100,7 @@ index 0aaa47a..4066716 100644
 +                fields[name] = _text(shot.get(name, ''), maximum, optional=True)
          if bool(fields["tamil_voiceover"]) != bool(fields["english_subtitle"]):
              raise ValueError('Each spoken shot needs both Tamil voiceover and an English caption.')
-+        if not fields["camera"] or not fields["lighting"] or not fields["sound"]:
++        if not all(fields[name] for name in _OPTIONAL_SHOT_FIELDS):
 +            detailed = False
          timeline.append({"start_ms": start, "end_ms": end, **fields})
          start = end
@@ -1035,7 +1113,7 @@ index 0aaa47a..4066716 100644
      }
  
  
-@@ -148,25 +214,93 @@ def _timecode(milliseconds):
+@@ -148,25 +214,88 @@ def _timecode(milliseconds):
      return f"00:00:{seconds:02},{remainder:03}"
  
  
@@ -1053,16 +1131,15 @@ index 0aaa47a..4066716 100644
 +    return 'Higgsfield prompt' if engine == 'Higgsfield' else 'Flow prompt'
 +
 +
-+def prompt_for(shot, engine):
-+    """The prompt of one shot for one engine.
-+
-+    A plan that only carries one engine's prompt still answers for the other
-+    one, because a half plan is better than no prompt. The plan is marked
-+    partial so the interface can say that is what happened.
-+    """
-+    if engine == 'Higgsfield':
-+        return shot.get('higgsfield_prompt') or shot.get('flow_prompt') or ''
-+    return shot.get('flow_prompt') or shot.get('higgsfield_prompt') or ''
++def _prompt_lines(shot, engine, *, show_label=True):
++    field = 'higgsfield_prompt' if engine == 'Higgsfield' else 'flow_prompt'
++    prompt = shot.get(field)
++    if prompt:
++        return [f"{_prompt_label(engine)}: {prompt}" if show_label else prompt]
++    lines = [f"{_prompt_label(engine)}: {NOT_SPECIFIED}"]
++    if engine == 'Higgsfield' and shot.get('flow_prompt'):
++        lines.append(f"Google Flow fallback (adapt for Higgsfield): {shot['flow_prompt']}")
++    return lines
 +
 +
 +def _value(shot, name):
@@ -1094,7 +1171,7 @@ index 0aaa47a..4066716 100644
 +            "Sound: " + _value(shot, "sound"),
              "Visual: " + shot["visual"],
 -            f"{prompt_label}: " + shot["flow_prompt"],
-+            f"{_prompt_label(engine)}: " + prompt_for(shot, engine),
++            *_prompt_lines(shot, engine),
              "Edit and sound: " + shot["edit_and_sound"],
          ])
          if shot["tamil_voiceover"]:
@@ -1102,15 +1179,11 @@ index 0aaa47a..4066716 100644
                            "English: " + shot["english_subtitle"]])
 +        else:
 +            lines.append("English: (intentional silent shot)")
-+    return "\n".join(lines)
-+
-+
+     return "\n".join(lines)
+ 
+ 
 +def prompt_sheet(plan, engine="Google Flow"):
-+    """The copy-ready prompts for one engine, one shot after another.
-+
-+    This is what the owner pastes into the engine, so it carries nothing else:
-+    no timings, no notes, just the prompts in order.
-+    """
++    """Show per-shot prompts and label any source-engine fallback."""
 +    label = _prompt_label(engine)
 +    lines = [f"{plan['title']} — {label}s for {engine}"]
 +    if not plan.get("detailed", False):
@@ -1119,11 +1192,11 @@ index 0aaa47a..4066716 100644
 +        lines.extend([
 +            "",
 +            f"Shot {number}  ({_seconds(shot['end_ms'] - shot['start_ms'])})",
-+            prompt_for(shot, engine) or NOT_SPECIFIED,
++            *_prompt_lines(shot, engine, show_label=False),
 +        ])
-     return "\n".join(lines)
- 
- 
++    return "\n".join(lines)
++
++
 +def flow_instructions(plan):
 +    """The shot list with the plan's own engine prompts.
 +

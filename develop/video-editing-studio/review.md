@@ -40,7 +40,8 @@ Now one brief produces:
 | `video_studio/planning.py` | The plan carries `camera`, `lighting`, `sound` and `higgsfield_prompt` per shot. The model is asked for both engine prompts. `parse_plan` accepts the old shape too. New: `shot_list()` and `prompt_sheet()`. |
 | `video_studio/editing.py` | **New.** `editing_checklist()` (CapCut + DaVinci Resolve), `export_davinci()`, `clip_name()`. |
 | `desktop/app.py` | The Video Editor shows the shot list, a sheet chooser (Shot list / Flow prompts / Higgsfield prompts / Editing checklist), a **Copy to clipboard** button, and **Export for DaVinci Resolve**. The export buttons no longer force the page to scroll sideways. |
-| `tests/test_video_editing_studio.py` | **New.** 14 tests, driven through the JARVIS window. |
+| `desktop/video_export.py` | The DaVinci Resolve and CapCut exports both select an existing output folder. MP4 preview still chooses a file. |
+| `tests/test_video_editing_studio.py` | Tests cover the JARVIS workflow, including the DaVinci button through package creation and missing Higgsfield prompts with cinematic fields present. |
 | `tests/test_ai_brain_voice.py` | Six end-to-end chat-flow tests carried over — see §6. |
 
 ### The two engine prompts
@@ -52,16 +53,15 @@ The plan now holds both, and each one is written in that engine's own style:
 | `flow_prompt` | Google Flow | reference use, composition, camera movement, lighting, one main action |
 | `higgsfield_prompt` | Higgsfield | subject action, then setting and lighting, then ONE camera move, then mood |
 
-Both describe **the same shot**. The prompt sheet is what gets pasted into the
-engine, so it carries only prompts — one after another, nothing else.
+Both describe **the same shot**. The prompt sheet groups the text by shot so
+the editor can copy the desired prompt.
 
 ### Backwards compatibility
 
-An older plan that carries only one prompt still parses, still renders, and
-still answers for both engines: the missing half is filled in from the prompt
-that IS there. Such a plan is marked **PARTIAL PLAN** and every missing field
-reads `(not specified)`, so the interface never shows an empty column as if it
-had been designed that way.
+Plans with only a Google Flow prompt remain usable. A missing Higgsfield
+prompt marks the plan **PARTIAL PLAN**, even when camera, lighting, and sound
+are present. The Higgsfield sheet shows `(not specified)` for the missing
+prompt and labels the Google Flow fallback for adaptation.
 
 ## 3. Labelled behaviour
 
@@ -80,21 +80,14 @@ The Command Center HUD's device panels already carried `SIMULATION` and
 
 ## 4. Test results
 
-Measured on the same machine, same command, from a clean checkout of the
-baseline with the patch applied:
+The original MiniMax submission recorded 597 passing tests and 3 skips.
+The corrected submission passed all 63 targeted Video Editing Studio and
+AI Brain & Voice tests. These cover the DaVinci folder picker, action approval,
+package creation with FFmpeg, and Higgsfield fallback labels.
 
-| Tree | Result |
-|---|---|
-| Baseline `main` @ `954af152a263` | `577 passed, 3 skipped, **0 failed** |
-| This section applied | **`597 passed, 3 skipped, 0 failed`** |
-
-The 20 extra passing tests are the 14 new Video Editing Studio tests and the 6
-carried-over chat-flow tests.
-
-**The suite is fully green.** PR #28 merged into `main` while this section was
-being prepared, so the iPhone pairing-tab layout failure that was open at the
-start of this cycle is now fixed on `main` and the suite passes with no
-failures at all.
+```cmd
+python -m pytest -q tests/test_video_editing_studio.py tests/test_ai_brain_voice.py
+```
 
 ### Passed with mocks
 
@@ -105,7 +98,7 @@ failures at all.
 | The shot list shows duration, camera, lighting, sound and the English subtitle | `test_the_shot_list_shows_duration_camera_lighting_sound_and_subtitles` |
 | A plan without the cinematic fields is labelled partial | `test_a_plan_without_the_cinematic_fields_is_labelled_partial` |
 | One brief produces a different prompt for each engine | `test_one_brief_produces_a_prompt_for_both_engines` |
-| A one-prompt plan still answers for both engines | `test_the_prompt_sheet_of_a_partial_plan_still_answers` |
+| Missing Higgsfield prompts mark the plan partial and show a labeled fallback | `test_the_higgsfield_sheet_labels_a_missing_prompt` |
 | The editing checklist covers CapCut and DaVinci Resolve and every shot | `test_the_editing_checklist_covers_capcut_and_davinci_resolve` |
 | The checklist is built from the plan alone | `test_the_checklist_is_built_from_the_plan_alone` |
 | The copy button puts the chosen sheet on the clipboard | `test_the_copy_button_puts_the_sheet_on_the_clipboard` |
@@ -120,7 +113,7 @@ mocked:
 
 | Check | Test |
 |---|---|
-| The DaVinci handoff really contains the video, the captions and the checklist | `test_the_davinci_handoff_carries_the_video_the_captions_and_the_checklist` |
+| The DaVinci button chooses a folder, requests approval, and generates the handoff with FFmpeg | `test_the_davinci_button_exports_video_captions_and_checklist` |
 | The CapCut handoff still works | `test_the_capcut_handoff_still_works` |
 
 ### Blocked — needs the owner's machine
@@ -186,8 +179,10 @@ it.
 **Apply**
 
 ```cmd
-git checkout 954af152a263
-git apply develop\video-editing-studio\changes.patch
+git fetch origin development
+git show origin/development:develop/video-editing-studio/changes.patch > "%TEMP%\jarvis-video-studio.patch"
+git switch --detach 954af152a263
+git apply "%TEMP%\jarvis-video-studio.patch"
 python scripts\source_manifest.py
 python scripts\source_manifest.py --check
 ```
@@ -205,7 +200,7 @@ git revert <the commit that applied the patch>
 or, before committing:
 
 ```cmd
-git apply -R develop/video-editing-studio/changes.patch
+git apply -R "%TEMP%\jarvis-video-studio.patch"
 ```
 
 **Verify after applying**
@@ -215,7 +210,7 @@ python -m pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-Expected: `597 passed, 3 skipped`, and no failures.
+Install FFmpeg and ffprobe to exercise the media export tests.
 
 ## 9. What was not done
 
