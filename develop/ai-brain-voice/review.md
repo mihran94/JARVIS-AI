@@ -114,13 +114,18 @@ non-retryable; the classification keeps it.
 
 ## 5. Test results
 
-Run from a clean worktree at the baseline, with the patch applied:
+Run from a clean worktree at the baseline, with the patch applied and the
+manifest refreshed:
 
 ```
 574 passed, 3 skipped, 1 failed
 ```
 
-**Baseline before the patch:** `532 passed, 3 skipped, 1 failed`.
+**Baseline before the patch** (`47ac1e21`, measured on the same machine, same
+command): `534 passed, 3 skipped, 1 failed`.
+
+The 40 extra passing tests are the 40 new tests in
+`tests/test_ai_brain_voice.py`.
 
 The single failure is **the same failure that exists on the baseline** and is **not**
 caused by this work:
@@ -158,11 +163,13 @@ create a conflict for no gain. Merge PR #28 first and this test goes green.
 
 ### HUD reviewed at both widths
 
-Rendered in headless Chromium from the patched tree, no console errors, **no
-horizontal overflow at either width**:
+Rendered in headless Chromium from the patched tree. **No horizontal overflow at
+either width**, and no page errors. The only console entry is the expected
+`/eel.js` 404 in browser preview mode, which is how the page behaves when the Eel
+backend is not running:
 
-* desktop 1600 × 1000 — no overflow, no page errors
-* phone 390 × 844 — no overflow, no page errors
+* desktop 1600 × 1000 — no overflow
+* phone 390 × 844 — no overflow
 
 ### Blocked — needs the owner's machine
 
