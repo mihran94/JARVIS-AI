@@ -45,6 +45,7 @@ HELP = (
     "/settings — configure keys, microphone, saved projects and permissions\n"
     "/projects — list your saved coding projects\n"
     "/editors — list detected development editors\n"
+    "/draft GOAL — request a Python code draft (provider approval required)\n"
     "/project add — register a project folder in Settings\n"
     "/project NAME — show a saved project's status\n"
     "/project NAME open — open in its configured editor (approval required)\n"
@@ -93,6 +94,9 @@ def parse_command(text, projects=()):
         return Command("projects")
     if keyword == "/editors" and not remainder:
         return Command("editors")
+    if keyword == "/draft":
+        return Command("code_draft", detail=remainder) if remainder else Command(
+            "error", detail="Enter a coding goal: /draft GOAL")
     if keyword == "/new" and not remainder:
         return Command("new")
     if keyword in ("/project", "/projects"):
