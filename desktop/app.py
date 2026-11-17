@@ -846,6 +846,14 @@ class Window(QMainWindow):
                 text, '\n'.join(item['name'] + ': ' +
                                ('installed' if item['installed'] else 'setup needed')
                                for item in states))
+        elif command.kind == 'code_draft':
+            # Reuse existing MiniMax/Codex draft worker and explicit approval.
+            # A draft remains a preview until the owner reviews and saves it.
+            if self.omega is not None and self.omega.mode != 'Omega':
+                self.omega.switch('Omega')
+            self.open_section('Coding Assistant')
+            self.code_goal.setText(command.detail)
+            self.generate_code()
         elif command.kind == 'project_status':
             project = find_project(load_projects(self.store), command.target)
             if project is None:
