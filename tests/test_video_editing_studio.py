@@ -133,6 +133,7 @@ def test_the_tamil_brief_reaches_the_provider_unchanged(tmp_path, monkeypatch):
         assert "higgsfield_prompt" in body["messages"][0]["content"]
     finally:
         win.close()
+        win.deleteLater()
         app.processEvents()
 
 
@@ -152,6 +153,7 @@ def test_the_shot_list_shows_duration_camera_lighting_sound_and_subtitles(tmp_pa
         assert "PARTIAL PLAN" not in listing
     finally:
         win.close()
+        win.deleteLater()
         app.processEvents()
 
 
@@ -167,6 +169,7 @@ def test_a_plan_without_the_cinematic_fields_is_labelled_partial(tmp_path, monke
         assert "English: What happened?" in listing
     finally:
         win.close()
+        win.deleteLater()
         app.processEvents()
 
 
@@ -192,6 +195,7 @@ def test_one_brief_produces_a_prompt_for_both_engines(tmp_path, monkeypatch):
         assert flow.count("Shot ") == 4
     finally:
         win.close()
+        win.deleteLater()
         app.processEvents()
 
 
@@ -210,6 +214,7 @@ def test_the_higgsfield_sheet_labels_a_missing_prompt(tmp_path, monkeypatch, mak
         assert f"Google Flow fallback (adapt for Higgsfield): {draft['shots'][0]['flow_prompt']}" in sheet
     finally:
         win.close()
+        win.deleteLater()
         app.processEvents()
 
 
@@ -231,6 +236,7 @@ def test_the_editing_checklist_covers_capcut_and_davinci_resolve(tmp_path, monke
         assert "English subtitle: What happened?" in checklist
     finally:
         win.close()
+        win.deleteLater()
         app.processEvents()
 
 
@@ -258,6 +264,7 @@ def test_the_copy_button_puts_the_sheet_on_the_clipboard(tmp_path, monkeypatch):
         assert "DaVinci Resolve" in QApplication.clipboard().text()
     finally:
         win.close()
+        win.deleteLater()
         app.processEvents()
 
 
@@ -279,6 +286,7 @@ def test_browser_handoff_copies_only_the_selected_shots_matching_prompt(tmp_path
         assert opened == ['https://flow.google.com/', 'https://higgsfield.ai/ai-video']
     finally:
         win.close()
+        win.deleteLater()
         app.processEvents()
 
 
@@ -303,6 +311,7 @@ def test_browser_handoff_keeps_clipboard_when_the_matching_prompt_is_missing(tmp
         assert not win.video_tool_buttons['Google Flow'].isEnabled()
     finally:
         win.close()
+        win.deleteLater()
         app.processEvents()
 
 
@@ -378,6 +387,7 @@ def test_the_davinci_button_exports_video_captions_and_checklist(tmp_path, monke
             win.worker.wait()
             app.processEvents()
         win.close()
+        win.deleteLater()
         app.processEvents()
 
 
@@ -410,6 +420,7 @@ def test_the_video_page_offers_the_sheets_the_copy_and_the_resolve_export(tmp_pa
         assert not win.capcut_button.isEnabled()
     finally:
         win.close()
+        win.deleteLater()
         app.processEvents()
 
 
@@ -421,6 +432,7 @@ def test_the_sheet_list_is_the_same_shot_list_the_preview_shows(tmp_path, monkey
         assert win.video_sheet.toPlainText() == win.video_preview.toPlainText()
     finally:
         win.close()
+        win.deleteLater()
         app.processEvents()
 
 
@@ -441,4 +453,5 @@ def test_the_video_editor_page_stays_readable_at_narrow_desktop_size(tmp_path, m
         assert page.horizontalScrollBar().maximum() == 0
     finally:
         win.close()
+        win.deleteLater()
         app.processEvents()

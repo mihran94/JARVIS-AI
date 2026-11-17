@@ -115,6 +115,7 @@ def test_closing_the_window_during_a_task_stops_the_workers(window, monkeypatch)
     win.show()
     app.processEvents()
     win.close()
+    win.deleteLater()
     app.processEvents()
     # The window did not go away while a task was running.
     assert win.isVisible()
@@ -122,6 +123,7 @@ def test_closing_the_window_during_a_task_stops_the_workers(window, monkeypatch)
     assert win.close_when_done is True
     win.test_worker = None
     win.close()
+    win.deleteLater()
     app.processEvents()
 
 

@@ -33,6 +33,11 @@ def test_one_dashboard_has_orb_read_only_metrics_and_existing_pages(tmp_path):
         assert not window.bridge.listener.running
     finally:
         window.close()
+        window.deleteLater()
+        # The window is destroyed, not just closed: a closed window keeps its
+        # widgets and its OpenGL resources alive, and the next test then
+        # renders far more slowly than it should.
+        window.deleteLater()
         app.processEvents()
 
 
@@ -91,6 +96,7 @@ def test_hud_and_local_commands_use_the_same_counters(tmp_path, monkeypatch):
         assert outbound[-1]['content'] == 'Explain how timelines work'
     finally:
         window.close()
+        window.deleteLater()
         app.processEvents()
 
 
@@ -171,4 +177,5 @@ def test_hud_continuous_voice_waits_for_playback_before_listening_again(tmp_path
         release_input.set()
         release_audio.set()
         window.close()
+        window.deleteLater()
         app.processEvents()
