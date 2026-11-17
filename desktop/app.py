@@ -675,7 +675,10 @@ class Window(QMainWindow):
             self.statusBar().showMessage(
                 'Turn on Allow the microphone, then choose Talk once.', 15000)
             return
-        self.voice_panel.listen('once')
+        if self.voice_panel.listening:
+            self.voice_panel.cancel_listening()
+        else:
+            self.voice_panel.listen('once')
 
     def page(self, title, note=''):
         page = QWidget()
@@ -941,7 +944,11 @@ class Window(QMainWindow):
         }[state]
         self.orb.set_state(state)
         self.hud_orb.set_state(state)
+        if self.chat_launch is not None and not self.policy.stopped:
+            label = 'APPROVAL REQUIRED'
         self.orb_status.setText('JARVIS  /  ' + label)
+        self.chat_mic.setText('Cancel mic' if self.voice_panel.listening else 'Speak')
+        self.chat_mic.setEnabled(not self.policy.stopped and not self.voice_panel.playback_busy)
         self.hud_voice_status.setText(label)
         if self.omega is not None:
             self.omega.set_voice(state)
@@ -1046,6 +1053,7 @@ class Window(QMainWindow):
         approval_row = QHBoxLayout(self.chat_approval)
         approval_row.setContentsMargins(0, 0, 0, 0)
         self.chat_approval_label = QLabel()
+        self.chat_approval_label.setTextFormat(Qt.TextFormat.PlainText)
         self.chat_approval_label.setWordWrap(True)
         approval_row.addWidget(self.chat_approval_label, 1)
         self.chat_approve_button = self.button(
@@ -1076,7 +1084,11 @@ class Window(QMainWindow):
         self.prompt = QPlainTextEdit()
         self.prompt.setPlaceholderText(
             'என்ன செய்ய வேண்டும்? Tell me what you need… e.g. Jarvis, CapCut open pannu')
+        self.prompt.setAccessibleName('Message to JARVIS')
         self.prompt.setFixedHeight(78)
+        self.chat_send_shortcut = QShortcut(QKeySequence('Ctrl+Return'), self.prompt)
+        self.chat_send_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+        self.chat_send_shortcut.activated.connect(self.send)
         layout.addWidget(self.prompt)
         self.read_replies = QCheckBox('Read replies aloud')
         settings_layout.addWidget(self.read_replies)
@@ -1094,10 +1106,11 @@ class Window(QMainWindow):
             settings_actions, 'Review PC action', self.review_chat_pc_action)
         composer_actions = QHBoxLayout()
         layout.addLayout(composer_actions)
-        self.button(composer_actions, 'Speak', self.listen_to_user)
+        self.chat_mic = self.button(composer_actions, 'Speak', self.listen_to_user)
         composer_actions.addStretch()
         self.send_button = self.button(composer_actions, 'Ask JARVIS', self.send)
         self.send_button.setObjectName('primary')
+        self.send_button.setToolTip('Send message (Ctrl+Enter)')
         return page
 
     def bridge_page(self):
@@ -2314,7 +2327,7 @@ class Window(QMainWindow):
                     def operation():
                         if not QDesktopServices.openUrl(QUrl(url)):
                             raise ValueError(f'Could not open {name} in the browser.')
-                        return f'{name} opened in the browser.'
+                        return f'Browser launch requested for {name}.'
                 else:
                     path = editor_executable(name, self.store.get('editor_path:' + name, ''))
                     action = Action('launch_editor', str(path))
@@ -2326,11 +2339,13 @@ class Window(QMainWindow):
         self.show_local_system_reply(command, f'Open {name}? Approve or decline below.')
         self.chat_approval_label.setText(action.target)
         self.chat_approval.show()
+        self.refresh_voice_hud()
         return True
 
     def finish_chat_launch(self, approved):
         pending, self.chat_launch = self.chat_launch, None
         self.chat_approval.hide()
+        self.refresh_voice_hud()
         if pending is None:
             return
         name, ticket, action, operation = pending
@@ -2377,6 +2392,7 @@ class Window(QMainWindow):
         self.chat_approval_label.setText(
             f'{step.title()} in {task.app}: {excerpt!r}\nSHA-256: {digest}')
         self.chat_approval.show()
+        self.refresh_voice_hud()
         return True
 
     def schedule_desktop_task(self, task, ticket, digest):

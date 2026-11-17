@@ -56,3 +56,23 @@ def test_mark_lvii_chat_first_but_existing_pages_remain(tmp_path):
     finally:
         win.close()
         app.processEvents()
+
+
+def test_pending_app_approval_is_visible_in_mark_lvii_island(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    win = Window(tmp_path)
+    try:
+        win.enable_omega()
+        win.prompt.setPlainText('Jarvis, open Notepad')
+        win.send()
+        win.open_island()
+        assert 'Approval required' in win.omega.floating.handle.text()
+        assert win.omega.floating.assistant.text() == 'Review'
+        win.omega.floating.assistant.click()
+        assert win.omega.mode == 'Omega'
+        assert win.chat_approval.isVisible()
+        win.finish_chat_launch(False)
+        assert win.omega.floating.assistant.text() == 'Assistant'
+    finally:
+        win.close()
+        app.processEvents()
