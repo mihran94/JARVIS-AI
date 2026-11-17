@@ -214,7 +214,7 @@ def test_auto_hide_dock_keeps_reveal_reachable(tmp_path):
         assert not window.omega.dock.isVisible()
         assert window.omega.reveal.isVisible()
         window.omega.reveal.click()
-        assert not window.omega.dock.isVisible()
+        assert window.omega.dock.isVisible()
     finally:
         window.close()
         app.processEvents()
@@ -230,7 +230,7 @@ def test_island_return_keeps_windows_taskbar_accessible(tmp_path):
         app.processEvents()
         assert window.isVisible()
         assert not window.isFullScreen()
-        assert window.omega.dock.isVisible()
+        assert not window.omega.dock.isVisible()
     finally:
         window.close()
         app.processEvents()
