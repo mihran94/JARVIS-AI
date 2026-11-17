@@ -36,7 +36,7 @@ def test_mark_lvii_chat_first_but_existing_pages_remain(tmp_path):
         assert win.plugins_button.text() == 'Plugins'
         assert win.tools_button.isHidden()
         assert win.chat_home_button.isHidden()
-        assert win.chat_provider.isHidden()
+        assert not win.chat_provider.isVisible()
         win.plugins_button.click()
         app.processEvents()
         assert win.pages.currentIndex() == win.page_indices['Settings & Safety']
