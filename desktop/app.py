@@ -2273,8 +2273,9 @@ class Window(QMainWindow):
                             lambda: self.schedule_desktop_task(task, ticket, digest))
         excerpt = task.text[:160] + ('…' if len(task.text) > 160 else '')
         self.show_local_system_reply(command,
-            f'Review desktop task: {step} in {task.app}. Text preview: {excerpt!r}. '
-            'Approve once to start; the target is verified before typing.')
+            f'Review desktop task: {step} in {task.app}. '
+            'The full text to be inserted follows; approve only if correct:\n'
+            + task.text + '\nThe target window must be verified before typing.')
         self.chat_approval_label.setText(
             f'{step.title()} in {task.app}: {excerpt!r}\nSHA-256: {digest}')
         self.chat_approval.show()
