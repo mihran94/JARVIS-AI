@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from voice.consent import VoiceConsent
+from voice.echo_guard import EchoGuard
 from voice.errors import VoiceError, VoiceUnavailable
 from voice.wake import DEFAULT_PHRASE, WakePhraseMatcher
 from voice.windows_stt import WindowsSpeechRecognizer
@@ -192,6 +193,8 @@ class VoicePanel(QWidget):
         self.muted = False
         self.speaking = False
         self.pending_speech = ''
+        self.spoken_text = ''
+        self.echo_guard = EchoGuard()
         self.continuous = False
         self.discard_recognition = False
         self.wake_timer = QTimer(self)
@@ -408,6 +411,9 @@ class VoicePanel(QWidget):
         """Show what was heard and whether it was a wake call."""
         if self.sender() is not None and not self.accepts_recognition():
             return
+        if self.echo_guard.is_echo(text):
+            self.status('Ignored possible echo of JARVIS speech.')
+            return
         match = self.matcher.match(text)
         if match.is_wake_call:
             command = self.matcher.extract_command(text)
@@ -427,6 +433,9 @@ class VoicePanel(QWidget):
     def on_wake_call(self, transcript, command):
         """Show a wake call and offer it to the desktop as a draft only."""
         if not transcript or not self.accepts_recognition():
+            return
+        if self.echo_guard.is_echo(transcript):
+            self.status('Ignored possible echo of JARVIS speech.')
             return
         line = f'{transcript}\nWake call.'
         if command:
@@ -452,6 +461,7 @@ class VoicePanel(QWidget):
             self.status('A reply is already scheduled for playback.')
             return
         self.wake_timer.stop()
+        self.spoken_text = text
         if self.worker is not None and self.worker.isRunning():
             self.pending_speech = text
             self.cancel_listening()
@@ -466,6 +476,7 @@ class VoicePanel(QWidget):
     def on_playback_started(self):
         if self.sender() is self.speaker_worker and not self.muted and not self.consent.stopped:
             self.speaking = True
+            self.echo_guard.record(self.spoken_text)
             self.refresh()
 
     def on_playback_finished(self):
@@ -494,6 +505,7 @@ class VoicePanel(QWidget):
         self.discard_recognition = True
         self.stop_continuous()
         self.pending_speech = ''
+        self.echo_guard.reset()
         self.cancel_listening()
         if self.speaker_worker is not None and self.speaker_worker.isRunning():
             self.speaker_worker.requestInterruption()
