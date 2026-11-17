@@ -2,7 +2,7 @@
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QPushButton
 
 from desktop.app import Window
 from developer_studio.projects import SavedProject, save_projects
@@ -21,6 +21,9 @@ def test_main_toolbar_is_chat_island_settings_and_safety(tmp_path):
     try:
         assert window.island_button.isVisible()
         assert window.settings_button.isVisible()
+        assert not window.resume_button.isVisible()
+        assert any(button.text() == "EMERGENCY STOP" and button.isVisible()
+                   for button in window.findChildren(QPushButton))
         assert window.plugins_button.isHidden()
         assert window.tools_button.isHidden()
         assert window.pages.currentIndex() == window.page_indices["JARVIS Chat"]
