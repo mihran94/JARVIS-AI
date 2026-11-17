@@ -174,3 +174,31 @@ def test_floating_mic_shows_permissions_and_returns_voice_draft_to_chat(tmp_path
         assert window.worker is None
     finally:
         window.close()
+
+
+def test_chat_theme_paints_pages_and_keeps_navigation_reachable(tmp_path):
+    """Regression: the chat page must not render white-on-white or lose its tools."""
+    from desktop.omega_visuals import THEMES
+
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
+    try:
+        window.enable_omega()
+        app.processEvents()
+        assert window.pages.currentIndex() == window.page_indices['JARVIS Chat']
+        assert window.omega.dock.isVisible()
+        scroller = window.pages.widget(window.page_indices['JARVIS Chat'])
+        assert scroller.widget() is not None
+        for theme, (background, _panel, _edge, ink, *_rest) in THEMES.items():
+            window.omega.set_theme(theme)
+            sheet = window.styleSheet()
+            assert f'QWidget {{ background: {background}; color: {ink};' in sheet
+            assert (
+                f'QMainWindow, QStackedWidget, QScrollArea, '
+                f'QWidget#omegaFrame {{ background: {background}; }}'
+            ) in sheet
+        window.omega.show_dock(False)
+        assert window.omega.reveal.isVisible()
+    finally:
+        window.close()
+        app.processEvents()
