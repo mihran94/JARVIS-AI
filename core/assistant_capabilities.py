@@ -32,6 +32,8 @@ def summary(window):
         'Hands-free needs explicit consent and local Ollama.\n'
         f'PC control: restricted approved actions; '
         f'{"Emergency Stop active" if state["stopped"] else "owner approval required"}.\n'
+        'Conversation plans: up to six supported app launches with per-step approval, '
+        'optionally ending in Notepad typing; /cancel stops remaining steps.\n'
         'Coding: project-aware change reviews using configured Codex/MiniMax.\n'
         f'Android remote bridge: {"listening" if state["phone_bridge"] else "off"}; '
         'real hardware pairing still needs verification.\n'

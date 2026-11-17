@@ -82,3 +82,34 @@ provider, while the existing coding workflows retain their own providers.
 No new always-on cloud listening or general mouse/keyboard agent is introduced.
 Opening CapCut is not automatic video editing. Real Windows app launch, speech
 and editing acceptance still require the owner's PC.
+
+## Conversation plans
+
+A supported sequence can now stay in the chat:
+
+```
+Jarvis, open Calculator then open Notepad and type: My editing budget
+/do open Google Flow then open Higgsfield
+/cancel
+```
+
+JARVIS shows a numbered plan and prepares one inline approval at a time. Up to
+six known app-launch steps are accepted. The final step may use the existing
+Notepad typing action, which reviews the exact text and checks the foreground
+process before dispatching input. Everything after the first colon is literal
+text, including the word `then`; it never becomes another command. `then`,
+`and then`, `apram`, `பிறகு` and `அப்புறம்` join explicit launch instructions.
+Questions and negations do not create plans. An unsupported clause rejects the
+whole plan before any launch. A later setup or execution failure stops remaining
+steps; already opened applications are not closed or rolled back.
+
+Decline, `/cancel`, Emergency Stop, changing conversations or closing the window
+cancels remaining steps. Resume never replays a cancelled plan. Progress and the
+final status stay in the original conversation and task history. Persisted
+running task records become interrupted on restart; plans are not auto-resumed.
+
+These are local, user-authored plans using the existing approval gateway. They
+are not model-generated shell commands or general cross-application editing.
+A successful launch means the launch request was accepted, not that the app's
+content was inspected. Browser login, Flow/Higgsfield generation, CapCut editing,
+saved files and real Windows hardware still require separate verification.
