@@ -34,10 +34,12 @@ if errorlevel 1 (
 )
 echo.
 echo OFFLINE CHECKS COMPLETE. Real microphone, AI account, and phone pairing still need manual tests.
+if defined JARVIS_CHECK_HOME if exist "%JARVIS_CHECK_HOME%" rmdir /s /q "%JARVIS_CHECK_HOME%" >nul 2>&1
 pause
 exit /b 0
 :failed
 echo.
 echo LOCAL VERIFICATION FAILED. Copy the output above, excluding personal data, for diagnosis.
+if defined JARVIS_CHECK_HOME if exist "%JARVIS_CHECK_HOME%" rmdir /s /q "%JARVIS_CHECK_HOME%" >nul 2>&1
 pause
 exit /b 1
