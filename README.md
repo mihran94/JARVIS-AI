@@ -13,6 +13,7 @@ through existing approval-gated project workflows rather than being launched
 as another assistant:
 
 - `/projects` and `/editors` inspect saved project names and configured editors.
+- `/draft GOAL` prepares a reviewable Python code draft through the selected approved coding provider.
 - `/project add` opens the Settings folder picker; JARVIS does not scan your PC.
 - `/project NAME open` launches its saved editor only after the existing
   project-launch approval.
