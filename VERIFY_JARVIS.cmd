@@ -4,7 +4,8 @@ cd /d "%~dp0"
 set "PY=.venv\Scripts\python.exe"
 echo JARVIS AI - offline Windows verification
 echo Close any running JARVIS app before this check.
-echo This script never starts GitHub Actions, contacts AI providers, or reads API keys.
+echo This script does not trigger GitHub Actions or request an AI response.
+echo It uses a temporary data folder for the UI smoke test.
 echo.
 if not exist "%PY%" (
   echo FAIL: Python environment not found. Run setup.cmd first.
@@ -15,6 +16,10 @@ echo [1/3] Checking installed runtime and Qt imports...
 if errorlevel 1 goto failed
 echo.
 echo [2/3] Starting short offline UI smoke test...
+set "JARVIS_CHECK_HOME=%TEMP%\Jarvis-Offline-Check-%RANDOM%-%RANDOM%"
+mkdir "%JARVIS_CHECK_HOME%" >nul 2>&1
+if not exist "%JARVIS_CHECK_HOME%" goto failed
+set "LOCALAPPDATA=%JARVIS_CHECK_HOME%"
 set "QT_QPA_PLATFORM=offscreen"
 "%PY%" main.py --smoke-test
 if errorlevel 1 goto failed
