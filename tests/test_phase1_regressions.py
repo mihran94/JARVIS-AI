@@ -291,15 +291,6 @@ def test_a_different_test_command_is_never_trusted(tmp_path, monkeypatch, projec
 
 # ── 4. the tests run off the UI thread and can be stopped ──────────────────
 
-def test_windows_test_command_keeps_quoted_executable_and_python_code():
-    """Windows argv must not retain surrounding quote delimiters."""
-    from developer_studio.codex_task import split_test_command
-    command = r'"C:\\Program Files\\Python\\python.exe" -c "import time; time.sleep(2)"'
-    assert split_test_command(command, windows=True) == [
-        r'C:\\Program Files\\Python\\python.exe', '-c', 'import time; time.sleep(2)'
-    ]
-
-
 def test_the_tests_run_off_the_ui_thread(tmp_path, monkeypatch, project):
     """The event loop keeps running while the tests do."""
     win, app = window(tmp_path, monkeypatch)

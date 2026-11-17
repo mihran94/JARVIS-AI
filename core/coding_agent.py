@@ -26,6 +26,7 @@ import json
 from pathlib import Path
 import re
 
+from core.protection import SKIP_DIRS, Protection
 from core.updates import UpdateError, validate_update_path
 from providers.chat import ProviderError, stream_chat
 
@@ -130,8 +131,12 @@ def apply_files(worktree, files: dict) -> list[str]:
 
     A path that would leave the worktree is refused, and so is a path that
     points at something that is not a regular file.
+
+    A file that holds secrets, or that the project's `.gitignore` keeps out,
+    is refused as well. The provider proposes; JARVIS decides.
     """
     root = Path(worktree).resolve()
+    protection = Protection(root)
     written = []
     for name, content in files.items():
         try:
@@ -144,6 +149,11 @@ def apply_files(worktree, files: dict) -> list[str]:
             raise CodingAgentError(f'The coding provider proposed a reserved path: {name}')
         if relative.is_absolute() or '..' in relative.parts:
             raise CodingAgentError(f'The coding provider asked for a file outside the project: {name}')
+        relative_name = str(relative).replace('\\', '/')
+        if protection.blocked(relative_name):
+            raise CodingAgentError(
+                f'The coding provider asked to change a protected file: {name} — '
+                + protection.reason(relative_name))
         target = (root / relative).resolve()
         if not target.is_relative_to(root):
             raise CodingAgentError(f'The coding provider asked for a file outside the project: {name}')
@@ -160,15 +170,21 @@ def project_context(worktree, limit: int = 120_000) -> str:
 
     Only text files are read, and only up to a limit, so a large project
     cannot fill the request.
+
+    Files that hold secrets, and files the project's own `.gitignore` keeps
+    out, are left out completely. A key must never travel to a provider.
     """
     root = Path(worktree)
+    protection = Protection(root)
     parts = []
     used = 0
     for path in sorted(root.rglob('*')):
         if not path.is_file() or path.is_symlink():
             continue
-        if any(part in {'.git', '__pycache__', '.venv', 'node_modules', '.updates'}
-               for part in path.parts):
+        if any(part in SKIP_DIRS for part in path.parts):
+            continue
+        relative = str(path.relative_to(root)).replace('\\', '/')
+        if protection.blocked(relative):
             continue
         if path.suffix.lower() not in {'.py', '.md', '.txt', '.json', '.toml', '.cfg', '.ini'}:
             continue
@@ -176,7 +192,7 @@ def project_context(worktree, limit: int = 120_000) -> str:
             content = path.read_text('utf-8')
         except (OSError, UnicodeDecodeError):
             continue
-        block = f'--- {path.relative_to(root)}\n{content}\n'
+        block = f'--- {relative}\n{content}\n'
         if used + len(block) > limit:
             break
         used += len(block)

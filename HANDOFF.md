@@ -1,6 +1,6 @@
 # JARVIS OMEGA — handoff
 
-**Cycle:** Windows install and verification, and the Personal Codex Assistant review.
+**Cycle:** Windows install and verification, the Personal Codex Assistant review, and the port of the Mark LVI source that was supplied.
 **Branch:** `feature/phase1-omega-verification-20261117`
 **Baseline (starting commit):** `7a1ec8d` — *Merge JARVIS Omega desktop presentation (#29)*, the `main` at the start of the cycle.
 **Current `main`:** `8450f51` — *Merge pull request #30 from mihran94/feature/automatic-source-updates*. PR #30 was merged into `main` **by the owner, not by this cycle**, and the branch now contains it. This branch merges that `main` in; see section 1.1.
@@ -96,12 +96,89 @@ never reaches a dialog.
 
 ---
 
+## 2.4 What came from the Mark LVI source
+
+The owner supplied `Mark-LVII-main.zip`. It is a full alternative assistant
+(96 Python files, about 52,000 lines, PyQt6, its own asyncio voice session).
+It was **inspected**, not copied: the whole archive is a second application
+with a second daemon, a second GUI and its own config file, and the handoff
+says to integrate the useful modules as optional modules, not as a second
+background daemon.
+
+Two things were worth porting, and both fill a real gap in JARVIS.
+
+### 2.4.1 `core/protection.py` — the files a coding agent may not touch
+
+Ported from the archive's `core/code_checks.py`. Its own comment explains
+why:
+
+> *"Learned from a real job: asked to add a plugin, the model also 'edited'
+> config/api_keys.json to switch the plugin on — rewrote the whole file from
+> memory, dropped the API keys and half the settings. Worse, that file had
+> been read into the project context, so the keys in it went to the model
+> with every request."*
+
+That is exactly what JARVIS's own coding agent could do: `project_context()`
+read every `.json` in the project into the request, so a `config/api_keys.json`
+would have gone to MiniMax with the code.
+
+The rule now lives in one place:
+
+* a file that looks like a secret by name (`.env`, `*.pem`, `*secret*.json`,
+  `*token*.yaml`, …) is off limits;
+* a file the project's own `.gitignore` keeps out is off limits.
+
+It is applied in four places:
+
+| Where | What it does |
+|---|---|
+| `core/coding_agent.py` → `project_context()` | those files never enter the request, so a key never travels to a provider |
+| `core/coding_agent.py` → `apply_files()` | a proposed change may not write one — the provider proposes, JARVIS decides |
+| `developer_studio/codex_task.py` → `build_prompt()` | the Codex prompt names the files that are off limits |
+| `developer_studio/codex_task.py` → `_collect_diff()` | a change to one is put back from `HEAD` and left out of the diff, so the review screen never shows a key |
+
+`dropped_data()` came with it: an edit that silently drops keys from a
+settings file is reported instead of being applied quietly.
+
+Source code called `api_keys.py` is still editable — only DATA files with
+those names are treated as secrets.
+
+### 2.4.2 GPU load and CPU temperature
+
+Ported from the archive's `actions/system_monitor.py`. JARVIS's system
+readings had CPU, RAM and disk; they had no GPU load and no temperature.
+
+The readings come from NVML through `ctypes` and from `psutil`, so no
+subprocess is started. A value that cannot be read stays **Unavailable** —
+the same honesty the rest of the HUD keeps.
+
+### 2.4.3 What was NOT taken
+
+The archive also contains a second GUI, its own asyncio voice session, its
+own task engine, its own plugin loader, a Windows Startup VBS, a wake-word
+listener and a second microphone listener. None of it was copied: it would
+be a second daemon next to JARVIS, it would fight JARVIS for the microphone
+and the TTS, and the handoff forbids exactly that. The archive stays where
+it was, outside the repository.
+
+Two things the handoff asked for were found **already done** in JARVIS, so
+nothing was ported for them: the news briefing already reads real regional
+RSS feeds with parsing tests (`news/briefing.py`), and the permission model
+is already the approval gateway.
+
+---
+
 ## 3. Changed files in this cycle
 
 | File | Change |
 |---|---|
 | `desktop/app.py` | `closeEvent` waits for the coding and test workers; `on_coding_finished` and `on_test_finished` close the window when the last worker is gone; `open_website_project` goes through the approval gateway; `open_video_tool` documented as the preserved one-click handoff. |
 | `tests/test_phase1_gap_fixes.py` | **new** — 6 tests for the gaps above. |
+| `core/protection.py` | **new** — the secret and `.gitignore` protection, ported from the Mark LVI source. |
+| `core/coding_agent.py` | The project context leaves protected files out; a proposed change may not write one. |
+| `developer_studio/codex_task.py` | The prompt names the off-limits files; a change to one is put back and left out of the diff. |
+| `desktop/system_metrics.py` | The GPU load and the CPU temperature, read with no subprocess. |
+| `tests/test_mark_lvi_ports.py` | **new** — 17 tests for the ports. |
 | `docs/SOURCE_INTEGRITY.sha256` | regenerated for the tree. |
 | `HANDOFF.md` | **new** — this file. |
 
@@ -116,14 +193,15 @@ The reviewable diff against the starting commit is
 ```
 $ cd /workspace/work/wt-omega-verify
 $ QT_QPA_PLATFORM=offscreen python -m pytest -q
-709 passed, 3 skipped, 12 subtests passed in 220.68s
+726 passed, 3 skipped, 12 subtests passed in 220.06s
 ```
 
 | Run | Result |
 |---|---|
 | Baseline of the applied tree, before the fixes | 657 passed, 3 skipped |
 | After the fixes, before `main` moved | 663 passed, 3 skipped, 0 failed (+6 new tests) |
-| After merging the new `main` (PR #30 and its follow-up) | **709 passed, 3 skipped, 0 failed** |
+| After merging the new `main` (PR #30 and its follow-up) | 709 passed, 3 skipped, 0 failed |
+| After the Mark LVI ports | **726 passed, 3 skipped, 0 failed** (+17 new tests) |
 
 Targeted runs used as evidence:
 
@@ -157,13 +235,14 @@ The six new tests, and what each one holds in place:
 | # | Check | Result | Evidence |
 |---|---|---|---|
 | 1 | Startup smoke test (Omega modes, dock, approval, stop) | **PASS** | `tests/test_omega.py` — 6 passed, including `test_modes_return_to_same_window_and_keep_saved_preferences`, `test_live_activity_approval_and_emergency_stop` |
-| 2 | Full Python regression suite | **PASS** | 709 passed, 3 skipped, 0 failed |
+| 2 | Full Python regression suite | **PASS** | 726 passed, 3 skipped, 0 failed |
 | 3 | Source integrity manifest | **PASS** | `scripts/source_manifest.py --check` → *matches the tree*; `tests/test_source_manifest.py` — 2 passed |
 | 4 | CapCut / DaVinci Resolve / After Effects launch commands preserved | **PASS** | `test_the_software_launch_commands_still_work[CapCut|DaVinci Resolve|After Effects]` — 3 passed |
 | 5 | Approval gate on the task card | **PASS** | `test_every_task_card_action_goes_through_the_approval` (phase 1 regressions) |
 | 6 | Emergency Stop cancels the task and Resume does not restart it | **PASS** | `test_stop_cancels_the_task_and_resume_does_not_restart_it` |
 | 7 | Tests run off the interface thread | **PASS** | `test_the_test_command_runs_off_the_interface_thread` (new) + the Phase 1 regression test |
 | 8 | Android pairing protocol, revocation and reconnection (server side) | **PASS** | 61 passed across the five bridge test modules |
+| 8b | A key never reaches a provider, and never the review screen | **PASS** | `tests/test_mark_lvi_ports.py` — 17 passed |
 | 9 | Windows release candidate build | **BLOCKED** | No Windows in this environment: `wine`, `makensis`, `iscc` all absent; the build is a Windows-only step. **No artifact and no checksum are given, because no build succeeded.** |
 | 10 | Clean install → launch → restart → uninstall on Windows 10/11 | **BLOCKED** | Needs a real Windows PC and the installer from check 9. |
 | 11 | Microphone permission prompt | **BLOCKED** | No microphone and no audio stack here. The permission logic is covered by `tests/test_native_speech_contract.py` and the Omega floating-mic test, which report PASS for the *logic*, not the hardware. |
@@ -207,12 +286,17 @@ On a Windows 10/11 PC, with the release candidate built there:
 5. Press **Emergency Stop** during a coding task and confirm the Codex CLI
    and the test process really end, and that closing the window during a
    task waits instead of leaving the process running.
-6. Start the Video Studio handoff and confirm the browser opens with the
+6. Give a project that has a `.env` or a `config/api_keys.json` to the
+   coding assistant, and confirm the key is neither sent to the provider nor
+   shown in the diff.
+7. Check the HUD's GPU and CPU temperature lines on the real machine. They
+   read **Unavailable** here because this sandbox has no GPU and no sensor.
+8. Start the Video Studio handoff and confirm the browser opens with the
    prompt on the clipboard.
 
 On an Android phone, with the APK built there:
 
-7. Install the debug APK, pair it, and repeat check 4.
+9. Install the debug APK, pair it, and repeat check 4.
 
 ---
 

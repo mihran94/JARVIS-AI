@@ -20,7 +20,6 @@ import json
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 import subprocess
-import sys
 import time
 
 import pytest
@@ -394,7 +393,7 @@ def test_a_configured_launcher_is_remembered_and_reports_its_capabilities(tmp_pa
     win, app = window(tmp_path, monkeypatch)
     try:
         win.launcher_name.setText('Fleet')
-        win.launcher_command.setText(sys.executable)
+        win.launcher_command.setText('/usr/bin/true')
         win.add_launcher()
         from developer_studio.projects import configured_launchers
         launchers = configured_launchers(win.store)

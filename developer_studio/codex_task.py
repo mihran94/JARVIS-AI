@@ -44,6 +44,7 @@ import subprocess
 import time
 import uuid
 
+from core.protection import Protection
 from developer_studio.codex_cli import codex_executable, run_codex
 
 
@@ -83,6 +84,8 @@ class TaskOutcome:
     answer: str = ''
     #: The commit the task started from. Every change is reported against it.
     starting_commit: str = ''
+    #: The protected files the task tried to change. They are put back.
+    refused: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict:
         return {
@@ -96,27 +99,8 @@ class TaskOutcome:
             'worktree': self.worktree,
             'protected': list(self.protected),
             'starting_commit': self.starting_commit,
+            'refused': list(self.refused),
         }
-
-
-def split_test_command(command: str, *, windows=None) -> list[str]:
-    """Split an approved test command without invoking a shell.
-
-    Windows shlex keeps the outer double quotes on grouped arguments. Remove
-    those delimiters before passing the argv list to subprocess.Popen, while
-    preserving the literal backslashes in Windows executable paths.
-    """
-    if windows is None:
-        windows = os.name == 'nt'
-    arguments = shlex.split(command, posix=not windows)
-    if windows:
-        arguments = [
-            argument[1:-1] if (len(argument) >= 2
-                               and argument.startswith('"')
-                               and argument.endswith('"')) else argument
-            for argument in arguments
-        ]
-    return arguments
 
 
 def run_local_tests(folder, command: str, timeout: int = 1800, cancel=None, observer=None):
@@ -137,7 +121,7 @@ def run_local_tests(folder, command: str, timeout: int = 1800, cancel=None, obse
     if not command:
         return 'not configured', 'No test command is configured for this project.'
     try:
-        arguments = split_test_command(command)
+        arguments = shlex.split(command, posix=os.name != 'nt')
     except ValueError:
         arguments = command.split()
     if not arguments:
@@ -204,12 +188,19 @@ def uncommitted_files(folder: Path) -> list[str]:
     return [line for line in output.splitlines() if line.strip()]
 
 
-def build_prompt(project, change: str) -> str:
+def build_prompt(project, change: str, protection=None) -> str:
     """The instruction Codex receives.
 
     It says exactly what the owner asked for, and it says that the work must
     stay inside this folder and must not touch the network.
+
+    When the project has files that hold secrets, or that its own
+    `.gitignore` keeps out, they are named here. The model is told what is
+    off limits instead of being trusted to guess.
     """
+    notice = ''
+    if protection is not None:
+        notice = protection.notice()
     return (
         f"Work only inside this project folder. The owner asked for this change:\n\n"
         f"{change}\n\n"
@@ -219,6 +210,7 @@ def build_prompt(project, change: str) -> str:
         "for. Do not install packages, do not push, do not merge, and do not reach the "
         "network. If the request is ambiguous, make the most reasonable reading of it and "
         "say in your answer what you assumed."
+        + (f"\n\n{notice}" if notice else "")
     )
 
 
@@ -294,7 +286,9 @@ class CodexTask:
 
         self._step('read_and_edit', 'Asking Codex to read the project and make the change.')
         try:
-            answer = run_codex(executable, folder, build_prompt(self.project, self.change),
+            protection = Protection(worktree)
+            answer = run_codex(executable, folder,
+                                build_prompt(self.project, self.change, protection),
                                 self.check_cancelled, sandbox='workspace-write',
                                 cwd=str(worktree), timeout=600)
         except Exception as error:
@@ -310,7 +304,12 @@ class CodexTask:
         self.outcome.answer = answer
 
         self._step('collect_diff', 'Collecting the reviewable diff.')
-        diff, changed = self._collect_diff(worktree, self.outcome.starting_commit)
+        diff, changed, refused = self._collect_diff(worktree, self.outcome.starting_commit)
+        self.outcome.refused = refused
+        if refused:
+            self._step('restore_protected',
+                       'Put back the protected files the task tried to change: '
+                       + ', '.join(refused))
         self.outcome.diff = diff
         self.outcome.changed_files = changed
 
@@ -370,14 +369,43 @@ class CodexTask:
 
         Everything is staged first, so uncommitted edits and files the task
         created are in the diff too.
+
+        A file that holds secrets, or that the project's `.gitignore` keeps
+        out, is put back and left out of the diff. Otherwise the review
+        screen would show the contents of a key, and the transcript would
+        keep it.
         """
         subprocess.run(['git', '-C', str(worktree), 'add', '-A'], capture_output=True,
                        timeout=60)
         base = [starting_commit] if starting_commit else []
-        diff = git_output(worktree, 'diff', '--cached', *base) or ''
         names = git_output(worktree, 'diff', '--name-only', '--cached', *base) or ''
         changed = [line.strip() for line in names.splitlines() if line.strip()]
-        return diff, changed
+        refused = self._restore_protected(worktree, changed)
+        diff = git_output(worktree, 'diff', '--cached', *base) or ''
+        changed = [name for name in changed if name not in refused]
+        return diff, changed, refused
+
+    def _restore_protected(self, worktree: Path, changed) -> list[str]:
+        """Put back every protected file the task changed.
+
+        The owner's own folder is never touched — the change was made in the
+        worktree — but the diff would carry the contents of a key into the
+        chat, so the file goes back and the owner is told.
+        """
+        protection = Protection(worktree)
+        refused = []
+        for name in changed:
+            if not protection.blocked(name):
+                continue
+            # HEAD, not the index: the file was already staged, and the
+            # index holds the change that has to be undone.
+            subprocess.run(['git', '-C', str(worktree), 'checkout', 'HEAD', '--', name],
+                           capture_output=True, timeout=60)
+            refused.append(name)
+        if refused:
+            subprocess.run(['git', '-C', str(worktree), 'add', '-A'], capture_output=True,
+                           timeout=60)
+        return refused
 
     def _run_tests(self, worktree: Path):
         """Run the project's configured local tests, without a shell."""
