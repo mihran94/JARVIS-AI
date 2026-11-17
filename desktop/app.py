@@ -3770,7 +3770,15 @@ class Window(QMainWindow):
                 if self.read_replies.isChecked() and not self.policy.stopped:
                     self.voice_panel.speak_response(text[:600])
             else:
-                self.transcript.appendPlainText('\n[' + status.upper() + '] ' + text)
+                # A transient failure must stay visible when chat is reopened.
+                # Never persist raw provider error details into conversation history.
+                notice = ('Request cancelled. Nothing will restart automatically.'
+                          if status == 'cancelled' else
+                          'AI request failed. Check the selected AI provider and connection, then retry.')
+                self.store.message(self.session, 'system', '[' + status.upper() + '] ' + notice)
+                self.render_chat()
+                if status != 'cancelled':
+                    self.transcript.appendPlainText('\nAttempt details: ' + text)
             self.refresh_archives()
         else:
             timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
