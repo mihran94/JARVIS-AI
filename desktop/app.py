@@ -3770,14 +3770,17 @@ class Window(QMainWindow):
                 if self.read_replies.isChecked() and not self.policy.stopped:
                     self.voice_panel.speak_response(text[:600])
             else:
-                # A transient failure must stay visible when chat is reopened.
-                # Never persist raw provider error details into conversation history.
-                notice = ('Request cancelled. Nothing will restart automatically.'
-                          if status == 'cancelled' else
-                          'AI request failed. Check the selected AI provider and connection, then retry.')
-                self.store.message(self.session, 'system', '[' + status.upper() + '] ' + notice)
-                self.render_chat()
-                if status != 'cancelled':
+                if status == 'cancelled':
+                    # A late reply from an invalidated ticket must never be
+                    # persisted after Stop/Resume or appear in a later chat.
+                    self.transcript.appendPlainText('\n[CANCELLED] Request cancelled.')
+                else:
+                    # Keep a generic failure notice across app restarts, but
+                    # do not persist potentially sensitive provider diagnostics.
+                    notice = ('AI request failed. Check the selected AI provider '
+                              'and connection, then retry.')
+                    self.store.message(self.session, 'system', '[FAILED] ' + notice)
+                    self.render_chat()
                     self.transcript.appendPlainText('\nAttempt details: ' + text)
             self.refresh_archives()
         else:
