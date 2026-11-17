@@ -162,11 +162,18 @@ changes. Nothing is closed and nothing is lost.
 
 ```
 $ python -m pytest -q
-624 passed, 3 skipped, 12 subtests passed
+624 passed, 3 skipped, 12 subtests passed in 121.91s
 ```
 
-The branch had **589 passed, 3 skipped** before this work (its own PR body
-says so). Now: **624 passed, 3 skipped, 0 failed**.
+The branch had **589 passed, 3 skipped** before this work, measured the same
+way on the base commit `458b013`. Now: **624 passed, 3 skipped, 0 failed** —
+35 new tests, no failures, no new skips.
+
+Both runs end with a segmentation fault at interpreter shutdown, after the
+results are printed. That happens on the base commit too, so it is the
+pre-existing offscreen Qt teardown crash and not something this work
+introduced. The test results themselves are complete and green in both
+runs.
 
 New and changed tests, by requirement:
 
