@@ -186,7 +186,8 @@ def test_chat_theme_paints_pages_and_keeps_navigation_reachable(tmp_path):
         window.enable_omega()
         app.processEvents()
         assert window.pages.currentIndex() == window.page_indices['JARVIS Chat']
-        assert window.omega.dock.isVisible()
+        assert not window.omega.dock.isVisible()
+        assert not window.omega.reveal.isVisible()
         scroller = window.pages.widget(window.page_indices['JARVIS Chat'])
         assert scroller.widget() is not None
         for theme, (background, _panel, _edge, ink, *_rest) in THEMES.items():
@@ -208,6 +209,8 @@ def test_auto_hide_dock_keeps_reveal_reachable(tmp_path):
     window = Window(tmp_path)
     try:
         window.store.set('omega:auto_hide', True)
+        # Legacy dock mode stays available when the owner explicitly wants it.
+        window.store.set('omega:command_first', False)
         window.enable_omega()
         app.processEvents()
         assert not window.omega.dock.isVisible()
@@ -229,7 +232,7 @@ def test_island_return_keeps_windows_taskbar_accessible(tmp_path):
         app.processEvents()
         assert window.isVisible()
         assert not window.isFullScreen()
-        assert window.omega.dock.isVisible()
+        assert not window.omega.dock.isVisible()
     finally:
         window.close()
         app.processEvents()

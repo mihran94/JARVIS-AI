@@ -65,9 +65,10 @@ from automation.inspection import inspect_windows
 from developer_studio.workspace import Workspace
 from developer_studio.codex_cli import codex_executable, run_codex
 from developer_studio.editors import (
-    CAPABILITY_LABELS, editor_from_text, editor_status, editor_names, open_project_in_editor,
+    CAPABILITY_LABELS, all_statuses, editor_from_text, editor_status, editor_names, open_project_in_editor,
 )
-from developer_studio.intents import parse_coding_request
+from developer_studio.intents import CodingRequest, parse_coding_request
+from developer_studio.commands import HELP as COMMAND_HELP, parse_command
 from developer_studio.projects import (
     SavedProject, assistant_language, configured_launchers, find_project, load_projects,
     project_status, routine_allowed, save_projects, set_assistant_language,
@@ -324,6 +325,7 @@ class Window(QMainWindow):
         self.resume_button = QPushButton('Resume')
         self.resume_button.clicked.connect(self.resume)
         self.resume_button.setEnabled(False)
+        self.resume_button.hide()
         header.addWidget(self.resume_button)
         stop = QPushButton('EMERGENCY STOP')
         stop.setObjectName('stop')
@@ -338,9 +340,11 @@ class Window(QMainWindow):
         self.tools_button.setCheckable(True)
         self.tools_button.hide()
         navigation.addWidget(self.tools_button)
+        self.island_button = self.button(navigation, 'Island', self.open_island)
         self.settings_button = self.button(
             navigation, 'Settings', lambda: self.open_section('Settings & Safety'))
         self.plugins_button = self.button(navigation, 'Plugins', self.open_plugins)
+        self.plugins_button.hide()  # The full plugin manager lives in Settings.
         navigation.addStretch()
         outer.addLayout(navigation)
         body = QHBoxLayout()
@@ -458,6 +462,12 @@ class Window(QMainWindow):
             # The saved-project table lives in Settings, so it is refreshed
             # whenever the owner comes back to it.
             self.refresh_projects_page()
+
+    def open_island(self):
+        """The only optional presentation mode on the main assistant toolbar."""
+        if self.omega is None:
+            self.enable_omega()
+        self.omega.switch('Island')
 
     def update_assistant_navigation(self, _index=None):
         """Keep the assistant central; reveal Back only on advanced pages."""
@@ -813,6 +823,77 @@ class Window(QMainWindow):
             if percent is not None:
                 meter.setValue(round(percent * 10))
 
+    def handle_developer_command(self, text):
+        """Dispatch only known commands through existing approval-gated features."""
+        command = parse_command(text, load_projects(self.store))
+        if command is None:
+            return False
+        if command.kind == 'error':
+            self.show_local_system_reply(text, command.detail)
+        elif command.kind == 'help':
+            self.show_local_system_reply(text, COMMAND_HELP)
+        elif command.kind == 'projects':
+            projects = load_projects(self.store)
+            lines = [f'{item.name} — {item.editor} — ' +
+                     ('folder found' if item.exists else 'folder missing')
+                     for item in projects]
+            self.show_local_system_reply(
+                text, '\n'.join(lines) if lines else
+                'No saved projects. Use /project add and choose a folder in Settings.')
+        elif command.kind == 'editors':
+            states = all_statuses(configured_launchers(self.store))
+            self.show_local_system_reply(
+                text, '\n'.join(item['name'] + ': ' +
+                               ('installed' if item['installed'] else 'setup needed')
+                               for item in states))
+        elif command.kind == 'code_draft':
+            # Reuse existing MiniMax/Codex draft worker and explicit approval.
+            # A draft remains a preview until the owner reviews and saves it.
+            if self.omega is not None and self.omega.mode != 'Omega':
+                self.omega.switch('Omega')
+            self.open_section('Coding Assistant')
+            self.code_goal.setText(command.detail)
+            self.generate_code()
+        elif command.kind == 'project_status':
+            project = find_project(load_projects(self.store), command.target)
+            if project is None:
+                self.show_local_system_reply(text, 'Project is no longer saved.')
+            else:
+                self.show_local_system_reply(
+                    text, f'{project.name} — {project.editor} — ' +
+                    ('folder found' if project.exists else 'folder missing') +
+                    f' — tests: {project.test_command or "not configured"}')
+        elif command.kind == 'project_add':
+            if self.omega is not None and self.omega.mode != 'Omega':
+                self.omega.switch('Omega')
+            self.open_section('Settings & Safety')
+            self.add_project()  # Owner selects the folder; never scan the disk.
+        elif command.kind in ('project_open', 'project_test', 'project_fix'):
+            request = CodingRequest(
+                project=command.target,
+                change=command.detail,
+                open_project=command.kind == 'project_open',
+                run_tests=command.kind == 'project_test',
+                make_change=command.kind == 'project_fix',
+                mentions_work=True,
+            )
+            if self.omega is not None and self.omega.mode != 'Omega':
+                self.omega.switch('Omega')
+            self.open_section('JARVIS Chat')
+            self.start_coding_task(request, text)  # Existing one-use approvals.
+        elif command.kind == 'new':
+            self.new_chat()
+        elif command.kind == 'island':
+            self.show_local_system_reply(
+                text, 'Island ready. Expand to send a command; Esc returns to the main assistant.')
+            self.open_island()
+        elif command.kind == 'page':
+            if self.omega is not None and self.omega.mode != 'Omega':
+                self.omega.switch('Omega')
+            self.open_section(command.target)
+            self.show_local_system_reply(text, f'Opened {command.target}.')
+        return True
+
     def local_system_reply(self, text):
         command = ' '.join(text.casefold().split()).strip('?!.,')
         if command in ('capabilities', '/capabilities', 'what can you do',
@@ -922,14 +1003,11 @@ class Window(QMainWindow):
         self.chat_provider.currentTextChanged.connect(self.on_chat_provider_changed)
         self.new_chat_button = QPushButton('New chat')
         self.new_chat_button.clicked.connect(self.new_chat)
-        options = QCheckBox('Chat options')
-        layout.addWidget(options)
-        settings = QWidget()
-        settings_layout = QVBoxLayout(settings)
+        # One command bar and transcript: all advanced chat controls are in
+        # Settings, not another set of visible options beside the assistant.
+        self.chat_settings_panel = QWidget()
+        settings_layout = QVBoxLayout(self.chat_settings_panel)
         settings_layout.setContentsMargins(0, 0, 0, 0)
-        settings.hide()
-        options.toggled.connect(settings.setVisible)
-        layout.addWidget(settings)
         settings_layout.addWidget(QLabel('AI provider'))
         settings_layout.addWidget(self.chat_provider)
         settings_layout.addWidget(self.new_chat_button)
@@ -994,7 +1072,7 @@ class Window(QMainWindow):
         layout.addWidget(self.chat_task_card)
         self.prompt = QPlainTextEdit()
         self.prompt.setPlaceholderText(
-            'Ask JARVIS… e.g. Open CapCut, or name a saved project and what to change')
+            'Ask JARVIS or type /help for coding, project and PC commands…')
         self.prompt.setFixedHeight(78)
         layout.addWidget(self.prompt)
         self.read_replies = QCheckBox('Read replies aloud')
@@ -2104,8 +2182,17 @@ class Window(QMainWindow):
 
     def permissions_page(self):
         page, layout = self.page('Settings and safety',
-            'Only essential tools are in the main navigation. '
+            'Commands run JARVIS. Only Settings and Island appear in the main toolbar. '
             'Every computer action needs your explicit approval.')
+        assistant_group = QGroupBox('Chat, provider and voice preferences')
+        assistant_layout = QVBoxLayout(assistant_group)
+        assistant_layout.addWidget(self.chat_settings_panel)
+        layout.addWidget(assistant_group)
+        command_help = QLabel(
+            'Use /help in the main command bar to see project, editor, '
+            'test and tool commands. Saved project folders are configured below.')
+        command_help.setWordWrap(True)
+        layout.addWidget(command_help)
         self.button(layout, 'Updates & rollback', lambda: open_updates(self))
         self.button(layout, 'Review prepared changes', lambda: self.open_section('Review changes'))
         background = QHBoxLayout()
@@ -3597,6 +3684,9 @@ class Window(QMainWindow):
         if self.policy.stopped or self.worker is not None or not self.prompt.toPlainText().strip():
             return
         text = self.prompt.toPlainText().strip()
+        if self.handle_developer_command(text):
+            self.prompt.clear()
+            return
         use_notes = allow_notes and self.use_notes.isChecked()
         if allow_notes:
             self.use_notes.setChecked(False)
@@ -3872,6 +3962,7 @@ class Window(QMainWindow):
             self.worker.requestInterruption()
         self.state.setText('● STOPPED')
         self.resume_button.setEnabled(True)
+        self.resume_button.show()
         self.send_button.setEnabled(False)
         self.review_pc_action_button.setEnabled(False)
         ident = self.store.task('emergency_stop', 'All outstanding approvals invalidated')
@@ -3887,6 +3978,7 @@ class Window(QMainWindow):
         self.refresh_draft_buttons()
         self.set_ai_visual_state('idle' if self.worker is None else 'thinking')
         self.resume_button.setEnabled(False)
+        self.resume_button.hide()
         self.state.setText('● READY · MANUAL APPROVAL')
         if self.worker is None:
             for button in (self.send_button, self.new_chat_button, self.clear_button,

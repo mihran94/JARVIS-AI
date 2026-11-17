@@ -1,5 +1,5 @@
 """Prevent the vertically compressed Chat and Phone Remote layouts."""
-from PySide6.QtWidgets import QApplication, QCheckBox, QTabWidget
+from PySide6.QtWidgets import QApplication, QTabWidget
 
 from desktop.app import STYLE, Window
 
@@ -18,12 +18,14 @@ def test_chat_and_phone_stay_readable_at_narrow_desktop_size(tmp_path):
         assert window.transcript.height() >= 150
         assert window.send_button.isVisible()
         assert not window.backup_provider.isVisible()
-        options = next(box for box in chat.findChildren(QCheckBox)
-                       if box.text() == "Chat options")
-        options.setChecked(True)
+        # Advanced chat controls are deliberately accessible from Settings,
+        # not inside an extra set of chat options on the narrow main screen.
+        window.open_section("Settings & Safety")
         app.processEvents()
         assert window.backup_provider.isVisible()
-        options.setChecked(False)
+        window.open_section("JARVIS Chat")
+        app.processEvents()
+        assert not window.backup_provider.isVisible()
 
         window.open_section("Phone Remote")
         tabs = window.bridge.findChild(QTabWidget)
