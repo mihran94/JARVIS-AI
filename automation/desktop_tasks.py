@@ -12,6 +12,7 @@ import re
 import sys
 
 import psutil
+from core.conversation import addressed_request
 
 MAX_TEXT = 2000
 KEYEVENTF_KEYUP = 0x0002
@@ -40,7 +41,7 @@ def parse_desktop_task(message: str) -> DesktopTask | None:
     """
     if not isinstance(message, str):
         return None
-    cleaned = message.strip()
+    cleaned = addressed_request(message)
     patterns = (
         (True, r'open\s+notepad\s+and\s+(?:type|write|enter)\s*:\s*([\s\S]+)'),
         (False, r'(?:type|write|enter)\s+in(?:to)?\s+notepad\s*:\s*([\s\S]+)'),

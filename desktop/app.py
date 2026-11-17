@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QProgressBar, QGroupBox, QSizePolicy,
 )
 from core.store import Store
+from core.conversation import ASSISTANT_GUIDANCE, addressed_request
 from core.assistant_capabilities import summary as capability_summary, system_context as capability_context
 from quantum_core.studio_project import STUDIO_URL, studio_update_prompt, validate_studio_url
 from desktop.memory_page import MemoryPanel
@@ -895,7 +896,7 @@ class Window(QMainWindow):
         return True
 
     def local_system_reply(self, text):
-        command = ' '.join(text.casefold().split()).strip('?!.,')
+        command = ' '.join(addressed_request(text).casefold().split()).strip('?!.,')
         if command in ('capabilities', '/capabilities', 'what can you do',
                        'what are your abilities', 'your skills', 'what can jarvis do',
                        'உன்னால் என்ன செய்ய முடியும்', 'என்ன செய்ய முடியும்',
@@ -1072,7 +1073,7 @@ class Window(QMainWindow):
         layout.addWidget(self.chat_task_card)
         self.prompt = QPlainTextEdit()
         self.prompt.setPlaceholderText(
-            'Ask JARVIS or type /help for coding, project and PC commands…')
+            'என்ன செய்ய வேண்டும்? Tell me what you need… e.g. Jarvis, CapCut open pannu')
         self.prompt.setFixedHeight(78)
         layout.addWidget(self.prompt)
         self.read_replies = QCheckBox('Read replies aloud')
@@ -3714,12 +3715,13 @@ class Window(QMainWindow):
             self.prompt.clear()
             self.queue_chat_launch(text, name)
             return
-        if text.casefold().startswith('/video '):
+        request_text = addressed_request(text)
+        if request_text.casefold().startswith('/video '):
             if not allow_notes:
                 self.statusBar().showMessage(
                     'Review the video brief and press Ask JARVIS to send it to Gemini.', 15000)
                 return
-            brief = text[7:].strip()
+            brief = request_text[7:].strip()
             if brief:
                 self.open_section('JARVIS Chat')
                 self.video_brief.setPlainText(brief)
@@ -3761,11 +3763,7 @@ class Window(QMainWindow):
             self.transcript.appendPlainText('\nJARVIS\n')
             self.prompt.clear()
             system = {'role': 'system', 'content':
-                'You are JARVIS, a helpful assistant. Reply in the user language. '
-                'You cannot execute tools or control this computer via plain chat. '
-                'Approved, separate workflows can perform limited actions; '
-                'never claim a task ran merely because you described it. '
-                + capability_context(self)}
+                ASSISTANT_GUIDANCE + capability_context(self)}
             self.start_worker(provider, model, key, [system] + messages, 'chat', backup=backup)
             self.backup_consent.setChecked(False)
         self.notify(operation)

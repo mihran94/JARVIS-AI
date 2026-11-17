@@ -7,6 +7,7 @@ must already be saved in Settings.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from core.conversation import addressed_request
 
 
 @dataclass(frozen=True)
@@ -67,7 +68,7 @@ def parse_command(text, projects=()):
     """
     if not isinstance(text, str):
         return None
-    raw = text.strip()
+    raw = addressed_request(text)
     if not raw:
         return None
     common = raw.casefold()
@@ -76,6 +77,19 @@ def parse_command(text, projects=()):
         return Command("island" if common in ("island", "island mode", "eyeland")
                        else "page", target="" if common in ("island", "island mode", "eyeland")
                        else "Settings & Safety")
+    natural = {
+        "settings open pannu": Command("page", target="Settings & Safety"),
+        "settings திறந்து வை": Command("page", target="Settings & Safety"),
+        "island open pannu": Command("island"),
+        "show my projects": Command("projects"),
+        "ennoda projects kattu": Command("projects"),
+        "என்னுடைய projects காட்டு": Command("projects"),
+        "show my editors": Command("editors"),
+        "help me get started": Command("help"),
+        "enna vela seiya mudiyum": Command("help"),
+    }
+    if common.rstrip(".!?") in natural:
+        return natural[common.rstrip(".!?")]
     if not raw.startswith("/"):
         return None
     keyword, _, remainder = raw.partition(" ")

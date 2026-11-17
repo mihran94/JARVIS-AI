@@ -56,3 +56,29 @@ MARK's licensed graphics, assets or source into proprietary JARVIS binaries
 without the necessary permission.
 
 No installer or physical-device test is implied by this source commit.
+
+## Conversational requests (17 November 2026)
+
+The existing assistant now accepts a leading `Jarvis,`, `Hey Jarvis,`,
+`J.A.R.V.I.S.,` or `ஜார்விஸ்,`, optionally followed by `please` or `தயவுசெய்து`,
+for the known app commands, local status questions and command shortcuts.
+For example:
+
+- `Jarvis, CapCut open pannu` prepares the existing reviewed app launch.
+- `Hey Jarvis, please open Notepad` still waits for approval.
+- `Jarvis, open Notepad and type: வணக்கம்` reviews the literal text before typing.
+- `Jarvis, ennoda projects kattu` lists saved coding projects locally.
+- `Jarvis, settings open pannu` opens Settings.
+
+Matching remains whole-request only: questions, negations, quoted instructions
+and extra actions do not become app launches. Text to type and ordinary chat
+messages retain the user's wording. These commands share the main conversation,
+Settings and Island; no additional application or menu was added.
+
+The chat guidance now emphasizes friendly language matching, practical next
+steps and truthful task results. This changes conversation instructions, not
+model intelligence or provider access. Main chat continues to use the selected
+provider, while the existing coding workflows retain their own providers.
+No new always-on cloud listening or general mouse/keyboard agent is introduced.
+Opening CapCut is not automatic video editing. Real Windows app launch, speech
+and editing acceptance still require the owner's PC.
