@@ -1,5 +1,17 @@
 > **Latest beta status (14 November 2026):** the canonical product is **one Windows JARVIS with an Android remote**. Android startup crash repair PR #22 was merged (main `9313cb6`) and passed a real Android 15 emulator cold-launch gate; the installed phone and secure PC pairing still require hardware acceptance. Session-only hands-free voice uses **local Ollama only**, not paid cloud providers, and PC actions remain approval-gated. See [current development audit](docs/DEVELOPMENT_AUDIT_2026-11-14.md) and [Android remote setup](docs/ANDROID_REMOTE_QUICKSTART.md). Historic release instructions below may describe earlier source versions; do not treat them as evidence of completed production capabilities.
 
+## Windows UI repair verification (November 2026)
+
+The desktop recovery branch fixes unreadable chat page colours, restores
+discoverable navigation, and opens in a normal maximized Windows window.
+Extract the complete branch ZIP into a **new** folder; never overwrite an
+existing JARVIS installation or delete local history. Run `setup.cmd`, then
+`VERIFY_JARVIS.cmd` to check dependencies, run the offline Qt startup smoke
+check, and run focused tests when pytest is installed. Finally launch
+`START_JARVIS.cmd` and verify the visible UI manually. Check live AI providers,
+microphone, desktop approvals and mobile pairing separately on the owner's PC.
+An automated CI success does not certify these hardware-dependent features.
+
 # JARVIS AI — Windows foundation v0.3.0
 
 To use a camera connected to the PC, open **PC Control → Watch & read connected camera** and select the device. For text on a document or label, select **Capture frame**, review it, and select **Read text**. Use **Find next** to search the recognized text. Live viewing requires a camera recognized by Windows. Text recognition requires Tesseract on PATH and the language data for your selection (`eng`, `tam` or `fra`). Recognition runs locally.
