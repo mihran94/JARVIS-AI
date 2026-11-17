@@ -174,3 +174,81 @@ def test_floating_mic_shows_permissions_and_returns_voice_draft_to_chat(tmp_path
         assert window.worker is None
     finally:
         window.close()
+
+
+def test_chat_theme_paints_pages_and_keeps_navigation_reachable(tmp_path):
+    """Regression: the chat page must not render white-on-white or lose its tools."""
+    from desktop.omega_visuals import THEMES
+
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
+    try:
+        window.enable_omega()
+        app.processEvents()
+        assert window.pages.currentIndex() == window.page_indices['JARVIS Chat']
+        assert window.omega.dock.isVisible()
+        scroller = window.pages.widget(window.page_indices['JARVIS Chat'])
+        assert scroller.widget() is not None
+        for theme, (background, _panel, _edge, ink, *_rest) in THEMES.items():
+            window.omega.set_theme(theme)
+            sheet = window.styleSheet()
+            assert f'QWidget {{ background: {background}; color: {ink};' in sheet
+            assert (
+                f'QMainWindow, QStackedWidget, QScrollArea, '
+                f'QWidget#omegaFrame {{ background: {background}; }}'
+            ) in sheet
+        window.omega.show_dock(False)
+        assert window.omega.reveal.isVisible()
+    finally:
+        window.close()
+        app.processEvents()
+
+def test_auto_hide_dock_keeps_reveal_reachable(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
+    try:
+        window.store.set('omega:auto_hide', True)
+        window.enable_omega()
+        app.processEvents()
+        assert not window.omega.dock.isVisible()
+        assert window.omega.reveal.isVisible()
+        window.omega.reveal.click()
+        assert window.omega.dock.isVisible()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_island_return_keeps_windows_taskbar_accessible(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
+    try:
+        window.enable_omega()
+        window.omega.switch('Island')
+        window.omega.switch('Omega')
+        app.processEvents()
+        assert window.isVisible()
+        assert not window.isFullScreen()
+        assert window.omega.dock.isVisible()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_failed_chat_remains_visible_after_reopen_without_storing_error_details(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
+    try:
+        window.chat_ticket = window.policy.ticket()
+        window.chat_task = window.store.task('chat', 'Offline provider failure')
+        window.worker_kind = 'chat'
+        window.on_result('failed', 'Sensitive diagnostic details', {'duration_ms': 10})
+        messages = window.store.messages(window.session)
+        assert messages[-1]['role'] == 'system'
+        assert 'AI request failed' in messages[-1]['content']
+        assert 'Sensitive diagnostic details' not in messages[-1]['content']
+        window.render_chat()
+        assert 'AI request failed' in window.transcript.toPlainText()
+    finally:
+        window.close()
+        app.processEvents()

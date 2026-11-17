@@ -27,8 +27,8 @@ def tint(color, alpha):
 def theme_sheet(name):
     bg, panel, edge, ink, muted, cyan, gold = THEMES[name]
     return f"""
-    QWidget {{ color: {ink}; font-family: 'Segoe UI'; font-size: 13px; }}
-    QMainWindow, QWidget#omegaFrame {{ background: {bg}; }}
+    QWidget {{ background: {bg}; color: {ink}; font-family: 'Segoe UI'; font-size: 13px; }}
+    QMainWindow, QStackedWidget, QScrollArea, QWidget#omegaFrame {{ background: {bg}; }}
     QWidget#omegaFloat, QLabel {{ background: transparent; }}
     QLabel#title {{ color: {cyan}; font-size: 23px; font-weight: 700; }}
     QLabel#subtitle, QLabel#systemMetrics, QLabel#hudClock {{ color: {muted}; }}
