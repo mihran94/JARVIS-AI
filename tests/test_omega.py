@@ -186,7 +186,8 @@ def test_chat_theme_paints_pages_and_keeps_navigation_reachable(tmp_path):
         window.enable_omega()
         app.processEvents()
         assert window.pages.currentIndex() == window.page_indices['JARVIS Chat']
-        assert window.omega.dock.isVisible()
+        assert not window.omega.dock.isVisible()
+        assert not window.omega.reveal.isVisible()
         scroller = window.pages.widget(window.page_indices['JARVIS Chat'])
         assert scroller.widget() is not None
         for theme, (background, _panel, _edge, ink, *_rest) in THEMES.items():
@@ -213,7 +214,7 @@ def test_auto_hide_dock_keeps_reveal_reachable(tmp_path):
         assert not window.omega.dock.isVisible()
         assert window.omega.reveal.isVisible()
         window.omega.reveal.click()
-        assert window.omega.dock.isVisible()
+        assert not window.omega.dock.isVisible()
     finally:
         window.close()
         app.processEvents()
