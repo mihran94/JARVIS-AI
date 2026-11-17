@@ -209,6 +209,8 @@ def test_auto_hide_dock_keeps_reveal_reachable(tmp_path):
     window = Window(tmp_path)
     try:
         window.store.set('omega:auto_hide', True)
+        # Legacy dock mode stays available when the owner explicitly wants it.
+        window.store.set('omega:command_first', False)
         window.enable_omega()
         app.processEvents()
         assert not window.omega.dock.isVisible()
