@@ -39,7 +39,7 @@ class MediaInputs(QDialog):
 
 
 class PreviewInputs(MediaInputs):
-    def __init__(self, plan, parent, *, timeline=False, capcut=False):
+    def __init__(self, plan, parent, *, timeline=False, editor=None):
         super().__init__(parent)
         self.setWindowTitle("Build After Effects timeline" if timeline else "Assemble MP4 preview")
         self.resize(640, 390)
@@ -66,10 +66,10 @@ class PreviewInputs(MediaInputs):
         self.narration = self.add_file("Narration (optional)", "Audio (*.wav *.mp3 *.m4a *.aac *.flac *.ogg)", clearable=True)
         if timeline:
             self.target = self.add_file("Adobe application", "After Effects (AfterFX.exe)")
-        elif capcut:
-            self.setWindowTitle("Export for CapCut Desktop")
+        elif editor:
+            self.setWindowTitle(f"Export for {editor}")
             note.setText("Choose one clip per shot and an export folder. Import video.mp4 "
-                         "and english.srt into CapCut Desktop.")
+                         f"and english.srt into {editor}.")
             self.target = QLineEdit()
             self.target.setReadOnly(True)
             choose = QPushButton("Choose export folder…")

@@ -1,6 +1,9 @@
 """Strictly local voice-intent parser; no arbitrary commands or shell execution."""
 import re
 
+from automation.windows import EDITOR_EXECUTABLES
+from video_studio.planning import VIDEO_TOOLS
+
 COMMANDS = {
     "open notepad": "Notepad",
     "launch notepad": "Notepad",
@@ -13,6 +16,16 @@ COMMANDS = {
     "கால்குலேட்டர் திற": "Calculator",
     "கால்குலேட்டரை திற": "Calculator",
 }
+
+aliases = {name.casefold(): name for name in (*VIDEO_TOOLS, *EDITOR_EXECUTABLES)}
+aliases.update({'flow': 'Google Flow', 'davinci': 'DaVinci Resolve'})
+for alias, name in aliases.items():
+    COMMANDS.update({
+        f'open {alias}': name,
+        f'{alias} open பண்ணு': name,
+        f'{alias} open pannu': name,
+        f'{alias} திற': name,
+    })
 
 
 def parse_voice_command(text):

@@ -849,6 +849,10 @@ class Omega:
             state = 'approval'
         elif window.worker_kind in ('coding', 'code_generation', 'code_repair', 'codex_review') and window.worker is not None:
             state = 'coding'
+        elif getattr(window, 'coding_worker', None) is not None:
+            # The personal coding assistant runs its own worker, so the Omega
+            # modes still show that work in progress.
+            state = 'coding'
         elif window.worker_kind == 'video_export' and window.worker is not None:
             state = 'working'
         activity = ACTIVITY[state]
