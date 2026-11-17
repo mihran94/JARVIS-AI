@@ -691,9 +691,9 @@ class Omega:
             self.open_page('JARVIS Chat')
             # Tests that explicitly inspect the dock keep legacy smoke
             # behavior; ordinary startup is the minimal voice/chat screen.
-            if not smoke and not self.store.get('omega:show_dock_on_start', False):
+            if not smoke and not self.store.get('omega:show_dock_on_start', True):
+                # Even when the dock is hidden on request, the reveal remains reachable.
                 self.show_dock(False)
-                self.reveal.hide()
         if not smoke and self.mode == 'Omega' and self.store.get('omega:intro', True) and not self.reduced:
             self.startup.setText('Local controls ready')
             self.skip.show()
