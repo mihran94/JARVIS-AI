@@ -33,11 +33,12 @@ def test_mark_lvii_chat_first_but_existing_pages_remain(tmp_path):
         app.processEvents()
         assert win.pages.currentIndex() == win.page_indices['JARVIS Chat']
         assert win.settings_button.text() == 'Settings'
-        assert win.plugins_button.text() == 'Plugins'
+        assert win.island_button.text() == 'Island'
+        assert win.plugins_button.isHidden()
         assert win.tools_button.isHidden()
         assert win.chat_home_button.isHidden()
         assert not win.chat_provider.isVisible()
-        win.plugins_button.click()
+        win.settings_button.click()
         app.processEvents()
         assert win.pages.currentIndex() == win.page_indices['Settings & Safety']
         assert win.plugins_group.isVisible()
