@@ -291,6 +291,14 @@ def test_a_different_test_command_is_never_trusted(tmp_path, monkeypatch, projec
 
 # ── 4. the tests run off the UI thread and can be stopped ──────────────────
 
+def test_windows_test_argv_removes_only_outer_quotation_marks():
+    from developer_studio.codex_task import split_test_command
+    command = '"C:\\Program Files\\Python\\python.exe" -c "import time; time.sleep(2)"'
+    assert split_test_command(command, windows=True) == [
+        'C:\\Program Files\\Python\\python.exe', '-c', 'import time; time.sleep(2)'
+    ]
+
+
 def test_the_tests_run_off_the_ui_thread(tmp_path, monkeypatch, project):
     """The event loop keeps running while the tests do."""
     win, app = window(tmp_path, monkeypatch)
@@ -304,7 +312,7 @@ def test_the_tests_run_off_the_ui_thread(tmp_path, monkeypatch, project):
             win.start_test_run(win.selected_project_for_tests()
                                if hasattr(win, 'selected_project_for_tests') else
                                SavedProject('project-a', str(project), 'VS Code', 'pytest -q'),
-                               project, f'{sys.executable} -c "import time; time.sleep(2)"')
+                               project, f'"{sys.executable}" -c "import time; time.sleep(2)"')
             pump(app, 0.6)
             assert win.test_worker is not None
             assert len(ticks) > 5, 'the UI thread was blocked by the test run'
@@ -326,7 +334,7 @@ def test_cancelling_the_tests_stops_the_test_process(tmp_path, monkeypatch, proj
     try:
         save_project(win, path=project, tests='pytest -q')
         marker = tmp_path / 'still-running.txt'
-        command = (f'{sys.executable} -c "import time,pathlib;'
+        command = (f'"{sys.executable}" -c "import time,pathlib;'
                    f'time.sleep(30);pathlib.Path(r\'{marker}\').write_text(\'x\')"')
         win.start_test_run(SavedProject('project-a', str(project), 'VS Code', 'pytest -q'),
                            project, command)
