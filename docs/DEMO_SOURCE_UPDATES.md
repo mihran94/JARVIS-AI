@@ -44,7 +44,8 @@ Prepared            Kind              Revision    Tests     Changed
 
 Below it:
 
-* the **diff**, so you can read what changed,
+* the **diff** — a real unified diff, so you can read what changed, not only
+  which files it touches,
 * the **test results**, with the summary line of the run,
 * **Approve this exact revision** and **Reject**.
 

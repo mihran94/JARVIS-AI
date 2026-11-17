@@ -1918,14 +1918,10 @@ class Window(QMainWindow):
         except Exception:
             return ''
         current = release_path(self.installation_root(), read_state(self.installation_root())['active'])
-        changes = changed_files(current, files)
-        if not changes:
+        if not changed_files(current, files):
             return 'This revision is the one that is already running.'
-        lines = []
-        for name in changes:
-            lines.append(f'--- {name}')
-            lines.append(f'+++ {name}')
-        return '\n'.join(lines)
+        from core.candidates import unified_diff
+        return unified_diff(current, files)
 
     def tray_note_text(self):
         """What the owner is told about the background session."""

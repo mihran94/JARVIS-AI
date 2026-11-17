@@ -43,7 +43,7 @@ On top of that, the draft asks for four things that did not exist yet:
 | `core/coding_agent.py` | **new** | Asks the coding provider for the files of a change and writes them into the worktree. |
 | `core/verification.py` | **new** | Runs a test command in a prepared folder and keeps the result. |
 | `core/source_updates.py` | changed | `stage_latest()` became `fetch_latest_source()`, which downloads and verifies without selecting anything. |
-| `desktop/review_panel.py` | **new** | The review screen: the diff, the test results, Approve and Reject. |
+| `desktop/review_panel.py` | **new** | The review screen: the unified diff, the test results, Approve and Reject. |
 | `desktop/background.py` | **new** | The background work: preparing an improvement, and preparing a source revision. |
 | `desktop/startup.py` | **new** | The Windows start-at-sign-in setting. |
 | `desktop/tray.py` | changed | **Pause JARVIS** next to **Show JARVIS** and **Exit JARVIS**. |

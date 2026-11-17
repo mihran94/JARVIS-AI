@@ -76,7 +76,13 @@ def test_a_prepared_revision_is_shown_with_its_diff_and_tests(installation, wind
     panel.refresh()
     assert panel.table.rowCount() == 1
     assert panel.table.item(0, 2).text() == REVISION[:12]
-    assert 'main.py' in panel.diff.toPlainText()
+    diff = panel.diff.toPlainText()
+    assert 'main.py' in diff
+    # The diff is a real diff, not only a list of names.
+    assert '--- a/main.py' in diff
+    assert '+++ b/main.py' in diff
+    assert '-original code' in diff
+    assert '+new code' in diff
     assert 'Tests: passed' in panel.tests.toPlainText()
     assert panel.approve_button.isEnabled()
 

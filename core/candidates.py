@@ -183,6 +183,32 @@ def content_digest(files: dict) -> str:
     return digest.hexdigest()
 
 
+def unified_diff(current, files: dict) -> str:
+    """The difference between the running version and the prepared files.
+
+    It is a real unified diff, so the owner can read what the revision
+    changes and not only which files it touches.
+    """
+    import difflib
+
+    lines = []
+    for name in sorted(files):
+        old = Path(current) / name
+        try:
+            before = old.read_text('utf-8').splitlines(keepends=True)
+        except (OSError, UnicodeDecodeError):
+            before = []
+        try:
+            after = files[name].decode('utf-8').splitlines(keepends=True)
+        except UnicodeDecodeError:
+            after = [files[name].decode('utf-8', 'replace')]
+        diff = list(difflib.unified_diff(before, after, fromfile=f'a/{name}',
+                                         tofile=f'b/{name}', n=3))
+        if diff:
+            lines.extend(diff)
+    return ''.join(lines)
+
+
 def prepare_candidate(root, running_root, history, *, check, publish, transport=None,
                        test_command: str = '', test_timeout: int = 1800) -> Candidate:
     """Download, verify and test a revision, and record it for review.
