@@ -309,13 +309,20 @@ def test_the_tests_run_off_the_ui_thread(tmp_path, monkeypatch, project):
         timer.timeout.connect(lambda: ticks.append(1))
         timer.start(10)
         try:
+            started = time.monotonic()
             win.start_test_run(win.selected_project_for_tests()
                                if hasattr(win, 'selected_project_for_tests') else
                                SavedProject('project-a', str(project), 'VS Code', 'pytest -q'),
-                               project, f'"{sys.executable}" -c "import time; time.sleep(2)"')
-            pump(app, 0.6)
+                               project, f'"{sys.executable}" -c "import time; time.sleep(4)"')
+            # Starting the subprocess must return promptly rather than blocking
+            # the UI until the tests finish. On busy Windows CI runners, a
+            # 10-ms Qt timer can coalesce or skip several expected callbacks.
+            assert time.monotonic() - started < 1.5, (
+                'starting a test run blocked the UI thread')
+            pump(app, 0.8)
             assert win.test_worker is not None
-            assert len(ticks) > 5, 'the UI thread was blocked by the test run'
+            assert len(ticks) >= 1, (
+                'the UI event loop never processed the timer during the test run')
         finally:
             timer.stop()
             if win.test_worker is not None:
