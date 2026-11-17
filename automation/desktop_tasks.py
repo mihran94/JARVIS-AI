@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import ctypes
-from ctypes import wintypes
 import re
 import sys
 
@@ -59,30 +58,30 @@ def parse_desktop_task(message: str) -> DesktopTask | None:
 
 class _KEYBDINPUT(ctypes.Structure):
     _fields_ = (
-        ('wVk', wintypes.WORD),
-        ('wScan', wintypes.WORD),
-        ('dwFlags', wintypes.DWORD),
-        ('time', wintypes.DWORD),
+        ('wVk', ctypes.c_uint16),
+        ('wScan', ctypes.c_uint16),
+        ('dwFlags', ctypes.c_uint32),
+        ('time', ctypes.c_uint32),
         ('dwExtraInfo', ctypes.c_size_t),
     )
 
 
 class _MOUSEINPUT(ctypes.Structure):
     _fields_ = (
-        ('dx', wintypes.LONG),
-        ('dy', wintypes.LONG),
-        ('mouseData', wintypes.DWORD),
-        ('dwFlags', wintypes.DWORD),
-        ('time', wintypes.DWORD),
+        ('dx', ctypes.c_int32),
+        ('dy', ctypes.c_int32),
+        ('mouseData', ctypes.c_uint32),
+        ('dwFlags', ctypes.c_uint32),
+        ('time', ctypes.c_uint32),
         ('dwExtraInfo', ctypes.c_size_t),
     )
 
 
 class _HARDWAREINPUT(ctypes.Structure):
     _fields_ = (
-        ('uMsg', wintypes.DWORD),
-        ('wParamL', wintypes.WORD),
-        ('wParamH', wintypes.WORD),
+        ('uMsg', ctypes.c_uint32),
+        ('wParamL', ctypes.c_uint16),
+        ('wParamH', ctypes.c_uint16),
     )
 
 
@@ -95,7 +94,7 @@ class _INPUT_UNION(ctypes.Union):
 
 
 class _INPUT(ctypes.Structure):
-    _fields_ = (('type', wintypes.DWORD), ('data', _INPUT_UNION))
+    _fields_ = (('type', ctypes.c_uint32), ('data', _INPUT_UNION))
 
 
 def _require_windows():
@@ -112,14 +111,14 @@ def target_is_foreground(app: str) -> bool:
     # Set explicit pointer-sized Win32 signatures; ctypes defaults to c_int
     # and would truncate HWND on 64-bit Windows.
     user32.GetForegroundWindow.argtypes = []
-    user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.GetForegroundWindow.restype = ctypes.c_void_p
     user32.GetWindowThreadProcessId.argtypes = [
-        wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
-    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+        ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)]
+    user32.GetWindowThreadProcessId.restype = ctypes.c_uint32
     handle = user32.GetForegroundWindow()
     if not handle:
         return False
-    pid = wintypes.DWORD(0)
+    pid = ctypes.c_uint32(0)
     user32.GetWindowThreadProcessId(handle, ctypes.byref(pid))
     if not pid.value:
         return False
@@ -175,8 +174,8 @@ def type_into_target(app: str, text: str) -> str:
         raise RuntimeError('The target window changed. No text was sent.')
     array_type = _INPUT * len(events)
     array = array_type(*events)
-    user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(_INPUT), ctypes.c_int]
-    user32.SendInput.restype = wintypes.UINT
+    user32.SendInput.argtypes = [ctypes.c_uint32, ctypes.POINTER(_INPUT), ctypes.c_int]
+    user32.SendInput.restype = ctypes.c_uint32
     sent = user32.SendInput(len(array), array, ctypes.sizeof(_INPUT))
     if sent != len(array):
         raise RuntimeError(f'Only {sent}/{len(array)} keyboard events were accepted; '
