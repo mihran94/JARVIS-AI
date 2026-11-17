@@ -174,5 +174,5 @@ def type_into_target(app: str, text: str) -> str:
     if sent != len(array):
         raise RuntimeError(f'Only {sent}/{len(array)} keyboard events were accepted; '
                            'the result is incomplete and must be reviewed.')
-    return f'{app} received {len(events)} keyboard events. Text delivery was '
-           'requested but content and save status are not verified.'
+    return (f'{app} received {len(events)} keyboard events. '
+            'Text delivery was requested but content and save status are not verified.')
