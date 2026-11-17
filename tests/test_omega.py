@@ -202,3 +202,34 @@ def test_chat_theme_paints_pages_and_keeps_navigation_reachable(tmp_path):
     finally:
         window.close()
         app.processEvents()
+
+def test_auto_hide_dock_keeps_reveal_reachable(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
+    try:
+        window.store.set('omega:auto_hide', True)
+        window.enable_omega()
+        app.processEvents()
+        assert not window.omega.dock.isVisible()
+        assert window.omega.reveal.isVisible()
+        window.omega.reveal.click()
+        assert window.omega.dock.isVisible()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_island_return_keeps_windows_taskbar_accessible(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
+    try:
+        window.enable_omega()
+        window.omega.switch('Island')
+        window.omega.switch('Omega')
+        app.processEvents()
+        assert window.isVisible()
+        assert not window.isFullScreen()
+        assert window.omega.dock.isVisible()
+    finally:
+        window.close()
+        app.processEvents()
