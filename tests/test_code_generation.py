@@ -81,3 +81,4 @@ def test_generation_review_boundary(tmp_path,monkeypatch,allow,stop,provider):
         assert window.code_preview.toPlainText()==''
     window.editor.document().setModified(False)
     window.close()
+    window.deleteLater()

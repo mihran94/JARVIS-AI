@@ -101,6 +101,7 @@ def test_chat_executes_previewed_task_only_after_approval(tmp_path, monkeypatch)
         assert window.store.tasks()[0]['status'] == 'completed'
     finally:
         window.close()
+        window.deleteLater()
         app.processEvents()
 
 
@@ -123,4 +124,5 @@ def test_emergency_stop_cancels_pending_type_action(tmp_path, monkeypatch):
         assert typed == []
     finally:
         window.close()
+        window.deleteLater()
         app.processEvents()

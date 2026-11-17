@@ -64,6 +64,7 @@ def test_conversational_commands_stay_local_and_preserve_approval(tmp_path, monk
         assert win.chat_launch is None
     finally:
         win.close()
+        win.deleteLater()
         app.processEvents()
 
 
@@ -85,6 +86,7 @@ def test_chat_keeps_original_user_words_and_honest_personality(tmp_path, monkeyp
         assert win.chat_launch is None
     finally:
         win.close()
+        win.deleteLater()
         app.processEvents()
 
 
@@ -99,4 +101,5 @@ def test_addressed_video_brief_reaches_existing_workflow_unchanged(tmp_path, mon
         assert briefs == ['தமிழ் Story: KEEP This Case']
     finally:
         win.close()
+        win.deleteLater()
         app.processEvents()

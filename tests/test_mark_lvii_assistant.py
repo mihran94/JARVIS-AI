@@ -22,6 +22,7 @@ def test_capabilities_are_based_on_local_state(tmp_path):
         assert snapshot(win)['stopped']
     finally:
         win.close()
+        win.deleteLater()
         app.processEvents()
 
 
@@ -55,4 +56,5 @@ def test_mark_lvii_chat_first_but_existing_pages_remain(tmp_path):
             assert name in win.page_indices
     finally:
         win.close()
+        win.deleteLater()
         app.processEvents()
