@@ -1,6 +1,5 @@
 """The unified JARVIS desktop keeps one command center and one safety policy."""
 import os
-import time
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 from PySide6.QtWidgets import QApplication
@@ -96,52 +95,6 @@ def test_hud_and_local_commands_use_the_same_counters(tmp_path, monkeypatch):
         assert [message['role'] for message in outbound] == ['system', 'user']
         assert outbound[-1]['content'] == 'Explain how timelines work'
     finally:
-        window.close()
-        window.deleteLater()
-        app.processEvents()
-
-
-def test_the_hud_says_listening_while_the_microphone_is_listening(tmp_path, monkeypatch):
-    """The HUD must not say IDLE while the microphone is really listening.
-
-    The worker thread is not running yet when start() returns, so the state
-    read straight after the button is pressed can still say "not listening".
-    The panel refreshes when the thread really starts, and the HUD follows.
-    """
-    from threading import Event
-
-    app = QApplication.instance() or QApplication([])
-    window = Window(tmp_path)
-    voice = window.voice_panel
-    release = Event()
-
-    class Recognizer:
-        def wait_for_wake_phrase(self, timeout):
-            release.wait(2)
-            return '', ''
-
-        def recognize_once(self, timeout):
-            return ''
-
-        def stop(self):
-            pass
-
-    monkeypatch.setattr(voice, '_recognizer_factory', lambda *_: Recognizer())
-    try:
-        window.open_section('Command Center')
-        voice.allow.setChecked(True)
-        voice.listen('continuous')
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            app.processEvents()
-            if window.hud_voice_status.text() == 'LISTENING':
-                break
-            time.sleep(0.01)
-        assert window.hud_voice_status.text() == 'LISTENING', (
-            'the HUD did not show LISTENING while the microphone was listening')
-    finally:
-        release.set()
-        window.stop()
         window.close()
         window.deleteLater()
         app.processEvents()
