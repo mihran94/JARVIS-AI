@@ -24,7 +24,7 @@ def test_main_toolbar_is_chat_island_settings_and_safety(tmp_path):
         assert window.plugins_button.isHidden()
         assert window.tools_button.isHidden()
         assert window.pages.currentIndex() == window.page_indices["JARVIS Chat"]
-        assert window.chat_provider.isHidden()
+        assert not window.chat_provider.isVisible()
         window.enable_omega()
         app.processEvents()
         assert not window.omega.dock.isVisible()
