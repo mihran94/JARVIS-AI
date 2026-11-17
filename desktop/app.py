@@ -4,6 +4,7 @@ import sys
 import uuid
 import time
 from datetime import datetime, timezone
+from hashlib import sha256
 
 from PySide6.QtCore import QProcess, QThread, Signal, QTimer, Qt, QLockFile, QUrl, QEvent
 from PySide6.QtGui import QDesktopServices, QFont, QTextCursor, QKeySequence, QShortcut
@@ -59,6 +60,7 @@ from providers.registry import provider_names
 from providers.router import ProviderRouter
 from providers.stream_fallback import StreamTarget, stream_with_fallback, FallbackBlocked
 from automation.windows import APPS, EDITOR_EXECUTABLES, editor_executable, launch_app, launch_editor
+from automation.desktop_tasks import parse_desktop_task, target_is_foreground, type_into_target
 from automation.inspection import inspect_windows
 from developer_studio.workspace import Workspace
 from developer_studio.codex_cli import codex_executable, run_codex
@@ -282,6 +284,10 @@ class Window(QMainWindow):
         self.video_plan = None
         self.video_chat_brief = None
         self.chat_launch = None
+        self.desktop_pending = None
+        self.desktop_task_timer = QTimer(self)
+        self.desktop_task_timer.setInterval(180)
+        self.desktop_task_timer.timeout.connect(self.complete_desktop_task)
         self.coding = None
         self.coding_worker = None
         self.test_worker = None
@@ -2250,6 +2256,73 @@ class Window(QMainWindow):
 
     # ── saved projects, editors and routines ─────────────────────────────
 
+    def queue_desktop_task(self, command, task):
+        """Review exact text before doing anything to a Windows application."""
+        if self.chat_launch is not None or self.desktop_pending is not None:
+            self.statusBar().showMessage('Finish the current desktop task first.', 10000)
+            return
+        if self.omega is not None and self.omega.mode != 'Omega':
+            self.omega.switch('Omega')
+        self.open_section('JARVIS Chat')
+        ticket = self.policy.ticket()
+        digest = sha256(task.text.encode('utf-8')).hexdigest()
+        step = 'open and type' if task.launch else 'type into active window'
+        action = Action('desktop_plan_approval', f'{task.app}: {step}, {len(task.text)} chars',
+                        digest)
+        self.chat_launch = (task.app, ticket, action,
+                            lambda: self.schedule_desktop_task(task, ticket, digest))
+        excerpt = task.text[:160] + ('…' if len(task.text) > 160 else '')
+        self.show_local_system_reply(command,
+            f'Review desktop task: {step} in {task.app}. Text preview: {excerpt!r}. '
+            'Approve once to start; the target is verified before typing.')
+        self.chat_approval_label.setText(
+            f'{step.title()} in {task.app}: {excerpt!r}\nSHA-256: {digest}')
+        self.chat_approval.show()
+
+    def schedule_desktop_task(self, task, ticket, digest):
+        """Schedule, never poll for a window on the Qt UI thread."""
+        self.policy.check(ticket)
+        if self.desktop_pending is not None:
+            raise ValueError('A desktop task is already running.')
+        if task.launch:
+            launch_app(task.app)
+        self.desktop_pending = dict(task=task, ticket=ticket, digest=digest,
+                                    deadline=time.monotonic() + 7.0)
+        self.desktop_task_timer.start()
+        return (f'Desktop plan approved for {task.app}. Waiting for its '
+                'foreground window; text not entered yet.')
+
+    def complete_desktop_task(self):
+        """Only type after Windows verifies the target foreground process."""
+        pending = self.desktop_pending
+        if pending is None:
+            self.desktop_task_timer.stop()
+            return
+        task = pending['task']
+        try:
+            self.policy.check(pending['ticket'])
+            if time.monotonic() >= pending['deadline']:
+                self.desktop_task_timer.stop()
+                self.desktop_pending = None
+                self.show_local_system_reply('Desktop task',
+                    f'{task.app} did not become foreground in time. '
+                    'No text was entered. Activate the correct window and retry.')
+                return
+            if not target_is_foreground(task.app):
+                return
+            self.desktop_task_timer.stop()
+            self.desktop_pending = None
+            result = self.gateway.run(
+                Action('desktop_type', f'{task.app}: {len(task.text)} characters',
+                       pending['digest']),
+                lambda _action: True,  # the exact text was approved in chat
+                lambda: type_into_target(task.app, task.text))
+            self.show_local_system_reply('Desktop task result', str(result))
+        except (Denied, Stopped, RuntimeError, ValueError, OSError) as error:
+            self.desktop_task_timer.stop()
+            self.desktop_pending = None
+            self.show_local_system_reply('Desktop task failed', str(error))
+
     def add_projects_settings(self, layout):
         """The saved-project settings, inside Settings & Plugins.
 
@@ -3531,6 +3604,11 @@ class Window(QMainWindow):
             self.prompt.clear()
             self.show_local_system_reply(text, local_reply)
             return
+        desktop_task = parse_desktop_task(text)
+        if desktop_task is not None:
+            self.prompt.clear()
+            self.queue_desktop_task(text, desktop_task)
+            return
         coding = self.coding_request(text)
         if coding is not None:
             self.prompt.clear()
@@ -3755,6 +3833,8 @@ class Window(QMainWindow):
 
     def stop(self):
         self.policy.stop()
+        self.desktop_task_timer.stop()
+        self.desktop_pending = None
         if self.test_worker is not None:
             # The test PROCESS is stopped too, not just the assistant.
             self.test_worker.requestInterruption()
@@ -3854,6 +3934,8 @@ class Window(QMainWindow):
         self.close()
 
     def closeEvent(self, event):
+        self.desktop_task_timer.stop()
+        self.desktop_pending = None
         if not self.close_when_done and self.editor.document().isModified():
             if not self.confirm(Action('discard_unsaved_editor_changes', self.filename.text())):
                 self.exit_requested = False
