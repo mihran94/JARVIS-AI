@@ -691,7 +691,7 @@ class Omega:
             self.open_page('JARVIS Chat')
             # Tests that explicitly inspect the dock keep legacy smoke
             # behavior; ordinary startup is the minimal voice/chat screen.
-            if not smoke and not self.store.get('omega:show_dock_on_start', True):
+            if not smoke and (self.auto_hide or not self.store.get('omega:show_dock_on_start', True)):
                 # Even when the dock is hidden on request, the reveal remains reachable.
                 self.show_dock(False)
         if not smoke and self.mode == 'Omega' and self.store.get('omega:intro', True) and not self.reduced:
@@ -737,7 +737,9 @@ class Omega:
         self.mode_select.blockSignals(previous)
         if mode == 'Omega':
             self.floating.hide()
-            self.window.showFullScreen()
+            # Keep the taskbar/window controls accessible in ordinary desktop mode.
+            # F11 and the Window control remain available for optional fullscreen.
+            self.window.showMaximized()
         else:
             self.window.hide()
             self.floating.set_mode(mode)
