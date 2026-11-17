@@ -42,6 +42,11 @@ class Policy:
             if self._stopped or ticket != self._generation:
                 raise Stopped('Operation cancelled by emergency stop.')
 
+    def run_if_current(self, ticket, operation):
+        with self._lock:
+            self.check(ticket)
+            return operation()
+
     def stop(self):
         with self._lock:
             self._stopped = True

@@ -9,6 +9,10 @@ dist/
 
 .updates/
 
+# The worktrees JARVIS prepares for its own improvements live here. They are
+# a working area, not part of the source, and they are never committed.
+development/
+
 # The PWA icons are pictures, so they travel as base64 sidecars and are
 # written again by iphone-pwa/icons/restore-icons.py.
 iphone-pwa/icons/*.png

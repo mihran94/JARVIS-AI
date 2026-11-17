@@ -24,6 +24,15 @@ from desktop.camera_reader import open_camera_reader
 from desktop.update_dialog import ReleaseChecker, open_updates
 from desktop.voice_panel import VoicePanel
 from desktop.tray import BackgroundControls
+from desktop.background import ImprovementWorker, SourceCheckWorker
+from desktop.review_panel import ReviewPanel
+from desktop.startup import (StartupError, set_start_at_signin, start_at_signin_enabled,
+                             supported as startup_supported)
+from core.candidates import read_candidate
+from core.coding_tasks import prepared as prepared_tasks, resumable as resumable_tasks
+from core.development import DevelopmentError, maintenance_goal
+from core.updates import installation_root, read_state, release_path
+from providers import routing
 from desktop.personal_theme import PERSONAL_STYLE
 from desktop.blue_orb import BlueOrb
 from desktop.omega import Omega
@@ -191,6 +200,9 @@ class Window(QMainWindow):
         self.site_preview_path = None
         self.worker = None
         self.omega = None
+        self.improvement_worker = None
+        self.paused = bool(self.store.get('paused', False))
+        self.exit_requested = False
         self.close_when_done = False
         self.session = self.store.get('session') or uuid.uuid4().hex
         self.store.set('session', self.session)
@@ -260,6 +272,7 @@ class Window(QMainWindow):
         self.add_page('Task History', self.history_page(), primary=False)
         self.add_page('AI Providers', self.provider_page(), primary=False)
         self.add_page('System & Usage', self.usage_page(), primary=False)
+        self.add_page('Review changes', ReviewPanel(self), primary=False)
         # The chat page is built first, so the brain label can be filled in
         # once every provider page exists.
         self.refresh_brain_label()
@@ -285,6 +298,10 @@ class Window(QMainWindow):
         self.render_chat()
         self.background_controls = BackgroundControls(self)
         self.release_checker = ReleaseChecker(self)
+        self.maintenance_timer = QTimer(self)
+        self.maintenance_timer.timeout.connect(self.check_maintenance)
+        self.maintenance_timer.start(60_000)
+        QTimer.singleShot(0, self.check_maintenance)
 
     def enable_omega(self, *, smoke=False):
         if self.omega is None:
@@ -1244,15 +1261,20 @@ class Window(QMainWindow):
         provider_row = QHBoxLayout()
         provider_row.addWidget(QLabel('Coding AI'))
         self.coding_provider = QComboBox()
-        self.coding_provider.addItems(['Use chat provider', 'MiniMax'])
-        saved_provider = self.store.get('coding_provider')
-        if saved_provider == 'MiniMax':
-            self.coding_provider.setCurrentText(saved_provider)
-        self.coding_provider.currentTextChanged.connect(
-            lambda provider: self.store.set('coding_provider', provider))
+        self.coding_provider.addItems(routing.coding_provider_names())
+        self.coding_provider.setCurrentText(routing.coding_provider(self.store))
+        self.coding_provider.currentTextChanged.connect(self.on_coding_provider_changed)
+        # The choice is written down, so the owner can see which provider is
+        # in use even when it is the default.
+        routing.set_coding_provider(self.store, self.coding_provider.currentText())
         provider_row.addWidget(self.coding_provider, 1)
         self.button(provider_row, 'MiniMax API settings', self.open_minimax_settings)
         layout.addLayout(provider_row)
+        routing_note = QLabel(
+            'Only MiniMax and Codex may write or fix source code. Gemini answers you, '
+            'reads the proposed change and explains it; it never edits a file.')
+        routing_note.setWordWrap(True)
+        layout.addWidget(routing_note)
         self.code_goal = QLineEdit()
         self.code_goal.setPlaceholderText('Describe the Python program you want to create…')
         layout.addWidget(self.code_goal)
@@ -1277,6 +1299,19 @@ class Window(QMainWindow):
         self.codex_response.setPlaceholderText('Codex project response')
         self.codex_response.hide()
         layout.addWidget(self.codex_response, 1)
+        improve = QHBoxLayout()
+        self.improvement_goal = QLineEdit()
+        self.improvement_goal.setPlaceholderText(
+            'Describe an improvement to JARVIS itself…')
+        improve.addWidget(self.improvement_goal, 1)
+        self.button(improve, 'Prepare this improvement', self.start_improvement)
+        self.button(layout, 'Retry latest interrupted improvement', self.retry_improvement)
+        layout.addLayout(improve)
+        improve_note = QLabel(
+            'The change is prepared in an isolated worktree under the local development folder, '
+            'where you can review the diff, authorize the tests, then approve the revision for restart.')
+        improve_note.setWordWrap(True)
+        layout.addWidget(improve_note)
         self.button(layout, 'Review and copy draft to editor', self.apply_code_draft)
         self.filename = QLineEdit('hello.py')
         layout.addWidget(self.filename)
@@ -1300,8 +1335,38 @@ class Window(QMainWindow):
         self.secret.setFocus()
 
     def selected_coding_provider(self):
-        choice = self.coding_provider.currentText()
-        return self.chat_provider.currentText() if choice == 'Use chat provider' else choice
+        """The provider that writes code.
+
+        Only MiniMax and Codex may do this. The chat provider is never used
+        for code, whatever it is set to.
+        """
+        return routing.require_coding_provider(routing.coding_provider(self.store))
+
+    def on_coding_provider_changed(self, provider):
+        """Remember the coding provider the owner chose."""
+        if provider in routing.coding_provider_names():
+            routing.set_coding_provider(self.store, provider)
+            self.refresh_routing_note()
+
+    def coding_model(self, provider):
+        """The model to use with a coding provider.
+
+        Codex is the command line tool, so it chooses its own model and has
+        no model ID here.
+        """
+        saved = self.store.get('model:' + provider)
+        if saved:
+            return saved
+        try:
+            return self.router.spec(provider).default_model
+        except KeyError:
+            return ''
+
+    def refresh_routing_note(self):
+        """Show which provider answers and which one writes code."""
+        if not hasattr(self, 'coding_provider'):
+            return
+        self.coding_provider.setCurrentText(routing.coding_provider(self.store))
 
     def coding_key(self, provider):
         try:
@@ -1363,8 +1428,14 @@ class Window(QMainWindow):
             status, response = 'cancelled', 'Codex review cancelled by Emergency Stop.'
         self.store.finish(self.chat_task, status)
         if status == 'completed':
-            self.codex_response.setPlainText(response)
-            self.code_status.setText('Codex review ready.')
+            if self.worker_kind in ('code_generation', 'code_repair'):
+                # A draft goes to the preview, so it can be applied to the
+                # editor in the same way as any other draft.
+                self.code_preview.setPlainText(response)
+                self.code_status.setText('Codex draft ready. Review it before you copy it.')
+            else:
+                self.codex_response.setPlainText(response)
+                self.code_status.setText('Codex review ready.')
         else:
             self.code_status.setText('Codex review cancelled.' if status == 'cancelled' else response)
         self.refresh_history()
@@ -1376,7 +1447,10 @@ class Window(QMainWindow):
             ticket = self.policy.ticket()
             messages = messages_for_goal(self.code_goal.text())
             provider = self.selected_coding_provider()
-            model = self.store.get('model:' + provider) or self.router.spec(provider).default_model
+            if provider == 'Codex':
+                self.draft_with_codex(messages[-1]['content'], 'code_generation')
+                return
+            model = self.coding_model(provider)
             key = self.coding_key(provider)
             if not self.confirm(Action('send_coding_goal', provider + ' / ' + model + ' (API charges may apply)')):
                 return
@@ -1387,6 +1461,36 @@ class Window(QMainWindow):
             self.start_worker(provider, model, key, messages, 'code_generation')
         self.notify(operation)
 
+    def draft_with_codex(self, prompt, kind):
+        """Draft with the Codex command line tool.
+
+        Codex is a local tool, so there is no key and no API charge. The
+        draft lands in the same preview the other provider uses, and it is
+        applied to the editor only when the owner approves that.
+        """
+        ticket = self.policy.ticket()
+        executable = codex_executable()
+        project = self.workspace.root
+        action = Action('codex_draft', f'{kind} · Codex reads {project}')
+        if not self.confirm(action):
+            return
+        self.policy.check(ticket)
+        self.chat_ticket = ticket
+        self.worker_kind = kind
+        self.active_provider = 'Codex'
+        self.active_model = ''
+        self.chat_task = self.store.task(kind, 'Codex CLI draft')
+        self.store.finish(self.chat_task, 'running')
+        self.code_preview.clear()
+        self.code_status.setText('Codex is drafting your code…')
+        self.worker = VideoExportWorker(
+            lambda check: run_codex(executable, project, prompt, check), self)
+        self.worker.result.connect(self.on_codex_result)
+        self.worker.finished.connect(self.on_finished)
+        self.refresh_draft_buttons()
+        self.set_ai_visual_state('thinking')
+        self.worker.start()
+
     def repair_code(self):
         if self.worker is not None:
             return
@@ -1394,7 +1498,10 @@ class Window(QMainWindow):
             ticket = self.policy.ticket()
             messages = messages_for_repair(self.editor.toPlainText(), self.code_error.toPlainText())
             provider = self.selected_coding_provider()
-            model = self.store.get('model:' + provider) or self.router.spec(provider).default_model
+            if provider == 'Codex':
+                self.draft_with_codex(messages[-1]['content'], 'code_repair')
+                return
+            model = self.coding_model(provider)
             key = self.coding_key(provider)
             action = Action('send_editor_code_and_error',
                             provider + ' / ' + model + ' (shares editor code and pasted error; API charges may apply)',
@@ -1709,6 +1816,26 @@ class Window(QMainWindow):
             'Only essential tools are in the main navigation. '
             'Every computer action needs your explicit approval.')
         self.button(layout, 'Updates & rollback', lambda: open_updates(self))
+        self.button(layout, 'Review prepared changes', lambda: self.open_section('Review changes'))
+        background = QHBoxLayout()
+        self.keep_in_tray = QCheckBox('Keep JARVIS in the system tray when the window is closed')
+        self.keep_in_tray.setChecked(bool(self.store.get('keep_running_in_tray', False)))
+        self.keep_in_tray.toggled.connect(
+            lambda enabled: self.store.set('keep_running_in_tray', bool(enabled)))
+        background.addWidget(self.keep_in_tray)
+        self.start_at_signin = QCheckBox('Start JARVIS when Windows signs in')
+        self.start_at_signin.setEnabled(startup_supported())
+        self.start_at_signin.setChecked(start_at_signin_enabled())
+        self.start_at_signin.toggled.connect(self.on_start_at_signin)
+        background.addWidget(self.start_at_signin)
+        layout.addLayout(background)
+        self.auto_maintenance = QCheckBox('Automatically propose source update guide fixes')
+        self.auto_maintenance.setChecked(bool(self.store.get('auto_maintenance', False)))
+        self.auto_maintenance.toggled.connect(self.set_auto_maintenance)
+        layout.addWidget(self.auto_maintenance)
+        self.tray_note = QLabel(self.tray_note_text())
+        self.tray_note.setWordWrap(True)
+        layout.addWidget(self.tray_note)
         advanced = QHBoxLayout()
         for label, name in [
             ('AI providers', 'AI Providers'),
@@ -1749,6 +1876,199 @@ class Window(QMainWindow):
         )
         layout.addWidget(text)
         return page
+
+    # ── the review of prepared changes ─────────────────────────────────────
+
+    def installation_root(self):
+        """The folder JARVIS is installed in."""
+        return installation_root()
+
+    def development_test_command(self):
+        """The command that tests a prepared change."""
+        return self.store.get('development_test_command') or 'pytest -q'
+
+    def set_paused(self, paused):
+        """Pause or resume the background work.
+
+        Pausing stops the automatic source check and the background
+        preparation of changes. Nothing is closed and nothing is lost: the
+        saved work stays in the task history and can be resumed.
+        """
+        self.paused = bool(paused)
+        self.store.set('paused', self.paused)
+        if self.paused:
+            self.release_checker.pause()
+            if self.improvement_worker is not None:
+                self.improvement_worker.requestInterruption()
+            self.statusBar().showMessage('JARVIS is paused in the system tray.', 10000)
+        else:
+            self.release_checker.resume()
+            self.statusBar().showMessage('JARVIS is running again.', 10000)
+
+    def keep_running_in_tray(self):
+        """True when closing the window keeps JARVIS in the tray."""
+        return bool(self.store.get('keep_running_in_tray', False))
+
+    def refresh_review(self):
+        """Show the prepared changes again, after one of them changed."""
+        widget = self.pages.widget(self.page_indices['Review changes'])
+        if isinstance(widget, QScrollArea):
+            widget = widget.widget()
+        if hasattr(widget, 'refresh'):
+            widget.refresh()
+
+    def prepared_improvements(self):
+        """The improvements that are ready for the owner to review."""
+        return prepared_tasks(self.store)
+
+    def candidate_diff(self, candidate):
+        """The diff between the running version and a prepared revision."""
+        from core.candidates import prepared_files
+        from core.updates import changed_files, release_path, read_state
+        try:
+            files = prepared_files(self.installation_root(), candidate.revision)
+        except Exception:
+            return ''
+        current = release_path(self.installation_root(), read_state(self.installation_root())['active'])
+        if not changed_files(current, files):
+            return 'This revision is the one that is already running.'
+        from core.candidates import unified_diff
+        return unified_diff(current, files)
+
+    def tray_note_text(self):
+        """What the owner is told about the background session."""
+        if not startup_supported():
+            return ('Starting at sign-in is a Windows setting. '
+                    'The system tray controls are available on Windows.')
+        if start_at_signin_enabled():
+            return 'JARVIS starts when you sign in to Windows.'
+        return 'JARVIS does not start when you sign in to Windows.'
+
+    def on_start_at_signin(self, enabled):
+        """Turn the start-at-sign-in setting on or off."""
+        try:
+            changed = set_start_at_signin(bool(enabled))
+        except StartupError as error:
+            changed = False
+            self.statusBar().showMessage(str(error), 15000)
+        self.start_at_signin.setChecked(changed)
+        self.tray_note.setText(self.tray_note_text())
+
+    # ── preparing an improvement to JARVIS itself ────────────────────────────
+
+    def set_auto_maintenance(self, enabled):
+        if not enabled:
+            self.store.set('auto_maintenance', False)
+            if self.improvement_worker is not None and self.improvement_worker.automatic:
+                self.improvement_worker.requestInterruption()
+            return
+        provider = self.selected_coding_provider()
+        action = Action('enable_automatic_guide_proposals',
+                        f'{provider} · may read project source to update docs/UPDATES.md')
+        self.notify(lambda: self.gateway.run(action, self.confirm,
+                    lambda: self.store.set('auto_maintenance', provider)))
+        blocked = self.auto_maintenance.blockSignals(True)
+        self.auto_maintenance.setChecked(bool(self.store.get('auto_maintenance', False)))
+        self.auto_maintenance.blockSignals(blocked)
+
+    def check_maintenance(self):
+        provider = self.store.get('auto_maintenance')
+        if (not provider or self.paused or self.close_when_done or self.policy.stopped
+                or self.improvement_worker is not None or self.release_checker.source_worker is not None):
+            return
+        try:
+            routing.require_coding_provider(provider)
+            root = self.installation_root()
+            state = read_state(root)
+            active = release_path(root, state['active'])
+            goal = maintenance_goal(active)
+        except (OSError, ValueError):
+            return
+        if not goal or self.store.get('last_maintenance_goal') == [state['active'], goal]:
+            return
+        self.store.set('last_maintenance_goal', [state['active'], goal])
+        self.run_improvement(goal, provider, automatic=True)
+
+    def start_improvement(self):
+        """Ask a coding provider to prepare an improvement, in the background."""
+        if self.improvement_worker is not None:
+            self.statusBar().showMessage('A change is already being prepared.', 10000)
+            return
+        goal = self.improvement_goal.text().strip()
+        if not goal or len(goal) > 8000:
+            self.statusBar().showMessage('Describe the change in 1–8,000 characters.', 10000)
+            return
+        provider = self.selected_coding_provider()
+        action = Action('prepare_code_change',
+                        f'{provider} · {goal[:120]} · sends project files to {provider} for review')
+
+        def operation():
+            self.improvement_goal.clear()
+            self.run_improvement(goal, provider)
+
+        self.notify(lambda: self.gateway.run(action, self.confirm, operation))
+
+    def retry_improvement(self):
+        pending = resumable_tasks(self.store)
+        if not pending:
+            self.statusBar().showMessage('No interrupted improvement is waiting.', 10000)
+            return
+        task = pending[0]
+        provider = self.selected_coding_provider()
+        action = Action('retry_saved_improvement',
+                        f'{provider} · {task.goal[:120]} · sends project files to this provider')
+        self.notify(lambda: self.gateway.run(action, self.confirm,
+                    lambda: self.run_improvement(task.goal, provider, task=task)))
+
+    def run_improvement(self, goal, provider, *, automatic=False, task=None):
+        """Start the background work for one improvement."""
+        if self.improvement_worker is not None:
+            self.statusBar().showMessage('A change is already being prepared.', 10000)
+            return
+        worker = ImprovementWorker(self, goal, provider, parent=self, automatic=automatic, task=task)
+        self.improvement_worker = worker
+        worker.prepared.connect(self.on_improvement_prepared)
+        worker.message.connect(lambda text: self.statusBar().showMessage(text, 20000))
+        worker.finished.connect(self.finish_improvement_worker)
+        worker.start()
+
+    def on_improvement_prepared(self, improvement):
+        """A prepared change is ready to be looked at."""
+        self.statusBar().showMessage(
+            f'Revision {improvement.short} is prepared. Review it before it is used.', 20000)
+        review = self.pages.widget(self.page_indices['Review changes'])
+        if isinstance(review, QScrollArea):
+            review = review.widget()
+        if hasattr(review, 'refresh'):
+            review.refresh()
+
+    def finish_improvement_worker(self):
+        """The background work has ended."""
+        worker = self.improvement_worker
+        self.improvement_worker = None
+        if worker is not None:
+            worker.deleteLater()
+        if self.close_when_done:
+            self.close()
+
+    def switch_coding_provider(self, goal, provider):
+        """Prepare a change with the other coding provider, after approval.
+
+        The owner asked for the other provider, so the switch is an approved
+        action like any other. The task that was saved is the one that is
+        continued.
+        """
+        action = Action('use_other_coding_provider',
+                        f'{provider} · {goal[:120]} · sends project files to {provider} for review')
+
+        def operation():
+            # The owner approved the switch, so this provider is the one that
+            # does the work from now on.
+            routing.set_coding_provider(self.store, provider)
+            self.improvement_goal.setText(goal)
+            self.run_improvement(goal, provider)
+
+        self.notify(lambda: self.gateway.run(action, self.confirm, operation))
 
     def confirm(self, action):
         extra = ('\nContent SHA-256: ' + action.digest) if action.digest else ''
@@ -2183,6 +2503,9 @@ class Window(QMainWindow):
 
     def stop(self):
         self.policy.stop()
+        self.release_checker.cancel_source()
+        if self.improvement_worker is not None:
+            self.improvement_worker.requestInterruption()
         if self.omega is not None:
             self.omega.on_stop()
         if self.news_panel is not None:
@@ -2267,12 +2590,27 @@ class Window(QMainWindow):
             for column, value in enumerate(values):
                 self.usage_table.setItem(index, column, QTableWidgetItem(str(value)))
 
+    def request_exit(self):
+        self.exit_requested = True
+        self.close()
+
     def closeEvent(self, event):
         if not self.close_when_done and self.editor.document().isModified():
             if not self.confirm(Action('discard_unsaved_editor_changes', self.filename.text())):
+                self.exit_requested = False
                 event.ignore()
                 return
-        if self.worker is not None:
+        if (self.keep_running_in_tray() and not self.exit_requested
+                and self.background_controls is not None
+                and self.background_controls.tray is not None
+                and self.background_controls.tray.isVisible()):
+            # The owner asked JARVIS to keep running: the window goes away and
+            # the tray keeps it alive, with Pause and Exit.
+            self.background_controls.hide()
+            event.ignore()
+            return
+        if (self.worker is not None or self.release_checker.source_worker is not None
+                or self.improvement_worker is not None):
             self.close_when_done = True
             self.stop()
             self.statusBar().showMessage('Waiting for the current task to exit safely…')

@@ -57,7 +57,29 @@ def test_background_mode_is_explicit_and_reversible():
     controls.restore()
     assert window.isVisible()
     assert [a.text() for a in controls.menu.actions() if not a.isSeparator()] == [
-        'Show JARVIS', 'Run in background', 'Exit JARVIS',
+        'Show JARVIS', 'Run in background', 'Pause JARVIS', 'Exit JARVIS',
     ]
     assert 'microphone follows explicit voice consent' in controls.tray.tooltip
+    window.close()
+
+
+def test_pause_stops_the_background_work_without_closing_anything():
+    application = app()
+    window = QWidget()
+    window.show()
+    states = []
+    def set_paused(paused):
+        states.append(paused)
+        window.paused = paused
+    window.set_paused = set_paused
+    window.paused = False
+    controls = BackgroundControls(window, tray_available=True, tray_factory=FakeTray)
+    controls.toggle_pause()
+    assert states == [True]
+    assert controls.pause_action.text() == 'Resume JARVIS'
+    # Nothing was closed, and the window is still there.
+    assert window.isVisible()
+    controls.toggle_pause()
+    assert states == [True, False]
+    assert controls.pause_action.text() == 'Pause JARVIS'
     window.close()

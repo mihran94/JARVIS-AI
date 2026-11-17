@@ -3,6 +3,16 @@
 Adapted from the owner's JARVIS_BLUE_BACKGROUND_PATCH_01.zip (PyQt6).
 There is deliberately no automatic hide-on-close or implicit microphone
 activation: the user must select "Run in background" explicitly.
+
+THE ALWAYS-ON SESSION
+    The owner requirement for this draft is that closing the window can keep
+    JARVIS in the system tray, with Pause and Exit controls, and that
+    JARVIS can start when Windows signs in.
+
+    So the tray menu carries three things: show the window, pause the
+    background work, and exit. Pause stops the automatic checks and the
+    background preparation of changes; it does not close anything, and the
+    work that was saved can be resumed from the Review screen.
 """
 from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QMenu, QStyle, QSystemTrayIcon
@@ -25,6 +35,8 @@ class BackgroundControls(QObject):
         self.menu = QMenu(window)
         self.menu.addAction('Show JARVIS', self.restore)
         self.menu.addAction('Run in background', self.hide)
+        label = 'Resume JARVIS' if getattr(window, 'paused', False) else 'Pause JARVIS'
+        self.pause_action = self.menu.addAction(label, self.toggle_pause)
         self.menu.addSeparator()
         self.menu.addAction('Exit JARVIS', self.request_exit)
         self.tray.setContextMenu(self.menu)
@@ -41,9 +53,15 @@ class BackgroundControls(QObject):
         self.window.raise_()
         self.window.activateWindow()
 
+    def toggle_pause(self):
+        """Pause or resume the background work, without closing anything."""
+        paused = not bool(getattr(self.window, 'paused', False))
+        self.window.set_paused(paused)
+        self.pause_action.setText('Resume JARVIS' if paused else 'Pause JARVIS')
+
     def request_exit(self):
         """Use the desktop's closeEvent for unsaved changes and active workers."""
-        self.window.close()
+        self.window.request_exit()
 
     def activate(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
