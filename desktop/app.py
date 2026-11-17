@@ -1064,7 +1064,7 @@ class Window(QMainWindow):
         layout.addWidget(self.chat_task_card)
         self.prompt = QPlainTextEdit()
         self.prompt.setPlaceholderText(
-            'Ask JARVIS… e.g. Open CapCut, or name a saved project and what to change')
+            'Ask JARVIS or type /help for coding, project and PC commands…')
         self.prompt.setFixedHeight(78)
         layout.addWidget(self.prompt)
         self.read_replies = QCheckBox('Read replies aloud')
