@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 from core.store import Store
 from core.conversation import ASSISTANT_GUIDANCE, addressed_request
+from desktop.conversation_plan import ConversationPlan, parse_plan as parse_conversation_plan
 from core.assistant_capabilities import summary as capability_summary, system_context as capability_context
 from quantum_core.studio_project import STUDIO_URL, studio_update_prompt, validate_studio_url
 from desktop.memory_page import MemoryPanel
@@ -286,6 +287,7 @@ class Window(QMainWindow):
         self.video_plan = None
         self.video_chat_brief = None
         self.chat_launch = None
+        self.conversation_plan = ConversationPlan(self)
         self.desktop_pending = None
         self.desktop_task_timer = QTimer(self)
         self.desktop_task_timer.setInterval(180)
@@ -2085,6 +2087,7 @@ class Window(QMainWindow):
             return
         session = self.archives.currentData()
         if session:
+            self.conversation_plan.cancel('Conversation changed; remaining steps cancelled.')
             if self.chat_launch is not None:
                 self.finish_chat_launch(False)
             self.session = session
@@ -2293,6 +2296,8 @@ class Window(QMainWindow):
             self.notify(save)
 
     def queue_chat_launch(self, command, name):
+        if self.chat_launch is not None or self.desktop_pending is not None:
+            return False
         self.open_section('JARVIS Chat')
         try:
             ticket = self.policy.ticket()
@@ -2316,11 +2321,12 @@ class Window(QMainWindow):
                     operation = lambda: launch_editor(name, path)
         except (Stopped, ValueError, OSError) as error:
             self.show_local_system_reply(command, str(error))
-            return
+            return False
         self.chat_launch = (name, ticket, action, operation)
         self.show_local_system_reply(command, f'Open {name}? Approve or decline below.')
         self.chat_approval_label.setText(action.target)
         self.chat_approval.show()
+        return True
 
     def finish_chat_launch(self, approved):
         pending, self.chat_launch = self.chat_launch, None
@@ -2328,16 +2334,20 @@ class Window(QMainWindow):
         if pending is None:
             return
         name, ticket, action, operation = pending
+        success = False
         try:
             self.policy.check(ticket)
             if approved and name not in APPS and not self.plugin_enabled(name):
                 raise ValueError(f'{name} is disabled in Settings → Plugins.')
             result = self.gateway.run(action, lambda _action: approved, operation)
+            success = True
         except (Denied, Stopped, ValueError, OSError, RuntimeError) as error:
             result = str(error)
         self.store.message(self.session, 'system', result)
         self.render_chat()
         self.refresh_history()
+        if self.desktop_pending is None:
+            self.conversation_plan.result(success, str(result) if approved else 'declined')
 
     # ── coding tasks ─────────────────────────────────────────────────────
 
@@ -2348,7 +2358,7 @@ class Window(QMainWindow):
         """Review exact text before doing anything to a Windows application."""
         if self.chat_launch is not None or self.desktop_pending is not None:
             self.statusBar().showMessage('Finish the current desktop task first.', 10000)
-            return
+            return False
         if self.omega is not None and self.omega.mode != 'Omega':
             self.omega.switch('Omega')
         self.open_section('JARVIS Chat')
@@ -2367,6 +2377,7 @@ class Window(QMainWindow):
         self.chat_approval_label.setText(
             f'{step.title()} in {task.app}: {excerpt!r}\nSHA-256: {digest}')
         self.chat_approval.show()
+        return True
 
     def schedule_desktop_task(self, task, ticket, digest):
         """Schedule, never poll for a window on the Qt UI thread."""
@@ -2396,6 +2407,7 @@ class Window(QMainWindow):
                 self.show_local_system_reply('Desktop task',
                     f'{task.app} did not become foreground in time. '
                     'No text was entered. Activate the correct window and retry.')
+                self.conversation_plan.result(False, 'Target window did not become foreground in time.')
                 return
             if not target_is_foreground(task.app):
                 return
@@ -2407,10 +2419,12 @@ class Window(QMainWindow):
                 lambda _action: True,  # the exact text was approved in chat
                 lambda: type_into_target(task.app, task.text))
             self.show_local_system_reply('Desktop task result', str(result))
+            self.conversation_plan.result(True, str(result))
         except (Denied, Stopped, RuntimeError, ValueError, OSError) as error:
             self.desktop_task_timer.stop()
             self.desktop_pending = None
             self.show_local_system_reply('Desktop task failed', str(error))
+            self.conversation_plan.result(False, str(error))
 
     def add_projects_settings(self, layout):
         """The saved-project settings, inside Settings & Plugins.
@@ -3665,6 +3679,7 @@ class Window(QMainWindow):
             self.statusBar().showMessage(
                 'A task is still running. Finish or decline it before starting a new chat.', 12000)
             return
+        self.conversation_plan.cancel('New conversation; remaining steps cancelled.')
         if self.chat_launch is not None:
             self.finish_chat_launch(False)
         self.session = uuid.uuid4().hex
@@ -3677,6 +3692,7 @@ class Window(QMainWindow):
         if self.worker is not None:
             return
         if self.confirm(Action('delete_conversation', self.session)):
+            self.conversation_plan.cancel('Conversation deleted.')
             self.store.clear_messages(self.session)
             self.render_chat()
             self.refresh_archives()
@@ -3685,6 +3701,31 @@ class Window(QMainWindow):
         if self.policy.stopped or self.worker is not None or not self.prompt.toPlainText().strip():
             return
         text = self.prompt.toPlainText().strip()
+        if addressed_request(text).casefold() in ('/cancel', 'cancel task', 'task cancel pannu'):
+            cancelled = self.conversation_plan.cancel()
+            if not cancelled and self.chat_launch is not None:
+                self.finish_chat_launch(False)
+                cancelled = True
+            if not cancelled and self.desktop_pending is not None:
+                self.desktop_task_timer.stop()
+                self.desktop_pending = None
+                cancelled = True
+            self.show_local_system_reply(text, 'Pending desktop requests cancelled. Already opened apps remain open.'
+                                         if cancelled else 'No pending conversation plan. Use Emergency Stop to cancel other active work.')
+            self.prompt.clear()
+            return
+        if self.conversation_plan.active:
+            self.statusBar().showMessage('Approve the current step or type /cancel first.', 10000)
+            return
+        try:
+            plan = parse_conversation_plan(text)
+            if plan is not None:
+                self.conversation_plan.start(text, plan)
+                self.prompt.clear()
+                return
+        except ValueError as error:
+            self.show_local_system_reply(text, str(error))
+            return
         if self.handle_developer_command(text):
             self.prompt.clear()
             return
@@ -3933,6 +3974,7 @@ class Window(QMainWindow):
 
     def stop(self):
         self.policy.stop()
+        self.conversation_plan.cancel('Emergency Stop. Resume will not replay this plan.')
         self.desktop_task_timer.stop()
         self.desktop_pending = None
         if self.test_worker is not None:
@@ -4036,6 +4078,7 @@ class Window(QMainWindow):
         self.close()
 
     def closeEvent(self, event):
+        self.conversation_plan.cancel('Window closed; remaining steps cancelled.')
         self.desktop_task_timer.stop()
         self.desktop_pending = None
         if not self.close_when_done and self.editor.document().isModified():

@@ -42,6 +42,8 @@ PAGE_COMMANDS = {
 HELP = (
     "JARVIS commands (no extra dashboard needed):\n"
     "/help — list commands\n"
+    "/do open Calculator then open Notepad and type: Your text — review steps in chat\n"
+    "/cancel — cancel remaining conversation-plan steps\n"
     "/island — open the floating Dynamic Island\n"
     "/settings — configure keys, microphone, saved projects and permissions\n"
     "/projects — list your saved coding projects\n"
