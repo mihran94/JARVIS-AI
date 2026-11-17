@@ -109,11 +109,18 @@ def target_is_foreground(app: str) -> bool:
         raise ValueError('Unsupported desktop typing target.')
     _require_windows()
     user32 = ctypes.windll.user32
+    # Set explicit pointer-sized Win32 signatures; ctypes defaults to c_int
+    # and would truncate HWND on 64-bit Windows.
+    user32.GetForegroundWindow.argtypes = []
+    user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.GetWindowThreadProcessId.argtypes = [
+        wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
     handle = user32.GetForegroundWindow()
     if not handle:
         return False
     pid = wintypes.DWORD(0)
-    user32.GetWindowThreadProcessId(wintypes.HWND(handle), ctypes.byref(pid))
+    user32.GetWindowThreadProcessId(handle, ctypes.byref(pid))
     if not pid.value:
         return False
     try:
