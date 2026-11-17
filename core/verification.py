@@ -13,6 +13,7 @@ from pathlib import Path
 import shlex
 import subprocess
 import sys
+import time
 
 
 class TestRunError(RuntimeError):
@@ -29,6 +30,11 @@ def python_for(folder: Path) -> str:
                       Path(folder) / '.venv' / 'bin' / 'python'):
         if candidate.is_file():
             return str(candidate)
+    interpreter = Path(sys.executable)
+    if interpreter.name.lower() == 'pythonw.exe':
+        console_python = interpreter.with_name('python.exe')
+        if console_python.is_file():
+            return str(console_python)
     return sys.executable
 
 
@@ -67,14 +73,27 @@ def run_tests(folder, command: str, *, timeout: int = 1800, cancel=None) -> dict
         )
     except OSError as error:
         raise TestRunError(f'The test command could not be started: {error}') from None
+    deadline = time.monotonic() + timeout
     try:
-        output, _ = process.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.communicate()
-        raise TestRunError(f'The tests did not finish within {timeout // 60} minutes.')
-    if cancel is not None:
-        cancel()
+        while True:
+            if cancel is not None:
+                cancel()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TestRunError(f'The tests did not finish within {timeout // 60} minutes.')
+            try:
+                output, _ = process.communicate(timeout=min(remaining, 0.25))
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        if cancel is not None:
+            cancel()
+    finally:
+        if process.poll() is None:
+            process.kill()
+            if process.stdout is not None:
+                process.stdout.close()
+            process.wait()
     return {
         'status': 'passed' if process.returncode == 0 else 'failed',
         'code': process.returncode,

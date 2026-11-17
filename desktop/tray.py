@@ -35,7 +35,8 @@ class BackgroundControls(QObject):
         self.menu = QMenu(window)
         self.menu.addAction('Show JARVIS', self.restore)
         self.menu.addAction('Run in background', self.hide)
-        self.pause_action = self.menu.addAction('Pause JARVIS', self.toggle_pause)
+        label = 'Resume JARVIS' if getattr(window, 'paused', False) else 'Pause JARVIS'
+        self.pause_action = self.menu.addAction(label, self.toggle_pause)
         self.menu.addSeparator()
         self.menu.addAction('Exit JARVIS', self.request_exit)
         self.tray.setContextMenu(self.menu)
@@ -60,7 +61,7 @@ class BackgroundControls(QObject):
 
     def request_exit(self):
         """Use the desktop's closeEvent for unsaved changes and active workers."""
-        self.window.close()
+        self.window.request_exit()
 
     def activate(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:

@@ -25,12 +25,13 @@ THE RULES THIS MODULE KEEPS
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import tempfile
 
@@ -111,9 +112,12 @@ def read_candidate(root) -> Candidate | None:
         data = json.loads(path.read_text('utf-8'))
     except (OSError, ValueError):
         return None
-    if not isinstance(data, dict) or not data.get('revision'):
+    if not isinstance(data, dict) or not re.fullmatch('[a-f0-9]{40}', str(data.get('revision', ''))):
         return None
-    return Candidate.from_dict(data)
+    try:
+        return Candidate.from_dict(data)
+    except (TypeError, ValueError):
+        return None
 
 
 def write_candidate(root, candidate: Candidate) -> None:
@@ -145,7 +149,13 @@ def clear_candidate(root) -> None:
 
 def prepared_path(root, revision: str) -> Path:
     """Where the files of one revision are kept."""
-    return candidate_folder(root) / revision
+    if not re.fullmatch('[a-f0-9]{40}', revision):
+        raise UpdateError('Invalid source revision.')
+    root = Path(root).resolve()
+    target = candidate_folder(root) / revision
+    if target.resolve() != target:
+        raise UpdateError('The prepared source path contains a link.')
+    return target
 
 
 def store_prepared(root, revision: str, files: dict) -> Path:
@@ -168,7 +178,9 @@ def prepared_files(root, revision: str) -> dict:
         raise UpdateError('The prepared source is no longer there. Check again.')
     files = {}
     for path in sorted(target.rglob('*')):
-        if path.is_file() and '__pycache__' not in path.parts:
+        if path.is_symlink() or getattr(path, 'is_junction', lambda: False)():
+            raise UpdateError('The prepared source contains a link. Check again.')
+        if path.is_file() and not {'__pycache__', '.pytest_cache'}.intersection(path.relative_to(target).parts):
             files[str(path.relative_to(target)).replace(os.sep, '/')] = path.read_bytes()
     return files
 
@@ -232,6 +244,9 @@ def prepare_candidate(root, running_root, history, *, check, publish, transport=
     from core.updates import changed_files
     current = release_path(root, state['active'])
     changed = tuple(changed_files(current, files))
+    existing = read_candidate(root)
+    if existing is not None and (existing.revision, existing.digest) == (revision, digest) and not test_command:
+        return existing
     store_prepared(root, revision, files)
     tests = {}
     if test_command:
@@ -261,6 +276,28 @@ def _test_prepared(root, revision: str, command: str, timeout: int, check) -> di
     except TestRunError as error:
         return {'status': 'error', 'summary': str(error), 'output': ''}
     return result
+
+
+def test_candidate(root, candidate, command, *, check, publish):
+    """Record test results for the exact downloaded snapshot the owner reviewed."""
+    def validate():
+        if read_candidate(root) != candidate:
+            raise UpdateError('The pending source revision changed. Review it again.')
+        if content_digest(prepared_files(root, candidate.revision)) != candidate.digest:
+            raise UpdateError('The prepared source changed after the review. Review it again.')
+
+    check()
+    validate()
+    tests = _test_prepared(root, candidate.revision, command, 1800, check)
+    updated = replace(candidate, tests=tests,
+                      summary=describe(candidate_tests=tests, changed=candidate.changed))
+
+    def record():
+        validate()
+        write_candidate(root, updated)
+
+    publish(record)
+    return updated
 
 
 def describe(*, candidate_tests: dict, changed) -> str:
@@ -294,9 +331,14 @@ def stage_candidate(root, history, candidate: Candidate, *, check=lambda: None,
     The previous version is kept, so it can be rolled back, and the owner's
     history is backed up before the code changes.
     """
-    approve_candidate(root, candidate)
     files = prepared_files(root, candidate.revision)
+    if content_digest(files) != candidate.digest:
+        raise UpdateError('The prepared source changed after the review. Review it again.')
+    if not candidate.appliable or read_candidate(root) != candidate:
+        raise UpdateError('This exact revision must be current and its tests must pass.')
     state = read_state(root)
+    if state['active'] != candidate.base:
+        raise UpdateError('The selected version changed. Prepare this update again.')
     if state['active'] == candidate.digest:
         return 'This revision is already selected for the next start.'
     backup_history(history)
@@ -308,5 +350,7 @@ def stage_candidate(root, history, candidate: Candidate, *, check=lambda: None,
 
 def reject_candidate(root, candidate: Candidate) -> str:
     """Throw the prepared revision away. The running version is untouched."""
+    if read_candidate(root) != candidate:
+        raise UpdateError('The pending source revision changed. Review it again.')
     clear_candidate(root)
     return f'Revision {candidate.short} was rejected. The running version is unchanged.'

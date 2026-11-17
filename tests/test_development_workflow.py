@@ -235,3 +235,37 @@ def test_the_switch_to_the_other_coding_provider_is_an_approved_action(tmp_path,
         window.close()
         window.deleteLater()
         app.processEvents()
+
+
+def test_maintenance_finds_missing_documented_windows_script(tmp_path):
+    from core.development import maintenance_goal
+
+    (tmp_path / 'docs').mkdir()
+    (tmp_path / 'START_JARVIS.cmd').touch()
+    (tmp_path / 'ROLLBACK_JARVIS.cmd').touch()
+    guide = tmp_path / 'docs' / 'UPDATES.md'
+    guide.write_text('Run START_JARVIS.cmd to launch.', encoding='utf-8')
+    goal = maintenance_goal(tmp_path)
+    assert 'ROLLBACK_JARVIS.cmd' in goal
+    assert 'START_JARVIS.cmd' not in goal
+    guide.write_text('Use START_JARVIS.cmd or ROLLBACK_JARVIS.cmd.', encoding='utf-8')
+    assert maintenance_goal(tmp_path) == ''
+
+
+def test_source_installation_without_git_uses_only_inventory(tmp_path):
+    root = tmp_path / 'source'
+    (root / 'docs').mkdir(parents=True)
+    (root / 'main.py').write_text('print("original")\n', encoding='utf-8')
+    (root / 'private-notes.txt').write_text('not part of JARVIS', encoding='utf-8')
+    inventory = root / 'docs' / 'SOURCE_INTEGRITY.sha256'
+    inventory.write_text(f'{"a" * 64}  main.py\n', encoding='utf-8')
+
+    def edit(folder, *_):
+        assert not (folder / 'private-notes.txt').exists()
+        (folder / 'main.py').write_text('print("changed")\n', encoding='utf-8')
+
+    item = prepare_improvement(root, root, 'Update greeting', 'MiniMax', change=edit)
+    assert 'changed' in item.diff
+    assert item.state == 'ready'
+    assert not item.appliable
+    assert 'original' in (root / 'main.py').read_text(encoding='utf-8')

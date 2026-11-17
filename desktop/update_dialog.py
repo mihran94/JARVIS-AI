@@ -36,7 +36,7 @@ class ReleaseChecker(QObject):
         self.source_status = self.store.get('source_update_status', '')
         self.source_timer = QTimer(self)
         self.source_timer.timeout.connect(self.check_source_if_due)
-        if self.source_enabled and self.source_supported:
+        if self.source_enabled and self.source_supported and not self.window.paused:
             self.source_timer.start(60_000)
             QTimer.singleShot(0, self.check_source_if_due)
 
@@ -71,7 +71,7 @@ class ReleaseChecker(QObject):
             self.check_source()
 
     def check_source(self):
-        if (not self.source_supported or self.source_worker is not None
+        if (not self.source_supported or self.window.paused or self.source_worker is not None
                 or self.window.policy.stopped or self.window.close_when_done):
             return
         if not self.source_enabled:
@@ -80,21 +80,24 @@ class ReleaseChecker(QObject):
         else:
             self.start_source_worker()
 
-    def start_source_worker(self):
+    def start_source_worker(self, candidate=None):
         if self.source_worker is not None:
             return
         ticket = self.window.policy.ticket()
         worker = SourceCheckWorker(
             installation_root(), Path(__file__).resolve().parents[1], self.store.path,
-            self.window.policy, ticket, self.window.development_test_command(), self)
-        self.store.set('source_update_attempt', datetime.now(timezone.utc).timestamp())
+            self.window.policy, ticket, self.window.development_test_command(), self, candidate=candidate)
+        if candidate is None:
+            self.store.set('source_update_attempt', datetime.now(timezone.utc).timestamp())
         self.source_worker = worker
         worker.message.connect(self.finish_source_result)
         worker.prepared.connect(self.finish_source_prepared)
         worker.finished.connect(self.finish_source_worker)
-        self.source_status = 'Checking GitHub main and preparing a revision for review…'
+        self.source_status = ('Running approved tests…' if candidate else
+                              'Checking GitHub main and preparing a revision for review…')
         self.source_status_changed.emit(self.source_status)
         worker.start()
+        self.window.refresh_review()
 
     def finish_source_prepared(self, candidate):
         """A revision is prepared. The running version is unchanged."""
@@ -111,7 +114,7 @@ class ReleaseChecker(QObject):
 
     def resume(self):
         """Start the automatic check again after a pause."""
-        if self.source_enabled and self.source_supported:
+        if self.source_enabled and self.source_supported and not self.window.paused:
             self.source_timer.start(60_000)
 
     def finish_source_result(self, message):
@@ -123,6 +126,7 @@ class ReleaseChecker(QObject):
     def finish_source_worker(self):
         self.source_worker.deleteLater()
         self.source_worker = None
+        self.window.refresh_review()
         if self.window.close_when_done:
             self.window.close()
 
@@ -217,7 +221,7 @@ def open_updates(window):
     layout.addWidget(report)
     check = QPushButton('Check for a published release')
     checker = window.release_checker
-    source_auto = QCheckBox('Automatically stage source updates from GitHub main')
+    source_auto = QCheckBox('Automatically prepare GitHub source updates for review')
     source_auto.setChecked(checker.source_enabled)
     source_auto.setEnabled(checker.source_supported)
     source_now = QPushButton('Check and prepare a revision for review')
@@ -229,9 +233,8 @@ def open_updates(window):
     for widget in (source_auto, source_now, source_status):
         layout.addWidget(widget)
     checker.source_status_changed.connect(source_status.setText)
-    prepared = QLabel('A prepared revision waits for you in Review changes. Nothing runs until '
-                      'you approve that exact revision, and the previous version stays '
-                      'available for rollback.')
+    prepared = QLabel('Open Review changes to authorize the test command. Once the tests pass, '
+                      'you can separately approve that exact revision for the next launch.')
     prepared.setWordWrap(True)
     layout.addWidget(prepared)
     review = QPushButton('Open Review changes')

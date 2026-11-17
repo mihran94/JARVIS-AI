@@ -26,6 +26,7 @@ import json
 from pathlib import Path
 import re
 
+from core.updates import UpdateError, validate_update_path
 from providers.chat import ProviderError, stream_chat
 
 INSTRUCTION = """You are preparing a change to a Python project.
@@ -120,7 +121,8 @@ def ask(provider: str, goal: str, worktree, *, check, model: str = '', key: str 
         return ask_codex(goal, worktree, check=check, executable=executable)
     if not key:
         raise CodingAgentError(f'Save the {provider} key before preparing a change.')
-    return ask_minimax(model, key, goal, worktree, check=check, emit=emit, transport=transport)
+    return ask_minimax(model, key, goal, worktree, check=check, emit=emit, transport=transport,
+                       context=project_context(worktree))
 
 
 def apply_files(worktree, files: dict) -> list[str]:
@@ -132,7 +134,14 @@ def apply_files(worktree, files: dict) -> list[str]:
     root = Path(worktree).resolve()
     written = []
     for name, content in files.items():
+        try:
+            validate_update_path(name)
+        except UpdateError as error:
+            raise CodingAgentError(f'The coding provider proposed an unsafe path: {name}') from error
         relative = Path(name)
+        if (any(part.lower().startswith('.env') or part.lower() in
+                {'.git', '.venv', '.updates', 'development'} for part in relative.parts)):
+            raise CodingAgentError(f'The coding provider proposed a reserved path: {name}')
         if relative.is_absolute() or '..' in relative.parts:
             raise CodingAgentError(f'The coding provider asked for a file outside the project: {name}')
         target = (root / relative).resolve()

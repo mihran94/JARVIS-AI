@@ -201,3 +201,84 @@ def test_the_start_at_sign_in_command_is_the_same_launcher(tmp_path, monkeypatch
     command = startup.startup_command()
     assert 'launch.py' in command
     assert command.startswith('"')
+
+
+def test_downloaded_tests_require_permission(installation, window, monkeypatch):
+    root, _ = installation
+    win, _ = window
+    from dataclasses import replace
+
+    candidate = replace(prepare(root), tests={})
+    write_candidate(root, candidate)
+    panel = review_panel(win)
+    panel.refresh()
+    requests = []
+    approvals = []
+    monkeypatch.setattr(win.release_checker, 'start_source_worker', lambda **args: requests.append(args))
+    monkeypatch.setattr('desktop.app.QMessageBox.warning', lambda *args: None)
+    win.confirm = lambda action: approvals.append(action) or False
+    assert panel.test_button.isEnabled()
+    assert not panel.approve_button.isEnabled()
+    panel.test_button.click()
+    assert not requests
+    assert approvals[0].digest == candidate.digest
+    win.confirm = lambda action: True
+    panel.test_button.click()
+    assert requests == [{'candidate': candidate}]
+    assert read_state(root)['active'] == 'base'
+
+
+def test_local_approval_launches_reviewed_source_and_allows_rollback(installation, window, monkeypatch):
+    import shutil
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    from core.coding_tasks import create, load, save
+    from core.development import prepare_improvement
+    from core.updates import rollback
+
+    root, _ = installation
+    win, _ = window
+    base_source = Path(__file__).resolve().parents[1]
+    (root / 'scripts').mkdir()
+    shutil.copyfile(base_source / 'scripts/launch.py', root / 'scripts/launch.py')
+    shutil.copyfile(base_source / 'core/updates.py', root / 'core/updates.py')
+    (root / 'main.py').write_text('print("original code")\n', encoding='utf-8')
+
+    def git(*args):
+        subprocess.run(['git', '-C', str(root), *args], check=True, capture_output=True)
+
+    git('init')
+    git('add', '-A')
+    git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'Base')
+
+    task = create(win.store, 'Change launch marker', 'MiniMax')
+
+    def make_change(worktree, provider, goal):
+        (worktree / 'main.py').write_text('print("approved local code")\n', encoding='utf-8')
+
+    item = prepare_improvement(root, root, task.goal, task.provider, task.ident,
+                               change=make_change, test_command='python -c "print(1)"')
+    save(win.store, item)
+    panel = review_panel(win)
+    panel.refresh()
+    win.confirm = lambda action: False
+    panel.approve()
+    assert read_state(root)['active'] == 'base'
+    win.confirm = lambda action: True
+    panel.approve()
+    assert read_state(root)['active'] == item.digest
+    assert load(win.store, item.ident).state == 'completed'
+
+    def launch():
+        return subprocess.check_output([sys.executable, str(root / 'scripts/launch.py')], text=True).strip()
+
+    assert launch() == 'approved local code'
+
+    second = prepare_improvement(root, root, 'Follow-up', 'MiniMax', change=lambda *args: None)
+    assert second.base == item.digest
+    assert (Path(second.worktree) / 'main.py').read_text().strip() == 'print("approved local code")'
+
+    rollback(root)
+    assert launch() == 'original code'

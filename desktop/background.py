@@ -7,17 +7,19 @@ is already there.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 
-from core.candidates import prepare_candidate
-from core.coding_agent import CodingAgentError, apply_files, ask, project_context
-from core.coding_tasks import create as create_task, set_state, save as save_task
-from core.development import DevelopmentError, prepare_improvement
-from core.updates import UpdateError
+from core.candidates import prepare_candidate, test_candidate
+from core.coding_agent import CodingAgentError, apply_files, ask
+from core.coding_tasks import create as create_task, set_state, save as save_task, load as load_task
+from core.development import DevelopmentError, Improvement, prepare_improvement, test_improvement, worktree_for
+from core.updates import UpdateError, read_state
 from providers.errors import FailureKind
 from providers.routing import other_coding_provider, require_coding_provider
+from security.policy import Stopped
 
 
 class ImprovementWorker(QThread):
@@ -27,18 +29,19 @@ class ImprovementWorker(QThread):
     message = Signal(str)
     stopped = Signal(str)
 
-    def __init__(self, window, goal: str, provider: str, parent=None):
+    def __init__(self, window, goal: str, provider: str, parent=None, *, automatic=False, task=None):
         super().__init__(parent)
         self.window = window
         self.goal = goal
         self.provider = provider
-        self.task = None
+        self.automatic = automatic
+        self.task = task
+        self.ticket = window.policy.ticket()
 
     def check(self):
         if self.isInterruptionRequested():
-            from security.policy import Stopped
             raise Stopped()
-        self.window.policy.check(self.window.policy.ticket())
+        self.window.policy.check(self.ticket)
 
     def run(self):
         store = self.window.store
@@ -47,25 +50,37 @@ class ImprovementWorker(QThread):
         except ValueError as error:
             self.message.emit(str(error))
             return
-        self.task = create_task(store, self.goal, self.provider)
-        set_state(store, self.task, 'running')
         try:
             root = self.window.installation_root()
             repo = Path(root)
-            command = self.window.store.get('development_test_command') or 'python -m pytest -q'
+            base = read_state(root)['active']
+            resumed = self.task is not None
+            if resumed and self.task.base != base:
+                raise DevelopmentError('The active version changed. Prepare a new improvement for it.')
+            self.task = self.task or create_task(store, self.goal, self.provider)
+            self.task = save_task(store, replace(self.task, provider=self.provider, state='running',
+                                                 worktree=str(worktree_for(root, self.task.ident)),
+                                                 reason='', base=base))
 
             def make_change(worktree, provider, goal):
                 files = ask(provider, goal, worktree, check=self.check,
                             model=self.window.coding_model(provider),
                             key=self.window.coding_key(provider))
+                if self.automatic and set(files) != {'docs/UPDATES.md'}:
+                    raise DevelopmentError('Automatic maintenance can only edit docs/UPDATES.md.')
+                self.check()
                 apply_files(worktree, files)
 
             improvement = prepare_improvement(
                 root, repo, self.goal, self.provider, ident=self.task.ident,
-                change=make_change, test_command=command, check=self.check)
+                change=make_change, check=self.check, resume=resumed)
             saved = save_task(store, improvement)
             self.prepared.emit(saved)
             self.message.emit(self._summary(saved))
+        except Stopped:
+            if self.task is not None:
+                set_state(store, self.task, 'waiting', 'The task was paused and can be retried.')
+            self.message.emit('Preparation paused.')
         except CodingAgentError as error:
             self._failed(str(error))
         except DevelopmentError as error:
@@ -130,8 +145,9 @@ class SourceCheckWorker(QThread):
     message = Signal(str)
 
     def __init__(self, root, running_root, history, policy, ticket, test_command='',
-                 parent=None):
+                 parent=None, *, candidate=None):
         super().__init__(parent)
+        self.candidate = candidate
         self.root = root
         self.running_root = running_root
         self.history = history
@@ -141,20 +157,28 @@ class SourceCheckWorker(QThread):
 
     def check(self):
         if self.isInterruptionRequested():
-            from security.policy import Stopped
             raise Stopped()
         self.policy.check(self.ticket)
 
     def run(self):
         try:
-            candidate = prepare_candidate(
-                self.root, self.running_root, self.history, check=self.check,
-                publish=lambda operation: self.policy.run_if_current(self.ticket, operation),
-                test_command=self.test_command)
+            publish = lambda operation: self.policy.run_if_current(self.ticket, operation)
+            if self.candidate is None:
+                candidate = prepare_candidate(self.root, self.running_root, self.history,
+                                              check=self.check, publish=publish)
+            elif isinstance(self.candidate, Improvement):
+                from core.store import Store
+                store = Store(self.history)
+                if load_task(store, self.candidate.ident) != self.candidate:
+                    raise DevelopmentError('The prepared improvement changed. Review it again.')
+                candidate = test_improvement(self.candidate, self.test_command, check=self.check)
+                publish(lambda: save_task(store, candidate))
+            else:
+                candidate = test_candidate(self.root, self.candidate, self.test_command,
+                                           check=self.check, publish=publish)
             self.prepared.emit(candidate)
-            self.message.emit(
-                f'Revision {candidate.short} is prepared for review. '
-                'The running version is unchanged until you approve it.')
+            status = candidate.tests.get('status', 'not run')
+            self.message.emit(f'Revision {candidate.short}: tests {status}.')
         except UpdateError as error:
             self.message.emit(str(error))
         except Exception as error:

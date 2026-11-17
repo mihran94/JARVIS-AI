@@ -167,12 +167,13 @@ def test_only_the_approved_revision_is_activated(installation, monkeypatch):
     other = Candidate(revision='d' * 40, digest='e' * 64, base=approved.base,
                       changed=('main.py',), tests={'status': 'passed', 'summary': '3 passed'})
     write_candidate(root, other)
+    with pytest.raises(UpdateError, match='must be current'):
+        stage_candidate(root, history, approved)
+    assert read_state(root)['active'] == 'base'
+    assert read_candidate(root) == other
+    write_candidate(root, approved)
     stage_candidate(root, history, approved)
-    state = read_state(root)
-    assert state['active'] == approved.digest
-    assert state['last_source_revision'] == approved.revision
-    # The revision that was only prepared is not the one that runs.
-    assert other.revision not in str(state['active'])
+    assert read_state(root)['active'] == approved.digest
     assert read_candidate(root) is None
 
 
@@ -263,3 +264,37 @@ def test_automatic_source_update_requires_opt_in_and_saves_choice(tmp_path, monk
     reopened.release_checker.set_source_enabled(False)
     assert not reopened.release_checker.source_enabled
     reopened.close()
+
+
+def test_background_fetch_does_not_execute_candidate(installation, monkeypatch):
+    from core.candidates import test_candidate as run_candidate_test
+    from desktop.background import SourceCheckWorker
+
+    root, history = installation
+    policy = Policy()
+    ticket = policy.ticket()
+    ran = []
+    calls = []
+
+    def prepare_without_network(*args, **kwargs):
+        return prepare(installation, fake_github([]), test_command=kwargs.get('test_command', ''))
+
+    def run_tests(folder, command, **kwargs):
+        ran.append(command)
+        return {'status': 'passed', 'summary': 'passed', 'output': ''}
+
+    monkeypatch.setattr('desktop.background.prepare_candidate', prepare_without_network)
+    monkeypatch.setattr('core.candidates.run_tests', run_tests)
+    auto = SourceCheckWorker(root, root, history, policy, ticket, 'pytest -q')
+    auto.prepared.connect(calls.append)
+    auto.run()
+    candidate, = calls
+    assert not ran
+    assert not candidate.appliable
+    assert read_state(root)['active'] == 'base'
+
+    tested = run_candidate_test(root, candidate, 'pytest -q', check=lambda: None,
+                                publish=lambda operation: operation())
+    assert ran == ['pytest -q']
+    assert tested.appliable
+    assert read_state(root)['active'] == 'base'

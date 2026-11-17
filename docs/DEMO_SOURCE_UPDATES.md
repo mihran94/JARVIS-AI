@@ -24,7 +24,7 @@ so it is still there the next time you start JARVIS.
 ## 2. Prepare a source revision for review
 
 1. **Settings & Safety → Updates & rollback**.
-2. Turn on **Automatically stage source updates from GitHub main** and approve
+2. Turn on **Automatically prepare GitHub source updates for review** and approve
    it. Or press **Check and prepare a revision for review** to check once.
 3. The status bar says the revision is being prepared.
 
@@ -39,13 +39,14 @@ selected, nothing is staged.
 
 ```
 Prepared            Kind              Revision    Tests     Changed
-2026-01-01 00:00    GitHub source     458b0139    passed    3 file(s)
+2026-01-01 00:00    GitHub source     458b0139    not run    3 file(s)
 ```
 
 Below it:
 
 * the **diff** — a real unified diff, so you can read what changed, not only
   which files it touches,
+* **Review and run tests**, which asks for approval of the exact test command,
 * the **test results**, with the summary line of the run,
 * **Approve this exact revision** and **Reject**.
 
@@ -86,11 +87,10 @@ JARVIS then:
    from the current commit,
 2. asks the coding provider (MiniMax or Codex) for the change,
 3. writes the changed files inside that worktree,
-4. runs the tests there,
-5. saves the diff, the test results and the exact revision.
+4. saves the diff and the exact revision for review.
 
 The result waits for you in **Review prepared changes**, with the same Approve
-and Reject.
+and Reject. Authorize the tests before approving the exact revision for the next restart.
 
 Your working folder and your uncommitted files are never touched: the change
 is made in the worktree, and the running installation is not the place where

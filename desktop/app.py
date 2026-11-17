@@ -29,9 +29,9 @@ from desktop.review_panel import ReviewPanel
 from desktop.startup import (StartupError, set_start_at_signin, start_at_signin_enabled,
                              supported as startup_supported)
 from core.candidates import read_candidate
-from core.coding_tasks import prepared as prepared_tasks, tasks as coding_tasks, set_state as set_task_state
-from core.development import DevelopmentError
-from core.updates import installation_root
+from core.coding_tasks import prepared as prepared_tasks, resumable as resumable_tasks
+from core.development import DevelopmentError, maintenance_goal
+from core.updates import installation_root, read_state, release_path
 from providers import routing
 from desktop.personal_theme import PERSONAL_STYLE
 from desktop.blue_orb import BlueOrb
@@ -201,7 +201,8 @@ class Window(QMainWindow):
         self.worker = None
         self.omega = None
         self.improvement_worker = None
-        self.paused = False
+        self.paused = bool(self.store.get('paused', False))
+        self.exit_requested = False
         self.close_when_done = False
         self.session = self.store.get('session') or uuid.uuid4().hex
         self.store.set('session', self.session)
@@ -297,6 +298,10 @@ class Window(QMainWindow):
         self.render_chat()
         self.background_controls = BackgroundControls(self)
         self.release_checker = ReleaseChecker(self)
+        self.maintenance_timer = QTimer(self)
+        self.maintenance_timer.timeout.connect(self.check_maintenance)
+        self.maintenance_timer.start(60_000)
+        QTimer.singleShot(0, self.check_maintenance)
 
     def enable_omega(self, *, smoke=False):
         if self.omega is None:
@@ -1300,10 +1305,11 @@ class Window(QMainWindow):
             'Describe an improvement to JARVIS itself…')
         improve.addWidget(self.improvement_goal, 1)
         self.button(improve, 'Prepare this improvement', self.start_improvement)
+        self.button(layout, 'Retry latest interrupted improvement', self.retry_improvement)
         layout.addLayout(improve)
         improve_note = QLabel(
             'The change is prepared in an isolated worktree under the local development folder, '
-            'the tests are run there, and you review the diff before anything is used.')
+            'where you can review the diff, authorize the tests, then approve the revision for restart.')
         improve_note.setWordWrap(True)
         layout.addWidget(improve_note)
         self.button(layout, 'Review and copy draft to editor', self.apply_code_draft)
@@ -1823,6 +1829,10 @@ class Window(QMainWindow):
         self.start_at_signin.toggled.connect(self.on_start_at_signin)
         background.addWidget(self.start_at_signin)
         layout.addLayout(background)
+        self.auto_maintenance = QCheckBox('Automatically propose source update guide fixes')
+        self.auto_maintenance.setChecked(bool(self.store.get('auto_maintenance', False)))
+        self.auto_maintenance.toggled.connect(self.set_auto_maintenance)
+        layout.addWidget(self.auto_maintenance)
         self.tray_note = QLabel(self.tray_note_text())
         self.tray_note.setWordWrap(True)
         layout.addWidget(self.tray_note)
@@ -1875,7 +1885,7 @@ class Window(QMainWindow):
 
     def development_test_command(self):
         """The command that tests a prepared change."""
-        return self.store.get('development_test_command') or 'python -m pytest -q'
+        return self.store.get('development_test_command') or 'pytest -q'
 
     def set_paused(self, paused):
         """Pause or resume the background work.
@@ -1888,6 +1898,8 @@ class Window(QMainWindow):
         self.store.set('paused', self.paused)
         if self.paused:
             self.release_checker.pause()
+            if self.improvement_worker is not None:
+                self.improvement_worker.requestInterruption()
             self.statusBar().showMessage('JARVIS is paused in the system tray.', 10000)
         else:
             self.release_checker.resume()
@@ -1944,6 +1956,39 @@ class Window(QMainWindow):
 
     # ── preparing an improvement to JARVIS itself ────────────────────────────
 
+    def set_auto_maintenance(self, enabled):
+        if not enabled:
+            self.store.set('auto_maintenance', False)
+            if self.improvement_worker is not None and self.improvement_worker.automatic:
+                self.improvement_worker.requestInterruption()
+            return
+        provider = self.selected_coding_provider()
+        action = Action('enable_automatic_guide_proposals',
+                        f'{provider} · may read project source to update docs/UPDATES.md')
+        self.notify(lambda: self.gateway.run(action, self.confirm,
+                    lambda: self.store.set('auto_maintenance', provider)))
+        blocked = self.auto_maintenance.blockSignals(True)
+        self.auto_maintenance.setChecked(bool(self.store.get('auto_maintenance', False)))
+        self.auto_maintenance.blockSignals(blocked)
+
+    def check_maintenance(self):
+        provider = self.store.get('auto_maintenance')
+        if (not provider or self.paused or self.close_when_done or self.policy.stopped
+                or self.improvement_worker is not None or self.release_checker.source_worker is not None):
+            return
+        try:
+            routing.require_coding_provider(provider)
+            root = self.installation_root()
+            state = read_state(root)
+            active = release_path(root, state['active'])
+            goal = maintenance_goal(active)
+        except (OSError, ValueError):
+            return
+        if not goal or self.store.get('last_maintenance_goal') == [state['active'], goal]:
+            return
+        self.store.set('last_maintenance_goal', [state['active'], goal])
+        self.run_improvement(goal, provider, automatic=True)
+
     def start_improvement(self):
         """Ask a coding provider to prepare an improvement, in the background."""
         if self.improvement_worker is not None:
@@ -1955,7 +2000,7 @@ class Window(QMainWindow):
             return
         provider = self.selected_coding_provider()
         action = Action('prepare_code_change',
-                        f'{provider} · {goal[:120]} · sends the project files to {provider}')
+                        f'{provider} · {goal[:120]} · sends project files to {provider} for review')
 
         def operation():
             self.improvement_goal.clear()
@@ -1963,12 +2008,24 @@ class Window(QMainWindow):
 
         self.notify(lambda: self.gateway.run(action, self.confirm, operation))
 
-    def run_improvement(self, goal, provider):
+    def retry_improvement(self):
+        pending = resumable_tasks(self.store)
+        if not pending:
+            self.statusBar().showMessage('No interrupted improvement is waiting.', 10000)
+            return
+        task = pending[0]
+        provider = self.selected_coding_provider()
+        action = Action('retry_saved_improvement',
+                        f'{provider} · {task.goal[:120]} · sends project files to this provider')
+        self.notify(lambda: self.gateway.run(action, self.confirm,
+                    lambda: self.run_improvement(task.goal, provider, task=task)))
+
+    def run_improvement(self, goal, provider, *, automatic=False, task=None):
         """Start the background work for one improvement."""
         if self.improvement_worker is not None:
             self.statusBar().showMessage('A change is already being prepared.', 10000)
             return
-        worker = ImprovementWorker(self, goal, provider, parent=self)
+        worker = ImprovementWorker(self, goal, provider, parent=self, automatic=automatic, task=task)
         self.improvement_worker = worker
         worker.prepared.connect(self.on_improvement_prepared)
         worker.message.connect(lambda text: self.statusBar().showMessage(text, 20000))
@@ -1991,6 +2048,8 @@ class Window(QMainWindow):
         self.improvement_worker = None
         if worker is not None:
             worker.deleteLater()
+        if self.close_when_done:
+            self.close()
 
     def switch_coding_provider(self, goal, provider):
         """Prepare a change with the other coding provider, after approval.
@@ -2000,7 +2059,7 @@ class Window(QMainWindow):
         continued.
         """
         action = Action('use_other_coding_provider',
-                        f'{provider} · {goal[:120]} · sends the project files to {provider}')
+                        f'{provider} · {goal[:120]} · sends project files to {provider} for review')
 
         def operation():
             # The owner approved the switch, so this provider is the one that
@@ -2445,6 +2504,8 @@ class Window(QMainWindow):
     def stop(self):
         self.policy.stop()
         self.release_checker.cancel_source()
+        if self.improvement_worker is not None:
+            self.improvement_worker.requestInterruption()
         if self.omega is not None:
             self.omega.on_stop()
         if self.news_panel is not None:
@@ -2529,12 +2590,17 @@ class Window(QMainWindow):
             for column, value in enumerate(values):
                 self.usage_table.setItem(index, column, QTableWidgetItem(str(value)))
 
+    def request_exit(self):
+        self.exit_requested = True
+        self.close()
+
     def closeEvent(self, event):
         if not self.close_when_done and self.editor.document().isModified():
             if not self.confirm(Action('discard_unsaved_editor_changes', self.filename.text())):
+                self.exit_requested = False
                 event.ignore()
                 return
-        if (self.keep_running_in_tray() and not self.paused
+        if (self.keep_running_in_tray() and not self.exit_requested
                 and self.background_controls is not None
                 and self.background_controls.tray is not None
                 and self.background_controls.tray.isVisible()):
@@ -2543,7 +2609,8 @@ class Window(QMainWindow):
             self.background_controls.hide()
             event.ignore()
             return
-        if self.worker is not None or self.release_checker.source_worker is not None:
+        if (self.worker is not None or self.release_checker.source_worker is not None
+                or self.improvement_worker is not None):
             self.close_when_done = True
             self.stop()
             self.statusBar().showMessage('Waiting for the current task to exit safely…')

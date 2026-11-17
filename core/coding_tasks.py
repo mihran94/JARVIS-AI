@@ -37,7 +37,7 @@ REJECTED = 'rejected'
 READY = 'ready'
 
 #: The states from which a task can be resumed.
-RESUMABLE = (PENDING, WAITING, FAILED)
+RESUMABLE = (PENDING, RUNNING, WAITING, FAILED)
 
 
 def _now() -> str:

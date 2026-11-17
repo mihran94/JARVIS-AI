@@ -9,10 +9,10 @@ A source update is **prepared**, **reviewed** and only then **approved**. Nothin
 ## Prepare a revision for review
 
 1. Open **Settings & Safety → Updates & rollback**.
-2. Turn on **Automatically stage source updates from GitHub main** and approve the setting. JARVIS checks on enable and once a day while it is open. Use **Check and prepare a revision for review** to check immediately.
-3. The check downloads the exact commit ZIP, verifies every source file against that commit's Git tree, runs the tests in the prepared copy and writes down the revision, the changed files and the test result. **The version that is running is not touched.**
-4. Open **Settings & Safety → Review prepared changes**. You see the revision, the files it changes, the diff and the test result, with **Approve this exact revision** and **Reject**.
-5. Approve. The approved revision is selected for the next start. Close JARVIS and start it again from the original `START_JARVIS.cmd`.
+2. Turn on **Automatically prepare GitHub source updates for review** and approve the setting. JARVIS checks on enable and once a day while it is open. Use **Check and prepare a revision for review** to check immediately.
+3. The check downloads the exact commit ZIP, verifies every source file against that commit's Git tree, and records the revision and changed files. The running version stays active.
+4. Open **Settings & Safety → Review prepared changes**. Review the diff and select **Review and run tests**. The confirmation names the exact revision, digest and command that will run with your account permissions.
+5. Once tests pass, choose **Approve this exact revision**. The approved revision is selected for the next start. Close JARVIS and start it again from the original `START_JARVIS.cmd`.
 
 JARVIS checks `mihran94/JARVIS-AI` on GitHub over HTTPS. This uses public GitHub endpoints and sends no API keys, prompts or chat history. Turning the setting off cancels an in-progress check.
 
@@ -20,15 +20,15 @@ JARVIS checks `mihran94/JARVIS-AI` on GitHub over HTTPS. This uses public GitHub
 
 ## Prepare an improvement to JARVIS itself
 
-JARVIS can prepare a change to its own source, in an isolated Git worktree under the local `development/` folder. The running installation is never the place where the change is made.
+JARVIS can prepare a change to its own source, in a separate Git checkout under the local `development/` folder. A Git checkout uses a detached worktree. A source ZIP installation uses the shipped source inventory to seed the task. Both need Git installed.
 
 1. Open **Coding Assistant**, describe the improvement, and choose **Prepare this improvement**.
-2. The coding provider makes the change inside the worktree and the tests are run there.
-3. The diff, the test results and the exact revision are saved. Open **Review prepared changes** to read them and to approve or reject.
+2. The coding provider prepares the change inside the worktree.
+3. Open **Review prepared changes**, inspect the diff and authorize **Review and run tests**. Once they pass, approve the exact revision for the next restart, or reject it.
 
 A change whose tests failed cannot be applied. A change that is edited after the review cannot be applied either: the approval has to be given again.
 
-If the coding provider stops — a rate limit, an exhausted quota, a dropped connection — the task is saved and can be resumed. Using the other coding provider instead is an action you approve.
+If the coding provider stops — a rate limit, an exhausted quota, a dropped connection — the task is saved. To resume it, choose a coding provider, then **Retry latest interrupted improvement** and approve. The same task and its worktree are reused when available.
 
 ## Apply a reviewed ZIP manually
 
@@ -52,4 +52,6 @@ For damaged update state, run `.venv\Scripts\python.exe main.py` from the origin
 * **Keep JARVIS in the system tray when the window is closed** — closing the window then leaves JARVIS running in the tray. The tray menu shows the window, pauses the background work and exits JARVIS.
 * **Start JARVIS when Windows signs in** — Windows-only. It adds the same launcher you already use to your own Run key, and removes it again when you switch the setting off. No administrator rights are needed.
 
-Pausing stops the automatic source check and the background preparation of changes. Nothing is closed and nothing is lost: the saved work stays in the task history and can be resumed from **Review prepared changes**.
+Pausing stops the automatic source check and the background preparation of changes. Nothing is closed and nothing is lost: the saved work stays in the task history and can be retried from **Coding Assistant**.
+
+**Automatically propose source update guide fixes** is an optional background check. With your approval it uses the selected coding provider to propose missing Windows launch or rollback instructions in `docs/UPDATES.md`. The proposal still requires test authorization and approval before it can be selected.

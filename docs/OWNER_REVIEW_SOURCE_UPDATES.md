@@ -1,5 +1,7 @@
 # Owner review — prepared source updates and the coding route
 
+> This review describes the original draft. See [UPDATES.md](UPDATES.md) for the current test approval, local staging, and retry steps.
+
 **Branch:** `feature/automatic-source-updates` (draft PR #30)
 **Base:** `7a1ec8d` (`main`)
 **Status:** Ready for the owner's review. The PR stays a draft; `main` is not touched.

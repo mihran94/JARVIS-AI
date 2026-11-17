@@ -51,6 +51,17 @@ def release_path(root, ident):
     return path
 
 
+def validate_update_path(name):
+    parts = name.rstrip('/').split('/')
+    if ('\\' in name or name.startswith('/') or any(
+            p in ('', '.', '..') or p.endswith((' ', '.')) or ':' in p
+            or any(ord(c) < 32 or c in '<>"|?*' for c in p)
+            or p.split('.')[0].upper() in {'CON','PRN','AUX','NUL',
+                *('COM'+str(i) for i in range(1,10)), *('LPT'+str(i) for i in range(1,10))}
+            for p in parts)):
+        raise UpdateError('Unsafe path in ZIP.')
+
+
 def inspect_zip(path):
     path = Path(path)
     if path.stat().st_size > MAX_ARCHIVE:
@@ -78,13 +89,9 @@ def inspect_zip(path):
             # backslash is refused on every platform.
             raw_name = item.orig_filename or name
             parts = name.rstrip('/').split('/')
-            if ('\\' in name or '\\' in raw_name or name.startswith('/') or any(
-                    p in ('', '.', '..') or p.endswith((' ', '.')) or ':' in p
-                    or any(ord(c) < 32 or c in '<>"|?*' for c in p)
-                    or p.split('.')[0].upper() in {'CON','PRN','AUX','NUL',
-                        *('COM'+str(i) for i in range(1,10)), *('LPT'+str(i) for i in range(1,10))}
-                    for p in parts)):
+            if '\\' in raw_name:
                 raise UpdateError('Unsafe path in ZIP.')
+            validate_update_path(name)
             if item.flag_bits & 1:
                 raise UpdateError('Encrypted files are not permitted in an update.')
             if stat.S_ISLNK(item.external_attr >> 16):
@@ -159,6 +166,15 @@ def activate_zip(root, archive, expected_digest):
 def stage_snapshot(root, digest, files, *, revision=None, expected_state=None, check=lambda: None,
                    publish=lambda operation: operation()):
     root = Path(root).resolve()
+    if not REQUIRED <= files.keys():
+        raise UpdateError('Prepared source is missing required JARVIS files.')
+    for name in files:
+        validate_update_path(name)
+        first = name.split('/')[0].lower()
+        if first in {'.updates', '.venv', '.git', 'development'} or first.startswith('.env'):
+            raise UpdateError('Prepared source includes runtime data or credentials.')
+    if len({name.casefold() for name in files}) != len(files):
+        raise UpdateError('Prepared source contains case-colliding paths.')
     check_compatibility(root, files)
     state = read_state(root)
     if expected_state is not None and state != expected_state:
