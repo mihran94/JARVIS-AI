@@ -233,3 +233,22 @@ def test_island_return_keeps_windows_taskbar_accessible(tmp_path):
     finally:
         window.close()
         app.processEvents()
+
+
+def test_failed_chat_remains_visible_after_reopen_without_storing_error_details(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
+    try:
+        window.chat_ticket = window.policy.ticket()
+        window.chat_task = window.store.task('chat', 'Offline provider failure')
+        window.worker_kind = 'chat'
+        window.on_result('failed', 'Sensitive diagnostic details', {'duration_ms': 10})
+        messages = window.store.messages(window.session)
+        assert messages[-1]['role'] == 'system'
+        assert 'AI request failed' in messages[-1]['content']
+        assert 'Sensitive diagnostic details' not in messages[-1]['content']
+        window.render_chat()
+        assert 'AI request failed' in window.transcript.toPlainText()
+    finally:
+        window.close()
+        app.processEvents()
