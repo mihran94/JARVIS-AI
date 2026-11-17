@@ -15,6 +15,8 @@ def test_minimal_navigation_and_help():
     assert parse_command("open settings").target == "Settings & Safety"
     assert parse_command("/settings").target == "Settings & Safety"
     assert parse_command("/code").target == "Coding Assistant"
+    assert parse_command("/workspace").target == "Coding Assistant"
+    assert parse_command("/editors").kind == "editors"
     assert parse_command("/voice").target == "Voice / Hey Jarvis"
     assert parse_command("/new").kind == "new"
     assert "/project NAME fix GOAL" in HELP
@@ -40,3 +42,6 @@ def test_unknown_commands_cannot_become_shell_or_paid_cloud_requests():
                   "hello Jarvis", "how do I fix a project?"):
         assert parse_command(query, PROJECTS) is None
     assert parse_command(None, PROJECTS) is None
+    # Keep the older local and video command handlers operational.
+    for value in ("/status", "/time", "/capabilities", "/video make a short reel"):
+        assert parse_command(value, PROJECTS) is None
