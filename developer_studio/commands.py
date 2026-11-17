@@ -21,6 +21,7 @@ PAGE_COMMANDS = {
     "plugins": "Settings & Safety",
     "coding": "Coding Assistant",
     "code": "Coding Assistant",
+    "workspace": "Coding Assistant",
     "pc": "PC Control",
     "voice": "Voice / Hey Jarvis",
     "mobile": "Phone Remote",
@@ -43,6 +44,7 @@ HELP = (
     "/island — open the floating Dynamic Island\n"
     "/settings — configure keys, microphone, saved projects and permissions\n"
     "/projects — list your saved coding projects\n"
+    "/editors — list detected development editors\n"
     "/project add — register a project folder in Settings\n"
     "/project NAME — show a saved project's status\n"
     "/project NAME open — open in its configured editor (approval required)\n"
@@ -84,6 +86,8 @@ def parse_command(text, projects=()):
         return Command("island")
     if keyword in ("/projects",) and not remainder:
         return Command("projects")
+    if keyword == "/editors" and not remainder:
+        return Command("editors")
     if keyword == "/new" and not remainder:
         return Command("new")
     if keyword in ("/project", "/projects"):
