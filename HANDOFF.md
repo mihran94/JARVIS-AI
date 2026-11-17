@@ -2,9 +2,9 @@
 
 **Cycle:** Windows install and verification, and the Personal Codex Assistant review.
 **Branch:** `feature/phase1-omega-verification-20261117`
-**Baseline (starting commit):** `7a1ec8d` — *Merge JARVIS Omega desktop presentation (#29)*, the latest `main`.
-**Draft PR:** #30 (`feature/automatic-source-updates`) is a separate, earlier draft and is untouched by this cycle.
-**Status:** Ready for the owner's review. `main` is not touched, nothing is merged, no release is published.
+**Baseline (starting commit):** `7a1ec8d` — *Merge JARVIS Omega desktop presentation (#29)*, the `main` at the start of the cycle.
+**Current `main`:** `8450f51` — *Merge pull request #30 from mihran94/feature/automatic-source-updates*. PR #30 was merged into `main` **by the owner, not by this cycle**, and the branch now contains it. This branch merges that `main` in; see section 1.1.
+**Status:** Ready for the owner's review. `main` is not touched by this cycle, nothing is merged, no release is published.
 
 ---
 
@@ -23,6 +23,24 @@ The worktree used for this cycle is **`/workspace/work/wt-omega-verify`**.
 
 Baseline of that tree: **657 passed, 3 skipped** — the same number the section
 reviews recorded.
+
+### 1.1 `main` moved during the cycle
+
+While this cycle was running, PR #30 was merged into `main` by the owner and a
+further commit (*Make reviewed JARVIS improvements launchable and authorize
+tests separately*) landed on that branch. This branch therefore **merges the
+new `main`** (`8450f51`) instead of staying on the old `7a1ec8d`.
+
+The merge touched `desktop/app.py` in three places. Each one was resolved by
+keeping **both** sides:
+
+| Place | Phase 1 side | PR #30 side | Resolution |
+|---|---|---|---|
+| Method block | the coding task, the task card and the approval gate | the review screen, the prepared changes, the maintenance timer | both, in full |
+| `stop()` | interrupts the test worker, the coding worker and the chat launch | cancels the source check and interrupts the improvement worker | both |
+| `closeEvent()` | waits for the coding and test workers | hides to the tray and waits for the source and improvement workers | both: the tray check first, then every worker |
+
+The merged `Window` class has 192 methods and no duplicated one.
 
 ---
 
@@ -88,7 +106,8 @@ never reaches a dialog.
 | `HANDOFF.md` | **new** — this file. |
 
 The reviewable diff against the starting commit is
-`git diff 7a1ec8d..HEAD`.
+`git diff 7a1ec8d..HEAD`. Because the branch now also contains the merged
+`main`, `git diff origin/main..HEAD` shows only what this cycle added.
 
 ---
 
@@ -97,13 +116,14 @@ The reviewable diff against the starting commit is
 ```
 $ cd /workspace/work/wt-omega-verify
 $ QT_QPA_PLATFORM=offscreen python -m pytest -q
-663 passed, 3 skipped, 12 subtests passed in 203.90s
+709 passed, 3 skipped, 12 subtests passed in 220.68s
 ```
 
 | Run | Result |
 |---|---|
-| Baseline of the applied tree (before the fixes) | 657 passed, 3 skipped |
-| After the fixes | **663 passed, 3 skipped, 0 failed** (+6 new tests) |
+| Baseline of the applied tree, before the fixes | 657 passed, 3 skipped |
+| After the fixes, before `main` moved | 663 passed, 3 skipped, 0 failed (+6 new tests) |
+| After merging the new `main` (PR #30 and its follow-up) | **709 passed, 3 skipped, 0 failed** |
 
 Targeted runs used as evidence:
 
@@ -137,7 +157,7 @@ The six new tests, and what each one holds in place:
 | # | Check | Result | Evidence |
 |---|---|---|---|
 | 1 | Startup smoke test (Omega modes, dock, approval, stop) | **PASS** | `tests/test_omega.py` — 6 passed, including `test_modes_return_to_same_window_and_keep_saved_preferences`, `test_live_activity_approval_and_emergency_stop` |
-| 2 | Full Python regression suite | **PASS** | 663 passed, 3 skipped, 0 failed |
+| 2 | Full Python regression suite | **PASS** | 709 passed, 3 skipped, 0 failed |
 | 3 | Source integrity manifest | **PASS** | `scripts/source_manifest.py --check` → *matches the tree*; `tests/test_source_manifest.py` — 2 passed |
 | 4 | CapCut / DaVinci Resolve / After Effects launch commands preserved | **PASS** | `test_the_software_launch_commands_still_work[CapCut|DaVinci Resolve|After Effects]` — 3 passed |
 | 5 | Approval gate on the task card | **PASS** | `test_every_task_card_action_goes_through_the_approval` (phase 1 regressions) |
@@ -204,5 +224,19 @@ On an Android phone, with the APK built there:
    the results are added to section 5.
 4. **Only after that approval** is the branch merged into `main`, and only
    then is the release candidate built and signed.
+
+### 8.1 What this cycle did *not* do
+
+* It did not merge PR #30 — the owner did that. This cycle only merged the
+  resulting `main` into the feature branch.
+* It did not merge anything into `main`.
+* It did not build an installer or an APK, so there is no artifact and no
+  checksum.
+* It did not claim integration of any archive that was not inspected and
+  tested: the `JARVIS-AI-visionOS.zip`, the Supreme OS source, MiniMax
+  v0.2.0 and the MARK LVI source were **not** supplied to this environment,
+  so nothing about them is claimed.
+* It did not touch the provider registry, the credential store or the
+  permission model.
 
 Nothing is merged before the owner says so.
