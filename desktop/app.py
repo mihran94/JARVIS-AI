@@ -4,6 +4,7 @@ import sys
 import uuid
 import time
 from datetime import datetime, timezone
+from hashlib import sha256
 
 from PySide6.QtCore import QProcess, QThread, Signal, QTimer, Qt, QLockFile, QUrl, QEvent
 from PySide6.QtGui import QDesktopServices, QFont, QTextCursor, QKeySequence, QShortcut
@@ -11,10 +12,11 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QListWidget, QStackedWidget, QPlainTextEdit, QLineEdit,
     QComboBox, QMessageBox, QFormLayout, QTableWidget, QTableWidgetItem,
-    QHeaderView, QCheckBox, QDialog, QFileDialog, QScrollArea, QLayout, QGridLayout,
-    QProgressBar, QGroupBox,
+    QHeaderView, QCheckBox, QDialog, QFileDialog, QScrollArea, QLayout,
+    QProgressBar, QGroupBox, QSizePolicy,
 )
 from core.store import Store
+from core.assistant_capabilities import summary as capability_summary, system_context as capability_context
 from quantum_core.studio_project import STUDIO_URL, studio_update_prompt, validate_studio_url
 from desktop.memory_page import MemoryPanel
 from desktop.studio_inbox import StudioInboxDialog
@@ -48,7 +50,7 @@ from video_studio.after_effects import after_effects_render
 from video_studio.after_effects_timeline import timeline_executable, timeline_script
 from video_studio.capcut import export_capcut
 from video_studio.preview import media_tools, render_preview
-from security.policy import Policy, Action, Stopped
+from security.policy import Action, Denied, Policy, Stopped
 from security.vault import Vault
 from providers import profiles as profile_models
 from providers.chat import ProviderError, TransientProviderError
@@ -57,14 +59,26 @@ from providers.models import check_model
 from providers.registry import provider_names
 from providers.router import ProviderRouter
 from providers.stream_fallback import StreamTarget, stream_with_fallback, FallbackBlocked
-from automation.windows import APPS, launch_app
+from automation.windows import APPS, EDITOR_EXECUTABLES, editor_executable, launch_app, launch_editor
+from automation.desktop_tasks import parse_desktop_task, target_is_foreground, type_into_target
 from automation.inspection import inspect_windows
 from developer_studio.workspace import Workspace
 from developer_studio.codex_cli import codex_executable, run_codex
+from developer_studio.editors import (
+    CAPABILITY_LABELS, editor_from_text, editor_status, editor_names, open_project_in_editor,
+)
+from developer_studio.intents import parse_coding_request
+from developer_studio.projects import (
+    SavedProject, assistant_language, configured_launchers, find_project, load_projects,
+    project_status, routine_allowed, save_projects, set_assistant_language,
+    set_trusted_routine, trusted_routines,
+)
+from developer_studio.codex_task import STEP_LABELS, TASK_STEPS, CodexTask, TaskOutcome
 from developer_studio.generation import messages_for_goal, messages_for_repair, prepare_draft
+from video_studio.editing import editing_checklist, export_davinci
 from video_studio.planning import (
-    VIDEO_ENGINES, english_srt, flow_instructions, parse_plan, plan_json,
-    planning_messages, spoken_brief, suggest_workflow,
+    VIDEO_ENGINES, VIDEO_TOOLS, english_srt, parse_plan, plan_json, prompt_sheet,
+    planning_messages, shot_list, spoken_brief, suggest_workflow,
 )
 from business.site_preview import LANGUAGES, WebsiteExport
 from business.drafting import TASKS as BUSINESS_TASKS, draft_messages, spoken_business_request
@@ -174,6 +188,80 @@ class ModelCheckWorker(QThread):
         self.result.emit(status, text, payload)
 
 
+class CodingTaskWorker(QThread):
+    """Run one coding task off the UI thread and report every step.
+
+    The progress signal carries the step and the sentence, so the chat can
+    mark the task card as it goes. Nothing is logged, and the key never
+    appears here: the CLI reads its own credentials.
+    """
+
+    progress = Signal(str, str)
+    result = Signal(object)
+
+    def __init__(self, task, policy, ticket):
+        super().__init__()
+        self.task = task
+        self.policy = policy
+        self.ticket = ticket
+
+    def check(self):
+        self.policy.check(self.ticket)
+        if self.isInterruptionRequested():
+            raise Stopped('Task cancelled.')
+
+    def run(self):
+        self.task.progress = lambda step, text: self.progress.emit(step, text)
+        self.task.check_cancelled = self.check
+        try:
+            outcome = self.task.run()
+        except Stopped:
+            outcome = TaskOutcome(status='cancelled',
+                                  message='Cancelled. Your project was not changed.')
+        except Exception as error:
+            outcome = TaskOutcome(status='failed', message=str(error))
+        self.result.emit(outcome)
+
+
+class TestRunWorker(QThread):
+    """Run a project's tests off the UI thread.
+
+    The tests can take minutes, so they must not run on the UI thread. The
+    worker watches for Emergency Stop and for its own interruption, and when
+    either happens the TEST PROCESS is terminated — not left running while
+    the owner believes it stopped.
+    """
+
+    result = Signal(str, str, object)
+
+    def __init__(self, folder, command, policy, ticket):
+        super().__init__()
+        self.folder = folder
+        self.command = command
+        self.policy = policy
+        self.ticket = ticket
+        #: The running test process, so a stop can show that it really ended.
+        self.process = None
+
+    def cancel_check(self):
+        """Raise to stop the tests. Called while they run."""
+        if self.isInterruptionRequested():
+            raise Stopped('Test run cancelled.')
+        self.policy.check(self.ticket)
+
+    def run(self):
+        from developer_studio.codex_task import run_local_tests
+        try:
+            status, output = run_local_tests(
+                self.folder, self.command, cancel=self.cancel_check,
+                observer=lambda process: setattr(self, 'process', process))
+        except Stopped:
+            status, output = 'cancelled', 'The test run was cancelled and the process was stopped.'
+        except Exception as error:
+            status, output = 'could not run', str(error)
+        self.result.emit(status, output, {})
+
+
 class Window(QMainWindow):
     def __init__(self, data_root):
         super().__init__()
@@ -194,6 +282,16 @@ class Window(QMainWindow):
         self.active_model = None
         self.workspace = Workspace(self.root / 'workspace')
         self.video_plan = None
+        self.video_chat_brief = None
+        self.chat_launch = None
+        self.desktop_pending = None
+        self.desktop_task_timer = QTimer(self)
+        self.desktop_task_timer.setInterval(180)
+        self.desktop_task_timer.timeout.connect(self.complete_desktop_task)
+        self.coding = None
+        self.coding_worker = None
+        self.test_worker = None
+        self.chat_task_id = None
         self.site_export = None
         self.news_panel = None
         self.site_draft = None
@@ -232,9 +330,24 @@ class Window(QMainWindow):
         stop.clicked.connect(self.stop)
         header.addWidget(stop)
         outer.addLayout(header)
+        navigation = QHBoxLayout()
+        self.chat_home_button = self.button(
+            navigation, 'Assistant', lambda: self.open_section('JARVIS Chat'))
+        self.chat_home_button.hide()
+        self.tools_button = QPushButton('Tools')
+        self.tools_button.setCheckable(True)
+        self.tools_button.hide()
+        navigation.addWidget(self.tools_button)
+        self.settings_button = self.button(
+            navigation, 'Settings', lambda: self.open_section('Settings & Safety'))
+        self.plugins_button = self.button(navigation, 'Plugins', self.open_plugins)
+        navigation.addStretch()
+        outer.addLayout(navigation)
         body = QHBoxLayout()
         self.nav = QListWidget()
         self.nav.setFixedWidth(174)
+        self.nav.hide()
+        self.tools_button.toggled.connect(self.nav.setVisible)
         self.pages = QStackedWidget()
         body.addWidget(self.nav)
         body.addWidget(self.pages, 1)
@@ -278,6 +391,8 @@ class Window(QMainWindow):
         self.refresh_brain_label()
         self.nav.currentRowChanged.connect(self.show_primary_page)
         self.nav.setCurrentRow(0)
+        self.pages.currentChanged.connect(self.update_assistant_navigation)
+        self.update_assistant_navigation()
         self.statusBar().showMessage('Local history • Bridge listener is off by default • Keys configured on your PC')
         self.shortcut = QShortcut(QKeySequence('Ctrl+Alt+J'), self)
         self.shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
@@ -339,6 +454,22 @@ class Window(QMainWindow):
                 self.nav.setCurrentRow(row)
                 break
         self.pages.setCurrentIndex(index)
+        if name == 'Settings & Safety':
+            # The saved-project table lives in Settings, so it is refreshed
+            # whenever the owner comes back to it.
+            self.refresh_projects_page()
+
+    def update_assistant_navigation(self, _index=None):
+        """Keep the assistant central; reveal Back only on advanced pages."""
+        self.chat_home_button.setVisible(
+            self.pages.currentIndex() != self.page_indices['JARVIS Chat'])
+
+    def open_plugins(self):
+        """Open existing plugin switches without a large feature toolbar."""
+        self.open_section('Settings & Safety')
+        scroller = self.pages.widget(self.page_indices['Settings & Safety'])
+        if isinstance(scroller, QScrollArea):
+            scroller.ensureWidgetVisible(self.plugins_group, 16, 16)
 
     def local_voice_allowed(self):
         """Hands-free calls are allowed only to local, non-billable Ollama."""
@@ -552,6 +683,19 @@ class Window(QMainWindow):
         layout.addWidget(button)
         return button
 
+    def flexible_button(self, layout, text, callback, minimum=110):
+        """A button that keeps its natural width but may shrink when it must.
+
+        A long label on a full-width button sets a wide minimum on the whole
+        page, and a page that asks for more width than the window has asks to
+        scroll sideways. These buttons keep their natural width whenever there
+        is room and give some of it back when there is not.
+        """
+        button = self.button(layout, text, callback)
+        button.setMinimumWidth(minimum)
+        button.setSizePolicy(QSizePolicy.Minimum, button.sizePolicy().verticalPolicy())
+        return button
+
     def dashboard(self):
         page, layout = self.page('Command Center', 'Live system metrics for this computer.')
         header = QHBoxLayout()
@@ -671,6 +815,11 @@ class Window(QMainWindow):
 
     def local_system_reply(self, text):
         command = ' '.join(text.casefold().split()).strip('?!.,')
+        if command in ('capabilities', '/capabilities', 'what can you do',
+                       'what are your abilities', 'your skills', 'what can jarvis do',
+                       'உன்னால் என்ன செய்ய முடியும்', 'என்ன செய்ய முடியும்',
+                       'jarvis capabilities', 'tes capacités'):
+            return capability_summary(self)
         if command in ('time', '/time', 'current time', 'what time is it', 'what is the time', "what's the time",
                        'இப்போ நேரம் என்ன', 'நேரம்',
                        'quelle heure est-il'):
@@ -752,16 +901,13 @@ class Window(QMainWindow):
         self.system_metrics_label.hide()
         hero.addLayout(details, 1)
         layout.addLayout(hero)
-        shortcuts = QGridLayout()
-        for index, (label, section) in enumerate([
-            ('Video', 'Video Editor'), ('Coding', 'Coding Assistant'),
-            ('Phone', 'Phone Remote'), ('Camera', 'PC Control'),
-            ('Commands', 'Command Center'),
-        ]):
-            button = QPushButton(label)
-            button.clicked.connect(lambda checked=False, section=section: self.open_section(section))
-            shortcuts.addWidget(button, index // 3, index % 3)
-        layout.addLayout(shortcuts)
+        # The MARK LVII-inspired holographic reactor shares the existing AI
+        # status and voice pipeline. It does not launch a second assistant.
+        from desktop.omega_visuals import Reactor
+        self.chat_reactor = Reactor()
+        self.chat_reactor.setAccessibleName('JARVIS holographic core')
+        self.chat_reactor.setFixedHeight(170)
+        layout.addWidget(self.chat_reactor)
         # The active brain sits on its own line. It is information the owner
         # needs at a glance, and keeping it out of the provider row stops a
         # long model name from forcing the chat page to scroll sideways.
@@ -770,14 +916,12 @@ class Window(QMainWindow):
         self.brain_label.setWordWrap(True)
         self.brain_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.brain_label)
-        row = QHBoxLayout()
         self.chat_provider = QComboBox()
         self.chat_provider.addItems(provider_names())
         self.chat_provider.setCurrentText(self.stored_chat_provider())
         self.chat_provider.currentTextChanged.connect(self.on_chat_provider_changed)
-        row.addWidget(self.chat_provider)
-        self.new_chat_button = self.button(row, 'New chat', self.new_chat)
-        layout.addLayout(row)
+        self.new_chat_button = QPushButton('New chat')
+        self.new_chat_button.clicked.connect(self.new_chat)
         options = QCheckBox('Chat options')
         layout.addWidget(options)
         settings = QWidget()
@@ -786,6 +930,9 @@ class Window(QMainWindow):
         settings.hide()
         options.toggled.connect(settings.setVisible)
         layout.addWidget(settings)
+        settings_layout.addWidget(QLabel('AI provider'))
+        settings_layout.addWidget(self.chat_provider)
+        settings_layout.addWidget(self.new_chat_button)
         self.backup_consent = QCheckBox('Allow one backup attempt')
         self.backup_consent.setToolTip('Shares the full conversation with the backup provider. Charges may apply.')
         self.backup_consent.toggled.connect(lambda enabled: self.guard_local_voice_provider() if enabled else None)
@@ -814,8 +961,40 @@ class Window(QMainWindow):
         self.transcript.setReadOnly(True)
         self.transcript.setMinimumHeight(158)
         layout.addWidget(self.transcript, 1)
+        self.chat_approval = QWidget()
+        approval_row = QHBoxLayout(self.chat_approval)
+        approval_row.setContentsMargins(0, 0, 0, 0)
+        self.chat_approval_label = QLabel()
+        self.chat_approval_label.setWordWrap(True)
+        approval_row.addWidget(self.chat_approval_label, 1)
+        self.chat_approve_button = self.button(
+            approval_row, 'Approve', lambda: self.finish_chat_launch(True))
+        self.chat_decline_button = self.button(
+            approval_row, 'Decline', lambda: self.finish_chat_launch(False))
+        self.chat_approval.hide()
+        layout.addWidget(self.chat_approval)
+        self.chat_task_card = QWidget()
+        card_layout = QVBoxLayout(self.chat_task_card)
+        card_layout.setContentsMargins(0, 0, 0, 0)
+        self.chat_task_text = QLabel()
+        self.chat_task_text.setWordWrap(True)
+        self.chat_task_text.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        card_layout.addWidget(self.chat_task_text)
+        task_buttons = QHBoxLayout()
+        self.chat_task_approve = self.button(
+            task_buttons, 'Approve task', lambda: self.finish_coding_approval(True))
+        self.chat_task_decline = self.button(
+            task_buttons, 'Decline', lambda: self.finish_coding_approval(False))
+        self.chat_task_diff = self.button(task_buttons, 'Review diff', self.review_coding_diff)
+        self.chat_task_tests = self.button(task_buttons, 'Run tests', self.run_coding_tests)
+        self.chat_task_open = self.button(task_buttons, 'Open project', self.open_coding_project)
+        card_layout.addLayout(task_buttons)
+        self.chat_task_card.hide()
+        layout.addWidget(self.chat_task_card)
         self.prompt = QPlainTextEdit()
-        self.prompt.setPlaceholderText('Ask JARVIS… தமிழ் / English / Français')
+        self.prompt.setPlaceholderText(
+            'Ask JARVIS… e.g. Open CapCut, or name a saved project and what to change')
         self.prompt.setFixedHeight(78)
         layout.addWidget(self.prompt)
         self.read_replies = QCheckBox('Read replies aloud')
@@ -881,38 +1060,69 @@ class Window(QMainWindow):
         self.video_status = QLabel('Subtitle timing is estimated. Review it against the recorded voiceover.')
         self.video_status.setWordWrap(True)
         layout.addWidget(self.video_status)
+        sheet_row = QHBoxLayout()
+        self.video_sheet_kind = QComboBox()
+        self.video_sheet_kind.addItems(
+            ['Shot list', 'Flow prompts', 'Higgsfield prompts', 'Editing checklist'])
+        self.video_sheet_kind.currentTextChanged.connect(self.refresh_video_sheet)
+        sheet_row.addWidget(self.video_sheet_kind, 1)
+        self.video_copy_button = self.button(sheet_row, 'Copy to clipboard', self.copy_video_sheet)
+        layout.addLayout(sheet_row)
+        self.video_sheet = QPlainTextEdit()
+        self.video_sheet.setReadOnly(True)
+        self.video_sheet.setMaximumHeight(190)
+        self.video_sheet.setPlaceholderText(
+            'The copy-ready sheet appears here once a shot plan is ready.')
+        layout.addWidget(self.video_sheet)
         self.video_preview = QPlainTextEdit()
         self.video_preview.setReadOnly(True)
+        self.video_preview.setPlaceholderText('The cinematic shot list appears here once a plan is ready.')
         layout.addWidget(self.video_preview, 1)
-        flow_link = QLabel()
-        flow_link.setOpenExternalLinks(True)
-        layout.addWidget(flow_link)
-        links = (
-            '<a href="https://labs.google/fx/tools/flow">Open Google Flow</a>',
-            '<a href="https://higgsfield.ai/">Open Higgsfield</a>',
-        )
-        flow_link.setText(links[0])
-        self.video_engine.currentIndexChanged.connect(lambda index: flow_link.setText(links[index]))
+        handoff = QGroupBox('Browser handoff')
+        handoff_layout = QVBoxLayout(handoff)
+        handoff_note = QLabel('Pick a shot, then open either tool. JARVIS copies the shot’s '
+                             'prompt when available. Paste it in the browser to start.')
+        handoff_note.setWordWrap(True)
+        handoff_layout.addWidget(handoff_note)
+        self.video_handoff_shot = QComboBox()
+        self.video_handoff_shot.setAccessibleName('Shot for browser handoff')
+        self.video_handoff_shot.setPlaceholderText('Generate a shot plan first')
+        self.video_handoff_shot.setEnabled(False)
+        handoff_layout.addWidget(self.video_handoff_shot)
+        tool_row = QHBoxLayout()
+        self.video_tool_buttons = {
+            tool: self.flexible_button(
+                tool_row, f'Open {tool}', lambda _checked=False, tool=tool: self.open_video_tool(tool))
+            for tool in VIDEO_TOOLS
+        }
+        handoff_layout.addLayout(tool_row)
+        layout.addWidget(handoff)
         self.video_engine.currentIndexChanged.connect(self.invalidate_video_plan)
         row = QHBoxLayout()
         self.video_export_buttons = (
-            self.button(row, 'Save shot plan (JSON)', lambda: self.save_video_draft('json')),
-            self.button(row, 'Save English subtitles (SRT)', lambda: self.save_video_draft('srt')),
+            self.flexible_button(row, 'Save shot plan (JSON)',
+                                 lambda: self.save_video_draft('json')),
+            self.flexible_button(row, 'Save English subtitles (SRT)',
+                                 lambda: self.save_video_draft('srt')),
         )
         for button in self.video_export_buttons:
             button.setEnabled(False)
         layout.addLayout(row)
         render_row = QHBoxLayout()
-        self.video_render_button = self.button(render_row, 'Assemble MP4 preview', self.assemble_video)
+        self.video_render_button = self.flexible_button(
+            render_row, 'Assemble MP4 preview', self.assemble_video)
         self.video_render_button.setEnabled(False)
-        self.capcut_button = self.button(layout, 'Export for CapCut Desktop',
-                                         lambda: self.assemble_video(capcut=True))
+        self.capcut_button = self.flexible_button(
+            layout, 'Export for CapCut Desktop', lambda: self.assemble_video(editor='CapCut Desktop'))
         self.capcut_button.setEnabled(False)
+        self.davinci_button = self.flexible_button(
+            layout, 'Export for DaVinci Resolve', lambda: self.assemble_video(editor='DaVinci Resolve'))
+        self.davinci_button.setEnabled(False)
         self.after_effects_button = self.button(render_row, 'Render After Effects', self.render_after_effects)
         self.video_cancel_render = self.button(render_row, 'Cancel export', self.cancel_video_export)
         self.video_cancel_render.hide()
         layout.addLayout(render_row)
-        self.after_effects_timeline_button = self.button(
+        self.after_effects_timeline_button = self.flexible_button(
             layout, 'Build After Effects timeline', self.build_after_effects_timeline)
         self.after_effects_timeline_button.setEnabled(False)
         return page
@@ -923,7 +1133,7 @@ class Window(QMainWindow):
             suggest_workflow(self.video_brief.toPlainText(), self.video_engine.currentText()),
         )
 
-    def generate_video_plan(self):
+    def generate_video_plan(self, *, chat_brief=None):
         if self.worker is not None or self.policy.stopped:
             return
 
@@ -937,13 +1147,78 @@ class Window(QMainWindow):
             self.chat_ticket = self.policy.ticket()
             self.invalidate_video_plan()
             self.video_status.setText(f'Generating a {engine} shot plan with Gemini…')
+            self.video_chat_brief = chat_brief
             self.start_worker(provider, model, key, messages, 'video_plan')
+
+        self.notify(operation)
+
+    def refresh_video_sheet(self):
+        """Fill the copy area with the sheet the owner chose.
+
+        The sheet is the part that gets pasted into Flow, Higgsfield or the
+        editor, so it carries only what that tool needs.
+        """
+        if self.video_plan is None:
+            self.video_sheet.clear()
+            return
+        plan = self.video_plan[1]
+        kind = self.video_sheet_kind.currentText()
+        if kind == 'Flow prompts':
+            text = prompt_sheet(plan, 'Google Flow')
+        elif kind == 'Higgsfield prompts':
+            text = prompt_sheet(plan, 'Higgsfield')
+        elif kind == 'Editing checklist':
+            text = editing_checklist(plan)
+        else:
+            text = shot_list(plan)
+        self.video_sheet.setPlainText(text)
+
+    def copy_video_sheet(self):
+        """Copy the sheet so it can be pasted straight into the tool."""
+        text = self.video_sheet.toPlainText()
+        if not text.strip():
+            self.statusBar().showMessage('Generate a shot plan first.', 8000)
+            return
+        QApplication.clipboard().setText(text)
+        self.statusBar().showMessage(
+            'Copied the ' + self.video_sheet_kind.currentText().lower() + ' to the clipboard.', 8000)
+
+    def open_video_tool(self, tool):
+        """Open an external editing tool and copy the prompt for it.
+
+        The one-click handoff is what the Video Studio section is for: the
+        button puts the shot prompt on the clipboard and opens the tool. The
+        chat command for the same tool asks for approval, because a chat
+        command can come from anything the owner typed.
+        """
+        url, field = VIDEO_TOOLS[tool]
+
+        def operation():
+            self.policy.ticket()
+            if not self.plugin_enabled(tool):
+                raise ValueError(f'{tool} is disabled in Settings → Plugins.')
+            index = self.video_handoff_shot.currentIndex()
+            prompt = ''
+            if self.video_plan is not None and index >= 0:
+                prompt = self.video_plan[1]['shots'][index].get(field, '')
+            if prompt:
+                QApplication.clipboard().setText(prompt)
+            if not QDesktopServices.openUrl(QUrl(url)):
+                detail = ' The prompt is on your clipboard.' if prompt else ''
+                raise ValueError(f'Could not open {tool} in your browser.' + detail)
+            if prompt:
+                return f'Shot {index + 1} prompt copied. Paste it in {tool}.'
+            if index >= 0:
+                return f'Opened {tool}. Shot {index + 1} has no {tool} prompt to copy.'
+            return f'Opened {tool}. Generate a shot plan to copy a prompt from JARVIS.'
 
         self.notify(operation)
 
     def invalidate_video_plan(self):
         self.video_plan = None
         self.video_preview.clear()
+        self.video_sheet.clear()
+        self.video_handoff_shot.clear()
         self.refresh_draft_buttons()
 
     def save_video_draft(self, extension):
@@ -957,7 +1232,7 @@ class Window(QMainWindow):
             Action('save_file', name, Workspace.digest(content)),
             self.confirm, lambda: self.workspace.save(name, content)))
 
-    def assemble_video(self, *, capcut=False):
+    def assemble_video(self, *, editor=None):
         if self.video_plan is None or self.worker is not None or self.policy.stopped:
             return
         selection = self.video_plan
@@ -965,7 +1240,7 @@ class Window(QMainWindow):
 
         def operation():
             media_tools()
-            dialog = PreviewInputs(plan, self, capcut=capcut)
+            dialog = PreviewInputs(plan, self, editor=editor)
             if dialog.exec() != QDialog.DialogCode.Accepted:
                 return
             if self.video_plan is not selection or self.worker is not None:
@@ -973,10 +1248,13 @@ class Window(QMainWindow):
             clips = [field.text() for field in dialog.clips]
             output = dialog.target.text()
             narration = dialog.narration.text() or None
-            exporter = export_capcut if capcut else render_preview
-            label = 'Preparing CapCut export…' if capcut else 'Assembling local MP4 preview…'
+            exporter, action, label = {
+                'CapCut Desktop': (export_capcut, 'export_for_capcut', 'Preparing CapCut export…'),
+                'DaVinci Resolve': (export_davinci, 'export_for_davinci', 'Preparing DaVinci Resolve export…'),
+                None: (render_preview, 'start_video_preview', 'Assembling local MP4 preview…'),
+            }[editor]
             self.gateway.run(
-                Action('export_for_capcut' if capcut else 'start_video_preview', output), self.confirm,
+                Action(action, output), self.confirm,
                 lambda: self.start_video_export(
                     output, label,
                     lambda check: exporter(plan, clips, output, check, narration=narration)))
@@ -1182,15 +1460,26 @@ class Window(QMainWindow):
         return 'Updated source ZIP saved.'
 
     def open_website_project(self):
+        """Open the AI Studio project, with the owner's approval.
+
+        The URL is checked before anything is opened, and the approval names
+        the address that is about to be opened.
+        """
+        try:
+            url = validate_studio_url(self.website_project_url.text())
+        except (ValueError, OSError) as error:
+            self.notify(lambda: (_ for _ in ()).throw(error))
+            return
+        action = Action('open_website_project', url)
+
         def operation():
             self.policy.ticket()
-            url = validate_studio_url(self.website_project_url.text())
             self.store.set('website_ai_studio_url', url)
             if not QDesktopServices.openUrl(QUrl(url)):
                 raise ValueError('Project URL saved. Windows could not open your browser.')
             return 'AI Studio project URL saved.'
 
-        self.notify(operation)
+        self.notify(lambda: self.gateway.run(action, self.confirm, operation))
 
     def prepare_website_update(self):
         if self.business_brief.isReadOnly():
@@ -1717,6 +2006,8 @@ class Window(QMainWindow):
             return
         session = self.archives.currentData()
         if session:
+            if self.chat_launch is not None:
+                self.finish_chat_launch(False)
             self.session = session
             self.store.set('session', session)
             self.render_chat()
@@ -1847,6 +2138,28 @@ class Window(QMainWindow):
             self.button(advanced, label,
                         lambda checked=False, name=name: self.open_section(name))
         layout.addLayout(advanced)
+        self.add_projects_settings(layout)
+        plugins = QGroupBox('Plugins')
+        self.plugins_group = plugins
+        plugin_layout = QVBoxLayout(plugins)
+        for name in (*VIDEO_TOOLS, *EDITOR_EXECUTABLES):
+            row = QHBoxLayout()
+            enabled = QCheckBox(name)
+            enabled.setChecked(self.plugin_enabled(name))
+            enabled.toggled.connect(
+                lambda value, name=name: self.store.set('plugin:' + name, value))
+            row.addWidget(enabled)
+            row.addStretch()
+            if name in EDITOR_EXECUTABLES:
+                configured = self.store.get('editor_path:' + name, '')
+                label = QLabel('Executable configured' if configured else 'Setup needed')
+                row.addWidget(label)
+                button = QPushButton('Choose EXE')
+                button.clicked.connect(
+                    lambda _checked=False, name=name, label=label: self.choose_editor_path(name, label))
+                row.addWidget(button)
+            plugin_layout.addLayout(row)
+        layout.addWidget(plugins)
         text = QPlainTextEdit()
         text.setReadOnly(True)
         text.setPlainText(
@@ -1876,6 +2189,967 @@ class Window(QMainWindow):
         )
         layout.addWidget(text)
         return page
+
+    def plugin_enabled(self, name):
+        return bool(self.store.get('plugin:' + name, True))
+
+    def choose_editor_path(self, name, label):
+        current = self.store.get('editor_path:' + name, '')
+        path, _ = QFileDialog.getOpenFileName(
+            self, f'Choose {name}', current, 'Windows application (*.exe)')
+        if path:
+            def save():
+                executable = editor_executable(name, path)
+                self.store.set('editor_path:' + name, str(executable))
+                label.setText(executable.name + ' configured')
+            self.notify(save)
+
+    def queue_chat_launch(self, command, name):
+        self.open_section('JARVIS Chat')
+        try:
+            ticket = self.policy.ticket()
+            if name in APPS:
+                action = Action('launch_app', name)
+                operation = lambda: launch_app(name)
+            else:
+                if not self.plugin_enabled(name):
+                    raise ValueError(f'{name} is disabled in Settings → Plugins.')
+                if name in VIDEO_TOOLS:
+                    url, _ = VIDEO_TOOLS[name]
+                    action = Action('open_video_tool', url)
+
+                    def operation():
+                        if not QDesktopServices.openUrl(QUrl(url)):
+                            raise ValueError(f'Could not open {name} in the browser.')
+                        return f'{name} opened in the browser.'
+                else:
+                    path = editor_executable(name, self.store.get('editor_path:' + name, ''))
+                    action = Action('launch_editor', str(path))
+                    operation = lambda: launch_editor(name, path)
+        except (Stopped, ValueError, OSError) as error:
+            self.show_local_system_reply(command, str(error))
+            return
+        self.chat_launch = (name, ticket, action, operation)
+        self.show_local_system_reply(command, f'Open {name}? Approve or decline below.')
+        self.chat_approval_label.setText(action.target)
+        self.chat_approval.show()
+
+    def finish_chat_launch(self, approved):
+        pending, self.chat_launch = self.chat_launch, None
+        self.chat_approval.hide()
+        if pending is None:
+            return
+        name, ticket, action, operation = pending
+        try:
+            self.policy.check(ticket)
+            if approved and name not in APPS and not self.plugin_enabled(name):
+                raise ValueError(f'{name} is disabled in Settings → Plugins.')
+            result = self.gateway.run(action, lambda _action: approved, operation)
+        except (Denied, Stopped, ValueError, OSError, RuntimeError) as error:
+            result = str(error)
+        self.store.message(self.session, 'system', result)
+        self.render_chat()
+        self.refresh_history()
+
+    # ── coding tasks ─────────────────────────────────────────────────────
+
+
+    # ── saved projects, editors and routines ─────────────────────────────
+
+    def queue_desktop_task(self, command, task):
+        """Review exact text before doing anything to a Windows application."""
+        if self.chat_launch is not None or self.desktop_pending is not None:
+            self.statusBar().showMessage('Finish the current desktop task first.', 10000)
+            return
+        if self.omega is not None and self.omega.mode != 'Omega':
+            self.omega.switch('Omega')
+        self.open_section('JARVIS Chat')
+        ticket = self.policy.ticket()
+        digest = sha256(task.text.encode('utf-8')).hexdigest()
+        step = 'open and type' if task.launch else 'type into active window'
+        action = Action('desktop_plan_approval', f'{task.app}: {step}, {len(task.text)} chars',
+                        digest)
+        self.chat_launch = (task.app, ticket, action,
+                            lambda: self.schedule_desktop_task(task, ticket, digest))
+        excerpt = task.text[:160] + ('…' if len(task.text) > 160 else '')
+        self.show_local_system_reply(command,
+            f'Review desktop task: {step} in {task.app}. '
+            'The full text to be inserted follows; approve only if correct:\n'
+            + task.text + '\nThe target window must be verified before typing.')
+        self.chat_approval_label.setText(
+            f'{step.title()} in {task.app}: {excerpt!r}\nSHA-256: {digest}')
+        self.chat_approval.show()
+
+    def schedule_desktop_task(self, task, ticket, digest):
+        """Schedule, never poll for a window on the Qt UI thread."""
+        self.policy.check(ticket)
+        if self.desktop_pending is not None:
+            raise ValueError('A desktop task is already running.')
+        if task.launch:
+            launch_app(task.app)
+        self.desktop_pending = dict(task=task, ticket=ticket, digest=digest,
+                                    deadline=time.monotonic() + 7.0)
+        self.desktop_task_timer.start()
+        return (f'Desktop plan approved for {task.app}. Waiting for its '
+                'foreground window; text not entered yet.')
+
+    def complete_desktop_task(self):
+        """Only type after Windows verifies the target foreground process."""
+        pending = self.desktop_pending
+        if pending is None:
+            self.desktop_task_timer.stop()
+            return
+        task = pending['task']
+        try:
+            self.policy.check(pending['ticket'])
+            if time.monotonic() >= pending['deadline']:
+                self.desktop_task_timer.stop()
+                self.desktop_pending = None
+                self.show_local_system_reply('Desktop task',
+                    f'{task.app} did not become foreground in time. '
+                    'No text was entered. Activate the correct window and retry.')
+                return
+            if not target_is_foreground(task.app):
+                return
+            self.desktop_task_timer.stop()
+            self.desktop_pending = None
+            result = self.gateway.run(
+                Action('desktop_type', f'{task.app}: {len(task.text)} characters',
+                       pending['digest']),
+                lambda _action: True,  # the exact text was approved in chat
+                lambda: type_into_target(task.app, task.text))
+            self.show_local_system_reply('Desktop task result', str(result))
+        except (Denied, Stopped, RuntimeError, ValueError, OSError) as error:
+            self.desktop_task_timer.stop()
+            self.desktop_pending = None
+            self.show_local_system_reply('Desktop task failed', str(error))
+
+    def add_projects_settings(self, layout):
+        """The saved-project settings, inside Settings & Plugins.
+
+        Save each project folder with the editor you work in and the local test
+        command. After that a chat request only has to name the project. JARVIS
+        opens the real folder, works in an isolated Git worktree so your
+        uncommitted files stay untouched, and shows you the diff before
+        anything is pushed or merged.
+        """
+        heading = QLabel('Saved projects and editors')
+        heading.setStyleSheet('font-size:19px;font-weight:600')
+        layout.addWidget(heading)
+        note = QLabel(
+            'Save each project folder with the editor you work in and the local test command. '
+            'After that a chat request only has to name the project. JARVIS opens the real '
+            'folder, works in an isolated Git worktree so your uncommitted files stay '
+            'untouched, and shows you the diff before anything is pushed or merged.')
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        self.projects_table = QTableWidget(0, 4)
+        self.projects_table.setHorizontalHeaderLabels(
+            ['Project', 'Folder', 'Editor', 'Test command'])
+        header = self.projects_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.projects_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.projects_table.setSelectionBehavior(
+            QTableWidget.SelectionBehavior.SelectRows)
+        self.projects_table.itemSelectionChanged.connect(self.refresh_routine_switches)
+        layout.addWidget(self.projects_table)
+        row = QHBoxLayout()
+        self.button(row, 'Add project folder', self.add_project)
+        self.button(row, 'Remove selected project', self.remove_project)
+        layout.addLayout(row)
+        self.project_status = QLabel()
+        self.project_status.setWordWrap(True)
+        layout.addWidget(self.project_status)
+        self.editor_status = QLabel()
+        self.editor_status.setWordWrap(True)
+        layout.addWidget(self.editor_status)
+        launcher_heading = QLabel('Another editor, as a launcher you configure')
+        launcher_heading.setStyleSheet('font-weight:600')
+        layout.addWidget(launcher_heading)
+        self.launchers_table = QTableWidget(0, 3)
+        self.launchers_table.setHorizontalHeaderLabels(['Name', 'Command', 'Capabilities'])
+        self.launchers_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.Stretch)
+        self.launchers_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        layout.addWidget(self.launchers_table)
+        launcher_row = QHBoxLayout()
+        self.launcher_name = QLineEdit()
+        self.launcher_name.setPlaceholderText('Name, e.g. Fleet')
+        launcher_row.addWidget(self.launcher_name)
+        self.launcher_command = QLineEdit()
+        self.launcher_command.setPlaceholderText('Command or full path to its executable')
+        launcher_row.addWidget(self.launcher_command)
+        layout.addLayout(launcher_row)
+        self.button(layout, 'Add this launcher', self.add_launcher)
+        language_row = QHBoxLayout()
+        language_row.addWidget(QLabel('Assistant language'))
+        self.assistant_language_box = QComboBox()
+        self.assistant_language_box.addItems(
+            ['தமிழ் (Tamil)', 'English', 'Français (French)'])
+        self.assistant_language_box.currentTextChanged.connect(self.change_assistant_language)
+        language_row.addWidget(self.assistant_language_box)
+        layout.addLayout(language_row)
+        self.routine_open = QCheckBox('Open the selected project without asking')
+        self.routine_open.toggled.connect(self.change_routine_open)
+        layout.addWidget(self.routine_open)
+        self.routine_tests = QCheckBox("Run the selected project's tests without asking")
+        self.routine_tests.toggled.connect(self.change_routine_tests)
+        layout.addWidget(self.routine_tests)
+        self.refresh_projects_page()
+
+    def refresh_projects_page(self):
+        """Show the saved projects, the editors and the configured launchers."""
+        projects = load_projects(self.store)
+        self.projects_table.setRowCount(len(projects))
+        for row, project in enumerate(projects):
+            status = project_status(project)
+            for column, text in enumerate((project.name, project.path,
+                                           project.editor, project.test_command)):
+                item = QTableWidgetItem(text)
+                if column == 1 and not status['exists']:
+                    item.setToolTip('This folder is not there any more.')
+                self.projects_table.setItem(row, column, item)
+        launchers = configured_launchers(self.store)
+        self.launchers_table.setRowCount(len(launchers))
+        for row, launcher in enumerate(launchers):
+            state = editor_status(launcher['name'], launcher)
+            self.launchers_table.setItem(row, 0, QTableWidgetItem(launcher['name']))
+            self.launchers_table.setItem(row, 1, QTableWidgetItem(launcher['command']))
+            self.launchers_table.setItem(row, 2, QTableWidgetItem(
+                ', '.join(CAPABILITY_LABELS.get(item, item) for item in state['capabilities'])
+                or 'No capabilities declared'))
+        lines = []
+        for name in editor_names():
+            state = editor_status(name)
+            if state['installed']:
+                lines.append(f'{name}: installed — ' + ', '.join(
+                    CAPABILITY_LABELS.get(item, item) for item in state['capabilities']))
+            else:
+                lines.append(f'{name}: SETUP NEEDED — {state["setup"]}')
+        for launcher in launchers:
+            state = editor_status(launcher['name'], launcher)
+            lines.append(f'{launcher["name"]}: ' + (
+                'installed' if state['installed'] else 'SETUP NEEDED') + ' — ' + ', '.join(
+                    CAPABILITY_LABELS.get(item, item) for item in state['capabilities']))
+        self.editor_status.setText('\n'.join(lines))
+        language = assistant_language(self.store)
+        self.assistant_language_box.blockSignals(True)
+        self.assistant_language_box.setCurrentIndex({'ta': 0, 'en': 1, 'fr': 2}[language])
+        self.assistant_language_box.blockSignals(False)
+        self.refresh_routine_switches()
+
+    def selected_project(self):
+        row = self.projects_table.currentRow()
+        projects = load_projects(self.store)
+        if 0 <= row < len(projects):
+            return projects[row]
+        return None
+
+    def refresh_routine_switches(self):
+        project = self.selected_project()
+        routines = trusted_routines(self.store)
+        for box, key in ((self.routine_open, 'open'), (self.routine_tests, 'tests')):
+            box.blockSignals(True)
+            box.setChecked(bool(project and routines.get(key + ':' + project.name)))
+            box.setEnabled(project is not None)
+            box.blockSignals(False)
+        if project is None:
+            self.project_status.setText('Select a project to see its status.')
+        else:
+            state = project_status(project)
+            parts = [f'{project.name}: {project.path}']
+            if not state['exists']:
+                parts.append('SETUP NEEDED — the folder is not there.')
+            elif state['git']:
+                parts.append('Git repository.' + (
+                    f" {state['uncommitted']} uncommitted file(s) are protected when a task runs."
+                    if state['dirty'] else ' Working folder is clean.'))
+            else:
+                parts.append('SETUP NEEDED — not a Git repository, so a task cannot be isolated.')
+            self.project_status.setText(' '.join(parts))
+
+    def add_project(self):
+        """Choose a folder and save it with an editor and a test command."""
+        folder = QFileDialog.getExistingDirectory(self, 'Choose the project folder')
+        if not folder:
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Save this project')
+        form = QFormLayout(dialog)
+        name_field = QLineEdit(Path(folder).name)
+        form.addRow('Project name', name_field)
+        editor_field = QComboBox()
+        editor_field.addItems(editor_names())
+        form.addRow('Editor', editor_field)
+        test_field = QLineEdit()
+        test_field.setPlaceholderText('e.g. pytest -q')
+        form.addRow('Local test command', test_field)
+        buttons = QHBoxLayout()
+        save_button = QPushButton('Save project')
+        cancel_button = QPushButton('Cancel')
+        buttons.addWidget(save_button)
+        buttons.addWidget(cancel_button)
+        form.addRow(buttons)
+        save_button.clicked.connect(dialog.accept)
+        cancel_button.clicked.connect(dialog.reject)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        name = name_field.text().strip()
+        if not name:
+            self.statusBar().showMessage('Give the project a name.', 10000)
+            return
+        projects = load_projects(self.store)
+        projects = [item for item in projects if item.name.casefold() != name.casefold()]
+        projects.append(SavedProject(name=name, path=folder, editor=editor_field.currentText(),
+                                     test_command=test_field.text().strip()))
+        save_projects(self.store, projects)
+        self.refresh_projects_page()
+
+    def remove_project(self):
+        project = self.selected_project()
+        if project is None:
+            return
+        if not self.confirm(Action('remove_saved_project', project.name)):
+            return
+        projects = [item for item in load_projects(self.store)
+                    if item.name.casefold() != project.name.casefold()]
+        save_projects(self.store, projects)
+        self.refresh_projects_page()
+
+    def add_launcher(self):
+        """Save the owner's own editor launcher."""
+        name = self.launcher_name.text().strip()
+        command = self.launcher_command.text().strip()
+        if not name or not command:
+            self.statusBar().showMessage('Give the launcher a name and a command.', 10000)
+            return
+        launchers = configured_launchers(self.store)
+        launchers = [item for item in launchers if item['name'].casefold() != name.casefold()]
+        launchers.append({'name': name, 'command': command,
+                           'capabilities': ['open_project', 'open_file']})
+        from developer_studio.projects import save_configured_launchers
+        save_configured_launchers(self.store, launchers)
+        self.launcher_name.clear()
+        self.launcher_command.clear()
+        self.refresh_projects_page()
+
+    def change_assistant_language(self, label):
+        code = {'தமிழ் (Tamil)': 'ta', 'English': 'en', 'Français (French)': 'fr'}.get(label, 'ta')
+        set_assistant_language(self.store, code)
+
+    def change_routine_open(self, enabled):
+        project = self.selected_project()
+        if project is not None:
+            set_trusted_routine(self.store, 'open:' + project.name, enabled)
+
+    def change_routine_tests(self, enabled):
+        project = self.selected_project()
+        if project is not None:
+            set_trusted_routine(self.store, 'tests:' + project.name, enabled)
+
+    def coding_request(self, text):
+        """The coding request in a chat sentence, or None.
+
+        A sentence is only a coding request when it names a saved project.
+        Anything else is ordinary chat and goes to the assistant, because a
+        request that might be a coding task must never swallow a question.
+        """
+        projects = load_projects(self.store)
+        request = parse_coding_request(text, projects, editor_from_text)
+        if request.project and (request.open_project or request.make_change or request.run_tests):
+            return request
+        return None
+
+    def coding_task_active(self):
+        """True when a coding task is running or waiting for approval.
+
+        A second chat request must never take over a task that is already in
+        flight: the running job would report its result into the new task's
+        card, and a pending approval would be silently lost.
+        """
+        if self.coding_worker is not None or self.test_worker is not None:
+            return True
+        if getattr(self, 'coding_pending', None) is not None:
+            return True
+        if self.coding is not None:
+            steps = self.coding.get('steps', [])
+            if self.coding.get('index', 0) < len(steps):
+                return True
+        return False
+
+    def start_coding_task(self, request, text):
+        """Show the task card and start the first step."""
+        if self.coding_task_active():
+            self.show_local_system_reply(
+                text, 'A task is already running or waiting for approval. '
+                      'Finish or decline it before starting another.')
+            return
+        projects = load_projects(self.store)
+        project = find_project(projects, request.project)
+        if project is None:
+            self.show_local_system_reply(text, 'That project is not saved any more.')
+            return
+        launchers = configured_launchers(self.store)
+        editor = request.editor or project.editor
+        configured = next((item for item in launchers if item['name'] == editor), None)
+        status = editor_status(editor, configured)
+        routines = trusted_routines(self.store)
+        steps = []
+        if request.open_project:
+            steps.append({
+                'key': 'open', 'done': False, 'state': 'waiting',
+                'label': f'Open {project.name} in {editor}',
+                'approval': not routines.get('open:' + project.name),
+            })
+        if request.make_change:
+            steps.append({
+                'key': 'change', 'done': False, 'state': 'waiting',
+                'label': f'Ask Codex to: {request.change or project.name}',
+                'approval': True,
+            })
+        if request.run_tests:
+            steps.append({
+                'key': 'tests', 'done': False, 'state': 'waiting',
+                'label': f"Run the configured tests: {project.test_command or '(none configured)'}",
+                # A test command the owner has not trusted is approved on its
+                # own, separately from the change that produced it.
+                'approval': not (routines.get('tests:' + project.name)
+                                 and project.test_command),
+            })
+        self.coding = {
+            'request': request, 'project': project, 'editor': editor,
+            'editor_status': status, 'steps': steps, 'index': 0,
+            'outcome': None, 'text': text,
+        }
+        # The task is recorded in the task history from the moment it starts,
+        # so a task that is interrupted still leaves a trace.
+        self.chat_task_id = self.store.task(
+            'codex_task', f'{project.name} · {project.path} · {request.change or project.name}')
+        self.store.finish(self.chat_task_id, 'running')
+        self.render_coding_card()
+        self.advance_coding_task()
+
+    def coding_action(self, step):
+        """The exact action and target the owner approves for this step.
+
+        The target says which project, which folder and which change, so the
+        owner can see what is about to happen before it happens.
+        """
+        coding = self.coding
+        project = coding['project']
+        request = coding['request']
+        if step['key'] == 'open':
+            return Action('open_project', f'{coding["editor"]} · {project.path}')
+        if step['key'] == 'tests':
+            return Action('run_project_tests', f'{project.name}: {project.test_command}')
+        change = request.change or project.name
+        return Action('codex_task', f'{project.name} · {project.path} · {change}')
+
+    def render_coding_card(self):
+        """The task card: project, requested change and the steps."""
+        coding = self.coding
+        if coding is None:
+            self.chat_task_card.hide()
+            return
+        project = coding['project']
+        request = coding['request']
+        status = coding['editor_status']
+        lines = [f'Task · {project.name}', f'Folder: {project.path}']
+        editor_line = f"Editor: {coding['editor']}"
+        if status['installed']:
+            editor_line += f" — {status['path']}"
+        else:
+            editor_line += ' — SETUP NEEDED'
+        lines.append(editor_line)
+        if not status['installed'] and status['setup']:
+            lines.append(status['setup'])
+        if request.change:
+            lines.append('Change: ' + request.change)
+        lines.append('')
+        for number, step in enumerate(coding['steps'], 1):
+            mark = {'done': 'done', 'running': 'running', 'waiting': 'waiting',
+                    'declined': 'declined', 'failed': 'failed'}.get(step['state'], 'waiting')
+            if step['state'] == 'waiting' and coding.get('pending_step') is step:
+                mark = 'awaiting approval'
+            lines.append(f'{number}. {step["label"]}  [{mark}]')
+        outcome = coding.get('outcome')
+        if outcome is not None:
+            lines.append('')
+            lines.append(outcome.message)
+            if outcome.changed_files:
+                lines.append('Changed files: ' + ', '.join(outcome.changed_files))
+            if outcome.test_status not in ('', 'not run'):
+                lines.append(f'Tests: {outcome.test_status}')
+            if outcome.protected:
+                lines.append('Your uncommitted work was untouched: '
+                             + ', '.join(outcome.protected))
+        self.chat_task_text.setText('\n'.join(lines))
+        self.chat_task_card.show()
+        self.chat_task_diff.setEnabled(bool(outcome and outcome.diff))
+        self.chat_task_tests.setEnabled(bool(outcome and outcome.worktree))
+        self.chat_task_open.setEnabled(True)
+
+    def advance_coding_task(self):
+        """Run the next step, or ask for approval when it needs one."""
+        coding = self.coding
+        if coding is None:
+            return
+        while coding['index'] < len(coding['steps']):
+            step = coding['steps'][coding['index']]
+            if step['done']:
+                coding['index'] += 1
+                continue
+            break
+        if coding['index'] >= len(coding['steps']):
+            self.finish_coding_task()
+            return
+        step = coding['steps'][coding['index']]
+        step['state'] = 'running'
+        self.render_coding_card()
+        if step['key'] == 'open':
+            self.step_open_project(step)
+        elif step['key'] == 'change':
+            self.step_codex_change(step)
+        else:
+            self.step_run_tests(step)
+
+    def coding_configured_launcher(self):
+        """The owner's own launcher for this editor, when there is one."""
+        coding = self.coding
+        if coding is None:
+            return None
+        launchers = configured_launchers(self.store)
+        return next((item for item in launchers if item['name'] == coding['editor']), None)
+
+    def step_open_project(self, step):
+        coding = self.coding
+        project = coding['project']
+        if step['approval']:
+            self.queue_coding_approval(
+                step, self.coding_action(step),
+                lambda: open_project_in_editor(coding['editor'], project.path,
+                                               self.coding_configured_launcher()))
+            return
+        self.run_coding_step(
+            step, lambda: open_project_in_editor(coding['editor'], project.path,
+                                                 self.coding_configured_launcher()))
+
+    def step_codex_change(self, step):
+        # A change always needs approval: it writes code and sends project
+        # data to a provider.
+        self.queue_coding_approval(step, self.coding_action(step), None)
+
+    def step_run_tests(self, step):
+        coding = self.coding
+        project = coding['project']
+        if not project.test_command:
+            step['done'] = True
+            step['state'] = 'done'
+            self.render_coding_card()
+            self.advance_coding_task()
+            return
+        if step['approval']:
+            # A test command the owner has not trusted is approved on its own,
+            # separately from the change that produced it.
+            self.queue_coding_approval(step, self.coding_action(step), None)
+            return
+        self.run_coding_tests_for(project, project.folder)
+
+    def coding_action_gate(self, action, operation, *, trusted=False, read_only=False):
+        """Run one task-card action through the approval gateway and Emergency Stop.
+
+        EVERY action the task card offers comes through here. An action that
+        changes something needs an approval unless the owner has trusted that
+        exact routine, and it is then executed through the gateway, so the
+        one-use approval token and the Emergency Stop checks apply. A
+        read-only action still checks the stop, because an assistant that has
+        been stopped should not quietly keep working.
+        """
+        coding = self.coding
+        if coding is None:
+            return
+        try:
+            ticket = self.policy.ticket()
+            self.policy.check(ticket)
+        except Stopped as error:
+            self.show_local_system_reply(coding['text'], str(error))
+            return
+        if read_only:
+            self.show_local_system_reply(coding['text'], operation())
+            return
+        if trusted:
+            try:
+                result = self.gateway.run(action, lambda _action: True, operation)
+            except (Denied, Stopped, ValueError, OSError, RuntimeError) as error:
+                result = str(error)
+            self.show_local_system_reply(coding['text'], result)
+            return
+        self.queue_coding_approval(None, action, operation)
+
+    def queue_coding_approval(self, step, action, operation=None):
+        """Ask for approval, showing the exact action and its target.
+
+        `step` is None for an action the owner started from the task card
+        rather than from the task plan.
+        """
+        try:
+            ticket = self.policy.ticket()
+        except Stopped as error:
+            self.show_local_system_reply(self.coding['text'], str(error))
+            return
+        self.coding_pending = (step, ticket, action, operation)
+        if self.omega is not None:
+            self.omega.set_approval(True)
+        if self.coding is not None:
+            self.coding['pending_step'] = step
+        if step is not None:
+            step['state'] = 'waiting'
+        self.render_coding_card()
+        self.chat_task_text.setText(
+            self.chat_task_text.text()
+            + f'\n\n{action.kind}: {action.target}\nApprove this task or decline below.')
+        self.chat_task_approve.show()
+        self.chat_task_decline.show()
+
+    def finish_coding_approval(self, approved):
+        """Run or refuse the whole task."""
+        pending = getattr(self, 'coding_pending', None)
+        self.coding_pending = None
+        if self.omega is not None:
+            self.omega.set_approval(False)
+        if self.coding is not None:
+            self.coding['pending_step'] = None
+        self.chat_task_approve.hide()
+        self.chat_task_decline.hide()
+        if pending is None:
+            return
+        step, ticket, action, operation = pending
+        coding = self.coding
+        if coding is None:
+            return
+        try:
+            self.policy.check(ticket)
+        except Stopped as error:
+            self.show_local_system_reply(coding['text'], str(error))
+            return
+        if not approved:
+            if step is None:
+                # An action the owner started from the task card was declined.
+                self.show_local_system_reply(coding['text'], 'Declined. Nothing was changed.')
+                return
+            # Declining one step declines the whole task. Nothing is left half
+            # done and nothing is changed.
+            for item in coding['steps']:
+                item['state'] = 'declined'
+                item['done'] = True
+            coding['index'] = len(coding['steps'])
+            self.render_coding_card()
+            self.show_local_system_reply(coding['text'], 'Declined. Nothing was changed.')
+            self.finish_coding_task()
+            return
+        if step is None:
+            # A card action the owner approved.
+            try:
+                result = self.gateway.run(action, lambda _action: True, operation)
+            except (Denied, Stopped, ValueError, OSError, RuntimeError) as error:
+                result = str(error)
+            self.show_local_system_reply(coding['text'], result)
+            return
+        if step['key'] == 'change':
+            self.start_codex_task(step)
+        elif step['key'] == 'tests':
+            self.run_coding_tests_for(coding['project'], self.coding_test_folder())
+        else:
+            self.run_coding_step(step,
+                                 lambda: open_project_in_editor(coding['editor'],
+                                                               coding['project'].path))
+
+    def run_coding_step(self, step, operation):
+        """Run one approved routine action."""
+        coding = self.coding
+        try:
+            result = operation()
+            step['state'] = 'done'
+            step['done'] = True
+            coding['index'] += 1
+            self.render_coding_card()
+            self.show_local_system_reply(coding['text'], result)
+        except (Denied, Stopped, ValueError, OSError, RuntimeError) as error:
+            step['state'] = 'failed'
+            step['done'] = True
+            coding['index'] += 1
+            self.render_coding_card()
+            self.show_local_system_reply(coding['text'], str(error))
+            if step['key'] == 'open':
+                # A missing editor does not stop the work. The task itself runs
+                # in a worktree and does not need the editor.
+                self.statusBar().showMessage(str(error), 15000)
+                self.advance_coding_task()
+                return
+        self.advance_coding_task()
+
+    def start_codex_task(self, step):
+        """Start the Codex task in an isolated worktree."""
+        coding = self.coding
+        project = coding['project']
+        request = coding['request']
+        if self.worker is not None:
+            self.show_local_system_reply(coding['text'],
+                                         'Wait for the current request to finish.')
+            return
+        # The change does NOT run the tests. An untrusted test command needs
+        # its own approval, and a test command bundled inside the change
+        # approval would never get one.
+        task = CodexTask(project, request.change or project.name,
+                         test_command='',
+                         worktree_root=self.root / 'worktrees',
+                         codex_path=None)
+        self.worker_kind = 'coding'
+        self.coding_worker = CodingTaskWorker(task, self.policy, self.policy.ticket())
+        self.coding_worker.progress.connect(self.on_coding_progress)
+        self.coding_worker.result.connect(self.on_coding_result)
+        self.coding_worker.finished.connect(self.on_coding_finished)
+        if self.omega is not None:
+            # The Omega presentation shows that coding work is in progress.
+            # It is refreshed AFTER the worker exists, so the state is real.
+            self.omega.refresh_state()
+        step['state'] = 'running'
+        self.render_coding_card()
+        self.coding_worker.start()
+
+    def on_coding_progress(self, step, text):
+        """Show one step of the task as it happens."""
+        coding = self.coding
+        if coding is None:
+            return
+        for item in coding['steps']:
+            if item['key'] == step:
+                item['state'] = 'running'
+        self.render_coding_card()
+        self.store.message(self.session, 'system', '· ' + text)
+        self.render_chat()
+
+    def on_coding_result(self, outcome):
+        coding = self.coding
+        if coding is None:
+            return
+        coding['outcome'] = outcome
+        for step in coding['steps']:
+            if step['key'] == 'change' and step['state'] == 'running':
+                step['state'] = 'done' if outcome.status == 'completed' else 'failed'
+                step['done'] = True
+        self.render_coding_card()
+
+    def on_coding_finished(self):
+        worker = self.coding_worker
+        self.coding_worker = None
+        if worker is not None:
+            worker.deleteLater()
+        if self.omega is not None:
+            self.omega.refresh_state()
+        self.advance_coding_task()
+        if self.close_when_done and self.coding_worker is None and self.test_worker is None:
+            self.close()
+
+    def record_coding_history(self, outcome=None):
+        """Write the task's status, test result and worktree into the history.
+
+        The history row is updated as the task goes, so a task that is
+        interrupted still leaves a trace of what it was and where it worked.
+        """
+        if self.chat_task_id is None:
+            return
+        coding = self.coding or {}
+        outcome = outcome if outcome is not None else coding.get('outcome')
+        if outcome is None:
+            self.store.finish(self.chat_task_id, 'running')
+            return
+        status = outcome.status
+        if outcome.test_status == 'failed':
+            # The job was to make the change AND prove it. A failing test is a
+            # failed task, and the history says so.
+            status = 'failed'
+        elif outcome.test_status == 'cancelled':
+            status = 'cancelled'
+        detail = 'tests=' + (outcome.test_status or 'not run')
+        if outcome.changed_files:
+            detail += ' · files=' + str(len(outcome.changed_files))
+        if outcome.worktree:
+            detail += ' · worktree=' + outcome.worktree
+        if outcome.starting_commit:
+            detail += ' · from=' + outcome.starting_commit[:8]
+        self.store.finish(self.chat_task_id, status, detail)
+
+    def finish_coding_task(self):
+        """Close the task card with the result in the conversation."""
+        coding = self.coding
+        if coding is None:
+            return
+        outcome = coding.get('outcome')
+        if outcome is not None:
+            summary = outcome.message
+            if outcome.changed_files:
+                summary += '\nChanged files: ' + ', '.join(outcome.changed_files)
+            # The test result is ALWAYS in the final result, pass or fail.
+            summary += '\nTests: ' + (outcome.test_status or 'not run')
+            if outcome.worktree:
+                summary += '\nWorktree: ' + outcome.worktree
+            if outcome.refused:
+                summary += ('\nPut back (protected, not changed): '
+                            + ', '.join(outcome.refused))
+            self.store.message(self.session, 'system', summary)
+            self.render_chat()
+        self.record_coding_history(outcome)
+        self.refresh_archives()
+        self.refresh_history()
+
+    def review_coding_diff(self):
+        """Show the reviewable diff of the last task.
+
+        Reading changes nothing, so it needs no approval, but it still goes
+        through the gate so a stopped assistant stops answering.
+        """
+        coding = self.coding
+        if coding is None or not coding.get('outcome'):
+            return
+        outcome = coding['outcome']
+        if not outcome.diff:
+            self.statusBar().showMessage('There is no diff to review.', 10000)
+            return
+        self.coding_action_gate(
+            Action('review_diff', f'{coding["project"].name} · {outcome.starting_commit[:8]}'),
+            lambda: outcome.diff, read_only=True)
+
+    def coding_test_folder(self):
+        """Where the tests run: the task worktree if there is one."""
+        coding = self.coding
+        if coding is None:
+            return None
+        outcome = coding.get('outcome')
+        if outcome is not None and outcome.worktree:
+            return Path(outcome.worktree)
+        return coding['project'].folder
+
+    def test_command_trusted(self, project, command):
+        """True when this exact command is the saved one AND the owner trusts it.
+
+        A command the owner typed somewhere else is never trusted, even when
+        the saved routine is.
+        """
+        saved = (project.test_command or '').strip()
+        if not saved or (command or '').strip() != saved:
+            return False
+        return routine_allowed(self.store, 'tests:' + project.name)
+
+    def run_coding_tests(self):
+        """Run the project's configured tests again, from the task card."""
+        coding = self.coding
+        if coding is None:
+            return
+        project = coding['project']
+        command = project.test_command
+        if not command:
+            self.show_local_system_reply(project.name,
+                                         'No test command is configured for this project.')
+            return
+        action = Action('run_project_tests', f'{project.name}: {command}')
+        self.coding_action_gate(
+            action,
+            lambda: self.start_test_run(project, self.coding_test_folder(), command),
+            trusted=self.test_command_trusted(project, command))
+
+    def run_coding_tests_for(self, project, folder):
+        """Start the project's configured tests in the background."""
+        command = project.test_command
+        if not command:
+            step = self._current_test_step()
+            if step is not None:
+                step['done'] = True
+                step['state'] = 'done'
+            self.render_coding_card()
+            self.advance_coding_task()
+            return
+        self.start_test_run(project, folder, command)
+
+    def _current_test_step(self):
+        coding = self.coding
+        if coding is None:
+            return None
+        for step in coding['steps']:
+            if step['key'] == 'tests':
+                return step
+        return None
+
+    def start_test_run(self, project, folder, command):
+        """Run the tests on a worker thread, where they can be cancelled."""
+        if self.test_worker is not None:
+            raise RuntimeError('A test run is already going.')
+        self.test_worker = TestRunWorker(folder, command, self.policy, self.policy.ticket())
+        self.test_worker.result.connect(self.on_test_result)
+        self.test_worker.finished.connect(self.on_test_finished)
+        step = self._current_test_step()
+        if step is not None:
+            step['state'] = 'running'
+        self.render_coding_card()
+        self.test_worker.start()
+        return f'Tests are running in {folder}.'
+
+    def on_test_result(self, status, output, payload=None):
+        """Record the test result and show it in the conversation."""
+        coding = self.coding
+        if coding is None:
+            return
+        outcome = coding.get('outcome')
+        if outcome is None:
+            outcome = TaskOutcome(status='completed')
+            coding['outcome'] = outcome
+        outcome.test_status = status
+        outcome.test_output = output
+        step = self._current_test_step()
+        if step is not None:
+            step['state'] = 'done' if status in ('passed', 'failed', 'not configured') else 'failed'
+            step['done'] = True
+        self.render_coding_card()
+        self.record_coding_history(outcome)
+        project = coding['project']
+        self.show_local_system_reply(
+            project.name,
+            f'Tests {status} in {self.coding_test_folder()}.\n\n' + (output or '(no output)'))
+
+    def on_test_finished(self):
+        worker = self.test_worker
+        self.test_worker = None
+        if worker is not None:
+            worker.deleteLater()
+        self.advance_coding_task()
+        if self.close_when_done and self.coding_worker is None and self.test_worker is None:
+            self.close()
+
+    def open_coding_project(self):
+        """Open the project folder in the editor the owner saved.
+
+        Launching a program is not a read-only action, so it goes through the
+        approval gateway unless the owner has trusted opening this project.
+        """
+        coding = self.coding
+        if coding is None:
+            return
+        project = coding['project']
+        configured = self.coding_configured_launcher()
+        action = Action('open_project', f'{coding["editor"]} · {project.path}')
+
+        def operation():
+            try:
+                return open_project_in_editor(coding['editor'], project.path, configured)
+            except (ValueError, RuntimeError, OSError) as error:
+                return str(error)
+
+        self.coding_action_gate(
+            action, operation,
+            trusted=routine_allowed(self.store, 'open:' + project.name))
 
     # ── the review of prepared changes ─────────────────────────────────────
 
@@ -2299,6 +3573,12 @@ class Window(QMainWindow):
     def new_chat(self):
         if self.worker is not None:
             return
+        if self.coding_task_active():
+            self.statusBar().showMessage(
+                'A task is still running. Finish or decline it before starting a new chat.', 12000)
+            return
+        if self.chat_launch is not None:
+            self.finish_chat_launch(False)
         self.session = uuid.uuid4().hex
         self.store.set('session', self.session)
         self.render_chat()
@@ -2325,6 +3605,38 @@ class Window(QMainWindow):
             self.prompt.clear()
             self.show_local_system_reply(text, local_reply)
             return
+        desktop_task = parse_desktop_task(text)
+        if desktop_task is not None:
+            self.prompt.clear()
+            self.queue_desktop_task(text, desktop_task)
+            return
+        coding = self.coding_request(text)
+        if coding is not None:
+            self.prompt.clear()
+            self.open_section('JARVIS Chat')
+            self.start_coding_task(coding, text)
+            return
+        name = parse_voice_command(text)
+        if name:
+            if self.chat_launch is not None:
+                self.statusBar().showMessage('Approve or decline the pending action first.', 10000)
+                return
+            self.prompt.clear()
+            self.queue_chat_launch(text, name)
+            return
+        if text.casefold().startswith('/video '):
+            if not allow_notes:
+                self.statusBar().showMessage(
+                    'Review the video brief and press Ask JARVIS to send it to Gemini.', 15000)
+                return
+            brief = text[7:].strip()
+            if brief:
+                self.open_section('JARVIS Chat')
+                self.video_brief.setPlainText(brief)
+                self.generate_video_plan(chat_brief=brief)
+                if self.worker is not None:
+                    self.prompt.clear()
+                return
         if self.route_task(text):
             self.prompt.clear()
             return
@@ -2360,7 +3672,10 @@ class Window(QMainWindow):
             self.prompt.clear()
             system = {'role': 'system', 'content':
                 'You are JARVIS, a helpful assistant. Reply in the user language. '
-                'You cannot execute tools or control this computer. Never claim actions were executed.'}
+                'You cannot execute tools or control this computer via plain chat. '
+                'Approved, separate workflows can perform limited actions; '
+                'never claim a task ran merely because you described it. '
+                + capability_context(self)}
             self.start_worker(provider, model, key, [system] + messages, 'chat', backup=backup)
             self.backup_consent.setChecked(False)
         self.notify(operation)
@@ -2403,11 +3718,23 @@ class Window(QMainWindow):
                 else:
                     plan['engine'] = self.video_engine.currentText()
                     self.video_plan = uuid.uuid4().hex, plan
-                    self.video_preview.setPlainText(flow_instructions(plan))
+                    self.video_handoff_shot.addItems(
+                        [f'Shot {number}' for number in range(1, len(plan['shots']) + 1)])
+                    self.video_handoff_shot.setCurrentIndex(0)
+                    self.video_preview.setPlainText(shot_list(plan))
+                    self.refresh_video_sheet()
                     self.video_status.setText(
-                        'Shot plan ready. Verify historical details and sync captions to the recorded voiceover.')
+                        'Shot plan ready. Verify historical details and sync captions to the recorded voiceover.'
+                        if plan.get('detailed', False) else
+                        'Shot plan ready, but the model left some fields out. The missing ones are marked.')
             else:
                 self.video_status.setText(status + ': ' + text)
+            if self.video_chat_brief is not None:
+                brief = self.video_chat_brief
+                self.video_chat_brief = None
+                reply = (self.video_preview.toPlainText()
+                         if status == 'completed' else self.video_status.text())
+                self.show_local_system_reply('/video ' + brief, reply)
         elif self.worker_kind == 'news_briefing':
             data = metrics or {}
             parts = [text]
@@ -2489,6 +3816,9 @@ class Window(QMainWindow):
         self.coding_provider.setEnabled(ready)
         self.video_generate_button.setEnabled(ready)
         self.video_engine.setEnabled(ready)
+        self.video_handoff_shot.setEnabled(ready and self.video_plan is not None)
+        for button in self.video_tool_buttons.values():
+            button.setEnabled(ready)
         self.business_generate.setEnabled(ready)
         self.site_generate.setEnabled(ready)
         self.site_language.setEnabled(ready)
@@ -2498,11 +3828,21 @@ class Window(QMainWindow):
             button.setEnabled(ready and self.video_plan is not None)
         self.video_render_button.setEnabled(ready and self.video_plan is not None)
         self.capcut_button.setEnabled(ready and self.video_plan is not None)
+        self.davinci_button.setEnabled(ready and self.video_plan is not None)
         self.after_effects_button.setEnabled(ready)
         self.after_effects_timeline_button.setEnabled(ready and self.video_plan is not None)
 
     def stop(self):
         self.policy.stop()
+        self.desktop_task_timer.stop()
+        self.desktop_pending = None
+        if self.test_worker is not None:
+            # The test PROCESS is stopped too, not just the assistant.
+            self.test_worker.requestInterruption()
+        if self.coding_worker is not None:
+            self.coding_worker.requestInterruption()
+        if self.chat_launch is not None:
+            self.finish_chat_launch(False)
         self.release_checker.cancel_source()
         if self.improvement_worker is not None:
             self.improvement_worker.requestInterruption()
@@ -2595,6 +3935,8 @@ class Window(QMainWindow):
         self.close()
 
     def closeEvent(self, event):
+        self.desktop_task_timer.stop()
+        self.desktop_pending = None
         if not self.close_when_done and self.editor.document().isModified():
             if not self.confirm(Action('discard_unsaved_editor_changes', self.filename.text())):
                 self.exit_requested = False
@@ -2609,8 +3951,13 @@ class Window(QMainWindow):
             self.background_controls.hide()
             event.ignore()
             return
-        if (self.worker is not None or self.release_checker.source_worker is not None
+        if (self.worker is not None or self.coding_worker is not None
+                or self.test_worker is not None or self.release_checker.source_worker is not None
                 or self.improvement_worker is not None):
+            # A coding task runs the Codex CLI and the test command in their
+            # own processes. Closing the window must not leave them running
+            # behind the owner's back, so the stop happens first and the
+            # window closes when the workers are gone.
             self.close_when_done = True
             self.stop()
             self.statusBar().showMessage('Waiting for the current task to exit safely…')

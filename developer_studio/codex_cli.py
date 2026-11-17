@@ -26,18 +26,41 @@ def codex_executable():
     return Path(path).resolve(strict=True)
 
 
-def run_codex(executable, project, prompt, check_cancelled):
-    with TemporaryDirectory(prefix="jarvis-codex-") as directory:
+def run_codex(executable, project, prompt, check_cancelled, *, sandbox='read-only',
+              approval='never', cwd=None, timeout=300):
+    """Ask the Codex CLI to do something in a folder.
+
+    The default is read-only, which is what the existing "Ask Codex about a
+    project" action uses and must keep using.
+
+    `sandbox` may be raised to 'workspace-write' when the caller has already
+    isolated the work in a throwaway Git worktree of its own. Even then the
+    CLI is told never to ask for approval, because the owner approves the
+    whole action once, in the chat, before anything starts.
+
+    `cwd` is the folder the CLI actually runs in. It is separate from
+    `project` so a task can run in an isolated worktree while still being
+    described in terms of the project the owner chose.
+    """
+    if cwd is None:
+        # The default is the project the owner chose, exactly as before.
+        cwd = project
+    return _run_codex(executable, Path(cwd), prompt, check_cancelled,
+                       sandbox=sandbox, approval=approval, timeout=timeout)
+
+
+def _run_codex(executable, cwd, prompt, check_cancelled, *, sandbox, approval, timeout):
+    with TemporaryDirectory(prefix="jarvis-codex-out-") as directory:
         output = Path(directory) / "answer.txt"
         command = [
-            str(executable), "--ask-for-approval", "never", "exec",
-            "--ignore-user-config", "--ephemeral", "--sandbox", "read-only",
+            str(executable), "--ask-for-approval", approval, "exec",
+            "--ignore-user-config", "--ephemeral", "--sandbox", sandbox,
             "--skip-git-repo-check", "--output-last-message", str(output), "-",
         ]
         check_cancelled()
-        deadline = monotonic() + 300
+        deadline = monotonic() + timeout
         with subprocess.Popen(
-            command, cwd=project, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+            command, cwd=str(cwd), stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         ) as process:
             try:
@@ -45,7 +68,8 @@ def run_codex(executable, project, prompt, check_cancelled):
                 while True:
                     check_cancelled()
                     if monotonic() >= deadline:
-                        raise ValueError("Codex took more than five minutes. Try a smaller task.")
+                        raise ValueError(f"Codex took more than {int(timeout // 60)} minutes. "
+                                         "Try a smaller task.")
                     try:
                         process.communicate(pending, timeout=0.2)
                         break
