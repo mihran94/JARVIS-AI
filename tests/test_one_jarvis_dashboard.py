@@ -117,7 +117,10 @@ def test_hud_continuous_voice_waits_for_playback_before_listening_again(tmp_path
     class Recognizer:
         def wait_for_wake_phrase(self, timeout):
             if len(recognizers) == 1:
-                release_input.wait(2)
+                # The stub holds for as long as the test needs. A short
+                # timeout here ends the recognition before a slow machine
+                # has delivered the state the test is waiting for.
+                release_input.wait(30)
                 return 'Hey Jarvis', ''
             voice.worker.msleep(20)
             return '', ''
@@ -132,7 +135,9 @@ def test_hud_continuous_voice_waits_for_playback_before_listening_again(tmp_path
         def speak_interruptibly(self, text, should_stop):
             replies.append(text)
             playback_started.set()
-            release_audio.wait(2)
+            # The playback holds until the test says so, so the HUD is
+            # SPEAKING for as long as the test waits for it.
+            release_audio.wait(30)
 
     def recognizer_factory(*_):
         recognizer = Recognizer()
