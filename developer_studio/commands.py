@@ -80,6 +80,11 @@ def parse_command(text, projects=()):
     keyword, _, remainder = raw.partition(" ")
     keyword = keyword.casefold()
     remainder = remainder.strip()
+    # Preserve existing local status/time/capability and video-plan commands.
+    # They already have their own guarded handlers in the main assistant.
+    if (keyword in ("/status", "/time", "/capabilities") and not remainder or
+            keyword == "/video" and remainder):
+        return None
     if keyword in ("/help", "/commands", "/developer", "/dev") and not remainder:
         return Command("help")
     if keyword in ("/island", "/eyeland") and not remainder:
