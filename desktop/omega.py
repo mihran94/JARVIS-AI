@@ -221,7 +221,7 @@ class FloatingAssistant(QWidget):
         expanded.setContentsMargins(3, 4, 3, 4)
         controls = QHBoxLayout()
         self.mic = button(controls, 'Talk', controller.toggle_mic)
-        button(controls, 'Assistant', lambda: controller.open_page('JARVIS Chat'))
+        self.assistant = button(controls, 'Assistant', lambda: controller.open_page('JARVIS Chat'))
         button(controls, 'Stop', controller.window.stop)
         expanded.addLayout(controls)
         self.command = QLineEdit()
@@ -859,7 +859,7 @@ class Omega:
         window = self.window
         if window.policy.stopped:
             state = 'stopped'
-        elif self.approval:
+        elif self.approval or window.chat_launch is not None:
             state = 'approval'
         elif window.worker_kind in ('coding', 'code_generation', 'code_repair', 'codex_review') and window.worker is not None:
             state = 'coding'
@@ -872,6 +872,7 @@ class Omega:
         activity = ACTIVITY[state]
         self.activity_label.setText(activity)
         self.floating.handle.setText(f'JARVIS · {activity}')
+        self.floating.assistant.setText('Review' if state == 'approval' else 'Assistant')
         for orb in (self.reactor, self.floating.orb, window.chat_reactor):
             orb.set_activity(state)
         for mic in (self.mic, self.floating.mic):
