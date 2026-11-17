@@ -65,7 +65,7 @@ from automation.inspection import inspect_windows
 from developer_studio.workspace import Workspace
 from developer_studio.codex_cli import codex_executable, run_codex
 from developer_studio.editors import (
-    CAPABILITY_LABELS, editor_from_text, editor_status, editor_names, open_project_in_editor,
+    CAPABILITY_LABELS, all_statuses, editor_from_text, editor_status, editor_names, open_project_in_editor,
 )
 from developer_studio.intents import CodingRequest, parse_coding_request
 from developer_studio.commands import HELP as COMMAND_HELP, parse_command
@@ -840,6 +840,12 @@ class Window(QMainWindow):
             self.show_local_system_reply(
                 text, '\n'.join(lines) if lines else
                 'No saved projects. Use /project add and choose a folder in Settings.')
+        elif command.kind == 'editors':
+            states = all_statuses(configured_launchers(self.store))
+            self.show_local_system_reply(
+                text, '\n'.join(item['name'] + ': ' +
+                               ('installed' if item['installed'] else 'setup needed')
+                               for item in states))
         elif command.kind == 'project_status':
             project = find_project(load_projects(self.store), command.target)
             if project is None:
