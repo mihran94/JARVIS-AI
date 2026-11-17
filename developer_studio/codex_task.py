@@ -99,6 +99,26 @@ class TaskOutcome:
         }
 
 
+def split_test_command(command: str, *, windows=None) -> list[str]:
+    """Split an approved test command without invoking a shell.
+
+    Windows shlex keeps the outer double quotes on grouped arguments. Remove
+    those delimiters before passing the argv list to subprocess.Popen, while
+    preserving the literal backslashes in Windows executable paths.
+    """
+    if windows is None:
+        windows = os.name == 'nt'
+    arguments = shlex.split(command, posix=not windows)
+    if windows:
+        arguments = [
+            argument[1:-1] if (len(argument) >= 2
+                               and argument.startswith('"')
+                               and argument.endswith('"')) else argument
+            for argument in arguments
+        ]
+    return arguments
+
+
 def run_local_tests(folder, command: str, timeout: int = 1800, cancel=None, observer=None):
     """Run a project's own configured tests in that folder.
 
@@ -117,7 +137,7 @@ def run_local_tests(folder, command: str, timeout: int = 1800, cancel=None, obse
     if not command:
         return 'not configured', 'No test command is configured for this project.'
     try:
-        arguments = shlex.split(command, posix=os.name != 'nt')
+        arguments = split_test_command(command)
     except ValueError:
         arguments = command.split()
     if not arguments:
