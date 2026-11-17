@@ -2890,6 +2890,9 @@ class Window(QMainWindow):
             summary += '\nTests: ' + (outcome.test_status or 'not run')
             if outcome.worktree:
                 summary += '\nWorktree: ' + outcome.worktree
+            if outcome.refused:
+                summary += ('\nPut back (protected, not changed): '
+                            + ', '.join(outcome.refused))
             self.store.message(self.session, 'system', summary)
             self.render_chat()
         self.record_coding_history(outcome)
