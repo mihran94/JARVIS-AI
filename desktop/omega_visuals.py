@@ -10,6 +10,7 @@ from desktop.omega_geography import LAND_ROWS
 
 
 THEMES = {
+    'MARK LVII': ('#050910', '#101d2b', '#315568', '#eafaff', '#96b7c9', '#45e6ff', '#efae67'),
     'Midnight Blue': ('#060d1a', '#10253d', '#203f57', '#eef9ff', '#9db9cd', '#6ae6ff', '#ffae68'),
     'Apple Silver': ('#dfeaf4', '#f3f8fd', '#a0b9cb', '#132939', '#426176', '#006fa3', '#a6470f'),
     'Dark Titanium': ('#0d1017', '#202834', '#374757', '#f0f5fc', '#a4b5c8', '#82bfed', '#ffc481'),

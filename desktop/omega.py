@@ -221,7 +221,7 @@ class FloatingAssistant(QWidget):
         expanded.setContentsMargins(3, 4, 3, 4)
         controls = QHBoxLayout()
         self.mic = button(controls, 'Talk', controller.toggle_mic)
-        button(controls, 'Dashboard', lambda: controller.switch('Omega'))
+        button(controls, 'Assistant', lambda: controller.open_page('JARVIS Chat'))
         button(controls, 'Stop', controller.window.stop)
         expanded.addLayout(controls)
         self.command = QLineEdit()
@@ -466,7 +466,7 @@ class Omega:
     def __init__(self, window):
         self.window = window
         self.store = window.store
-        self.theme = setting(self.store, 'theme', THEMES, 'Midnight Blue')
+        self.theme = setting(self.store, 'theme', THEMES, 'MARK LVII')
         self.background = setting(self.store, 'background', BACKGROUNDS, BACKGROUNDS[0])
         self.mode = setting(self.store, 'mode', MODES, 'Omega')
         self.reduced = bool(self.store.get('omega:reduced', False))
@@ -674,6 +674,10 @@ class Omega:
         button(order, 'Move left', lambda: self.move_dock(-1))
         button(order, 'Move right', lambda: self.move_dock(1))
         form.addRow('Dock order', order)
+        dock_controls = QHBoxLayout()
+        button(dock_controls, 'Toggle advanced dock',
+               lambda: self.show_dock(not self.dock.isVisible()))
+        form.addRow(dock_controls)
         tools = QHBoxLayout()
         button(tools, 'AI providers', lambda: self.open_page('AI Providers'))
         button(tools, 'Voice settings', lambda: self.open_page('Voice / Hey Jarvis'))
@@ -684,7 +688,12 @@ class Omega:
     def start(self, *, smoke=False):
         self.switch('Omega' if smoke else self.mode, persist=False)
         if self.mode == 'Omega':
-            self.open_page('Omega Home')
+            self.open_page('JARVIS Chat')
+            # Tests that explicitly inspect the dock keep legacy smoke
+            # behavior; ordinary startup is the minimal voice/chat screen.
+            if not smoke and not self.store.get('omega:show_dock_on_start', False):
+                self.show_dock(False)
+                self.reveal.hide()
         if not smoke and self.mode == 'Omega' and self.store.get('omega:intro', True) and not self.reduced:
             self.startup.setText('Local controls ready')
             self.skip.show()
@@ -748,7 +757,7 @@ class Omega:
         self.signal_meter.theme = self.theme
         self.signal_meter.update()
         self.home.background = self.background
-        for widget in (self.reactor, self.floating.orb):
+        for widget in (self.reactor, self.floating.orb, self.window.chat_reactor):
             widget.theme = self.theme
             widget.set_motion(not self.reduced)
         self.dock.sync_style()
@@ -858,7 +867,7 @@ class Omega:
         activity = ACTIVITY[state]
         self.activity_label.setText(activity)
         self.floating.handle.setText(f'JARVIS · {activity}')
-        for orb in (self.reactor, self.floating.orb):
+        for orb in (self.reactor, self.floating.orb, window.chat_reactor):
             orb.set_activity(state)
         for mic in (self.mic, self.floating.mic):
             mic.setText('Cancel mic' if window.voice_panel.listening else 'Talk')
@@ -868,7 +877,7 @@ class Omega:
 
     def audio_level(self, level):
         self.signal_meter.set_level(level)
-        for widget in (self.reactor, self.floating.orb):
+        for widget in (self.reactor, self.floating.orb, self.window.chat_reactor):
             widget.set_level(level)
 
     def toggle_mic(self):

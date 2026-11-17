@@ -4,6 +4,7 @@ import sys
 import uuid
 import time
 from datetime import datetime, timezone
+from hashlib import sha256
 
 from PySide6.QtCore import QProcess, QThread, Signal, QTimer, Qt, QLockFile, QUrl, QEvent
 from PySide6.QtGui import QDesktopServices, QFont, QTextCursor, QKeySequence, QShortcut
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
     QProgressBar, QGroupBox, QSizePolicy,
 )
 from core.store import Store
+from core.assistant_capabilities import summary as capability_summary, system_context as capability_context
 from quantum_core.studio_project import STUDIO_URL, studio_update_prompt, validate_studio_url
 from desktop.memory_page import MemoryPanel
 from desktop.studio_inbox import StudioInboxDialog
@@ -58,6 +60,7 @@ from providers.registry import provider_names
 from providers.router import ProviderRouter
 from providers.stream_fallback import StreamTarget, stream_with_fallback, FallbackBlocked
 from automation.windows import APPS, EDITOR_EXECUTABLES, editor_executable, launch_app, launch_editor
+from automation.desktop_tasks import parse_desktop_task, target_is_foreground, type_into_target
 from automation.inspection import inspect_windows
 from developer_studio.workspace import Workspace
 from developer_studio.codex_cli import codex_executable, run_codex
@@ -281,6 +284,10 @@ class Window(QMainWindow):
         self.video_plan = None
         self.video_chat_brief = None
         self.chat_launch = None
+        self.desktop_pending = None
+        self.desktop_task_timer = QTimer(self)
+        self.desktop_task_timer.setInterval(180)
+        self.desktop_task_timer.timeout.connect(self.complete_desktop_task)
         self.coding = None
         self.coding_worker = None
         self.test_worker = None
@@ -325,11 +332,15 @@ class Window(QMainWindow):
         outer.addLayout(header)
         navigation = QHBoxLayout()
         self.chat_home_button = self.button(
-            navigation, 'Chat', lambda: self.open_section('JARVIS Chat'))
+            navigation, 'Assistant', lambda: self.open_section('JARVIS Chat'))
+        self.chat_home_button.hide()
         self.tools_button = QPushButton('Tools')
         self.tools_button.setCheckable(True)
+        self.tools_button.hide()
         navigation.addWidget(self.tools_button)
-        self.button(navigation, 'Settings & Plugins', lambda: self.open_section('Settings & Safety'))
+        self.settings_button = self.button(
+            navigation, 'Settings', lambda: self.open_section('Settings & Safety'))
+        self.plugins_button = self.button(navigation, 'Plugins', self.open_plugins)
         navigation.addStretch()
         outer.addLayout(navigation)
         body = QHBoxLayout()
@@ -380,6 +391,8 @@ class Window(QMainWindow):
         self.refresh_brain_label()
         self.nav.currentRowChanged.connect(self.show_primary_page)
         self.nav.setCurrentRow(0)
+        self.pages.currentChanged.connect(self.update_assistant_navigation)
+        self.update_assistant_navigation()
         self.statusBar().showMessage('Local history • Bridge listener is off by default • Keys configured on your PC')
         self.shortcut = QShortcut(QKeySequence('Ctrl+Alt+J'), self)
         self.shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
@@ -445,6 +458,18 @@ class Window(QMainWindow):
             # The saved-project table lives in Settings, so it is refreshed
             # whenever the owner comes back to it.
             self.refresh_projects_page()
+
+    def update_assistant_navigation(self, _index=None):
+        """Keep the assistant central; reveal Back only on advanced pages."""
+        self.chat_home_button.setVisible(
+            self.pages.currentIndex() != self.page_indices['JARVIS Chat'])
+
+    def open_plugins(self):
+        """Open existing plugin switches without a large feature toolbar."""
+        self.open_section('Settings & Safety')
+        scroller = self.pages.widget(self.page_indices['Settings & Safety'])
+        if isinstance(scroller, QScrollArea):
+            scroller.ensureWidgetVisible(self.plugins_group, 16, 16)
 
     def local_voice_allowed(self):
         """Hands-free calls are allowed only to local, non-billable Ollama."""
@@ -790,6 +815,11 @@ class Window(QMainWindow):
 
     def local_system_reply(self, text):
         command = ' '.join(text.casefold().split()).strip('?!.,')
+        if command in ('capabilities', '/capabilities', 'what can you do',
+                       'what are your abilities', 'your skills', 'what can jarvis do',
+                       'உன்னால் என்ன செய்ய முடியும்', 'என்ன செய்ய முடியும்',
+                       'jarvis capabilities', 'tes capacités'):
+            return capability_summary(self)
         if command in ('time', '/time', 'current time', 'what time is it', 'what is the time', "what's the time",
                        'இப்போ நேரம் என்ன', 'நேரம்',
                        'quelle heure est-il'):
@@ -871,6 +901,13 @@ class Window(QMainWindow):
         self.system_metrics_label.hide()
         hero.addLayout(details, 1)
         layout.addLayout(hero)
+        # The MARK LVII-inspired holographic reactor shares the existing AI
+        # status and voice pipeline. It does not launch a second assistant.
+        from desktop.omega_visuals import Reactor
+        self.chat_reactor = Reactor()
+        self.chat_reactor.setAccessibleName('JARVIS holographic core')
+        self.chat_reactor.setFixedHeight(170)
+        layout.addWidget(self.chat_reactor)
         # The active brain sits on its own line. It is information the owner
         # needs at a glance, and keeping it out of the provider row stops a
         # long model name from forcing the chat page to scroll sideways.
@@ -879,14 +916,12 @@ class Window(QMainWindow):
         self.brain_label.setWordWrap(True)
         self.brain_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.brain_label)
-        row = QHBoxLayout()
         self.chat_provider = QComboBox()
         self.chat_provider.addItems(provider_names())
         self.chat_provider.setCurrentText(self.stored_chat_provider())
         self.chat_provider.currentTextChanged.connect(self.on_chat_provider_changed)
-        row.addWidget(self.chat_provider)
-        self.new_chat_button = self.button(row, 'New chat', self.new_chat)
-        layout.addLayout(row)
+        self.new_chat_button = QPushButton('New chat')
+        self.new_chat_button.clicked.connect(self.new_chat)
         options = QCheckBox('Chat options')
         layout.addWidget(options)
         settings = QWidget()
@@ -895,6 +930,9 @@ class Window(QMainWindow):
         settings.hide()
         options.toggled.connect(settings.setVisible)
         layout.addWidget(settings)
+        settings_layout.addWidget(QLabel('AI provider'))
+        settings_layout.addWidget(self.chat_provider)
+        settings_layout.addWidget(self.new_chat_button)
         self.backup_consent = QCheckBox('Allow one backup attempt')
         self.backup_consent.setToolTip('Shares the full conversation with the backup provider. Charges may apply.')
         self.backup_consent.toggled.connect(lambda enabled: self.guard_local_voice_provider() if enabled else None)
@@ -2102,6 +2140,7 @@ class Window(QMainWindow):
         layout.addLayout(advanced)
         self.add_projects_settings(layout)
         plugins = QGroupBox('Plugins')
+        self.plugins_group = plugins
         plugin_layout = QVBoxLayout(plugins)
         for name in (*VIDEO_TOOLS, *EDITOR_EXECUTABLES):
             row = QHBoxLayout()
@@ -2216,6 +2255,74 @@ class Window(QMainWindow):
 
 
     # ── saved projects, editors and routines ─────────────────────────────
+
+    def queue_desktop_task(self, command, task):
+        """Review exact text before doing anything to a Windows application."""
+        if self.chat_launch is not None or self.desktop_pending is not None:
+            self.statusBar().showMessage('Finish the current desktop task first.', 10000)
+            return
+        if self.omega is not None and self.omega.mode != 'Omega':
+            self.omega.switch('Omega')
+        self.open_section('JARVIS Chat')
+        ticket = self.policy.ticket()
+        digest = sha256(task.text.encode('utf-8')).hexdigest()
+        step = 'open and type' if task.launch else 'type into active window'
+        action = Action('desktop_plan_approval', f'{task.app}: {step}, {len(task.text)} chars',
+                        digest)
+        self.chat_launch = (task.app, ticket, action,
+                            lambda: self.schedule_desktop_task(task, ticket, digest))
+        excerpt = task.text[:160] + ('…' if len(task.text) > 160 else '')
+        self.show_local_system_reply(command,
+            f'Review desktop task: {step} in {task.app}. '
+            'The full text to be inserted follows; approve only if correct:\n'
+            + task.text + '\nThe target window must be verified before typing.')
+        self.chat_approval_label.setText(
+            f'{step.title()} in {task.app}: {excerpt!r}\nSHA-256: {digest}')
+        self.chat_approval.show()
+
+    def schedule_desktop_task(self, task, ticket, digest):
+        """Schedule, never poll for a window on the Qt UI thread."""
+        self.policy.check(ticket)
+        if self.desktop_pending is not None:
+            raise ValueError('A desktop task is already running.')
+        if task.launch:
+            launch_app(task.app)
+        self.desktop_pending = dict(task=task, ticket=ticket, digest=digest,
+                                    deadline=time.monotonic() + 7.0)
+        self.desktop_task_timer.start()
+        return (f'Desktop plan approved for {task.app}. Waiting for its '
+                'foreground window; text not entered yet.')
+
+    def complete_desktop_task(self):
+        """Only type after Windows verifies the target foreground process."""
+        pending = self.desktop_pending
+        if pending is None:
+            self.desktop_task_timer.stop()
+            return
+        task = pending['task']
+        try:
+            self.policy.check(pending['ticket'])
+            if time.monotonic() >= pending['deadline']:
+                self.desktop_task_timer.stop()
+                self.desktop_pending = None
+                self.show_local_system_reply('Desktop task',
+                    f'{task.app} did not become foreground in time. '
+                    'No text was entered. Activate the correct window and retry.')
+                return
+            if not target_is_foreground(task.app):
+                return
+            self.desktop_task_timer.stop()
+            self.desktop_pending = None
+            result = self.gateway.run(
+                Action('desktop_type', f'{task.app}: {len(task.text)} characters',
+                       pending['digest']),
+                lambda _action: True,  # the exact text was approved in chat
+                lambda: type_into_target(task.app, task.text))
+            self.show_local_system_reply('Desktop task result', str(result))
+        except (Denied, Stopped, RuntimeError, ValueError, OSError) as error:
+            self.desktop_task_timer.stop()
+            self.desktop_pending = None
+            self.show_local_system_reply('Desktop task failed', str(error))
 
     def add_projects_settings(self, layout):
         """The saved-project settings, inside Settings & Plugins.
@@ -3498,6 +3605,11 @@ class Window(QMainWindow):
             self.prompt.clear()
             self.show_local_system_reply(text, local_reply)
             return
+        desktop_task = parse_desktop_task(text)
+        if desktop_task is not None:
+            self.prompt.clear()
+            self.queue_desktop_task(text, desktop_task)
+            return
         coding = self.coding_request(text)
         if coding is not None:
             self.prompt.clear()
@@ -3560,7 +3672,10 @@ class Window(QMainWindow):
             self.prompt.clear()
             system = {'role': 'system', 'content':
                 'You are JARVIS, a helpful assistant. Reply in the user language. '
-                'You cannot execute tools or control this computer. Never claim actions were executed.'}
+                'You cannot execute tools or control this computer via plain chat. '
+                'Approved, separate workflows can perform limited actions; '
+                'never claim a task ran merely because you described it. '
+                + capability_context(self)}
             self.start_worker(provider, model, key, [system] + messages, 'chat', backup=backup)
             self.backup_consent.setChecked(False)
         self.notify(operation)
@@ -3719,6 +3834,8 @@ class Window(QMainWindow):
 
     def stop(self):
         self.policy.stop()
+        self.desktop_task_timer.stop()
+        self.desktop_pending = None
         if self.test_worker is not None:
             # The test PROCESS is stopped too, not just the assistant.
             self.test_worker.requestInterruption()
@@ -3818,6 +3935,8 @@ class Window(QMainWindow):
         self.close()
 
     def closeEvent(self, event):
+        self.desktop_task_timer.stop()
+        self.desktop_pending = None
         if not self.close_when_done and self.editor.document().isModified():
             if not self.confirm(Action('discard_unsaved_editor_changes', self.filename.text())):
                 self.exit_requested = False
