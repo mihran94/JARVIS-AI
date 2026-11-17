@@ -1,5 +1,36 @@
 > **Latest beta status (14 November 2026):** the canonical product is **one Windows JARVIS with an Android remote**. Android startup crash repair PR #22 was merged (main `9313cb6`) and passed a real Android 15 emulator cold-launch gate; the installed phone and secure PC pairing still require hardware acceptance. Session-only hands-free voice uses **local Ollama only**, not paid cloud providers, and PC actions remain approval-gated. See [current development audit](docs/DEVELOPMENT_AUDIT_2026-11-14.md) and [Android remote setup](docs/ANDROID_REMOTE_QUICKSTART.md). Historic release instructions below may describe earlier source versions; do not treat them as evidence of completed production capabilities.
 
+## Command-first JARVIS (Island + Settings)
+
+The main Windows assistant is now chat/command-first. Its primary controls are
+**Island**, **Settings**, a chat composer and **Emergency Stop**; provider
+configuration, chat preferences, saved projects and other options are inside
+Settings. The older dock and specialized pages are retained in source, not
+deleted, and the legacy dock can be explicitly opened with `Ctrl+D`.
+
+Type `/help` in JARVIS to see local commands. Developer Studio is integrated
+through existing approval-gated project workflows rather than being launched
+as another assistant:
+
+- `/projects` and `/editors` inspect saved project names and configured editors.
+- `/project add` opens the Settings folder picker; JARVIS does not scan your PC.
+- `/project NAME open` launches its saved editor only after the existing
+  project-launch approval.
+- `/project NAME test` runs saved project tests through the existing
+  cancellable process and independent permission check.
+- `/project NAME fix GOAL` prepares changes through the existing Codex
+  task in an isolated Git worktree and requires approval.
+- `/review`, `/code`, `/workspace`, `/pc`, `/voice`, `/providers`,
+  `/mobile`, `/history`, `/settings` and `/island` open their existing
+  screens or presentation; they do not pretend to have completed a task.
+
+Normal Tamil, Tanglish and English chat remains supported. Arbitrary shell
+commands are **not** executed, and unknown slash commands are handled locally
+instead of being sent to a cloud model. Existing `/time`, `/status`,
+`/capabilities`, and `/video BRIEF` commands remain supported. Windows,
+microphone, device pairing and third-party CLIs still require real owner-PC
+testing before a production release.
+
 ## Windows UI repair verification (November 2026)
 
 The desktop recovery branch fixes unreadable chat page colours, restores
