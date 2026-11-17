@@ -9,39 +9,8 @@ from PySide6.QtCore import QObject, QThread, QTimer, Qt, QUrl, Signal
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from core.updates import (installation_root, inspect_zip, changed_files, read_state,
                           release_path, activate_zip, backup_history, rollback, UpdateError)
-from core.source_updates import stage_latest
+from desktop.background import SourceCheckWorker
 from security.policy import Action, Stopped
-
-
-class SourceUpdateWorker(QThread):
-    result = Signal(str)
-
-    def __init__(self, root, running_root, history, policy, ticket, parent):
-        super().__init__(parent)
-        self.root = root
-        self.running_root = running_root
-        self.history = history
-        self.policy = policy
-        self.ticket = ticket
-
-    def check(self):
-        if self.isInterruptionRequested():
-            raise Stopped()
-        self.policy.check(self.ticket)
-
-    def run(self):
-        try:
-            message = stage_latest(
-                self.root, self.running_root, self.history, check=self.check,
-                publish=lambda operation: self.policy.run_if_current(self.ticket, operation),
-            )
-        except Stopped:
-            message = 'Source update cancelled.'
-        except UpdateError as error:
-            message = str(error)
-        except OSError:
-            message = 'Could not read or write the source update files. Check installation permissions.'
-        self.result.emit(message)
 
 
 class ReleaseChecker(QObject):
@@ -88,8 +57,9 @@ class ReleaseChecker(QObject):
             return
         if not self.source_supported:
             return
-        action = Action('Enable automatic source updates', 'Stage future code from mihran94/JARVIS-AI main '
-                        'and load it the next time JARVIS starts via START_JARVIS.cmd.')
+        action = Action('Enable automatic source updates',
+                        'Prepare future code from mihran94/JARVIS-AI main for your review. '
+                        'Nothing is used until you approve that exact revision.')
         self.window.gateway.run(action, self.window.confirm,
                                 lambda: self.store.set('automatic_source_updates', True))
         self.source_timer.start(60_000)
@@ -105,7 +75,7 @@ class ReleaseChecker(QObject):
                 or self.window.policy.stopped or self.window.close_when_done):
             return
         if not self.source_enabled:
-            action = Action('Check and stage a source update', 'GitHub mihran94/JARVIS-AI main')
+            action = Action('Check and prepare a source revision', 'GitHub mihran94/JARVIS-AI main')
             self.window.gateway.run(action, self.window.confirm, self.start_source_worker)
         else:
             self.start_source_worker()
@@ -114,19 +84,35 @@ class ReleaseChecker(QObject):
         if self.source_worker is not None:
             return
         ticket = self.window.policy.ticket()
-        worker = SourceUpdateWorker(installation_root(), Path(__file__).resolve().parents[1],
-                                    self.store.path, self.window.policy, ticket, self)
+        worker = SourceCheckWorker(
+            installation_root(), Path(__file__).resolve().parents[1], self.store.path,
+            self.window.policy, ticket, self.window.development_test_command(), self)
         self.store.set('source_update_attempt', datetime.now(timezone.utc).timestamp())
         self.source_worker = worker
-        worker.result.connect(self.finish_source_result)
+        worker.message.connect(self.finish_source_result)
+        worker.prepared.connect(self.finish_source_prepared)
         worker.finished.connect(self.finish_source_worker)
-        self.source_status = 'Checking GitHub main for a source update…'
+        self.source_status = 'Checking GitHub main and preparing a revision for review…'
         self.source_status_changed.emit(self.source_status)
         worker.start()
+
+    def finish_source_prepared(self, candidate):
+        """A revision is prepared. The running version is unchanged."""
+        self.window.refresh_review()
 
     def cancel_source(self):
         if self.source_worker is not None:
             self.source_worker.requestInterruption()
+
+    def pause(self):
+        """Stop the automatic check while JARVIS is paused."""
+        self.cancel_source()
+        self.source_timer.stop()
+
+    def resume(self):
+        """Start the automatic check again after a pause."""
+        if self.source_enabled and self.source_supported:
+            self.source_timer.start(60_000)
 
     def finish_source_result(self, message):
         self.source_status = message
@@ -234,7 +220,7 @@ def open_updates(window):
     source_auto = QCheckBox('Automatically stage source updates from GitHub main')
     source_auto.setChecked(checker.source_enabled)
     source_auto.setEnabled(checker.source_supported)
-    source_now = QPushButton('Check and stage source update now')
+    source_now = QPushButton('Check and prepare a revision for review')
     source_now.setEnabled(checker.source_supported)
     source_status = QLabel(checker.source_status if checker.source_supported else
                            'Automatic source updates require the source installation launched with START_JARVIS.cmd.')
@@ -243,6 +229,14 @@ def open_updates(window):
     for widget in (source_auto, source_now, source_status):
         layout.addWidget(widget)
     checker.source_status_changed.connect(source_status.setText)
+    prepared = QLabel('A prepared revision waits for you in Review changes. Nothing runs until '
+                      'you approve that exact revision, and the previous version stays '
+                      'available for rollback.')
+    prepared.setWordWrap(True)
+    layout.addWidget(prepared)
+    review = QPushButton('Open Review changes')
+    review.clicked.connect(lambda: window.open_section('Review changes'))
+    layout.addWidget(review)
 
     def toggle_source(enabled):
         window.notify(lambda: checker.set_source_enabled(enabled))

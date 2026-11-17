@@ -1,3 +1,16 @@
+"""Preparing a source revision for review, and approving that exact revision.
+
+WHAT IS COVERED
+    * Preparing a revision never changes the version that runs.
+    * The prepared revision is verified against the GitHub tree before it is
+      offered.
+    * The tests run in the prepared folder, and their result is kept.
+    * Approving selects that exact revision, and the version it replaces is
+      kept so it can be rolled back.
+    * A revision whose tests failed cannot be applied.
+    * A prepared revision that changed after the review cannot be applied
+      either: the approval has to be given again.
+"""
 import hashlib
 from io import BytesIO
 import json
@@ -7,7 +20,9 @@ import zipfile
 import httpx
 import pytest
 
-from core.source_updates import API, ARCHIVES, stage_latest
+from core.candidates import (Candidate, approve_candidate, content_digest, prepare_candidate,
+                             read_candidate, reject_candidate, stage_candidate, write_candidate)
+from core.source_updates import API, ARCHIVES
 from core.updates import UpdateError, read_state, release_path, rollback
 from security.policy import Policy, Stopped
 
@@ -59,62 +74,141 @@ def fake_github(requests, *, files=FILES, archive_files=None, truncated=False):
     return httpx.MockTransport(serve)
 
 
-def stage(installation, transport, *, policy=None, publish=None):
+def prepare(installation, transport, *, policy=None, publish=None, test_command=''):
     root, history = installation
     policy = policy or Policy()
     ticket = policy.ticket()
-    return stage_latest(root, root, history, check=lambda: policy.check(ticket),
-                        publish=publish or (lambda operation: policy.run_if_current(ticket, operation)),
-                        transport=transport)
+    return prepare_candidate(
+        root, root, history, check=lambda: policy.check(ticket),
+        publish=publish or (lambda operation: policy.run_if_current(ticket, operation)),
+        transport=transport, test_command=test_command)
 
 
-def test_verified_source_stages_preserves_data_and_does_not_reapply_on_rollback(installation):
+def test_preparing_a_revision_does_not_change_the_running_version(installation):
     root, history = installation
-    requests = []
-    archive_files = dict(FILES, **{'START_JARVIS.cmd': b'@echo off\r\nexit /b 0\r\n'})
-    transport = fake_github(requests, archive_files=archive_files)
-    assert 'staged' in stage(installation, transport)
+    candidate = prepare(installation, fake_github([]))
+    assert candidate.revision == REVISION
+    # The version that runs is untouched, and no release was selected.
+    assert read_state(root)['active'] == 'base'
+    assert read_state(root).get('previous') is None
+    assert (root / 'main.py').read_bytes() == b'original code'
+    # The prepared revision is recorded, with the files it changes.
+    stored = read_candidate(root)
+    assert stored is not None and stored.revision == REVISION
+    assert 'main.py' in stored.changed
+    # No history was touched, because nothing was applied.
+    assert not list(history.parent.glob('history-before-update-*.sqlite3'))
+
+
+def test_approving_a_revision_selects_it_and_keeps_the_previous_one(installation, monkeypatch):
+    root, history = installation
+    monkeypatch.setattr('core.candidates.run_tests',
+                        lambda folder, command, timeout=1800, cancel=None:
+                        {'status': 'passed', 'summary': '3 passed', 'output': ''})
+    candidate = prepare(installation, fake_github([]), test_command='pytest -q')
+    approve_candidate(root, candidate)
+    message = stage_candidate(root, history, candidate)
+    assert 'staged' in message.lower() or 'Update staged' in message
     state = read_state(root)
+    assert state['active'] == candidate.digest
     assert state['previous'] == 'base'
     assert state['last_source_revision'] == REVISION
     assert (release_path(root, state['active']) / 'main.py').read_bytes() == b'new code'
-    assert (root / 'main.py').read_bytes() == b'original code'
+    # The history was backed up before the code changed.
     backup, = history.parent.glob('history-before-update-*.sqlite3')
     with sqlite3.connect(backup) as db:
         assert db.execute('SELECT message FROM history').fetchone() == ('retained',)
-    requests.clear()
-    assert 'already selected' in stage(installation, transport)
-    assert requests == []
+    # And the previous version can be selected again.
     rollback(root)
-    assert 'already been checked' in stage(installation, transport)
-    assert requests == [f'{API}/commits/main']
     assert read_state(root)['active'] == 'base'
 
 
-def test_tampered_source_is_rejected_before_backup(installation):
+def test_a_revision_whose_tests_failed_cannot_be_applied(installation, monkeypatch):
+    root, history = installation
+    monkeypatch.setattr('core.candidates.run_tests',
+                        lambda folder, command, timeout=1800, cancel=None:
+                        {'status': 'failed', 'summary': '1 failed', 'output': 'boom'})
+    candidate = prepare(installation, fake_github([]), test_command='pytest -q')
+    assert candidate.tests['status'] == 'failed'
+    assert candidate.appliable is False
+    with pytest.raises(UpdateError, match='tests'):
+        approve_candidate(root, candidate)
+    with pytest.raises(UpdateError, match='tests'):
+        stage_candidate(root, history, candidate)
+    assert read_state(root)['active'] == 'base'
+
+
+def test_a_prepared_revision_that_changed_after_the_review_cannot_be_applied(
+        installation, monkeypatch):
+    root, history = installation
+    monkeypatch.setattr('core.candidates.run_tests',
+                        lambda folder, command, timeout=1800, cancel=None:
+                        {'status': 'passed', 'summary': '3 passed', 'output': ''})
+    candidate = prepare(installation, fake_github([]), test_command='pytest -q')
+    approve_candidate(root, candidate)
+    # The prepared files are changed after the owner looked at them.
+    from core.candidates import prepared_path
+    target = prepared_path(root, candidate.revision) / 'main.py'
+    target.write_bytes(b'something else')
+    with pytest.raises(UpdateError, match='changed after the review'):
+        stage_candidate(root, history, candidate)
+    assert read_state(root)['active'] == 'base'
+
+
+def test_only_the_approved_revision_is_activated(installation, monkeypatch):
+    """A revision that was prepared but not approved never runs."""
+    root, history = installation
+    monkeypatch.setattr('core.candidates.run_tests',
+                        lambda folder, command, timeout=1800, cancel=None:
+                        {'status': 'passed', 'summary': '3 passed', 'output': ''})
+    approved = prepare(installation, fake_github([]), test_command='pytest -q')
+    approve_candidate(root, approved)
+    # Another revision is prepared afterwards. It was never approved.
+    other = Candidate(revision='d' * 40, digest='e' * 64, base=approved.base,
+                      changed=('main.py',), tests={'status': 'passed', 'summary': '3 passed'})
+    write_candidate(root, other)
+    stage_candidate(root, history, approved)
+    state = read_state(root)
+    assert state['active'] == approved.digest
+    assert state['last_source_revision'] == approved.revision
+    # The revision that was only prepared is not the one that runs.
+    assert other.revision not in str(state['active'])
+    assert read_candidate(root) is None
+
+
+def test_a_rejected_revision_leaves_the_running_version_alone(installation):
+    root, history = installation
+    candidate = prepare(installation, fake_github([]))
+    message = reject_candidate(root, candidate)
+    assert 'rejected' in message
+    assert read_candidate(root) is None
+    assert read_state(root)['active'] == 'base'
+
+
+def test_tampered_source_is_rejected_before_anything_is_written(installation):
     root, history = installation
     transport = fake_github([], archive_files=dict(FILES, **{'main.py': b'altered code'}))
     with pytest.raises(UpdateError, match='commit verification'):
-        stage(installation, transport)
+        prepare(installation, transport)
     assert read_state(root)['active'] == 'base'
+    assert read_candidate(root) is None
     assert not list(history.parent.glob('history-before-update-*.sqlite3'))
 
 
 def test_truncated_manifest_is_rejected(installation):
     with pytest.raises(UpdateError, match='complete source tree'):
-        stage(installation, fake_github([], truncated=True))
+        prepare(installation, fake_github([], truncated=True))
 
 
 def test_dependency_changes_are_rejected(installation):
     root, history = installation
     transport = fake_github([], files=dict(FILES, **{'requirements.txt': b'different==2'}))
     with pytest.raises(UpdateError, match='Dependencies changed'):
-        stage(installation, transport)
+        prepare(installation, transport)
     assert read_state(root)['active'] == 'base'
-    assert not list(history.parent.glob('history-before-update-*.sqlite3'))
 
 
-def test_emergency_stop_prevents_selection(installation):
+def test_emergency_stop_prevents_the_preparation(installation):
     root, _ = installation
     policy = Policy()
     ticket = policy.ticket()
@@ -124,8 +218,17 @@ def test_emergency_stop_prevents_selection(installation):
         policy.run_if_current(ticket, operation)
 
     with pytest.raises(Stopped):
-        stage(installation, fake_github([]), policy=policy, publish=stop_before_publish)
+        prepare(installation, fake_github([]), policy=policy, publish=stop_before_publish)
     assert read_state(root)['active'] == 'base'
+
+
+def test_the_prepared_files_are_verified_by_their_own_digest(installation):
+    root, _ = installation
+    candidate = prepare(installation, fake_github([]))
+    from core.candidates import prepared_files
+    files = prepared_files(root, candidate.revision)
+    assert content_digest(files) == candidate.digest
+    assert files['main.py'] == b'new code'
 
 
 def test_automatic_source_update_requires_opt_in_and_saves_choice(tmp_path, monkeypatch):

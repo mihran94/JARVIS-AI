@@ -10,8 +10,7 @@ import zipfile
 
 import httpx
 
-from core.updates import (MAX_ARCHIVE, UpdateError, backup_history, check_compatibility,
-                          inspect_zip, read_state, release_path, stage_snapshot)
+from core.updates import (MAX_ARCHIVE, UpdateError, check_compatibility, inspect_zip)
 
 REPOSITORY = 'mihran94/JARVIS-AI'
 API = f'https://api.github.com/repos/{REPOSITORY}'
@@ -86,17 +85,22 @@ def _verify_tree(tree, tree_id, files, check):
         raise UpdateError('The source ZIP failed GitHub commit verification.')
 
 
-def stage_latest(root, running_root, history, *, check, publish, transport=None):
-    state = read_state(root)
-    if release_path(root, state['active']) != Path(running_root).resolve():
-        return 'A version is already selected. Restart from START_JARVIS.cmd to use it.'
+def fetch_latest_source(root, *, check, transport=None):
+    """Download the latest commit on `main` and verify it against its tree.
+
+    Nothing on disk is selected and no version is changed: the caller decides
+    what to do with the source. The owner requirement for this draft is that
+    the automatic check prepares a candidate for review and leaves the
+    running version alone.
+
+    Returns the revision, the digest of the archive and the verified files.
+    """
+    root = Path(root)
     try:
         with httpx.Client(transport=transport, timeout=10, follow_redirects=False,
                           trust_env=False, headers={'User-Agent': 'JARVIS-AI-source-updates'}) as client:
             commit = _metadata(client, f'{API}/commits/main', check)
             revision = _object_id(commit['sha'])
-            if revision == state.get('last_source_revision'):
-                return f'Source commit {revision[:12]} has already been checked.'
             tree_id = _object_id(commit['commit']['tree']['sha'])
             tree = _metadata(client, f'{API}/git/trees/{tree_id}?recursive=1', check)
             with tempfile.TemporaryDirectory(prefix='jarvis-source-') as temp:
@@ -112,13 +116,5 @@ def stage_latest(root, running_root, history, *, check, publish, transport=None)
     except (KeyError, TypeError, ValueError, zipfile.BadZipFile, NotImplementedError):
         raise UpdateError('GitHub returned invalid source update data.') from None
     check()
-    check_compatibility(Path(root), files)
-    if read_state(root) != state:
-        raise UpdateError('Another update changed the selected version. Check again.')
-    if state['active'] != digest:
-        backup_history(history)
-    stage_snapshot(root, digest, files, revision=revision, expected_state=state,
-                   check=check, publish=publish)
-    if state['active'] == digest:
-        return f'Source commit {revision[:12]} matches the selected version.'
-    return f'Source commit {revision[:12]} staged. Restart from START_JARVIS.cmd to use it.'
+    check_compatibility(root, files)
+    return revision, digest, files
