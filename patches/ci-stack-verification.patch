@@ -1,0 +1,45 @@
+diff --git a/.github/workflows/android-integration.yml b/.github/workflows/android-integration.yml
+index f77afea..29b4c93 100644
+--- a/.github/workflows/android-integration.yml
++++ b/.github/workflows/android-integration.yml
+@@ -5,6 +5,13 @@ on:
+     paths:
+       - 'android/**'
+       - '.github/workflows/android-integration.yml'
++  # The Android application used to be built only after it reached main,
++  # so a change to the phone was never checked before it was merged. It
++  # is built on a pull request now, and only when the phone is touched.
++  pull_request:
++    paths:
++      - 'android/**'
++      - '.github/workflows/android-integration.yml'
+   workflow_dispatch:
+ permissions:
+   contents: read
+@@ -37,7 +44,7 @@ jobs:
+           echo "2db75c40782f5e8ba1fc278a5574bab070adccb2d21ca5a6e5ed840888448046  gradle/wrapper/gradle-wrapper.jar" | sha256sum --check -
+           chmod +x gradlew
+       - name: Android unit tests and debug APK
+-        run: ./gradlew :core:windows:testDebugUnitTest :feature:command:testDebugUnitTest :app:testDebugUnitTest :app:assembleDebug --no-daemon --console=plain --max-workers=2
++        run: ./gradlew :core:common:test :core:windows:testDebugUnitTest :feature:command:testDebugUnitTest :app:testDebugUnitTest :app:assembleDebug --no-daemon --console=plain --max-workers=2
+       - name: Audit compiled APK permissions and active components
+         run: |
+           set -eu
+diff --git a/.github/workflows/windows-integration.yml b/.github/workflows/windows-integration.yml
+index 4ba96db..fb4f9bc 100644
+--- a/.github/workflows/windows-integration.yml
++++ b/.github/workflows/windows-integration.yml
+@@ -11,8 +11,12 @@ on:
+       - 'installers/**'
+       - 'requirements*.txt'
+       - '.github/workflows/windows-integration.yml'
++  # The work arrives as a stack of branches, and every one of them is a
++  # pull request to the branch below it. The installer was built only for
++  # a pull request to main, so it was never built for the stack. It is
++  # built for any pull request now.
+   pull_request:
+-    branches: [main]
++    branches: ['**']
+     paths:
+       - 'desktop/**'
+       - 'voice/**'
