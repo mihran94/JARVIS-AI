@@ -59,5 +59,13 @@ class SecretVault(
         const val ALIAS_MINIMAX = "minimax_api_key"
         const val ALIAS_OLLAMA = "ollama_api_key"
         const val ALIAS_WINDOWS_PEER = "windows_peer_secret"
+
+        /**
+         * The fingerprint of the certificate the bridge was paired with.
+         *
+         * It is not a secret, but it is kept beside the shared secret so
+         * that the two are replaced together when a remote is re-paired.
+         */
+        const val ALIAS_WINDOWS_PEER_CERT = "windows_peer_certificate"
     }
 }

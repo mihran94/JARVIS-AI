@@ -14,7 +14,7 @@
 #
 #     python iphone-pwa/icons/restore-icons.py
 #
-# 690 files
+# 694 files
 811427777ef27750dc4a2b86240a03943355a35c020d18347b744316119736e7  .gitattributes
 d26faca3a8885396fa0aac85ff9c11be5c83eb2c95a4d9c2959c642bead72543  .github/workflows/android-integration.yml
 08a3cef7437a7b015f04dd505103f96fce5c896b7e7cae7f7aabfd6d1f5276e1  .github/workflows/import-upstream-sources.yml
@@ -39,7 +39,7 @@ ee2c73d317f5e4507279da7a7013280e8b036dfa863dacb6d23ab94844ac5090  agents/workflo
 7af657912954c52e8c771ce1b5f02410ad00b16e8755b48c42dd2a635325e1d7  android/.github/workflows/android-debug-apk.yml
 61ba00f8e2ab685e01d1c0407d6f6c90812940e47c4b8e21a13243995d55ffcd  android/.github/workflows/android-release.yml
 07da7b6e0e019e1bbc02a93710c2c3ba4e813d43f0bb6f243eb5d2664464d4d6  android/.github/workflows/release-preflight.yml
-bef1829ee6ac7c7dfccf4f7a52c8a41c6b7dc4e9cad74a94a9535cbb2b36b3d9  android/.gitignore
+f3c64f10c634bd481f3c6796e46dd56a3bdc9c46b91851a48118bcaf51e88138  android/.gitignore
 2a461389b2aa77a2942c43b67a224ed3e43211918038d0bc1e1f3f18e6633a78  android/README.md
 29aea73bb57ec466a771608154221c7a4722c06ac97a401497c8eafb7b1d8669  android/app/build.gradle.kts
 0ae4e7d5850100617c0985549f709e4fb939b4f28a7c5ac5c7c8edc0f0aec9b3  android/app/proguard-rules.pro
@@ -89,12 +89,16 @@ f3f09ea249d203b18c18b283529a3c49917a95f30d6890919b0d9ee701d33004  android/core/a
 6f5c6dc35c8e8b671cf2f7b4216134e8fa928e52cc794fdae73f82918a2dfa52  android/core/ai/src/test/kotlin/com/jarvisblue/core/ai/GeminiSchemaAdapterTest.kt
 c863d13eb0836b2702411877d3d5ff145879c01a3113a2669536776f20ac8948  android/core/common/build.gradle.kts
 20bf7501d2a87c14b2c8001594521fd97376b1bae60d4afc4a64db724947993e  android/core/common/src/main/kotlin/com/jarvisblue/core/common/AuditSink.kt
+6542ff98721213b5ea7164d949bd268659a4fedc364399b75246cc6833b89593  android/core/common/src/main/kotlin/com/jarvisblue/core/common/CertificatePin.kt
 cd29eafbbba3a1a95e67f3330d922084271f9bb6b4850ff93a68a05e205f166d  android/core/common/src/main/kotlin/com/jarvisblue/core/common/Clock.kt
 e7868696fd3055110c6e56c6d1f9ea39acccfafae77b7bf3507ec56e67627ab3  android/core/common/src/main/kotlin/com/jarvisblue/core/common/Dispatchers.kt
 d3c6c7a3754c3ca2f89632c56b84fc37fc479d307002f5a8991b53bee46eb7bf  android/core/common/src/main/kotlin/com/jarvisblue/core/common/Logger.kt
 d87bfd16f76d72e3603b558a4ea8353239163d65a1e46ff0672b46e215369fc4  android/core/common/src/main/kotlin/com/jarvisblue/core/common/Outcome.kt
+74d87d42ec97a264ceaf3642a56ba227d80b9c0e8c541b41f8b9cb6a9115e444  android/core/common/src/main/kotlin/com/jarvisblue/core/common/PairingCode.kt
 259b61bc4a64d871d926cb2cb0295c2dce4422e70b326eebab0e0f9eda5736a5  android/core/common/src/main/kotlin/com/jarvisblue/core/common/Redactor.kt
-d668a73a0f44120a697b2acb48215ffba7f9c87492ca0cf012a55c8dd0652a7c  android/core/common/src/main/kotlin/com/jarvisblue/core/common/TextTools.kt
+f5cbf2ae6af9e3ee50de85eadf235def8bacde519bc00c2502418890fc883a34  android/core/common/src/main/kotlin/com/jarvisblue/core/common/TextTools.kt
+7397545811c79904df5f28328c0be6000380816826e18373545d32c9beeda4f2  android/core/common/src/test/kotlin/com/jarvisblue/core/common/CertificatePinTest.kt
+e5f03b9da16ccfe4f238af9e722690376796bd575b4a70c1d20838c144267c21  android/core/common/src/test/kotlin/com/jarvisblue/core/common/PairingCodeTest.kt
 17d668672498eaed8ee87868d64ef8a55a5d161ed5101ca0bad7cb8144e68cb7  android/core/common/src/test/kotlin/com/jarvisblue/core/common/RedactorTest.kt
 bd4e27bd9f754ac2fa7232abcd708215675e5cb0bebb1395ba052c2f98865b55  android/core/common/src/test/kotlin/com/jarvisblue/core/common/TextToolsTest.kt
 b7acda8214e1aea07c03156cc017c70af12fbb555095c6f9522142a6b09139fa  android/core/database/build.gradle.kts
@@ -130,7 +134,7 @@ c03d7316803d6e45083af5290b1a77f2fd49bea2e3ea79c24a7d418cd614e2e6  android/core/s
 927de5cff2f734dff6cdb2db05732623e92b82077b8e1fb9499d87d734b1fd05  android/core/security/src/main/kotlin/com/jarvisblue/core/security/EmergencyStop.kt
 844308b8dba5f173c6bce2b949e4c1cd4e71bcfd1632d41660c0bce3d80893f4  android/core/security/src/main/kotlin/com/jarvisblue/core/security/KeystoreKeyManager.kt
 78ad2b079f306051e90c280fef19e17a3f8ada72fdd95535be2e4a62b469dbb8  android/core/security/src/main/kotlin/com/jarvisblue/core/security/PermissionGrantStore.kt
-055aff1e10778bf7a443f0e1f67e99c0fcc105f44dc0e10414d73db103063db1  android/core/security/src/main/kotlin/com/jarvisblue/core/security/SecretVault.kt
+1037b1f43242e043ef72f595afd8474f8baf5da4bb3b0671b30e6d329e1dfd30  android/core/security/src/main/kotlin/com/jarvisblue/core/security/SecretVault.kt
 2509b723695047486f13034b527571be81c12378cb43903e39c076ced3721311  android/core/security/src/main/kotlin/com/jarvisblue/core/security/SecurityModule.kt
 063b0d7e5004f1c2f5513f40d4bc2f6e56fd825e1062175503c2bc62768e2bde  android/core/security/src/main/kotlin/com/jarvisblue/core/security/SensitiveCaptureConsent.kt
 cd4a98b78acc891a07a199009c6378319ddc72ab4a71123d6e39eef1851f28bc  android/core/tools/build.gradle.kts
@@ -179,11 +183,11 @@ c01aa7c535356f6dc11d94ca4475bdecaee6a5a726c1b0759035d0def8fe60a1  android/core/v
 a48e5414d6723b987fef0a80272d85a3de398373cb5e9f6ad06d77d26d854779  android/core/voice/src/test/kotlin/com/jarvisblue/core/voice/WakePhraseMatcherTest.kt
 34361718041e46cbd7b748998f5bf5ed846345acfa5ece0fdd8142b9ad2c3a5b  android/core/windows/build.gradle.kts
 5d5c255c3a74f1f217b85fe5f39b5bb82ab35138c67b19e35d5635dc2385ede5  android/core/windows/consumer-rules.pro
-13b7e47538d78a45d3a02541567b3797947c5a1a29b32734a22288547325865f  android/core/windows/src/main/kotlin/com/jarvisblue/core/windows/BridgeClient.kt
-c6433b46ad40f7f9995ee7c44b20142aca1bd975a092cc0ce10696e2628197a9  android/core/windows/src/main/kotlin/com/jarvisblue/core/windows/WindowsModule.kt
+f04deb581a8f5533d9902199b63cf93b2296c03280f9029643efba5be7f62bbe  android/core/windows/src/main/kotlin/com/jarvisblue/core/windows/BridgeClient.kt
+58120570b65368cd7e85c409a75e3d8486a9107947dbe691cf32043e5863a1ba  android/core/windows/src/main/kotlin/com/jarvisblue/core/windows/WindowsModule.kt
 4b09af0a3c1b2d7b1c9ec96c444fde4fe40d63026e6710999b0b74d8255d4bd8  android/core/windows/src/test/kotlin/com/jarvisblue/core/windows/BridgeSignatureTest.kt
 a4eeb0dbbcb46efc46a75ba7da1b924f44fc97199235611ed06b74b631fbfae1  android/docs/ANDROID_COMPATIBILITY.md
-a8ba10dfcc9e7b3765aa5868a041e981f361799d5b1f7323773bc4ac6f710970  android/docs/ANDROID_SECURITY.md
+cd6f63f591423fb7cbc7357c92aac69fc6a5f382df31a4dd3d45d8faac534b56  android/docs/ANDROID_SECURITY.md
 a171c79b074936c30a8add4e3821cb19bed7a47e24d9565df3887c290d05d74b  android/docs/ARCHITECTURE.md
 f1d687950d27e6a2e0900bb87f05a5f19b413d43c66f62015afa8e27b16b4acb  android/docs/BUILD.md
 179ba625af7a3f71f0bf2b05716cf932a9bbf19bb20664a526ed7bf95a9ee7e6  android/docs/GITHUB_RELEASES_TAMIL.md
@@ -203,7 +207,7 @@ b2c7dc1f7d3f6adacc3173c89cea2942263aefd4e9276eb5e360d58161fb22d7  android/featur
 ccc7ad56dc73991d323bac5016cd1a01f81dbe87f6ca38f63e4e93013bd49f8b  android/feature/chat/src/main/kotlin/com/jarvisblue/feature/chat/ChatViewModel.kt
 e0aca42eedbc195547fe073ca5f7fc7697c5d495aae36c4826b05f38aa650a49  android/feature/command/build.gradle.kts
 e447973601c6c32c851c94ceb96e84d7f2d88ad7bbbbaf1d5f75b1d1dc66447d  android/feature/command/consumer-rules.pro
-a143ca85d6f554699c7a3a02aad583ee53ac00ece9ff18e7a84164e59a12b885  android/feature/command/src/main/kotlin/com/jarvisblue/feature/command/CommandScreens.kt
+0d36200cc2f9b584bc5a9fcba2a1adde158a86e0e40e80729a1199b62752efc9  android/feature/command/src/main/kotlin/com/jarvisblue/feature/command/CommandScreens.kt
 9c2a6ba21366301925f82f44c4344dfce764703ccafd5e520956f2e9034a4f3b  android/feature/command/src/main/kotlin/com/jarvisblue/feature/command/DesktopEndpoint.kt
 c8ec7067e7c88e2740ef67b07e619f1b75f239c492df9423992be57fe886153f  android/feature/command/src/main/kotlin/com/jarvisblue/feature/command/MemoryViewModel.kt
 47e16698c8424e9ddaf613f51ca5bc30e0fcbc7e04a323f2c5b9e7cc54c05a06  android/feature/command/src/main/kotlin/com/jarvisblue/feature/command/PermissionsScreen.kt
@@ -211,7 +215,7 @@ cccf498601ddaa9225f3f40cc2e6161579d130051ff3ca9823bee84f451d568c  android/featur
 d2397c1a83e327d75367089917b645068bb264990d4f0aeaecfd794e7ea8fb89  android/feature/command/src/main/kotlin/com/jarvisblue/feature/command/SettingsScreen.kt
 a065a684df171e67cd273dd713f2f14ac2eedc3372d4fe3f924a7e83a23a7825  android/feature/command/src/main/kotlin/com/jarvisblue/feature/command/SettingsViewModel.kt
 3875442ad72b7a056f783d4ee63efabb1e6aba711b22d20afe6584fec429fc87  android/feature/command/src/main/kotlin/com/jarvisblue/feature/command/TasksViewModel.kt
-1da4882228e328468546e5d29f4cdb7fa17e60035f3ba2bdc5bfec08e693c840  android/feature/command/src/main/kotlin/com/jarvisblue/feature/command/WindowsViewModel.kt
+a4b4e3aff7c8f091012d8c09607192c875730edfb2917a5bcae85ca048f73126  android/feature/command/src/main/kotlin/com/jarvisblue/feature/command/WindowsViewModel.kt
 41083d27cd944d8895a373709af856618ad5ceea0144c03fb58a58884a728393  android/feature/command/src/test/kotlin/com/jarvisblue/feature/command/DesktopEndpointTest.kt
 72a748a6c74f81d631b49a3a5308ab302fc2939bc1c5422b83a85e3edd2eb38e  android/feature/studio/build.gradle.kts
 5d69b54832c27660a234730d8a304f5e1962aa9883eca7d13e36a132bef40cc6  android/feature/studio/consumer-rules.pro

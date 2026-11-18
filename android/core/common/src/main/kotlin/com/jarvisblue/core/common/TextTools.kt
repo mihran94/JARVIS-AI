@@ -18,8 +18,9 @@ object TextTools {
         val kept = buildString {
             for (ch in noMarks) {
                 val type = Character.getType(ch)
-                val isMark = type == Character.NON_SPACING_MARK ||
-                    type == Character.COMBINING_SPACING_MARK
+                // The two constants are bytes, and getType gives an Int.
+                val isMark = type == Character.NON_SPACING_MARK.toInt() ||
+                    type == Character.COMBINING_SPACING_MARK.toInt()
                 append(if (ch.isLetterOrDigit() || ch.isWhitespace() || isMark) ch else ' ')
             }
         }
