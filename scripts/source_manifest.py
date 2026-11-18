@@ -22,6 +22,12 @@ import sys
 
 MANIFEST = os.path.join('docs', 'SOURCE_INTEGRITY.sha256')
 
+#: Files that the build draws or writes, and that are not source.
+GENERATED_FILES = {
+    # The application icon, drawn by tools/make_icon.py.
+    'installers/JarvisAI.ico',
+}
+
 #: Directories that never belong to the source tree, by name.
 SKIP_DIRS = {
     '.git', '.github-cache', '.mypy_cache', '.pytest_cache', '.venv',
@@ -80,6 +86,8 @@ def collect(root: str) -> list[str]:
             path = os.path.join(directory, name)
             relative = os.path.relpath(path, root).replace(os.sep, '/')
             if relative in (MANIFEST.replace(os.sep, '/'), '.git'):
+                continue
+            if relative in GENERATED_FILES:
                 continue
             found.append(relative)
     return sorted(found)
