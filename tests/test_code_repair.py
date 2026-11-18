@@ -50,3 +50,4 @@ def test_repair_approval_and_result(tmp_path,monkeypatch,mode):
         assert window.store.tasks()[0]['status']==({'late_stop':'cancelled','failure':'failed'}.get(mode,'completed'))
     window.editor.document().setModified(False)
     window.close()
+    window.deleteLater()

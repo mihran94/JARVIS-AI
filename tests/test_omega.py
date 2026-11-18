@@ -39,6 +39,7 @@ def test_modes_return_to_same_window_and_keep_saved_preferences(tmp_path):
         ui.switch('Island')
     finally:
         window.close()
+        window.deleteLater()
         app.processEvents()
     restored = Window(tmp_path)
     try:
@@ -82,6 +83,7 @@ def test_dock_links_keyboard_and_order(tmp_path):
         assert window.pages.currentIndex() == window.page_indices['Settings & Safety']
     finally:
         window.close()
+        window.deleteLater()
 
 
 def test_live_activity_approval_and_emergency_stop(tmp_path, monkeypatch):
@@ -114,6 +116,7 @@ def test_live_activity_approval_and_emergency_stop(tmp_path, monkeypatch):
         assert ui.send.isEnabled()
     finally:
         window.close()
+        window.deleteLater()
 
 
 def test_quick_command_goes_through_existing_chat_handler(tmp_path, monkeypatch):
@@ -134,6 +137,7 @@ def test_quick_command_goes_through_existing_chat_handler(tmp_path, monkeypatch)
         dispatch.assert_called_once_with()
     finally:
         window.close()
+        window.deleteLater()
 
 
 def test_feeds_report_partial_and_missing_data_explicitly(tmp_path, monkeypatch):
@@ -160,6 +164,7 @@ def test_feeds_report_partial_and_missing_data_explicitly(tmp_path, monkeypatch)
         assert 'stopped' in ui.devices.text()
     finally:
         window.close()
+        window.deleteLater()
 
 
 def test_floating_mic_shows_permissions_and_returns_voice_draft_to_chat(tmp_path):
@@ -178,6 +183,7 @@ def test_floating_mic_shows_permissions_and_returns_voice_draft_to_chat(tmp_path
         assert window.worker is None
     finally:
         window.close()
+        window.deleteLater()
 
 
 def test_chat_theme_paints_pages_and_keeps_navigation_reachable(tmp_path):
@@ -210,6 +216,7 @@ def test_chat_theme_paints_pages_and_keeps_navigation_reachable(tmp_path):
         assert not hasattr(window.omega, 'dock_shortcut')
     finally:
         window.close()
+        window.deleteLater()
         app.processEvents()
 
 def test_old_dock_preferences_cannot_revive_the_retired_design(tmp_path):
@@ -228,6 +235,7 @@ def test_old_dock_preferences_cannot_revive_the_retired_design(tmp_path):
         assert not window.omega.dock.isVisible()
     finally:
         window.close()
+        window.deleteLater()
         app.processEvents()
 
 
@@ -244,6 +252,7 @@ def test_island_return_keeps_windows_taskbar_accessible(tmp_path):
         assert not window.omega.dock.isVisible()
     finally:
         window.close()
+        window.deleteLater()
         app.processEvents()
 
 
@@ -263,4 +272,5 @@ def test_failed_chat_remains_visible_after_reopen_without_storing_error_details(
         assert 'AI request failed' in window.transcript.toPlainText()
     finally:
         window.close()
+        window.deleteLater()
         app.processEvents()
