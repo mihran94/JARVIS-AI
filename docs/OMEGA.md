@@ -18,6 +18,37 @@ expandable application dock are retired from user navigation.
 Advanced tools remain available through existing commands; they do not need
 a second menu or dashboard.
 
+## The key that brings JARVIS up
+
+The owner can give JARVIS one key that works in **every** application, not
+only while the JARVIS window has the focus.
+
+* Open **Settings**, find **Key that brings JARVIS up**, and write the
+  shortcut, for example `Ctrl+Alt+Space`. Press **Apply**.
+* The line under it says what happened. If another program already holds
+  the key, that is said plainly, and the old key is kept.
+* The key brings JARVIS to the front. It does **not** open the microphone.
+  The microphone only ever follows the consent the owner gave inside the
+  application.
+
+What the shortcut may be:
+
+* A key with at least one modifier, such as `Ctrl`, `Alt`, `Shift` or
+  `Win`. A bare letter would be taken while the owner types. The function
+  keys, `F1` to `F24`, are allowed on their own.
+* One key only. `Ctrl+Shift+Alt+J` is a shortcut; `Ctrl+J+K` is not.
+* Nothing that Windows keeps for itself. `Ctrl+Alt+Del`, `Alt+Tab`,
+  `Ctrl+Esc`, `Alt+F4`, `Win+L` and `F12` are refused with a reason.
+* Keys that other applications usually take, such as `Ctrl+T`, are
+  allowed, and the owner is warned that the key may reach that
+  application instead.
+
+On Windows the key is registered with the operating system through
+`RegisterHotKey`. On Linux and macOS the operating system cannot be asked
+for a key from here without extra native libraries, so the shortcut is
+still saved and still shown, and the application says that it does
+nothing on that system. It never claims the key works when it does not.
+
 ## Files & Folders
 
 Choose **Attach** beside the chat input (or type `/files`, `/folders`,

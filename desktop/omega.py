@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QProgressBar, QSizePolicy, QToolButton, QVBoxLayout, QWidget,
 )
 
+from desktop.global_hotkey import DEFAULT_SHORTCUT
 from desktop.omega_visuals import BACKGROUNDS, THEMES, Backdrop, Reactor, SignalMeter, dock_icon, theme_sheet
 from news.briefing import FEEDS, MAX_FEED_BYTES, parse_feed
 
@@ -689,6 +690,18 @@ class Omega:
         button(dock_controls, 'Toggle advanced dock',
                lambda: self.show_dock(not self.dock.isVisible()))
         form.addRow(dock_controls)
+        hotkey_row = QHBoxLayout()
+        self.hotkey_input = QLineEdit(str(self.store.get('hotkey:shortcut', DEFAULT_SHORTCUT)))
+        self.hotkey_input.setMaxLength(40)
+        self.hotkey_input.setPlaceholderText(DEFAULT_SHORTCUT)
+        self.hotkey_input.setToolTip(
+            'Press this key in any application to bring JARVIS up. It does not open the microphone.')
+        hotkey_row.addWidget(self.hotkey_input, 1)
+        button(hotkey_row, 'Apply', lambda: self.window.apply_hotkey(self.hotkey_input.text()))
+        form.addRow('Key that brings JARVIS up', hotkey_row)
+        self.hotkey_status = QLabel(getattr(self.window, 'hotkey_status', ''))
+        self.hotkey_status.setWordWrap(True)
+        form.addRow(self.hotkey_status)
         tools = QHBoxLayout()
         button(tools, 'AI providers', lambda: self.open_page('AI Providers'))
         button(tools, 'Voice settings', lambda: self.open_page('Voice / Hey Jarvis'))
