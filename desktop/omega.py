@@ -438,15 +438,27 @@ class HomeBackdrop(Backdrop):
         self.sides = sides
         self.compact = False
 
+    def available_width(self):
+        """The width the home is given, which is not its own minimum.
+
+        The wide layout needs more room than the compact one, so the wide
+        layout keeps the widget at its own minimum width. Reading the
+        widget's width therefore can never report the compact state. The
+        width that decides is the space the page is given.
+        """
+        space = self.parentWidget()
+        while space is not None and space.width() <= 0:
+            space = space.parentWidget()
+        return space.width() if space is not None else self.width()
+
     def apply_compact(self):
-        """Reflow for the width the backdrop has right now.
+        """Reflow for the width the home is given right now.
 
         The window can be resized and a page can be opened in the same step,
-        and the layout runs after both. Reading the width in the resize
-        event alone therefore uses the width from before the reflow, and the
-        home stays wide when it should be compact.
+        and the layout runs after both, so the reflow is applied again once
+        the layout has settled.
         """
-        compact = self.width() < 850
+        compact = self.available_width() < 850
         if hasattr(self, 'columns') and compact != self.compact:
             self.compact = compact
             for group in self.sides:
@@ -476,7 +488,7 @@ class Omega:
     def __init__(self, window):
         self.window = window
         self.store = window.store
-        self.theme = window.interface_theme
+        self.theme = setting(self.store, 'theme', THEMES, 'MARK LVII')
         self.background = setting(self.store, 'background', BACKGROUNDS, BACKGROUNDS[0])
         self.mode = setting(self.store, 'mode', MODES, 'Omega')
         self.reduced = bool(self.store.get('omega:reduced', False))
@@ -627,11 +639,11 @@ class Omega:
         page.setObjectName('omegaFrame')
         form = QFormLayout(page)
         form.addRow(label('Omega Settings', 'omegaTitle'))
-        self.theme_selector = QComboBox()
-        self.theme_selector.addItems(THEMES)
-        self.theme_selector.setCurrentText(self.theme)
-        self.theme_selector.currentTextChanged.connect(self.set_theme)
-        form.addRow('Theme', self.theme_selector)
+        theme = QComboBox()
+        theme.addItems(THEMES)
+        theme.setCurrentText(self.theme)
+        theme.currentTextChanged.connect(self.set_theme)
+        form.addRow('Theme', theme)
         background = QComboBox()
         background.addItems(BACKGROUNDS)
         background.setCurrentText(self.background)
@@ -763,14 +775,8 @@ class Omega:
         self.refresh_state()
 
     def set_theme(self, theme):
-        if theme not in THEMES:
-            return
-        self.theme = self.window.interface_theme = theme
+        self.theme = theme
         self.store.set('omega:theme', theme)
-        for selector in (self.theme_selector, self.window.theme_choice):
-            blocked = selector.blockSignals(True)
-            selector.setCurrentText(theme)
-            selector.blockSignals(blocked)
         self.apply_theme()
 
     def apply_theme(self):

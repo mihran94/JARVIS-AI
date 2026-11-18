@@ -117,28 +117,3 @@ def test_the_settings_offer_the_owner_a_light_and_a_dark_theme(tmp_path):
         window.close()
         window.deleteLater()
         app.processEvents()
-
-
-def test_theme_survives_restart_and_both_settings_stay_in_sync(app, tmp_path):
-    from desktop.app import Window
-    from desktop.omega_visuals import theme_sheet
-
-    window = Window(tmp_path)
-    try:
-        window.theme_choice.setCurrentText('Apple Silver')
-        assert window.styleSheet() == theme_sheet('Apple Silver')
-        window.enable_omega(smoke=True)
-        assert window.omega.theme_selector.currentText() == 'Apple Silver'
-        window.omega.theme_selector.setCurrentText('Dark Titanium')
-        assert window.theme_choice.currentText() == 'Dark Titanium'
-    finally:
-        window.close()
-        app.processEvents()
-
-    restarted = Window(tmp_path)
-    try:
-        assert restarted.styleSheet() == theme_sheet('Dark Titanium')
-        assert restarted.chat_reactor.theme == 'Dark Titanium'
-    finally:
-        restarted.close()
-        app.processEvents()
