@@ -1,6 +1,7 @@
 package com.jarvisblue.core.windows
 
 import com.jarvisblue.core.common.AppError
+import com.jarvisblue.core.common.CertificatePin
 import com.jarvisblue.core.common.Outcome
 import com.jarvisblue.core.common.runCatchingOutcomeSuspend
 import com.jarvisblue.core.model.BridgeJob
@@ -49,6 +50,14 @@ import javax.crypto.spec.SecretKeySpec
 class BridgeClient(
     private val httpClient: OkHttpClient = defaultClient(),
     private val secretProvider: suspend () -> String?,
+    /**
+     * The fingerprint of the certificate the bridge was paired with.
+     *
+     * When it is known, the connection accepts that one certificate and
+     * no other. When it is not known, the system trust store is used, and
+     * the owner is told so rather than being given a false assurance.
+     */
+    private val certificateFingerprintProvider: suspend () -> String? = { null },
 ) {
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -234,12 +243,24 @@ class BridgeClient(
         }
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
 
-        fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .writeTimeout(30, TimeUnit.SECONDS)
-            .pingInterval(30, TimeUnit.SECONDS)
-            .build()
+        fun defaultClient(fingerprint: String? = null): OkHttpClient {
+            val builder = OkHttpClient.Builder()
+                .connectTimeout(15, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS)
+                .writeTimeout(30, TimeUnit.SECONDS)
+                .pingInterval(30, TimeUnit.SECONDS)
+            if (fingerprint != null && CertificatePin.isFingerprint(fingerprint)) {
+                // The peer is the certificate that was pinned, not the name
+                // the owner typed. The trust manager accepts that one
+                // certificate and refuses every other.
+                builder.sslSocketFactory(
+                    CertificatePin.sslContextFor(fingerprint).socketFactory,
+                    CertificatePin.trustManagerFor(fingerprint),
+                )
+                builder.hostnameVerifier(CertificatePin.hostnameVerifier())
+            }
+            return builder.build()
+        }
 
         fun nonce(): String = java.util.UUID.randomUUID().toString()
 

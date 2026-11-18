@@ -13,7 +13,14 @@ object WindowsModule {
 
     @Provides
     @Singleton
-    fun provideBridgeClient(secretVault: SecretVault): BridgeClient = BridgeClient(
-        secretProvider = { secretVault.get(SecretVault.ALIAS_WINDOWS_PEER) },
-    )
+    fun provideBridgeClient(secretVault: SecretVault): BridgeClient {
+        val fingerprint = secretVault.get(SecretVault.ALIAS_WINDOWS_PEER_CERT)
+        return BridgeClient(
+            httpClient = BridgeClient.defaultClient(fingerprint),
+            secretProvider = { secretVault.get(SecretVault.ALIAS_WINDOWS_PEER) },
+            certificateFingerprintProvider = {
+                secretVault.get(SecretVault.ALIAS_WINDOWS_PEER_CERT)
+            },
+        )
+    }
 }
