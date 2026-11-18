@@ -30,6 +30,32 @@ same order.
 
 ---
 
+## 0. Two patches, before anything else
+
+The GitHub App that pushes this repository cannot write
+`.github/workflows/`, so two workflow changes travel as patches. They
+arrive with the P0 branch (#44). Apply them once, before you merge:
+
+```
+git apply patches/github-actions-green.patch
+git apply patches/windows-app-icon.patch
+```
+
+* `github-actions-green.patch` turns off `fail-fast`, so a Linux only
+  failure never hides the Windows result.
+* `windows-app-icon.patch` gives the application its own icon: the build
+  draws the orb the desktop draws, the executable is built with it, and
+  the installer uses it. The three parts travel together on purpose: the
+  installer must not point at an icon that is not there, because the
+  Windows installer job fails on a file it cannot find.
+
+Check that both applied:
+
+```
+git apply --check --reverse patches/github-actions-green.patch
+git apply --check --reverse patches/windows-app-icon.patch
+```
+
 ## 1. The installer (Phase 11)
 
 1. Download the `JARVIS-unified-windows-unsigned-<sha>` artefact from the
