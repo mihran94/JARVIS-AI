@@ -87,6 +87,12 @@ class TaskOutcome:
     starting_commit: str = ''
     #: The protected files the task tried to change. They are put back.
     refused: list[str] = field(default_factory=list)
+    #: How many files were looked at before the model was called.
+    files_inspected: int = 0
+    #: How many real problems were found before the model was called.
+    problems_found: int = 0
+    #: What the owner said about the change: '', 'accepted' or 'rejected'.
+    reviewed: str = ''
 
     def as_dict(self) -> dict:
         return {
@@ -101,6 +107,9 @@ class TaskOutcome:
             'protected': list(self.protected),
             'starting_commit': self.starting_commit,
             'refused': list(self.refused),
+            'files_inspected': self.files_inspected,
+            'problems_found': self.problems_found,
+            'reviewed': self.reviewed,
         }
 
 
@@ -207,7 +216,7 @@ def uncommitted_files(folder: Path) -> list[str]:
     return [line for line in output.splitlines() if line.strip()]
 
 
-def build_prompt(project, change: str, protection=None) -> str:
+def build_prompt(project, change: str, protection=None, findings: str = '') -> str:
     """The instruction Codex receives.
 
     It says exactly what the owner asked for, and it says that the work must
@@ -216,10 +225,19 @@ def build_prompt(project, change: str, protection=None) -> str:
     When the project has files that hold secrets, or that its own
     `.gitignore` keeps out, they are named here. The model is told what is
     off limits instead of being trusted to guess.
+
+    `findings` is what was already found by looking at the project before
+    the model was called. It is given so the model works on the real
+    problem instead of looking for it again, and so the answer it gives
+    can be checked against something that was measured.
     """
     notice = ''
     if protection is not None:
         notice = protection.notice()
+    found = ''
+    if findings:
+        found = ("\n\nJARVIS already looked at the project and found this. Check it, "
+                 "and work on the real problem:\n" + findings)
     return (
         f"Work only inside this project folder. The owner asked for this change:\n\n"
         f"{change}\n\n"
@@ -230,6 +248,7 @@ def build_prompt(project, change: str, protection=None) -> str:
         "network. If the request is ambiguous, make the most reasonable reading of it and "
         "say in your answer what you assumed."
         + (f"\n\n{notice}" if notice else "")
+        + found
     )
 
 
@@ -238,7 +257,8 @@ class CodexTask:
 
     def __init__(self, project, change: str, *, test_command: str = '',
                  worktree_root=None, progress=None, check_cancelled=None,
-                 codex_path=None, language: str = ''):
+                 codex_path=None, language: str = '', findings: str = '',
+                 files_inspected: int = 0, problems_found: int = 0):
         self.project = project
         self.language = (language or '').strip().casefold()
         self.change = (change or '').strip()
@@ -247,7 +267,13 @@ class CodexTask:
         self.progress = progress or (lambda step, text: None)
         self.check_cancelled = check_cancelled or (lambda: None)
         self.codex_path = codex_path
-        self.outcome = TaskOutcome()
+        #: What was found by looking at the project before the model was called.
+        self.findings = (findings or '').strip()
+        #: How many files were looked at, and how many real problems were found.
+        self.files_inspected = int(files_inspected or 0)
+        self.problems_found = int(problems_found or 0)
+        self.outcome = TaskOutcome(files_inspected=self.files_inspected,
+                                  problems_found=self.problems_found)
 
     # -- helpers ----------------------------------------------------------
 

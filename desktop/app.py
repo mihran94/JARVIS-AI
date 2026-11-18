@@ -20,6 +20,7 @@ from dataclasses import replace
 from core.store import Store
 from core.conversation import ASSISTANT_GUIDANCE, addressed_request
 from desktop.conversation_plan import ConversationPlan, parse_plan as parse_conversation_plan
+from developer_studio.inspection import inspect_project
 from core.assistant_capabilities import (conversation_context, summary as capability_summary,
                                        system_context as capability_context)
 from quantum_core.studio_project import STUDIO_URL, studio_update_prompt, validate_studio_url
@@ -1166,6 +1167,8 @@ class Window(QMainWindow):
         self.chat_task_diff = self.button(task_buttons, 'Review diff', self.review_coding_diff)
         self.chat_task_tests = self.button(task_buttons, 'Run tests', self.run_coding_tests)
         self.chat_task_open = self.button(task_buttons, 'Open project', self.open_coding_project)
+        self.chat_task_accept = self.button(task_buttons, 'Accept the change', self.accept_coding_change)
+        self.chat_task_reject = self.button(task_buttons, 'Reject the change', self.reject_coding_change)
         card_layout.addLayout(task_buttons)
         self.chat_task_card.hide()
         layout.addWidget(self.chat_task_card)
@@ -3285,10 +3288,16 @@ class Window(QMainWindow):
                 'approval': not (routines.get('tests:' + project.name)
                                  and project.test_command),
             })
+        # The project is looked at before the model is called, so the report
+        # can say what was found instead of what was assumed. This reads
+        # files and compiles nothing: it never runs the project.
+        inspection = inspect_project(project.path)
         self.coding = {
             'request': request, 'project': project, 'editor': editor,
             'editor_status': status, 'steps': steps, 'index': 0,
             'outcome': None, 'text': text,
+            'inspection': inspection,
+            'inspection_findings': inspection.problems_text(),
         }
         # The task is recorded in the task history from the moment it starts,
         # so a task that is interrupted still leaves a trace.
@@ -3342,6 +3351,16 @@ class Window(QMainWindow):
             lines.append(status['setup'])
         if request.change:
             lines.append(labels['change'] + ': ' + request.change)
+        inspection = coding.get('inspection')
+        if inspection is not None:
+            found = f'{inspection.files_inspected} file(s) looked at'
+            if inspection.problem_count:
+                found += f', {inspection.problem_count} problem(s) found'
+            lines.append(found)
+            for problem in inspection.problems[:5]:
+                lines.append('  ' + str(problem))
+            if inspection.problem_count > 5:
+                lines.append(f'  … and {inspection.problem_count - 5} more')
         lines.append('')
         for number, step in enumerate(coding['steps'], 1):
             mark = {'done': labels['done'], 'running': labels['running'],
@@ -3363,11 +3382,21 @@ class Window(QMainWindow):
                 lines.append(f"{labels['tests']}: {outcome.test_status}")
             if outcome.protected:
                 lines.append(labels['protected'] + ': ' + ', '.join(outcome.protected))
+            if outcome.files_inspected:
+                lines.append('Files looked at: ' + str(outcome.files_inspected))
+            if outcome.problems_found:
+                lines.append('Problems found: ' + str(outcome.problems_found))
         self.chat_task_text.setText('\n'.join(lines))
         self.chat_task_card.show()
         self.chat_task_diff.setEnabled(bool(outcome and outcome.diff))
         self.chat_task_tests.setEnabled(bool(outcome and outcome.worktree))
         self.chat_task_open.setEnabled(True)
+        # The owner accepts or rejects the change once there is one, and not
+        # before, so the buttons cannot be pressed on a task that has not
+        # produced anything.
+        decided = bool(outcome and outcome.diff and not outcome.reviewed)
+        self.chat_task_accept.setEnabled(decided)
+        self.chat_task_reject.setEnabled(decided)
 
     def advance_coding_task(self):
         """Run the next step, or ask for approval when it needs one."""
@@ -3584,7 +3613,10 @@ class Window(QMainWindow):
                          test_command='',
                          worktree_root=self.root / 'worktrees',
                          codex_path=None,
-                         language=self.assistant_language)
+                         language=self.assistant_language,
+                         findings=coding.get('inspection_findings', ''),
+                         files_inspected=coding['inspection'].files_inspected,
+                         problems_found=coding['inspection'].problem_count)
         self.worker_kind = 'coding'
         self.coding_worker = CodingTaskWorker(task, self.policy, self.policy.ticket())
         self.coding_worker.progress.connect(self.on_coding_progress)
@@ -3653,6 +3685,10 @@ class Window(QMainWindow):
         elif outcome.test_status == 'cancelled':
             status = 'cancelled'
         detail = 'tests=' + (outcome.test_status or 'not run')
+        if outcome.reviewed:
+            detail += ' · reviewed=' + outcome.reviewed
+        if outcome.files_inspected:
+            detail += ' · looked_at=' + str(outcome.files_inspected)
         if outcome.changed_files:
             detail += ' · files=' + str(len(outcome.changed_files))
         if outcome.worktree:
@@ -3740,6 +3776,73 @@ class Window(QMainWindow):
         self.coding_action_gate(
             Action('review_diff', f'{coding["project"].name} · {outcome.starting_commit[:8]}'),
             lambda: outcome.diff, read_only=True)
+
+    def accept_coding_change(self):
+        """The owner says the change is wanted.
+
+        Accepting does not touch the owner's working folder. The change
+        lives in the worktree that was made for it, and the owner brings
+        it in themselves, because their own uncommitted work is in the way
+        and JARVIS does not put a change under it without being asked.
+        """
+        coding = self.coding
+        if coding is None:
+            return
+        outcome = coding.get('outcome')
+        if outcome is None or not outcome.diff:
+            self.statusBar().showMessage('There is no change to accept.', 10000)
+            return
+        project = coding['project']
+
+        def operation():
+            outcome.reviewed = 'accepted'
+            self.store.finish(self.chat_task_id, 'accepted')
+            self.render_coding_card()
+            where = outcome.worktree or str(project.folder)
+            self.show_local_system_reply(
+                coding['text'],
+                'You accepted the change. It is kept in ' + where + ' and your own '
+                'project folder was not touched. To bring it in, review the diff '
+                'and apply it yourself, for example: '
+                f'git -C "{project.folder}" diff --no-index '
+                f'"{where}" "{project.folder}" > change.patch, then apply that patch.')
+            return 'The change was accepted and kept in the worktree.'
+
+        self.coding_action_gate(
+            Action('accept_coding_change', f'{project.name} · keep the change in the worktree'),
+            operation)
+
+    def reject_coding_change(self):
+        """The owner says the change is not wanted.
+
+        The worktree is kept, because it holds work that may still be worth
+        reading, and the owner is told where it is. Nothing of the owner's
+        own is touched either way.
+        """
+        coding = self.coding
+        if coding is None:
+            return
+        outcome = coding.get('outcome')
+        if outcome is None or not outcome.diff:
+            self.statusBar().showMessage('There is no change to reject.', 10000)
+            return
+        project = coding['project']
+
+        def operation():
+            outcome.reviewed = 'rejected'
+            self.store.finish(self.chat_task_id, 'rejected')
+            self.render_coding_card()
+            where = outcome.worktree or str(project.folder)
+            self.show_local_system_reply(
+                coding['text'],
+                'You rejected the change. Your project was not touched. The work is '
+                'still in ' + where + ' so you can read it; delete that folder when '
+                'you do not want it.')
+            return 'The change was rejected and nothing was applied.'
+
+        self.coding_action_gate(
+            Action('reject_coding_change', f'{project.name} · do not use the change'),
+            operation)
 
     def coding_test_folder(self):
         """Where the tests run: the task worktree if there is one."""
