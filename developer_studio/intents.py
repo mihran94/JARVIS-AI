@@ -159,6 +159,10 @@ def parse_coding_request(text: str, projects, editor_from_text=None,
     if not isinstance(text, str) or not text.strip():
         return CodingRequest()
 
+    # The sentence as the owner wrote it, and the sentence with the
+    # "Jarvis," in front of it taken off. The first one says whether the
+    # owner asked a question, the second one is what the request is about.
+    original = ' '.join(text.split())
     working = ' '.join(addressed_request(text).split())
     folded = working.casefold()
     if (working.startswith(('"', "'", '“', '/'))
