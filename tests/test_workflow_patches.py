@@ -5,8 +5,9 @@ The GitHub App that pushes this repository cannot write
 file. A patch that no longer applies is worse than no patch at all: the
 owner is told to run it and it fails.
 
-So every patch is checked here, one at a time, against the tree as it is
-now.
+Each patch is checked in both directions: it must either apply cleanly
+or already have been fully applied. This keeps tests valid after the owner
+applies the workflow patches to prepare a release.
 """
 import subprocess
 from pathlib import Path
@@ -23,11 +24,16 @@ def test_there_are_patches_to_check():
 
 @pytest.mark.parametrize('patch', PATCHES, ids=lambda path: path.name)
 def test_the_patch_applies_to_the_tree_as_it_is(patch):
-    result = subprocess.run(
+    forward = subprocess.run(
         ['git', 'apply', '--check', str(patch)],
         cwd=ROOT, capture_output=True, text=True)
-    assert result.returncode == 0, (
-        f'{patch.name} does not apply any more:\n{result.stderr.strip()}')
+    reverse = subprocess.run(
+        ['git', 'apply', '--reverse', '--check', str(patch)],
+        cwd=ROOT, capture_output=True, text=True)
+    assert forward.returncode == 0 or reverse.returncode == 0, (
+        f'{patch.name} is neither cleanly applicable nor fully applied. '
+        f'Forward: {forward.stderr.strip()} '
+        f'Reverse: {reverse.stderr.strip()}')
 
 
 def test_the_stack_patch_builds_the_phone_on_a_pull_request():
@@ -47,13 +53,14 @@ def test_the_stack_patch_builds_the_installer_for_any_branch():
     assert "branches: ['**']" in body
 
 
-def test_the_workflows_in_the_tree_still_need_the_patches():
-    """The tree must still be in the state the patches are meant to change."""
-    android = (ROOT / '.github/workflows/android-integration.yml').read_text(encoding='utf-8')
-    assert 'pull_request:' not in android.split('jobs:')[0], (
-        'the Android workflow already builds on a pull request, so the patch '
-        'is not needed any more')
-    windows = (ROOT / '.github/workflows/windows-integration.yml').read_text(encoding='utf-8')
-    assert "branches: ['**']" not in windows, (
-        'the Windows workflow already builds for any branch, so the patch is '
-        'not needed any more')
+def test_workflow_state_matches_its_patch():
+    """Accept either untouched or fully applied workflows, never partial edits."""
+    android = (ROOT / '.github/workflows/android-integration.yml').read_text(
+        encoding='utf-8')
+    windows = (ROOT / '.github/workflows/windows-integration.yml').read_text(
+        encoding='utf-8')
+    if 'pull_request:' in android.split('jobs:')[0]:
+        assert ':core:common:test' in android
+        assert ':app:assembleDebug' in android
+    if "branches: ['**']" in windows:
+        assert 'pull_request:' in windows.split('jobs:')[0]
