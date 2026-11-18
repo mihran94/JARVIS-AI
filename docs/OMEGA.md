@@ -1,45 +1,57 @@
-# JARVIS Omega desktop
+# JARVIS PRIME desktop and Island
 
-Omega runs inside the Windows desktop launcher. Install the project's pinned
-dependencies with `setup.cmd`, then use `START_JARVIS.cmd`. An existing source
-checkout can use `.venv\Scripts\python.exe main.py`. This branch preserves the
-existing provider credentials, voice permission, phone pairing and approval flow.
+The current Windows product has **one production interface**: JARVIS PRIME,
+with command-first chat, Settings and the optional floating Island. The old
+Omega Home dashboard, duplicate Omega Settings, animated startup design, and
+expandable application dock are retired from user navigation.
 
-## Modes and controls
+## Use
 
-| Mode | Use |
-|---|---|
-| Omega | Full-screen command center. **Window** or **F11** toggles normal size. Use the command field to submit through JARVIS Chat. |
-| Island | Drag the core or title. **Expand** reveals microphone, quick command, alerts, Stop, and Dashboard. |
-| Stealth | Click the small core to expand it. Drag it to reposition. **Dashboard** or **Esc** returns to Omega. |
+1. Install the checked-out version using `setup.cmd`.
+2. Launch with `START_JARVIS.cmd`.
+3. Ask JARVIS in Tamil, Tanglish or English, or type `/help` for supported
+   project, coding, memory and device commands.
+4. Open **Settings** for themes, API credentials, permissions, projects and
+   voice. Open **Island** to use the floating assistant. Use **Emergency Stop**
+   to interrupt work.
 
-Use **Settings** in the dock to select Midnight Blue, Apple Silver or Dark
-Titanium, change backgrounds and dock order, disable animation, or turn on
-always-on-top for the floating assistant. Startup speech uses the optional greeting you enter. **Ctrl+D** reveals or hides the dock.
-Tab or the arrow keys move focus among dock tools. The current section has a
-highlighted icon. The desktop remembers the theme, mode, dock and floating
-position settings.
+Advanced tools remain available through existing commands; they do not need
+a second menu or dashboard.
 
-**Refresh weather and news** makes direct HTTPS requests to Open-Meteo and
-the France and Sri Lanka sources already configured in the application.
-You can change the weather label and coordinates under Omega Settings. The
-dash displays the last returned reading time and marks unavailable feeds.
-A displayed phone pairing count and last signed check-in are distinct from
-an active Android connection.
+## Files & Folders
 
-The land grid is sampled from [Natural Earth public-domain 1:110m land polygons](https://www.naturalearthdata.com/about/terms-of-use/).
-The animated Earth uses an orthographic projection. The reactor and backdrop
-use a portable QPainter renderer. Rendering pauses when hidden and Reduce
-Motion also stops the reactor and hover animations. Listening rings use
-the existing Windows recognizer's audio level when available. Speaking rings
-follow the voice worker's playback state.
+Choose **Attach** beside the chat input (or type `/files`, `/folders`,
+`/upload` or `/attach`). Select individual files or a folder under two
+separate sections and preview a local text snapshot. Checking **Include
+selected file text in my NEXT AI message** permits a single cloud-provider
+request after the owner explicitly presses **Ask JARVIS**. The content is
+cleared from the selection on submission, never stored in conversation
+history or automatically uploaded. Folder selection is bounded and excludes
+hidden/secret files and symlinks. Only text/code/CSV/JSON and small DOCX
+formats are supported; PDF and binary attachments remain unsupported. The legacy `Ctrl+D` dock shortcut and Stealth
+presentation are intentionally not available. Saved legacy mode preferences
+cannot reactivate them. The older `Omega Home` and `Omega Settings` routes
+resolve to PRIME Chat and Settings respectively.
 
-## Validation
+Some historical widget internals are retained in `desktop/omega.py` for the
+working floating assistant, visual state, and compatibility smoke tests. That
+does **not** create another user-facing design or another application.
+
+## Verification
+
+On Windows:
 
 ```powershell
 .venv\Scripts\python.exe main.py --smoke-test
-.venv\Scripts\python.exe -m pytest -q tests/test_omega.py tests/test_voice_panel.py tests/test_jarvis_main_window.py
+.venv\Scripts\python.exe -m pytest -q tests/test_omega.py tests/test_prime_theme.py tests/test_command_first_window.py
 ```
 
-A Windows candidate can be built with the repository's existing
-`installers\build.cmd` on a Windows host.
+Validate the real PC at normal/125%/150%/200% display scaling and verify
+that chat, Island, Settings, permission prompts, and Emergency Stop work.
+A headless smoke test alone does not validate real microphone, phone pairing,
+Tamil voice quality or signed installers.
+
+The old `desktop/personal_theme.py` and `desktop/blue_theme.py` stylesheets
+and the outdated `scripts/port_chat_first_omega.py` migration were deleted.
+Runtime worker `desktop/background.py`, the Android remote, local memory,
+provider configurations and project/source history were not removed.

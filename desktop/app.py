@@ -21,6 +21,8 @@ from desktop.conversation_plan import ConversationPlan, parse_plan as parse_conv
 from core.assistant_capabilities import summary as capability_summary, system_context as capability_context
 from quantum_core.studio_project import STUDIO_URL, studio_update_prompt, validate_studio_url
 from desktop.memory_page import MemoryPanel
+from desktop.attachments import (AttachmentError, as_untrusted_context,
+                                 stage_files, stage_folder)
 from desktop.studio_inbox import StudioInboxDialog
 from memory.memory_service import MemoryService
 from desktop.bridge_panel import BridgePanel
@@ -293,6 +295,7 @@ class Window(QMainWindow):
         self.active_model = None
         self.workspace = Workspace(self.root / 'workspace')
         self.video_plan = None
+        self.attachments = []  # A temporary local snapshot; never persisted.
         self.video_chat_brief = None
         self.chat_launch = None
         self.conversation_plan = ConversationPlan(self)
@@ -372,6 +375,7 @@ class Window(QMainWindow):
         # One main UI: specialized tools remain available under Settings.
         self.page_indices = {}
         self.add_page('JARVIS Chat', self.chat_page())
+        self.add_page('Files & Folders', self.files_page(), primary=False)
         # Keep the composer outside the scrolling conversation.
         outer.addWidget(self.composer_bar)
         self.add_page('PC Control', self.automation_page())
@@ -1182,11 +1186,142 @@ class Window(QMainWindow):
         composer_layout.addLayout(composer_actions)
         self.chat_mic = self.button(composer_actions, 'Speak', self.listen_to_user)
         self.chat_mic.setObjectName('quiet')
+        self.attach_button = self.button(
+            composer_actions, 'Attach', lambda: self.open_section('Files & Folders'))
+        self.attach_button.setObjectName('quiet')
+        self.attach_button.setToolTip(
+            'Choose files or a folder to preview. AI sharing is opt-in for one message.')
         composer_actions.addStretch()
         self.send_button = self.button(composer_actions, 'Ask JARVIS', self.send)
         self.send_button.setObjectName('primary')
         self.send_button.setToolTip('Send message (Ctrl+Enter)')
         return page
+
+    def files_page(self):
+        """User-chosen local files and folders; no background upload."""
+        page, layout = self.page(
+            'Files & Folders',
+            'Choose local files or a folder. Preview stays on this PC. '
+            'Only checked files are shared once with the chosen AI provider.')
+        files = QGroupBox('Files')
+        file_actions = QHBoxLayout(files)
+        self.button(file_actions, 'Choose files…', self.choose_attachment_files)
+        layout.addWidget(files)
+        folders = QGroupBox('Folders')
+        folder_actions = QHBoxLayout(folders)
+        self.button(folder_actions, 'Choose folder…', self.choose_attachment_folder)
+        layout.addWidget(folders)
+        self.attachment_list = QListWidget()
+        self.attachment_list.setAccessibleName('Selected local attachments')
+        self.attachment_list.itemDoubleClicked.connect(
+            lambda _item: self.preview_attachment())
+        layout.addWidget(self.attachment_list)
+        actions = QHBoxLayout()
+        self.button(actions, 'Preview selected', self.preview_attachment)
+        self.button(actions, 'Remove selected', self.remove_selected_attachment)
+        self.button(actions, 'Clear all', self.clear_attachments)
+        layout.addLayout(actions)
+        self.files_share_once = QCheckBox('Share selected file text once with AI')
+        self.files_share_once.setChecked(False)
+        self.files_share_once.setToolTip(
+            'Private files stay local unless you check this box and send a message. '
+            'Do not attach passwords or private keys. The selected provider may retain data.')
+        layout.addWidget(self.files_share_once)
+        sharing_note = QLabel(
+            'Only your next Ask JARVIS message shares this text with the selected AI '
+            'provider (and any separately enabled backup provider). '
+            'Keep the checkbox off to preview files locally.')
+        sharing_note.setWordWrap(True)
+        layout.addWidget(sharing_note)
+        self.attachment_status = QLabel('')
+        self.attachment_status.setWordWrap(True)
+        layout.addWidget(self.attachment_status)
+        self.button(layout, 'Back to JARVIS Chat',
+                    lambda: self.open_section('JARVIS Chat'))
+        self.update_attachment_display()
+        return page
+
+    def update_attachment_display(self):
+        self.attachment_list.clear()
+        for item in self.attachments:
+            self.attachment_list.addItem(f'{item.name}  ({item.size} bytes)')
+        count = len(self.attachments)
+        self.attach_button.setText(f'Attach ({count})' if count else 'Attach')
+        self.attach_button.setToolTip(
+            f'{count} local file(s) selected. Open to preview and approve one-turn AI sharing.')
+        self.files_share_once.setEnabled(bool(count))
+        if not count:
+            self.files_share_once.setChecked(False)
+        self.attachment_status.setText(
+            f'{len(self.attachments)} file(s) selected; temporary text snapshots, '
+            'not copied to the history database. Up to 12 files / '
+            '24 KiB per file / 48,000 characters total. '
+            'Supported: UTF-8 text, Markdown, code, CSV, JSON and DOCX. '
+            'PDF and binary uploads are not yet supported.')
+
+    def choose_attachment_files(self):
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, 'Choose files to show JARVIS', '',
+            'Readable files (*.txt *.md *.markdown *.csv *.json *.py *.js *.ts '
+            '*.jsx *.tsx *.html *.css *.xml *.yaml *.yml *.toml *.log *.ini '
+            '*.java *.kt *.sql *.sh *.ps1 *.bat *.cmd *.rst *.docx)')
+        if not paths:
+            return
+        try:
+            self.attachments = stage_files(paths, self.attachments)
+            # Selecting new content invalidates earlier one-turn consent.
+            self.files_share_once.setChecked(False)
+        except AttachmentError as exc:
+            self.statusBar().showMessage(str(exc), 15000)
+        self.update_attachment_display()
+
+    def choose_attachment_folder(self):
+        folder = QFileDialog.getExistingDirectory(
+            self, 'Choose a folder to show JARVIS (safe text files only)')
+        if not folder:
+            return
+        try:
+            selected, skipped, truncated = stage_folder(folder, self.attachments)
+            self.attachments = selected
+            self.files_share_once.setChecked(False)
+            self.update_attachment_display()
+            self.statusBar().showMessage(
+                f'Folder scan: {len(selected)} selected, {skipped} skipped'
+                + ('; limit reached — not the entire folder' if truncated else ''),
+                18000)
+        except AttachmentError as exc:
+            self.statusBar().showMessage(str(exc), 15000)
+
+    def preview_attachment(self):
+        index = self.attachment_list.currentRow()
+        if index < 0 or index >= len(self.attachments):
+            self.statusBar().showMessage('Select a file to preview.', 8000)
+            return
+        item = self.attachments[index]
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Local preview · ' + item.name)
+        dialog.resize(760, 560)
+        layout = QVBoxLayout(dialog)
+        preview = QPlainTextEdit()
+        preview.setReadOnly(True)
+        preview.setPlainText(item.text)
+        layout.addWidget(preview)
+        self.button(layout, 'Close', dialog.accept)
+        dialog.exec()
+
+    def remove_selected_attachment(self):
+        index = self.attachment_list.currentRow()
+        if 0 <= index < len(self.attachments):
+            del self.attachments[index]
+            self.files_share_once.setChecked(False)
+            self.update_attachment_display()
+        if not self.attachments:
+            self.files_share_once.setChecked(False)
+
+    def clear_attachments(self):
+        self.attachments.clear()
+        self.files_share_once.setChecked(False)
+        self.update_attachment_display()
 
     def bridge_page(self):
         self.bridge = BridgePanel(self.policy, self.store, self.vault, self.confirm, self.notify,
@@ -2285,6 +2420,8 @@ class Window(QMainWindow):
             'test and tool commands. Saved project folders are configured below.')
         command_help.setWordWrap(True)
         layout.addWidget(command_help)
+        self.button(layout, 'Files & Folders — select and preview',
+                    lambda: self.open_section('Files & Folders'))
         appearance = QHBoxLayout()
         appearance.addWidget(QLabel('Interface theme'))
         self.theme_choice = QComboBox()
@@ -3782,6 +3919,7 @@ class Window(QMainWindow):
             self.finish_chat_launch(False)
         self.session = uuid.uuid4().hex
         self.store.set('session', self.session)
+        self.clear_attachments()
         self.render_chat()
         self.refresh_archives()
         self.statusBar().showMessage('New conversation. Open older conversations from the saved chat list.')
@@ -3792,6 +3930,9 @@ class Window(QMainWindow):
         if self.confirm(Action('delete_conversation', self.session)):
             self.conversation_plan.cancel('Conversation deleted.')
             self.store.clear_messages(self.session)
+            # Deleting the conversation must also revoke any previously
+            # selected one-turn file sharing and discard local text snapshots.
+            self.clear_attachments()
             self.render_chat()
             self.refresh_archives()
 
@@ -3899,6 +4040,12 @@ class Window(QMainWindow):
                 messages[-1]['content'] = (
                     prompt + '\n\nRelated notes from my local memory, for reference only:\n' + notes
                 )
+            # Only the explicit one-turn checkbox grants file-content sharing.
+            # A chosen path alone never uploads content. The app never saves
+            # these file bytes in the conversation database.
+            shared_files = tuple(self.attachments) if self.files_share_once.isChecked() else ()
+            if shared_files:
+                messages[-1]['content'] += '\n\n' + as_untrusted_context(shared_files)
             if sum(len(m['content']) for m in messages) > 90000:
                 raise ValueError('Conversation is too long. Start a new chat.')
             self.store.message(self.session, 'user', prompt)
@@ -3908,6 +4055,11 @@ class Window(QMainWindow):
             system = {'role': 'system', 'content':
                 ASSISTANT_GUIDANCE + capability_context(self)}
             self.start_worker(provider, model, key, [system] + messages, 'chat', backup=backup)
+            if shared_files:
+                self.clear_attachments()
+                self.statusBar().showMessage(
+                    f'{len(shared_files)} file(s) shared with the chosen AI for this message only.',
+                    12000)
             self.backup_consent.setChecked(False)
         self.notify(operation)
 

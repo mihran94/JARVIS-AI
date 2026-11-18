@@ -16,6 +16,11 @@ def test_minimal_navigation_and_help():
     assert parse_command("/settings").target == "Settings & Safety"
     assert parse_command("/code").target == "Coding Assistant"
     assert parse_command("/workspace").target == "Coding Assistant"
+    for command in ("/files", "/folders", "/upload", "/attach", "file upload pannu",
+                    "folder upload pannu", "கோப்புகளைத் திற"):
+        parsed = parse_command(command)
+        assert parsed.kind == "page"
+        assert parsed.target == "Files & Folders"
     assert parse_command("/editors").kind == "editors"
     assert parse_command("/draft a Python hello world script").kind == "code_draft"
     assert parse_command("/draft a Python hello world script").detail == "a Python hello world script"
