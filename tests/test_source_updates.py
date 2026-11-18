@@ -258,6 +258,7 @@ def test_automatic_source_update_requires_opt_in_and_saves_choice(tmp_path, monk
     checker.set_source_enabled(True)
     assert checks == ['started']
     window.close()
+    window.deleteLater()
 
     reopened = Window(data)
     assert reopened.release_checker.source_enabled

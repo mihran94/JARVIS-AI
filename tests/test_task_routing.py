@@ -25,6 +25,7 @@ def test_chat_routes_known_tasks_without_provider_request(tmp_path):
         assert window.prompt.toPlainText() == "render after effects"
     finally:
         window.close()
+        window.deleteLater()
         app.processEvents()
 
 
@@ -48,4 +49,5 @@ def test_natural_task_preserves_brief_and_leaves_questions_in_chat(tmp_path):
         assert window.video_brief.toPlainText() == "Google Flow prompts தயார் செய். Opening close-up."
     finally:
         window.close()
+        window.deleteLater()
         app.processEvents()

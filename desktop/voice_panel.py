@@ -360,6 +360,12 @@ class VoicePanel(QWidget):
         self.worker.wake_call.connect(self.on_wake_call)
         self.worker.failed.connect(self.on_recognition_failed)
         self.worker.finished.connect(self.on_recognition_finished)
+        # The thread is not running yet when start() returns, so the state
+        # that is read straight afterwards would still say "not listening".
+        # The worker tells the panel when it is really running, and the panel
+        # refreshes then: the microphone is listening from that moment, and
+        # the owner's interface says so.
+        self.worker.started.connect(self.refresh)
         self.worker.start()
         self.refresh()
 

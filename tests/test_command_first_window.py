@@ -43,6 +43,7 @@ def test_main_toolbar_is_chat_island_settings_and_safety(tmp_path):
         assert window.chat_provider.isVisible()
     finally:
         window.close()
+        window.deleteLater()
         app.processEvents()
 
 
@@ -64,6 +65,7 @@ def test_project_list_and_unknown_command_stay_local(tmp_path, monkeypatch):
         assert window.worker is None
     finally:
         window.close()
+        window.deleteLater()
         app.processEvents()
 
 
@@ -91,4 +93,5 @@ def test_project_fix_reuses_existing_coding_approval_path(tmp_path, monkeypatch)
         assert seen[-1][0].make_change is False
     finally:
         window.close()
+        window.deleteLater()
         app.processEvents()

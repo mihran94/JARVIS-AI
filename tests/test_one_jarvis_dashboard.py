@@ -33,6 +33,11 @@ def test_one_dashboard_has_orb_read_only_metrics_and_existing_pages(tmp_path):
         assert not window.bridge.listener.running
     finally:
         window.close()
+        window.deleteLater()
+        # The window is destroyed, not just closed: a closed window keeps its
+        # widgets and its OpenGL resources alive, and the next test then
+        # renders far more slowly than it should.
+        window.deleteLater()
         app.processEvents()
 
 
@@ -91,6 +96,7 @@ def test_hud_and_local_commands_use_the_same_counters(tmp_path, monkeypatch):
         assert outbound[-1]['content'] == 'Explain how timelines work'
     finally:
         window.close()
+        window.deleteLater()
         app.processEvents()
 
 
@@ -111,7 +117,10 @@ def test_hud_continuous_voice_waits_for_playback_before_listening_again(tmp_path
     class Recognizer:
         def wait_for_wake_phrase(self, timeout):
             if len(recognizers) == 1:
-                release_input.wait(2)
+                # The stub holds for as long as the test needs. A short
+                # timeout here ends the recognition before a slow machine
+                # has delivered the state the test is waiting for.
+                release_input.wait(30)
                 return 'Hey Jarvis', ''
             voice.worker.msleep(20)
             return '', ''
@@ -126,7 +135,9 @@ def test_hud_continuous_voice_waits_for_playback_before_listening_again(tmp_path
         def speak_interruptibly(self, text, should_stop):
             replies.append(text)
             playback_started.set()
-            release_audio.wait(2)
+            # The playback holds until the test says so, so the HUD is
+            # SPEAKING for as long as the test waits for it.
+            release_audio.wait(30)
 
     def recognizer_factory(*_):
         recognizer = Recognizer()
@@ -152,7 +163,10 @@ def test_hud_continuous_voice_waits_for_playback_before_listening_again(tmp_path
         voice.allow.setChecked(True)
         window.read_replies.setChecked(True)
         voice.listen('continuous')
-        assert window.hud_voice_status.text() == 'LISTENING'
+        # The status arrives from the voice worker on its own thread, so the
+        # event loop has to deliver it. Waiting for it is what the test is
+        # about; the other states below are waited for the same way.
+        wait_for(lambda: window.hud_voice_status.text() == 'LISTENING')
         release_input.set()
         wait_for(playback_started.is_set)
         wait_for(lambda: window.hud_voice_status.text() == 'SPEAKING')
@@ -171,4 +185,5 @@ def test_hud_continuous_voice_waits_for_playback_before_listening_again(tmp_path
         release_input.set()
         release_audio.set()
         window.close()
+        window.deleteLater()
         app.processEvents()
