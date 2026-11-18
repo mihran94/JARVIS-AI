@@ -86,16 +86,20 @@ def test_the_icon_can_be_drawn_again(tmp_path):
     assert read_entries(target.read_bytes())
 
 
-def test_the_installer_in_the_tree_does_not_need_a_file_that_is_not_there():
-    """The installer must build from the tree alone.
+def test_installer_icon_configuration_matches_workflow_patch_state():
+    """The checked-in and fully patched workflow states are both supported.
 
-    The icon is drawn by the build, and the installer only uses it once
-    the patch that draws it has been applied. Until then the installer
-    must not point at a file that is not there, because the Windows
-    installer job fails on a file it cannot find.
+    A half-applied patch is NOT supported: when SetupIconFile is active the
+    build must generate the icon before PyInstaller and installer packaging.
     """
     text = INSTALLER.read_text(encoding='utf-8')
-    assert 'SetupIconFile' not in text
+    workflow = (ROOT / '.github/workflows/windows-integration.yml').read_text(
+        encoding='utf-8')
+    if 'SetupIconFile=JarvisAI.ico' in text:
+        assert 'python tools/make_icon.py installers/JarvisAI.ico' in workflow
+        assert '--icon installers/JarvisAI.ico' in workflow
+    else:
+        assert 'SetupIconFile' not in text
     assert 'UninstallDisplayIcon={app}\\JarvisAI.exe' in text
 
 
@@ -131,10 +135,15 @@ def test_the_patches_apply_to_the_workflows_they_change():
     import subprocess
 
     for patch in (ICON_PATCH, GREEN_PATCH):
-        result = subprocess.run(['git', 'apply', '--check', str(patch)],
-                                cwd=ROOT, capture_output=True, text=True)
-        assert result.returncode == 0, (
-            f'{patch.name} does not apply: {result.stderr[:300]}')
+        forward = subprocess.run(['git', 'apply', '--check', str(patch)],
+                                 cwd=ROOT, capture_output=True, text=True)
+        reverse = subprocess.run(
+            ['git', 'apply', '--reverse', '--check', str(patch)],
+            cwd=ROOT, capture_output=True, text=True)
+        assert forward.returncode == 0 or reverse.returncode == 0, (
+            f'{patch.name} is neither cleanly applicable nor fully applied. '
+            f'Forward error: {forward.stderr[:180]}; '
+            f'reverse error: {reverse.stderr[:180]}')
 
 
 def test_the_icon_is_not_committed_as_a_picture():
