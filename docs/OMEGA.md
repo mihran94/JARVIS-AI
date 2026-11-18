@@ -16,7 +16,19 @@ expandable application dock are retired from user navigation.
    to interrupt work.
 
 Advanced tools remain available through existing commands; they do not need
-a second menu or dashboard. The legacy `Ctrl+D` dock shortcut and Stealth
+a second menu or dashboard.
+
+## Files & Folders
+
+Choose **Attach** beside the chat input (or type `/files`, `/folders`,
+`/upload` or `/attach`). Select individual files or a folder under two
+separate sections and preview a local text snapshot. Checking **Include
+selected file text in my NEXT AI message** permits a single cloud-provider
+request after the owner explicitly presses **Ask JARVIS**. The content is
+cleared from the selection on submission, never stored in conversation
+history or automatically uploaded. Folder selection is bounded and excludes
+hidden/secret files and symlinks. Only text/code/CSV/JSON and small DOCX
+formats are supported; PDF and binary attachments remain unsupported. The legacy `Ctrl+D` dock shortcut and Stealth
 presentation are intentionally not available. Saved legacy mode preferences
 cannot reactivate them. The older `Omega Home` and `Omega Settings` routes
 resolve to PRIME Chat and Settings respectively.
