@@ -37,9 +37,8 @@ from core.coding_tasks import prepared as prepared_tasks, resumable as resumable
 from core.development import DevelopmentError, maintenance_goal
 from core.updates import installation_root, read_state, release_path
 from providers import routing
-from desktop.personal_theme import PERSONAL_STYLE
 from desktop import prime_theme
-from desktop.omega_visuals import THEMES as OMEGA_THEMES
+from desktop.omega_visuals import THEMES as OMEGA_THEMES, theme_sheet
 from desktop.blue_orb import BlueOrb
 from desktop.omega import Omega
 from desktop.system_metrics import CpuSampler, snapshot, format_snapshot
@@ -278,6 +277,9 @@ class Window(QMainWindow):
         self.resize(1180, 790)
         self.root = Path(data_root)
         self.store = Store(self.root / 'history.sqlite3')
+        saved_theme = self.store.get('omega:theme')
+        self.interface_theme = saved_theme if isinstance(saved_theme, str) and saved_theme in OMEGA_THEMES else 'MARK LVII'
+        self.setStyleSheet(theme_sheet(self.interface_theme))
         self.memory_service = MemoryService(self.root / 'history.sqlite3')
         self.router = ProviderRouter()
         self.policy = Policy()
@@ -370,8 +372,7 @@ class Window(QMainWindow):
         # One main UI: specialized tools remain available under Settings.
         self.page_indices = {}
         self.add_page('JARVIS Chat', self.chat_page())
-        # The composer belongs to the window, so it stays visible on every
-        # page and never scrolls out of reach.
+        # Keep the composer outside the scrolling conversation.
         outer.addWidget(self.composer_bar)
         self.add_page('PC Control', self.automation_page())
         self.add_page('Coding Assistant', self.editor_page())
@@ -445,27 +446,16 @@ class Window(QMainWindow):
         self.refresh_voice_hud()
 
     def on_theme_chosen(self, name: str) -> None:
-        """Apply the theme the owner chose.
-
-        The choice is the Omega palette, which decides the colours of the
-        whole application. The premium sheet is built from it, so the pages,
-        the cards and the controls are one system.
-        """
         if name not in OMEGA_THEMES:
             return
+        self.interface_theme = name
         if self.omega is not None:
             self.omega.set_theme(name)
-
-    def apply_interface_theme(self, name: str = '') -> str:
-        """Apply the interface theme to the whole application.
-
-        The owner chooses the theme in Settings. The Omega core paints itself
-        with its own palette, so only the chrome changes.
-        """
-        app = QApplication.instance()
-        if app is None:
-            return ''
-        return prime_theme.apply_theme(app, self.store, name)
+        else:
+            self.store.set('omega:theme', name)
+            self.setStyleSheet(theme_sheet(name))
+            self.chat_reactor.theme = name
+            self.chat_reactor.update()
 
     def add_page(self, name, page, *, primary=True):
         index = self.pages.count()
@@ -495,9 +485,6 @@ class Window(QMainWindow):
                 self.nav.setCurrentRow(row)
                 break
         self.pages.setCurrentIndex(index)
-        composer = getattr(self, 'composer_bar', None)
-        if composer is not None:
-            composer.setVisible(name == 'JARVIS Chat')
         if name == 'Settings & Safety':
             # The saved-project table lives in Settings, so it is refreshed
             # whenever the owner comes back to it.
@@ -511,8 +498,9 @@ class Window(QMainWindow):
 
     def update_assistant_navigation(self, _index=None):
         """Keep the assistant central; reveal Back only on advanced pages."""
-        self.chat_home_button.setVisible(
-            self.pages.currentIndex() != self.page_indices['JARVIS Chat'])
+        in_chat = self.pages.currentIndex() == self.page_indices['JARVIS Chat']
+        self.chat_home_button.setVisible(not in_chat)
+        self.composer_bar.setVisible(in_chat)
 
     def open_plugins(self):
         """Open existing plugin switches without a large feature toolbar."""
@@ -1037,6 +1025,7 @@ class Window(QMainWindow):
         # status and voice pipeline. It does not launch a second assistant.
         from desktop.omega_visuals import Reactor
         self.chat_reactor = Reactor()
+        self.chat_reactor.theme = self.interface_theme
         self.chat_reactor.setAccessibleName('JARVIS holographic core')
         self.chat_reactor.setFixedHeight(170)
         layout.addWidget(self.chat_reactor, 0, Qt.AlignmentFlag.AlignCenter)
@@ -2268,9 +2257,7 @@ class Window(QMainWindow):
         appearance.addWidget(QLabel('Interface theme'))
         self.theme_choice = QComboBox()
         self.theme_choice.addItems(list(OMEGA_THEMES))
-        chosen = self.store.get('omega:theme', '')
-        self.theme_choice.setCurrentText(
-            chosen if chosen in OMEGA_THEMES else list(OMEGA_THEMES)[0])
+        self.theme_choice.setCurrentText(self.interface_theme)
         self.theme_choice.currentTextChanged.connect(self.on_theme_chosen)
         appearance.addWidget(self.theme_choice)
         appearance.addStretch()
@@ -4252,10 +4239,6 @@ def main():
     if not lock.tryLock(100):
         QMessageBox.warning(None, 'JARVIS AI', 'JARVIS is already running for this user.')
         return 1
-    # The interface theme is applied before the window is built, so the
-    # widgets are created with the right palette and there is no flash of the
-    # default Qt theme on the way in.
-    prime_theme.apply_theme(app, Store(base / 'history.sqlite3'))
     window = Window(base)
     window.enable_omega(smoke=smoke)
     if smoke:

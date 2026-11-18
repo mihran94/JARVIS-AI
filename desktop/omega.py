@@ -476,7 +476,7 @@ class Omega:
     def __init__(self, window):
         self.window = window
         self.store = window.store
-        self.theme = setting(self.store, 'theme', THEMES, 'MARK LVII')
+        self.theme = window.interface_theme
         self.background = setting(self.store, 'background', BACKGROUNDS, BACKGROUNDS[0])
         self.mode = setting(self.store, 'mode', MODES, 'Omega')
         self.reduced = bool(self.store.get('omega:reduced', False))
@@ -627,11 +627,11 @@ class Omega:
         page.setObjectName('omegaFrame')
         form = QFormLayout(page)
         form.addRow(label('Omega Settings', 'omegaTitle'))
-        theme = QComboBox()
-        theme.addItems(THEMES)
-        theme.setCurrentText(self.theme)
-        theme.currentTextChanged.connect(self.set_theme)
-        form.addRow('Theme', theme)
+        self.theme_selector = QComboBox()
+        self.theme_selector.addItems(THEMES)
+        self.theme_selector.setCurrentText(self.theme)
+        self.theme_selector.currentTextChanged.connect(self.set_theme)
+        form.addRow('Theme', self.theme_selector)
         background = QComboBox()
         background.addItems(BACKGROUNDS)
         background.setCurrentText(self.background)
@@ -763,8 +763,14 @@ class Omega:
         self.refresh_state()
 
     def set_theme(self, theme):
-        self.theme = theme
+        if theme not in THEMES:
+            return
+        self.theme = self.window.interface_theme = theme
         self.store.set('omega:theme', theme)
+        for selector in (self.theme_selector, self.window.theme_choice):
+            blocked = selector.blockSignals(True)
+            selector.setCurrentText(theme)
+            selector.blockSignals(blocked)
         self.apply_theme()
 
     def apply_theme(self):
