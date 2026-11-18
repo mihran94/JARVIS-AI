@@ -160,7 +160,6 @@ def test_the_capcut_command_still_reaches_the_inline_approval(tmp_path, monkeypa
         assert 'CapCut launched.' in win.transcript.toPlainText()
     finally:
         win.close()
-        win.deleteLater()
         app.processEvents()
 
 
@@ -193,7 +192,6 @@ def test_opening_the_project_from_the_card_needs_approval(tmp_path, monkeypatch,
         assert opened and opened[0][0] == 'VS Code'
     finally:
         win.close()
-        win.deleteLater()
 
 
 def test_a_trusted_open_routine_still_opens_without_asking(tmp_path, monkeypatch, project):
@@ -212,7 +210,6 @@ def test_a_trusted_open_routine_still_opens_without_asking(tmp_path, monkeypatch
         assert opened and opened[0][0] == 'VS Code'
     finally:
         win.close()
-        win.deleteLater()
 
 
 def test_emergency_stop_stops_the_card_actions(tmp_path, monkeypatch, project):
@@ -232,7 +229,6 @@ def test_emergency_stop_stops_the_card_actions(tmp_path, monkeypatch, project):
         assert 'emergency stop' in win.transcript.toPlainText().lower()
     finally:
         win.close()
-        win.deleteLater()
 
 
 def test_reviewing_the_diff_honours_the_stop(tmp_path, monkeypatch, project):
@@ -250,7 +246,6 @@ def test_reviewing_the_diff_honours_the_stop(tmp_path, monkeypatch, project):
         assert 'diff --git' not in win.transcript.toPlainText()
     finally:
         win.close()
-        win.deleteLater()
 
 
 # ── 3. an untrusted test command is approved on its own ─────────────────────
@@ -291,7 +286,6 @@ def test_the_test_command_is_approved_separately_from_the_change(
         assert 'pytest -q' in win.coding_pending[2].target
     finally:
         win.close()
-        win.deleteLater()
 
 
 def test_a_trusted_test_command_does_not_ask_again(tmp_path, monkeypatch, project):
@@ -332,7 +326,6 @@ def test_a_trusted_test_command_does_not_ask_again(tmp_path, monkeypatch, projec
         assert win.coding_pending is None
     finally:
         win.close()
-        win.deleteLater()
 
 
 def test_a_different_test_command_is_never_trusted(tmp_path, monkeypatch, project):
@@ -347,7 +340,6 @@ def test_a_different_test_command_is_never_trusted(tmp_path, monkeypatch, projec
         assert win.test_command_trusted(project_entry, 'npm test') is False
     finally:
         win.close()
-        win.deleteLater()
 
 
 # ── 4. the tests run off the UI thread and can be stopped ──────────────────
@@ -398,7 +390,6 @@ def test_the_tests_run_off_the_ui_thread(tmp_path, monkeypatch, project):
                 time.sleep(0.005)
     finally:
         win.close()
-        win.deleteLater()
 
 
 def test_cancelling_the_tests_stops_the_test_process(tmp_path, monkeypatch, project):
@@ -427,7 +418,6 @@ def test_cancelling_the_tests_stops_the_test_process(tmp_path, monkeypatch, proj
         assert not marker.exists(), 'the test process kept running and wrote its marker'
     finally:
         win.close()
-        win.deleteLater()
 
 
 # ── 5. the diff is against the commit the task started from ────────────────
@@ -446,7 +436,6 @@ def test_the_task_captures_the_starting_commit(tmp_path, monkeypatch, project):
         assert outcome.starting_commit == starting
     finally:
         win.close()
-        win.deleteLater()
 
 
 def test_committed_and_uncommitted_edits_are_both_reported(tmp_path, monkeypatch, project):
@@ -480,7 +469,6 @@ def test_committed_and_uncommitted_edits_are_both_reported(tmp_path, monkeypatch
         assert outcome.message.startswith('2 file(s) changed against ')
     finally:
         win.close()
-        win.deleteLater()
 
 
 def test_the_starting_commit_is_reported_in_the_result(tmp_path, monkeypatch, project):
@@ -501,4 +489,3 @@ def test_the_starting_commit_is_reported_in_the_result(tmp_path, monkeypatch, pr
         assert outcome.starting_commit[:8] in outcome.message
     finally:
         win.close()
-        win.deleteLater()
