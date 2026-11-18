@@ -1265,11 +1265,23 @@ class Window(QMainWindow):
         self.attach_button.setObjectName('quiet')
         self.attach_button.setToolTip(
             'Choose files or a folder to preview. AI sharing is opt-in for one message.')
+        self.research_button = self.button(
+            composer_actions, 'Research a page', self.open_research_window)
+        self.research_button.setObjectName('quiet')
+        self.research_button.setToolTip(
+            'Read one page you name and ask a question about it. The page is read '
+            'here, and only its text goes to the provider.')
         composer_actions.addStretch()
         self.send_button = self.button(composer_actions, 'Ask JARVIS', self.send)
         self.send_button.setObjectName('primary')
         self.send_button.setToolTip('Send message (Ctrl+Enter)')
         return page
+
+    def open_research_window(self):
+        """Open the research window: the owner names a page and a question."""
+        from desktop.research_dialog import open_research
+
+        return open_research(self)
 
     def files_page(self):
         """User-chosen local files and folders; no background upload."""
