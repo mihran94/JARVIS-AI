@@ -35,6 +35,8 @@ import shutil
 import subprocess
 import sys
 
+from developer_studio.intents import summary_labels
+
 
 #: What an editor can be asked to do. The interface shows these individually.
 CAP_OPEN_PROJECT = 'open_project'
@@ -186,7 +188,7 @@ def resolve_launcher(command: str):
     return Path(shutil.which(command)) if shutil.which(command) else None
 
 
-def editor_status(name: str, configured=None) -> dict:
+def editor_status(name: str, configured=None, language: str = '') -> dict:
     """What the interface shows about one editor.
 
     `configured` is an optional configured launcher: a dictionary with
@@ -203,7 +205,10 @@ def editor_status(name: str, configured=None) -> dict:
             'path': str(path) if path else None,
             'installed': path is not None,
             'capabilities': list(configured.get('capabilities', [])),
-            'setup': '' if path else f'Set up {name}: the command was not found.',
+            'setup': '' if path else (
+                (summary_labels(language)['setup_set_up'] + f' {name}: '
+                 + summary_labels(language)['setup_not_found'])
+                if language else f'Set up {name}: the command was not found.'),
         }
     try:
         found = spec(name)
@@ -211,7 +216,11 @@ def editor_status(name: str, configured=None) -> dict:
         return {
             'name': name, 'kind': 'unknown', 'command': '', 'path': None,
             'installed': False, 'capabilities': [],
-            'setup': f'Setup needed for {name}: choose its executable in Settings.',
+            'setup': (
+                (summary_labels(language)['setup_needed'] + f' {name}: '
+                 + summary_labels(language)['setup_choose'])
+                if language else
+                f'Setup needed for {name}: choose its executable in Settings.'),
         }
     path = find_editor(name)
     return {
@@ -222,6 +231,9 @@ def editor_status(name: str, configured=None) -> dict:
         'installed': path is not None,
         'capabilities': list(found.capabilities),
         'setup': '' if path else (
+            (summary_labels(language)['setup_needed'] + f' {found.name}: '
+             + summary_labels(language)['setup_install'].format(command=found.command))
+            if language else
             f'Setup needed for {found.name}: install it, or add "{found.command}" to PATH, '
             'or configure it as a launcher in Settings.'),
     }
