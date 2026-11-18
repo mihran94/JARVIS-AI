@@ -37,6 +37,7 @@ from desktop.camera_reader import open_camera_reader
 from desktop.update_dialog import ReleaseChecker, open_updates
 from desktop.voice_panel import VoicePanel
 from desktop.tray import BackgroundControls
+from desktop.global_hotkey import DEFAULT_SHORTCUT, GlobalHotkey
 from desktop.background import ImprovementWorker, SourceCheckWorker
 from desktop.review_panel import ReviewPanel
 from desktop.startup import (StartupError, set_start_at_signin, start_at_signin_enabled,
@@ -456,6 +457,9 @@ class Window(QMainWindow):
         self.refresh_history()
         self.render_chat()
         self.background_controls = BackgroundControls(self)
+        self.hotkey = GlobalHotkey(self.summon_from_hotkey)
+        self.hotkey_status = ''
+        self.apply_hotkey(self.store.get('hotkey:shortcut', DEFAULT_SHORTCUT), save=False)
         self.release_checker = ReleaseChecker(self)
         self.maintenance_timer = QTimer(self)
         self.maintenance_timer.timeout.connect(self.check_maintenance)
@@ -5062,6 +5066,35 @@ class Window(QMainWindow):
                 'The estimate uses the list price of the model; only the provider dashboard '
                 'can say what was really charged.')
 
+    def apply_hotkey(self, text, *, save=True):
+        """Take the key that brings JARVIS up, or say why it cannot be taken.
+
+        The key is not the microphone. It brings JARVIS to the front, and
+        the owner decides there what happens next.
+        """
+        message = self.hotkey.register(text)
+        self.hotkey_status = message
+        if save:
+            shortcut = self.hotkey.shortcut
+            self.store.set('hotkey:shortcut', shortcut.describe() if shortcut else '')
+        omega = getattr(self, 'omega', None)
+        if omega is not None and getattr(omega, 'hotkey_status', None) is not None:
+            omega.hotkey_status.setText(message)
+        return message
+
+    def summon_from_hotkey(self):
+        """Bring JARVIS to the front. The microphone is not opened."""
+        controls = getattr(self, 'background_controls', None)
+        if controls is not None and controls.tray is not None:
+            controls.restore()
+        else:
+            self.showNormal()
+            self.raise_()
+            self.activateWindow()
+        omega = getattr(self, 'omega', None)
+        if omega is not None:
+            omega.window.activateWindow()
+
     def request_exit(self):
         self.exit_requested = True
         self.close()
@@ -5103,6 +5136,8 @@ class Window(QMainWindow):
             self.voice_panel.stop_voice()
             self.voice_panel.wait_for_workers()
             self.bridge.listener.stop()
+            if getattr(self, 'hotkey', None) is not None:
+                self.hotkey.unregister()
             if self.omega is not None:
                 self.omega.shutdown()
             event.accept()
