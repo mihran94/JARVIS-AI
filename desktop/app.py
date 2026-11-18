@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QPushButton, QListWidget, QStackedWidget, QPlainTextEdit, QLineEdit,
     QComboBox, QMessageBox, QFormLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QCheckBox, QDialog, QFileDialog, QScrollArea, QLayout,
-    QProgressBar, QGroupBox, QSizePolicy,
+    QProgressBar, QGroupBox, QSizePolicy, QInputDialog,
 )
 from dataclasses import replace
 
@@ -27,6 +27,7 @@ from quantum_core.studio_project import STUDIO_URL, studio_update_prompt, valida
 from desktop.memory_page import MemoryPanel
 from desktop import documents
 from desktop import local_commands
+from desktop.document_search import search_folder, search_result_text, summary_export
 from desktop.attachments import (AttachmentError, as_untrusted_context,
                                  stage_files, stage_folder)
 from desktop.studio_inbox import StudioInboxDialog
@@ -1290,6 +1291,11 @@ class Window(QMainWindow):
         self.button(document_actions, 'Compare with…', self.compare_document_file)
         self.button(document_actions, 'Clear the preview', self.clear_document_preview)
         document_actions.addStretch()
+        search_row = QHBoxLayout()
+        self.button(search_row, 'Search a folder…', self.search_chosen_folder)
+        self.button(search_row, 'Summarise in chat', self.summarise_document)
+        self.button(search_row, 'Export the summary…', self.export_summary)
+        documents_box.layout().addLayout(search_row)
         layout.addWidget(documents_box)
         self.document_status = QLabel('')
         self.document_status.setWordWrap(True)
@@ -1410,6 +1416,71 @@ class Window(QMainWindow):
         self.document_preview.setPlainText(documents.comparison_text(result))
         self.document_status.setText(
             f'Compared {result["first"]} with {result["second"]}. Nothing was sent anywhere.')
+
+    def search_chosen_folder(self):
+        """Search the text of the files in a folder the owner chose.
+
+        The search happens here, on this computer. Nothing is sent
+        anywhere, and only the folder the owner chose is looked at.
+        """
+        folder = QFileDialog.getExistingDirectory(
+            self, 'Choose a folder to search')
+        if not folder:
+            return
+        query, ok = QInputDialog.getText(
+            self, 'Search', 'What are you looking for?')
+        if not ok or not query.strip():
+            return
+        result = search_folder(folder, query)
+        self.document_preview.setPlainText(search_result_text(result))
+        self.document_status.setText(
+            f'{result.match_count} match(es) for "{query.strip()}" in '
+            f'{len(result.files_with_matches)} file(s). Nothing was sent anywhere.')
+
+    def summarise_document(self):
+        """Put the document that was read in front of the assistant.
+
+        The text goes into the composer and the owner sends it. It is not
+        sent by itself, and the same one-turn consent that guards every
+        other file guards this one.
+        """
+        document = getattr(self, 'document_under_read', None)
+        if document is None:
+            self.document_status.setText('Read a document first, then summarise it.')
+            return
+        text = document.text.strip()
+        if not text:
+            self.document_status.setText('That document has no text to summarise.')
+            return
+        limit = 12000
+        excerpt = text[:limit]
+        if len(text) > limit:
+            excerpt += (f'\n\n… {len(text) - limit:,} more characters were left out. '
+                        'The whole document is on this page.')
+        self.open_section('JARVIS Chat')
+        self.prompt.setPlainText(
+            'Summarise this document in the language I am using:\n\n' + excerpt)
+        self.prompt.setFocus()
+        self.statusBar().showMessage(
+            'The document is in the composer. Press Ask JARVIS to send it.', 12000)
+
+    def export_summary(self):
+        """Save the summary the assistant gave, where the owner chooses."""
+        text = self.transcript.toPlainText()
+        if not text.strip():
+            self.statusBar().showMessage('There is nothing to save yet.', 10000)
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, 'Save the summary', 'jarvis-summary.md',
+            'Markdown (*.md);;Text (*.txt)')
+        if not path:
+            return
+        try:
+            Path(path).write_text(summary_export(text), encoding='utf-8')
+        except OSError as error:
+            self.statusBar().showMessage(f'The summary could not be saved: {error}', 15000)
+            return
+        self.statusBar().showMessage('The summary was saved to ' + path, 15000)
 
     def clear_document_preview(self):
         """Forget the document that was read."""
