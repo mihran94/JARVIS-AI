@@ -15,10 +15,13 @@ from PySide6.QtWidgets import (
     QHeaderView, QCheckBox, QDialog, QFileDialog, QScrollArea, QLayout,
     QProgressBar, QGroupBox, QSizePolicy,
 )
+from dataclasses import replace
+
 from core.store import Store
 from core.conversation import ASSISTANT_GUIDANCE, addressed_request
 from desktop.conversation_plan import ConversationPlan, parse_plan as parse_conversation_plan
-from core.assistant_capabilities import summary as capability_summary, system_context as capability_context
+from core.assistant_capabilities import (conversation_context, summary as capability_summary,
+                                       system_context as capability_context)
 from quantum_core.studio_project import STUDIO_URL, studio_update_prompt, validate_studio_url
 from desktop.memory_page import MemoryPanel
 from desktop.attachments import (AttachmentError, as_untrusted_context,
@@ -39,6 +42,7 @@ from core.coding_tasks import prepared as prepared_tasks, resumable as resumable
 from core.development import DevelopmentError, maintenance_goal
 from core.updates import installation_root, read_state, release_path
 from providers import routing
+from providers import pricing
 from desktop import prime_theme
 from desktop.omega_visuals import THEMES as OMEGA_THEMES, theme_sheet
 from desktop.blue_orb import BlueOrb
@@ -72,8 +76,14 @@ from developer_studio.codex_cli import codex_executable, run_codex
 from developer_studio.editors import (
     CAPABILITY_LABELS, all_statuses, editor_from_text, editor_status, editor_names, open_project_in_editor,
 )
-from developer_studio.intents import CodingRequest, parse_coding_request
 from developer_studio.commands import HELP as COMMAND_HELP, parse_command
+from developer_studio.context import (
+    ConversationMemory, TaskRecord, describe_task, task_is_resumable,
+)
+from developer_studio.intents import (
+    LANGUAGE_NAMES, CodingRequest, detect_reply_language, match_projects,
+    parse_coding_request, parse_follow_up, strip_language_marker, summary_labels,
+)
 from developer_studio.projects import (
     SavedProject, assistant_language, configured_launchers, find_project, load_projects,
     project_status, routine_allowed, save_projects, set_assistant_language,
@@ -307,6 +317,9 @@ class Window(QMainWindow):
         self.coding_worker = None
         self.test_worker = None
         self.chat_task_id = None
+        self.memory = ConversationMemory(self.store)
+        self.pending_clarification = None
+        self.assistant_language = assistant_language(self.store)
         self.site_export = None
         self.news_panel = None
         self.site_draft = None
@@ -711,6 +724,9 @@ class Window(QMainWindow):
 
     def page(self, title, note=''):
         page = QWidget()
+        # The page root carries the premium surface, so the window is never
+        # transparent behind the conversation.
+        page.setObjectName('pageRoot')
         layout = QVBoxLayout(page)
         layout.setContentsMargins(22, 18, 10, 10)
         label = QLabel(title)
@@ -2163,6 +2179,9 @@ class Window(QMainWindow):
         advanced_form.addRow('Profile', self.profile_note)
         advanced_form.addRow('Model ID', self.model)
         advanced_form.addRow('HTTPS endpoint', self.endpoint)
+        self.price_note = QLabel()
+        self.price_note.setWordWrap(True)
+        advanced_form.addRow('List price', self.price_note)
         self.button(advanced_form, 'Use recommended model', self.reset_provider_model)
         layout.addWidget(self.provider_advanced_panel)
         self.provider_advanced_panel.hide()
@@ -2176,6 +2195,7 @@ class Window(QMainWindow):
         self.provider_health.setWordWrap(True)
         layout.addWidget(self.provider_health)
         self.provider.currentTextChanged.connect(self.load_provider)
+        self.model.textChanged.connect(self.refresh_price_note)
         self.load_provider()
         layout.addStretch()
         return page
@@ -2286,14 +2306,20 @@ class Window(QMainWindow):
     def usage_page(self):
         page, layout = self.page('Usage & Health',
             'Latest 200 API attempts. Token counts come from provider responses. '
-            'Unknown does not mean zero or free. Check your provider dashboard for billed costs. '
+            'The cost column is an estimate from the list price of the model, read on '
+            f'{pricing.PRICED_ON}; only the provider dashboard can say what was really charged. '
+            'Unknown does not mean zero or free. '
             'Duration is the local request time; checks are user-triggered, never background probes.')
-        self.usage_table = QTableWidget(0, 7)
+        self.usage_table = QTableWidget(0, 8)
         self.usage_table.setHorizontalHeaderLabels(
-            ['Provider / Model', 'Status', 'Seconds', 'Input', 'Output', 'Total', 'Created (UTC)'])
+            ['Provider / Model', 'Status', 'Seconds', 'Input', 'Output', 'Total',
+             'Est. cost', 'Created (UTC)'])
         self.usage_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.usage_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.usage_table)
+        self.usage_cost_summary = QLabel('')
+        self.usage_cost_summary.setWordWrap(True)
+        layout.addWidget(self.usage_cost_summary)
         return page
 
     def refresh_archives(self):
@@ -2889,18 +2915,207 @@ class Window(QMainWindow):
         if project is not None:
             set_trusted_routine(self.store, 'tests:' + project.name, enabled)
 
+    # ── follow-ups about the task already in flight ─────────────────────────
+
+    def handle_follow_up(self, kind, text):
+        """Answer 'continue that task', 'show the diff', 'run the tests again'
+        or 'stop this task' against the task this conversation remembers."""
+        context = self.memory.load()
+        record = context.last_task
+        if kind == 'stop':
+            self.stop_saved_task(context, text)
+            return
+        if kind == 'show_diff':
+            self.show_saved_diff(context, text)
+            return
+        if kind == 'run_tests':
+            self.rerun_saved_tests(context, text)
+            return
+        self.resume_saved_task(context, text)
+
+    def _saved_project(self, context):
+        """The saved project a remembered task belongs to, or None."""
+        record = context.last_task
+        if not record or not record.project:
+            return None
+        return find_project(load_projects(self.store), record.project)
+
+    def show_saved_diff(self, context, text):
+        """Show the diff of the remembered task, read back from its worktree."""
+        record = context.last_task
+        allowed, reason = task_is_resumable(record)
+        if not allowed:
+            self.show_local_system_reply(text, reason)
+            return
+        from developer_studio.codex_task import reviewable_diff
+        diff = reviewable_diff(record.worktree, record.starting_commit)
+        if not diff.strip():
+            self.show_local_system_reply(
+                text, f'There is no difference in {record.worktree} against '
+                      f'{record.starting_commit[:8]}.')
+            return
+        self.show_local_system_reply(text, diff)
+
+    def rerun_saved_tests(self, context, text):
+        """Run the remembered task's tests again, in its worktree."""
+        record = context.last_task
+        allowed, reason = task_is_resumable(record)
+        if not allowed:
+            self.show_local_system_reply(text, reason)
+            return
+        project = self._saved_project(context)
+        if project is None:
+            self.show_local_system_reply(
+                text, f'The project {record.project} is not saved any more.')
+            return
+        command = project.test_command
+        if not command:
+            self.show_local_system_reply(
+                text, f'No test command is configured for {project.name}.')
+            return
+        action = Action('run_project_tests', f'{project.name}: {command}')
+        self.coding_action_gate(
+            action,
+            lambda: self.start_test_run(project, Path(record.worktree), command),
+            trusted=self.test_command_trusted(project, command))
+
+    def stop_saved_task(self, context, text):
+        """Stop the remembered task without stopping the whole assistant."""
+        record = context.last_task
+        if self.coding_worker is not None:
+            self.coding_worker.requestInterruption()
+        if self.test_worker is not None:
+            self.test_worker.requestInterruption()
+        if record and record.ident:
+            self.store.finish(record.ident, 'cancelled', 'Cancelled by the owner.')
+        self.show_local_system_reply(
+            text, 'The task is stopped. Nothing was pushed, merged or published.')
+
+    def resume_saved_task(self, context, text):
+        """Bring the remembered task back, after checking it is still valid."""
+        record = context.last_task
+        allowed, reason = task_is_resumable(record)
+        if not allowed:
+            self.show_local_system_reply(text, reason)
+            return
+        project = self._saved_project(context)
+        if project is None:
+            self.show_local_system_reply(
+                text, f'The project {record.project} is not saved any more, so the task '
+                      'cannot be continued. Save it again in Settings & Plugins.')
+            return
+        # The card comes back with what is known about the task, so the owner
+        # can carry on with it.
+        steps = [{'key': 'resume', 'done': True, 'state': 'done',
+                  'label': f'Continue {record.project}: {record.change or "the saved task"}',
+                  'approval': False}]
+        self.coding = {
+            'request': parse_coding_request(record.change or record.project,
+                                            [project], editor_from_text),
+            'project': project, 'editor': record.editor or project.editor,
+            'editor_status': editor_status(record.editor or project.editor, None,
+                                           self.assistant_language),
+            'steps': steps, 'index': len(steps), 'outcome': None, 'text': text,
+        }
+        self.chat_task_id = record.ident
+        self.render_coding_card()
+        self.show_local_system_reply(
+            text, f'Continuing {record.project}. The worktree is {record.worktree}. '
+                  'Say what to change next, or use Review diff, Run tests or Open project.')
+
     def coding_request(self, text):
         """The coding request in a chat sentence, or None.
 
         A sentence is only a coding request when it names a saved project.
         Anything else is ordinary chat and goes to the assistant, because a
         request that might be a coding task must never swallow a question.
+
+        When the sentence names more than one saved project, JARVIS does not
+        guess: it asks which one, and the answer is treated as the answer to
+        that question.
         """
         projects = load_projects(self.store)
-        request = parse_coding_request(text, projects, editor_from_text)
+        if not projects:
+            return None
+        matches = match_projects(text, projects)
+        if len(matches) > 1:
+            self.ask_which_project(text, matches)
+            return None
+        # The project this conversation is about is the default, so a request
+        # that names no project still knows where to go.
+        remembered = self.memory.load().project
+        if remembered and find_project(projects, remembered) is None:
+            remembered = ''
+        request = parse_coding_request(text, projects, editor_from_text,
+                                       default_project=remembered)
+        if request.question:
+            # The request is not clear enough to act on: ask one short
+            # question instead of guessing.
+            self.ask_clarification(text, request, projects)
+            return None
         if request.project and (request.open_project or request.make_change or request.run_tests):
             return request
         return None
+
+    def ask_which_project(self, text, candidates):
+        """Ask a short question when more than one project could be meant."""
+        names = ', '.join(project.name for project in candidates)
+        self.pending_clarification = {'kind': 'project', 'text': text,
+                                      'candidates': list(candidates)}
+        self.show_local_system_reply(
+            text, f'Which project do you mean? Choose one: {names}.')
+
+    def ask_clarification(self, text, request, projects):
+        """Ask the short question the request needs before anything happens.
+
+        Two kinds: the project to work on, and what to do in it. The answer
+        is folded back into the request, so the task that starts is the one
+        the owner actually described.
+        """
+        if request.question_kind == 'project':
+            names = ', '.join(project.name for project in projects[:6])
+            self.pending_clarification = {'kind': 'project', 'text': text,
+                                          'candidates': list(projects[:6])}
+            self.show_local_system_reply(
+                text, f'Which saved project is this for? Choose one: {names}.')
+            return
+        self.pending_clarification = {'kind': 'merge', 'text': text,
+                                      'question': request.question}
+        self.show_local_system_reply(text, request.question)
+
+    def answer_clarification(self, text):
+        """Use the owner's answer to finish the request, and start the task.
+
+        When the question was about the project, the answer has to name one
+        of them. When the question was about what to do, the answer is
+        folded back into the request, so "fix the contact form validation"
+        becomes the change the task works on.
+        """
+        pending = self.pending_clarification
+        self.pending_clarification = None
+        if pending is None:
+            return False
+        if pending['kind'] == 'merge':
+            # The owner said what to do: read the request again with it.
+            combined = pending['text'] + ' ' + text
+            request = self.coding_request(combined)
+            if request is not None:
+                self.start_coding_task(request, combined)
+            return True
+        candidates = pending['candidates']
+        matches = match_projects(text, candidates)
+        if len(matches) != 1:
+            self.pending_clarification = pending
+            self.show_local_system_reply(
+                text, 'Say the project name exactly, one of: '
+                + ', '.join(project.name for project in candidates) + '.')
+            return True
+        project = matches[0]
+        request = parse_coding_request(pending['text'], [project], editor_from_text)
+        if not request.project:
+            request = replace(request, project=project.name)
+        self.start_coding_task(request, pending['text'])
+        return True
 
     def coding_task_active(self):
         """True when a coding task is running or waiting for approval.
@@ -2934,25 +3149,28 @@ class Window(QMainWindow):
         launchers = configured_launchers(self.store)
         editor = request.editor or project.editor
         configured = next((item for item in launchers if item['name'] == editor), None)
-        status = editor_status(editor, configured)
+        status = editor_status(editor, configured, self.assistant_language)
         routines = trusted_routines(self.store)
         steps = []
         if request.open_project:
             steps.append({
                 'key': 'open', 'done': False, 'state': 'waiting',
-                'label': f'Open {project.name} in {editor}',
+                'label': summary_labels(self.assistant_language)['step_open'].format(
+                    project=project.name, editor=editor),
                 'approval': not routines.get('open:' + project.name),
             })
         if request.make_change:
             steps.append({
                 'key': 'change', 'done': False, 'state': 'waiting',
-                'label': f'Ask Codex to: {request.change or project.name}',
+                'label': summary_labels(self.assistant_language)['step_change'].format(
+                    change=request.change or project.name),
                 'approval': True,
             })
         if request.run_tests:
             steps.append({
                 'key': 'tests', 'done': False, 'state': 'waiting',
-                'label': f"Run the configured tests: {project.test_command or '(none configured)'}",
+                'label': summary_labels(self.assistant_language)['step_tests'].format(
+                    command=project.test_command or '(none configured)'),
                 # A test command the owner has not trusted is approved on its
                 # own, separately from the change that produced it.
                 'approval': not (routines.get('tests:' + project.name)
@@ -2968,6 +3186,13 @@ class Window(QMainWindow):
         self.chat_task_id = self.store.task(
             'codex_task', f'{project.name} · {project.path} · {request.change or project.name}')
         self.store.finish(self.chat_task_id, 'running')
+        # Remember what this conversation is about, so a follow-up that names
+        # no project still knows where to go.
+        language = detect_reply_language(text) or self.assistant_language
+        if language:
+            self.assistant_language = language
+            set_assistant_language(self.store, language)
+        self.memory.remember(project=project.name, editor=editor, language=language)
         self.render_coding_card()
         self.advance_coding_task()
 
@@ -2996,35 +3221,39 @@ class Window(QMainWindow):
         project = coding['project']
         request = coding['request']
         status = coding['editor_status']
-        lines = [f'Task · {project.name}', f'Folder: {project.path}']
-        editor_line = f"Editor: {coding['editor']}"
+        labels = summary_labels(self.assistant_language)
+        lines = [f"{labels['task']} · {project.name}", f"{labels['folder']}: {project.path}"]
+        editor_line = f"{labels['editor']}: {coding['editor']}"
         if status['installed']:
             editor_line += f" — {status['path']}"
         else:
-            editor_line += ' — SETUP NEEDED'
+            editor_line += ' — ' + labels['setup_needed']
         lines.append(editor_line)
         if not status['installed'] and status['setup']:
             lines.append(status['setup'])
         if request.change:
-            lines.append('Change: ' + request.change)
+            lines.append(labels['change'] + ': ' + request.change)
         lines.append('')
         for number, step in enumerate(coding['steps'], 1):
-            mark = {'done': 'done', 'running': 'running', 'waiting': 'waiting',
-                    'declined': 'declined', 'failed': 'failed'}.get(step['state'], 'waiting')
+            mark = {'done': labels['done'], 'running': labels['running'],
+                    'waiting': labels['waiting'], 'declined': labels['declined'],
+                    'failed': labels['failed']}.get(step['state'], labels['waiting'])
             if step['state'] == 'waiting' and coding.get('pending_step') is step:
-                mark = 'awaiting approval'
+                mark = labels['awaiting_approval']
             lines.append(f'{number}. {step["label"]}  [{mark}]')
         outcome = coding.get('outcome')
         if outcome is not None:
+            labels = summary_labels(self.assistant_language)
             lines.append('')
             lines.append(outcome.message)
             if outcome.changed_files:
-                lines.append('Changed files: ' + ', '.join(outcome.changed_files))
+                lines.append(labels['changed'] + ': ' + ', '.join(outcome.changed_files))
+            else:
+                lines.append(labels['changed'] + ': ' + labels['none'])
             if outcome.test_status not in ('', 'not run'):
-                lines.append(f'Tests: {outcome.test_status}')
+                lines.append(f"{labels['tests']}: {outcome.test_status}")
             if outcome.protected:
-                lines.append('Your uncommitted work was untouched: '
-                             + ', '.join(outcome.protected))
+                lines.append(labels['protected'] + ': ' + ', '.join(outcome.protected))
         self.chat_task_text.setText('\n'.join(lines))
         self.chat_task_card.show()
         self.chat_task_diff.setEnabled(bool(outcome and outcome.diff))
@@ -3245,7 +3474,8 @@ class Window(QMainWindow):
         task = CodexTask(project, request.change or project.name,
                          test_command='',
                          worktree_root=self.root / 'worktrees',
-                         codex_path=None)
+                         codex_path=None,
+                         language=self.assistant_language)
         self.worker_kind = 'coding'
         self.coding_worker = CodingTaskWorker(task, self.policy, self.policy.ticket())
         self.coding_worker.progress.connect(self.on_coding_progress)
@@ -3323,27 +3553,63 @@ class Window(QMainWindow):
         self.store.finish(self.chat_task_id, status, detail)
 
     def finish_coding_task(self):
-        """Close the task card with the result in the conversation."""
+        """Close the task card with the result in the conversation.
+
+        The report says what actually happened: the files that changed, the
+        diff to review, the test outcome and where the work was saved. It is
+        written in the language the owner asked the answer in.
+        """
         coding = self.coding
         if coding is None:
             return
         outcome = coding.get('outcome')
         if outcome is not None:
+            labels = summary_labels(self.assistant_language)
             summary = outcome.message
             if outcome.changed_files:
-                summary += '\nChanged files: ' + ', '.join(outcome.changed_files)
+                summary += '\n' + labels['changed'] + ': ' + ', '.join(outcome.changed_files)
+            else:
+                summary += '\n' + labels['changed'] + ': ' + labels['none']
             # The test result is ALWAYS in the final result, pass or fail.
-            summary += '\nTests: ' + (outcome.test_status or 'not run')
+            summary += '\n' + labels['tests'] + ': ' + (outcome.test_status or 'not run')
+            if outcome.diff:
+                # The whole diff goes in, but it is bounded so one enormous
+                # change cannot fill the conversation.
+                diff = outcome.diff
+                if len(diff) > 8000:
+                    diff = diff[:8000] + '\n… the diff was shortened. Use Review diff for all of it.'
+                summary += '\n' + labels['diff'] + ':\n' + diff
             if outcome.worktree:
-                summary += '\nWorktree: ' + outcome.worktree
+                summary += '\n' + labels['saved'] + ': ' + outcome.worktree
             if outcome.refused:
                 summary += ('\nPut back (protected, not changed): '
                             + ', '.join(outcome.refused))
             self.store.message(self.session, 'system', summary)
             self.render_chat()
         self.record_coding_history(outcome)
+        self.remember_finished_task(outcome)
         self.refresh_archives()
         self.refresh_history()
+
+    def remember_finished_task(self, outcome):
+        """Keep the finished task so the owner can continue it later."""
+        coding = self.coding
+        if coding is None or outcome is None:
+            return
+        project = coding['project']
+        record = TaskRecord(
+            ident=self.chat_task_id or '',
+            project=project.name,
+            folder=project.path,
+            editor=coding.get('editor') or project.editor,
+            worktree=outcome.worktree,
+            starting_commit=outcome.starting_commit,
+            change=coding['request'].change or project.name,
+            test_command=project.test_command,
+            status=outcome.status,
+            created=datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),
+        )
+        self.memory.remember_task(record)
 
     def review_coding_diff(self):
         """Show the reviewable diff of the last task.
@@ -3818,6 +4084,8 @@ class Window(QMainWindow):
         self.secret.clear()
         health = self.store.get('health:' + provider + ':' + self.model.text())
         self.provider_health.setText('Last explicit check: ' + (health['summary'] if health else 'Not tested'))
+        if hasattr(self, 'price_note'):
+            self.price_note.setText(pricing.describe(provider, self.model.text()))
         if spec.local:
             self.key_status.setText('Not required: this model runs on this computer')
             return
@@ -3852,7 +4120,15 @@ class Window(QMainWindow):
         self.profile_note.setText(profile_models.PROFILE_NOTES.get(profile, ''))
         if profile:
             self.model.setText(self.selected_model(provider, profile))
+        self.refresh_price_note()
         self.refresh_brain_label()
+
+    def refresh_price_note(self):
+        """Show what the model in the box costs, or that the price is unknown."""
+        if not hasattr(self, 'price_note'):
+            return
+        self.price_note.setText(
+            pricing.describe(self.provider.currentText(), self.model.text()))
 
     def save_provider(self):
         def operation():
@@ -3979,6 +4255,20 @@ class Window(QMainWindow):
                 self.prompt.clear()
                 self.show_local_system_reply(text, local_reply)
                 return
+            # A follow-up such as "continue" or "show the diff" only means
+            # something while JARVIS still knows the task it refers to.
+            follow_up = parse_follow_up(text)
+            if follow_up:
+                self.prompt.clear()
+                self.open_section('JARVIS Chat')
+                self.handle_follow_up(follow_up, text)
+                return
+            # The answer to a question JARVIS asked comes before anything
+            # else, so it is never mistaken for a new request.
+            if self.pending_clarification is not None and self.answer_clarification(text):
+                self.prompt.clear()
+                self.open_section('JARVIS Chat')
+                return
             desktop_task = parse_desktop_task(text)
             if desktop_task is not None:
                 self.prompt.clear()
@@ -4052,8 +4342,14 @@ class Window(QMainWindow):
             self.render_chat()
             self.transcript.appendPlainText('\nJARVIS\n')
             self.prompt.clear()
+            language = detect_reply_language(text) or self.assistant_language
+            if language:
+                self.assistant_language = language
+                set_assistant_language(self.store, language)
             system = {'role': 'system', 'content':
-                ASSISTANT_GUIDANCE + capability_context(self)}
+                ASSISTANT_GUIDANCE + capability_context(self) + conversation_context(self)}
+            if language:
+                system['content'] += ' Answer in ' + LANGUAGE_NAMES.get(language, language) + '.'
             self.start_worker(provider, model, key, [system] + messages, 'chat', backup=backup)
             if shared_files:
                 self.clear_attachments()
@@ -4318,14 +4614,32 @@ class Window(QMainWindow):
                 self.workflow_table.selectRow(index)
         attempts = self.store.usage_rows()
         self.usage_table.setRowCount(len(attempts))
+        estimated_total = 0.0
+        priced = 0
+        unknown = 0
         for index, attempt in enumerate(attempts):
+            cost = pricing.estimate(attempt['provider'], attempt['model'],
+                                     attempt['prompt_tokens'], attempt['completion_tokens'])
+            if cost is None:
+                unknown += 1
+            else:
+                estimated_total += cost
+                priced += 1
             values = [attempt['provider'] + ' / ' + attempt['model'], attempt['status'],
                       f"{attempt['duration_ms'] / 1000:.2f}",
                       *[attempt[k] if attempt[k] is not None else 'Unknown'
                         for k in ('prompt_tokens', 'completion_tokens', 'total_tokens')],
+                      pricing.format_cost(cost),
                       attempt['created']]
             for column, value in enumerate(values):
                 self.usage_table.setItem(index, column, QTableWidgetItem(str(value)))
+        if hasattr(self, 'usage_cost_summary'):
+            self.usage_cost_summary.setText(
+                f'Estimated total for the {len(attempts)} attempts shown: '
+                f'{pricing.format_cost(estimated_total)} '
+                f'({priced} priced, {unknown} without a known price). '
+                'The estimate uses the list price of the model; only the provider dashboard '
+                'can say what was really charged.')
 
     def request_exit(self):
         self.exit_requested = True
