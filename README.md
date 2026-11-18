@@ -14,6 +14,32 @@ Island, voice indicators and approvals. The obsolete stand-alone blue and
 personal Qt stylesheets and old migration script were removed. No conversation
 history, credentials or project source folders were deleted.
 
+### Attach files and folders (local-first)
+
+In JARVIS PRIME Chat choose **Attach**, or type `/files`, `/folders`,
+`/upload` or `/attach`. The **Files & Folders** workspace provides
+separate **Choose files** and **Choose folder** sections, a selection list,
+text preview, removal and clear actions. Selecting an item reads a bounded
+snapshot into local memory; it **never uploads anything by itself**.
+Supported formats include UTF-8 text, Markdown, source code, JSON, CSV and
+small DOCX documents. PDFs, images, archives and other binary files are
+not supported in this version; no PDF extraction is claimed.
+
+Folder traversal skips symlinks, hidden folders, common dependency/build
+folders and secret-named files. Limits are 12 files, 24 KiB per file,
+48,000 characters in all, 500 scanned files and four directory levels.
+The UI reports skipped entries and when the folder limit truncates the
+selection. There is **no background folder watcher or automatic rescan**.
+
+To ask the AI about the selection, check **Include selected file text in my
+NEXT AI message**, return to Chat and press **Ask JARVIS**. The selected
+text is sent to the chosen provider (and the backup provider only if the
+existing separate backup option is enabled). The files are cleared after
+that one submission and their raw contents are not saved in JARVIS chat
+history. Model outputs may still be retained according to the provider's
+policy. Never select passwords, keys or other sensitive content. Closing
+or starting a new conversation does not create persistent file uploads.
+
 Type `/help` in JARVIS to see local commands. Developer Studio is integrated
 through existing approval-gated project workflows rather than being launched
 as another assistant:
