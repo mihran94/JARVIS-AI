@@ -10,7 +10,20 @@ object TextTools {
         val lower = input.lowercase(Locale.ROOT).trim()
         val decomposed = Normalizer.normalize(lower, Normalizer.Form.NFD)
         val noMarks = decomposed.replace(COMBINING_MARKS, "")
-        return noMarks.replace(NON_ALPHANUMERIC, " ").replace(WHITESPACE, " ").trim()
+        // A mark that was kept on purpose is a letter of the word it
+        // follows: the Tamil vowel signs and the virama. It is not
+        // punctuation, so it must not become a space. "செய்ய" is one word,
+        // and splitting it into "ச ய ய" took the meaning out of every
+        // Tamil sentence that came out of the microphone.
+        val kept = buildString {
+            for (ch in noMarks) {
+                val type = Character.getType(ch)
+                val isMark = type == Character.NON_SPACING_MARK ||
+                    type == Character.COMBINING_SPACING_MARK
+                append(if (ch.isLetterOrDigit() || ch.isWhitespace() || isMark) ch else ' ')
+            }
+        }
+        return kept.replace(WHITESPACE, " ").trim()
     }
 
     fun tokens(input: String): List<String> =
@@ -63,6 +76,5 @@ object TextTools {
         if (input.length <= max) input else input.take(max - 1) + "…"
 
     private val COMBINING_MARKS = Regex("\\p{InCombiningDiacriticalMarks}+")
-    private val NON_ALPHANUMERIC = Regex("[^\\p{L}\\p{N}\\s]+")
     private val WHITESPACE = Regex("\\s+")
 }
