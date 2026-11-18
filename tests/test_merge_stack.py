@@ -109,7 +109,7 @@ def test_a_merge_that_conflicts_is_finished_and_the_manifest_is_written(tmp_path
         subprocess.run(['git', '-C', str(directory), 'worktree', 'prune'], capture_output=True)
 
 
-def test_a_conflict_the_script_does_not_know_stops_the_merge(tmp_path):
+def test_a_content_conflict_keeps_the_lines_of_the_merged_side(tmp_path):
     directory = build_repository(tmp_path / 'repository')
     # Both sides write the same file in a way that cannot be merged.
     git(directory, 'checkout', '--quiet', 'one')
@@ -130,9 +130,17 @@ def test_a_conflict_the_script_does_not_know_stops_the_merge(tmp_path):
     (directory / 'c.txt').write_text('two side\n', encoding='utf-8')
     git(directory, 'add', '-A')
     git(directory, 'commit', '--quiet', '-m', 'two side of c')
-    with pytest.raises(MergeFailed) as error:
-        merge_stack('main', 'merged', branches=['one', 'two'], repository=directory)
-    assert 'conflict' in str(error.value).lower()
+    merge_stack('main', 'merged', branches=['one', 'two'], repository=directory)
+    # The lines both sides changed are taken from the side that was
+    # merged first, and the file is not left with conflict markers.
+    body = git(directory, 'show', 'merged:c.txt')
+    assert 'one side' in body
+    assert '<<<<<<<' not in body
+    # And nothing is left unmerged.
+    unmerged = subprocess.run(
+        ['git', '-C', str(directory), 'diff', '--name-only', '--diff-filter=U'],
+        capture_output=True, text=True).stdout.strip()
+    assert not unmerged
 
 
 def test_the_manifest_is_the_file_that_is_written_again():

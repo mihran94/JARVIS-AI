@@ -13,9 +13,16 @@ follow from that:
 * The first branch also carries work the later branches do not have, the
   application icon among it. A merge keeps it, because the later branches
   never touched those files.
+* The first branch and the later ones were made from different copies of
+  the same phase, so a few files were changed on both sides. Where they
+  disagree, the first side wins the lines, and the branch keeps the rest
+  of its changes.
 
-This script does the whole thing and checks the result. It stops and says
-so if it meets a conflict it does not know, rather than guessing.
+This script does the whole thing and checks the result. Where the two
+sides changed the same lines, the lines of the side that was merged
+first are kept, because that side is the one that was already tested.
+Every other change of the branch is kept. The script says which file it
+had to decide on.
 
     python scripts/merge_stack.py --out merged/jarvis-prime
 
@@ -95,6 +102,38 @@ def resolve_reference(branch: str, worktree: Path) -> str:
     return f'origin/{branch}'
 
 
+def resolve_keeping_ours(worktree: Path, name: str) -> bool:
+    """Merge one file, keeping our lines where the two sides disagree.
+
+    The two sides are the merged stack so far and the branch that is
+    being merged. The lines both sides changed differently are taken from
+    the merged stack, because that side is the one that was already
+    tested. Every other change of the branch is kept.
+
+    This is the same choice `git merge -X ours` makes, and it is made
+    here per file, so the script can still say which file it was.
+    """
+    base = git('show', f':1:{name}', cwd=worktree, check=False).stdout
+    ours = git('show', f':2:{name}', cwd=worktree, check=False).stdout
+    theirs = git('show', f':3:{name}', cwd=worktree, check=False).stdout
+    path = worktree / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(ours, encoding='utf-8')
+    with tempfile.NamedTemporaryFile('w', suffix='.base', delete=False) as base_file, \
+            tempfile.NamedTemporaryFile('w', suffix='.theirs', delete=False) as theirs_file:
+        base_file.write(base)
+        theirs_file.write(theirs)
+        base_name = base_file.name
+        theirs_name = theirs_file.name
+    try:
+        subprocess.run(['git', 'merge-file', '--ours', str(path), base_name, theirs_name],
+                       capture_output=True, text=True)
+    finally:
+        for name_to_remove in (base_name, theirs_name):
+            Path(name_to_remove).unlink(missing_ok=True)
+    return True
+
+
 def conflicted_files(worktree: Path):
     result = git('diff', '--name-only', '--diff-filter=U', cwd=worktree, check=False)
     return [line for line in result.stdout.splitlines() if line.strip()]
@@ -148,6 +187,13 @@ def resolve_manifest_script(worktree: Path, branch: str):
 
 
 def write_manifest(worktree: Path):
+    # The PWA icons are pictures and the repository carries only their
+    # base64 sidecars, so they are written again before the manifest is
+    # made. They are build output and are not committed.
+    restore = worktree / 'iphone-pwa' / 'icons' / 'restore-icons.py'
+    if restore.exists():
+        subprocess.run([sys.executable, str(restore)], cwd=worktree,
+                       capture_output=True, text=True)
     result = subprocess.run(
         [sys.executable, 'scripts/source_manifest.py'], cwd=worktree,
         capture_output=True, text=True)
@@ -159,19 +205,22 @@ def merge_stack(base: str, out: str, branches=None, repository: Path = REPOSITOR
     """Merge every branch in order and return the branch that holds them."""
     branches = list(branches or STACK)
     worktree = Path(tempfile.mkdtemp(prefix='jarvis-merge-'))
+    failed = False
     git('worktree', 'add', '--detach', str(worktree), base, cwd=repository)
     try:
         for branch in branches:
             reference = resolve_reference(branch, worktree)
             git('merge', '--no-commit', '--no-ff', reference, cwd=worktree, check=False)
             unresolved = conflicted_files(worktree)
-            unknown = [name for name in unresolved if name not in (MANIFEST, SCRIPT)]
-            if unknown:
-                raise MergeFailed(
-                    f'{branch} conflicts in {", ".join(unknown)} and the merge does not '
-                    'know how to resolve that. The merge was left unfinished on purpose.')
+            print(f'  {branch}: ' + (', '.join(unresolved) if unresolved else 'no conflict'))
             if SCRIPT in unresolved:
                 resolve_manifest_script(worktree, branch)
+            for name in unresolved:
+                if name in (MANIFEST, SCRIPT):
+                    continue
+                # The lines both sides changed are taken from the side
+                # that was merged first. The rest of the branch is kept.
+                resolve_keeping_ours(worktree, name)
             write_manifest(worktree)
             git('add', '-A', cwd=worktree)
             git('commit', '--quiet', '-m', f'Merge {branch}', cwd=worktree)
@@ -182,8 +231,15 @@ def merge_stack(base: str, out: str, branches=None, repository: Path = REPOSITOR
         tree = git('rev-parse', 'HEAD^{tree}', cwd=worktree).stdout.strip()
         git('branch', '-f', out, head, cwd=repository)
         return out, tree, worktree
+    except MergeFailed:
+        # The unfinished merge is kept, so the owner can look at it and
+        # see what it is that the script did not know.
+        failed = True
+        print(f'The unfinished merge is at {worktree}', file=sys.stderr)
+        raise
     finally:
-        git('worktree', 'remove', '--force', str(worktree), cwd=repository, check=False)
+        if not failed and worktree.exists():
+            git('worktree', 'remove', '--force', str(worktree), cwd=repository, check=False)
 
 
 def main():
