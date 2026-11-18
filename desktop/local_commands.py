@@ -75,6 +75,18 @@ INTENTS = {
         'quelle heure',
         "l'heure",
     ),
+    'tidy': (
+        'tidy it',
+        'tidy the folder',
+        'tidy this folder',
+        'organise the folder',
+        'organize the folder',
+        'carry out the plan',
+        'move the files',
+        'sort the files',
+        'tidy pannu',
+        'folder tidy pannu',
+    ),
     'status': (
         'system status',
         'system stats',
