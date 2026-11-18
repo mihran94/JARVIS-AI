@@ -438,8 +438,14 @@ class HomeBackdrop(Backdrop):
         self.sides = sides
         self.compact = False
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
+    def apply_compact(self):
+        """Reflow for the width the backdrop has right now.
+
+        The window can be resized and a page can be opened in the same step,
+        and the layout runs after both. Reading the width in the resize
+        event alone therefore uses the width from before the reflow, and the
+        home stays wide when it should be compact.
+        """
         compact = self.width() < 850
         if hasattr(self, 'columns') and compact != self.compact:
             self.compact = compact
@@ -460,6 +466,10 @@ class HomeBackdrop(Backdrop):
                 self.columns.setColumnStretch(0, 2)
                 self.columns.setColumnStretch(1, 4)
                 self.columns.setColumnStretch(2, 2)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.apply_compact()
 
 
 class Omega:
@@ -728,6 +738,9 @@ class Omega:
         self.window.open_section(page)
         if self.auto_hide:
             self.show_dock(False)
+        # The layout runs after the page is opened, so the home is reflowed
+        # for the width it really has.
+        QTimer.singleShot(0, self.home.apply_compact)
 
     def switch(self, mode, persist=True):
         if mode not in MODES:
