@@ -1240,6 +1240,13 @@ class Window(QMainWindow):
         self.attachment_list.clear()
         for item in self.attachments:
             self.attachment_list.addItem(f'{item.name}  ({item.size} bytes)')
+        count = len(self.attachments)
+        self.attach_button.setText(f'Attach ({count})' if count else 'Attach')
+        self.attach_button.setToolTip(
+            f'{count} local file(s) selected. Open to preview and approve one-turn AI sharing.')
+        self.files_share_once.setEnabled(bool(count))
+        if not count:
+            self.files_share_once.setChecked(False)
         self.attachment_status.setText(
             f'{len(self.attachments)} file(s) selected; temporary text snapshots, '
             'not copied to the history database. Up to 12 files / '
@@ -1257,6 +1264,8 @@ class Window(QMainWindow):
             return
         try:
             self.attachments = stage_files(paths, self.attachments)
+            # Selecting new content invalidates earlier one-turn consent.
+            self.files_share_once.setChecked(False)
         except AttachmentError as exc:
             self.statusBar().showMessage(str(exc), 15000)
         self.update_attachment_display()
@@ -1269,6 +1278,7 @@ class Window(QMainWindow):
         try:
             selected, skipped, truncated = stage_folder(folder, self.attachments)
             self.attachments = selected
+            self.files_share_once.setChecked(False)
             self.update_attachment_display()
             self.statusBar().showMessage(
                 f'Folder scan: {len(selected)} selected, {skipped} skipped'
@@ -1298,6 +1308,7 @@ class Window(QMainWindow):
         index = self.attachment_list.currentRow()
         if 0 <= index < len(self.attachments):
             del self.attachments[index]
+            self.files_share_once.setChecked(False)
             self.update_attachment_display()
         if not self.attachments:
             self.files_share_once.setChecked(False)
