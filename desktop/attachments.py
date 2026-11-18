@@ -85,7 +85,10 @@ def read_file(path: str | Path, *, label: str | None = None) -> StagedFile:
         raise AttachmentError("Choose a normal, non-hidden file; secrets and links are excluded.")
     if source.suffix.casefold() not in SUPPORTED_SUFFIXES:
         raise AttachmentError("Supported: text, Markdown, code, CSV, JSON and DOCX. PDF is not yet supported.")
-    size = source.stat().st_size
+    try:
+        size = source.stat().st_size
+    except OSError as exc:
+        raise AttachmentError("The selected file is no longer available.") from exc
     if size > MAX_FILE_BYTES:
         raise AttachmentError("File exceeds the 24 KiB per-file text limit.")
     try:
