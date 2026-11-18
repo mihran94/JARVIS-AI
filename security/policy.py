@@ -1,5 +1,5 @@
 """Approval boundary; approvals cannot survive stop/resume or be reused."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from threading import RLock
 import uuid
 
@@ -19,12 +19,40 @@ class Action:
     digest: str = ''
 
 
+@dataclass(frozen=True)
+class Decision:
+    """One thing the approval boundary was asked for, and what it did.
+
+    The boundary is the most safety-critical part of the application, and
+    it was invisible: the owner could not see what had been allowed, what
+    had been refused, or what an emergency stop had thrown away. These
+    records make that visible, and they are kept in memory only: they
+    never leave the machine and they are not written to the history.
+    """
+
+    kind: str
+    target: str
+    outcome: str
+    detail: str = ''
+
+    def as_dict(self) -> dict:
+        return {'kind': self.kind, 'target': self.target,
+                'outcome': self.outcome, 'detail': self.detail}
+
+
+#: How many decisions are kept.
+MAX_DECISIONS = 200
+
+
 class Policy:
     def __init__(self):
         self._lock = RLock()
         self._generation = 0
         self._stopped = False
         self._grants = {}
+        self._decisions = []
+        #: How many pending approvals an emergency stop threw away.
+        self.invalidated = 0
 
     @property
     def stopped(self):
@@ -51,7 +79,46 @@ class Policy:
         with self._lock:
             self._stopped = True
             self._generation += 1
+            # Every approval that was waiting is thrown away, and the
+            # owner is told how many there were.
+            self.invalidated += len(self._grants)
+            for grant in list(self._grants.values()):
+                self._record(grant[1].kind, grant[1].target, 'stopped',
+                             'an emergency stop threw this approval away')
             self._grants.clear()
+
+    def _record(self, kind, target, outcome, detail=''):
+        """Keep one decision, and forget the oldest when there are too many."""
+        self._decisions.append(Decision(kind=kind, target=target,
+                                        outcome=outcome, detail=detail))
+        if len(self._decisions) > MAX_DECISIONS:
+            del self._decisions[:-MAX_DECISIONS]
+
+    def decisions(self) -> list:
+        """What the boundary was asked for, newest last."""
+        with self._lock:
+            return list(self._decisions)
+
+    def decision_counts(self) -> dict:
+        """How many of each outcome there are."""
+        with self._lock:
+            counts = {}
+            for decision in self._decisions:
+                counts[decision.outcome] = counts.get(decision.outcome, 0) + 1
+            return counts
+
+    def summary(self) -> str:
+        """The boundary, in words the owner can read."""
+        counts = self.decision_counts()
+        allowed = counts.get('allowed', 0)
+        refused = counts.get('refused', 0)
+        stopped = counts.get('stopped', 0)
+        return (
+            f'{allowed} action(s) allowed, {refused} refused, '
+            f'{stopped} thrown away by an emergency stop. '
+            f'{self.invalidated} pending approval(s) have been invalidated in total. '
+            'An approval is used once and cannot be replayed.'
+        )
 
     def resume(self):
         with self._lock:
@@ -60,6 +127,9 @@ class Policy:
     def approve(self, action, confirm):
         ticket = self.ticket()
         if not confirm(action):
+            with self._lock:
+                self._record(action.kind, action.target, 'refused',
+                             'the owner declined it')
             raise Denied('Action declined.')
         with self._lock:
             self.check(ticket)
@@ -72,6 +142,19 @@ class Policy:
         with self._lock:
             grant = self._grants.pop(token, None)
             if grant is None or grant[1] != action:
+                # A grant that an emergency stop threw away is not a
+                # refusal: the owner never said no.
+                outcome = 'stopped' if self._stopped else 'refused'
+                detail = ('an emergency stop threw this approval away'
+                          if self._stopped
+                          else 'the one-use approval was missing or did not match')
+                self._record(action.kind, action.target, outcome, detail)
                 raise Denied('Missing or mismatched one-use approval.')
-            self.check(grant[0])
+            try:
+                self.check(grant[0])
+            except Stopped:
+                self._record(action.kind, action.target, 'stopped',
+                             'an emergency stop was active')
+                raise
+            self._record(action.kind, action.target, 'allowed')
             return operation()

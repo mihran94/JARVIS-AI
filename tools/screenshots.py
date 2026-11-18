@@ -87,7 +87,13 @@ def main():
     app.processEvents()
     shoot(app, window, '06-plan-steps')
 
-    # 7. A pending approval, which is what the owner has to answer.
+    # 7. The Windows Automation page, with the approval boundary shown.
+    window.open_section('PC Control')
+    for _ in range(4):
+        app.processEvents()
+    shoot(app, window, '07-pc-control')
+
+    # 8. A pending approval, which is what the owner has to answer.
     window.open_section('JARVIS Chat')
     window.transcript.appendPlainText(
         'JARVIS\nI found the login check that fails in auth.py and can fix it '
