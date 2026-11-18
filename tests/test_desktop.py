@@ -32,6 +32,7 @@ def test_desktop_navigation_stop_and_editor(tmp_path):
     window.resume()
     assert not window.policy.stopped and window.send_button.isEnabled()
     window.close()
+    window.deleteLater()
     app.processEvents()
 
 
@@ -60,6 +61,7 @@ def test_chat_worker_to_ui_persists_result(tmp_path):
     assert window.store.tasks()[0]['status'] == 'completed'
     assert window.send_button.isEnabled()
     window.close()
+    window.deleteLater()
 
 
 def test_late_output_ignored_after_stop_resume(tmp_path):
@@ -76,6 +78,7 @@ def test_late_output_ignored_after_stop_resume(tmp_path):
     rows = {x['id']: x for x in window.store.tasks()}
     assert rows[window.chat_task]['status'] == 'cancelled'
     window.close()
+    window.deleteLater()
 
 
 def test_saved_chat_reopens(tmp_path):
@@ -89,6 +92,7 @@ def test_saved_chat_reopens(tmp_path):
     assert window.session == old
     assert 'Earlier conversation' in window.transcript.toPlainText()
     window.close()
+    window.deleteLater()
 
 
 def test_provider_check_records_health_without_chat(tmp_path):
@@ -119,6 +123,7 @@ def test_provider_check_records_health_without_chat(tmp_path):
     assert window.store.usage_rows()[0]['total_tokens'] == 6
     assert 'completed' in window.provider_health.text()
     window.close()
+    window.deleteLater()
 
 
 def test_stop_cancels_desktop_queue(tmp_path):
@@ -130,6 +135,7 @@ def test_stop_cancels_desktop_queue(tmp_path):
     window.resume()
     assert window.queue.rows()[0]['status'] == 'cancelled'
     window.close()
+    window.deleteLater()
 
 def test_workflow_desktop_create_and_emergency_cancel(tmp_path):
     app = QApplication.instance() or QApplication([])
@@ -143,6 +149,7 @@ def test_workflow_desktop_create_and_emergency_cancel(tmp_path):
     assert window.workflows.rows()[0]['status'] == 'cancelled'
     window.resume()
     window.close()
+    window.deleteLater()
 
 
 def test_packaged_smoke_switch_is_explicit_and_not_forwarded_to_qt():
@@ -186,6 +193,7 @@ def test_voice_drafts_text_without_network_or_automation(tmp_path):
         assert window.prompt.toPlainText() == original
     finally:
         window.close()
+        window.deleteLater()
         app.processEvents()
 
 
@@ -229,6 +237,7 @@ def test_chat_pc_action_only_runs_exact_allowlisted_command_after_approval(tmp_p
         assert window.review_pc_action_button.isEnabled()
     finally:
         window.close()
+        window.deleteLater()
         app.processEvents()
 
 
@@ -258,6 +267,7 @@ def test_hands_free_is_explicit_session_opt_in_and_local_only(tmp_path):
         assert not window.local_voice_allowed()
     finally:
         window.close()
+        window.deleteLater()
         app.processEvents()
 
 
@@ -291,6 +301,7 @@ def test_local_hands_free_wake_auto_sends_only_to_ollama(tmp_path):
         assert window.prompt.toPlainText() == 'cloud question'
     finally:
         window.close()
+        window.deleteLater()
         app.processEvents()
 
 
@@ -320,6 +331,7 @@ def test_local_hands_free_rearms_but_emergency_stop_revokes_it(tmp_path):
         assert not window.hands_free_voice.isChecked()
     finally:
         window.close()
+        window.deleteLater()
         app.processEvents()
 
 
@@ -358,6 +370,7 @@ def test_hands_free_never_reopens_microphone_during_speech(tmp_path):
     finally:
         window.voice_panel.speaker_worker = None
         window.close()
+        window.deleteLater()
         app.processEvents()
 
 
@@ -380,4 +393,5 @@ def test_chat_only_includes_memory_on_explicit_one_message_opt_in(tmp_path):
                    for row in window.store.messages(window.session))
     finally:
         window.close()
+        window.deleteLater()
         app.processEvents()

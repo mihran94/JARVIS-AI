@@ -40,6 +40,7 @@ def test_primary_sections_and_one_main_window(tmp_path):
         assert win.pages.currentIndex() == 0
     finally:
         win.close()
+        win.deleteLater()
         app.processEvents()
 
 
@@ -67,6 +68,7 @@ def test_hey_jarvis_only_drafts_a_chat_message(tmp_path):
         assert not win.voice_panel.consent.granted
     finally:
         win.close()
+        win.deleteLater()
         app.processEvents()
 
 

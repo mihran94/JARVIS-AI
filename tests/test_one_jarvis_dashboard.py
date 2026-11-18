@@ -38,6 +38,9 @@ def test_one_dashboard_has_orb_read_only_metrics_and_existing_pages(tmp_path):
         assert not window.bridge.listener.running
     finally:
         window.close()
+        # The window is destroyed, not just closed: a closed window keeps its
+        # widgets and its OpenGL resources alive, and the next test then
+        # renders far more slowly than it should.
         window.deleteLater()
         app.processEvents()
 
