@@ -99,3 +99,21 @@ def test_new_conversation_clears_unsent_snapshots(tmp_path):
     finally:
         window.close()
         app.processEvents()
+
+
+def test_deleting_chat_discards_queued_file_content(tmp_path, monkeypatch):
+    app, window = make_window(tmp_path)
+    try:
+        file = tmp_path / "delete-me.txt"
+        file.write_text("private draft", encoding="utf-8")
+        window.attachments = stage_files([file])
+        window.update_attachment_display()
+        window.files_share_once.setChecked(True)
+        monkeypatch.setattr(window, "confirm", lambda action: True)
+        window.clear_chat()
+        assert not window.attachments
+        assert not window.files_share_once.isChecked()
+        assert window.attach_button.text() == "Attach"
+    finally:
+        window.close()
+        app.processEvents()
