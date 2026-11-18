@@ -21,6 +21,7 @@ import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 import subprocess
 import time
+from pathlib import Path
 
 import pytest
 from PySide6.QtWidgets import QApplication
@@ -419,6 +420,98 @@ def test_a_configured_launcher_is_remembered_and_reports_its_capabilities(tmp_pa
         assert state['kind'] == 'configured'
         assert state['installed'] is True
         assert state['capabilities'] == ['open_project', 'open_file']
+    finally:
+        win.close()
+        win.deleteLater()
+
+
+def test_the_owner_can_accept_or_reject_a_change(tmp_path, monkeypatch, project):
+    """A change is only kept because the owner said so, and nothing is applied."""
+    win, app = window(tmp_path, monkeypatch)
+    try:
+        save_project(win, path=project)
+        fake_codex(monkeypatch)
+        monkeypatch.setattr('developer_studio.codex_task.run_local_tests',
+                            lambda folder, command, timeout=1800: ('passed', '2 passed'))
+        task = CodexTask(SavedProject('project-a', str(project), 'VS Code', 'pytest -q'),
+                         'login page validation',
+                         test_command='pytest -q',
+                         worktree_root=tmp_path / 'worktrees',
+                         codex_path='/usr/bin/true')
+        outcome = task.run()
+        assert outcome.status == 'completed', outcome.message
+        assert outcome.diff
+
+        saved = SavedProject('project-a', str(project), 'VS Code', 'pytest -q')
+        request = parse_coding_request('JARVIS, project-a open panni fix pannu', [saved])
+        win.coding = {'project': saved, 'outcome': outcome, 'text': 'fix the login',
+                      'request': request, 'editor': 'VS Code',
+                      'editor_status': editor_status('VS Code', None, 'en'),
+                      'steps': [], 'index': 0}
+        win.chat_task_id = win.store.task('codex_task', 'project-a')
+        win.store.finish(win.chat_task_id, 'running')
+
+        # There is a change and no decision yet, so the owner can decide.
+        win.render_coding_card()
+        assert win.chat_task_accept.isEnabled()
+        assert win.chat_task_reject.isEnabled()
+
+        # The owner accepts it. Accepting goes through the same one-use
+        # approval gateway as every other action, so it is asked for first.
+        win.accept_coding_change()
+        assert win.coding_pending is not None
+        win.finish_coding_approval(True)
+        assert outcome.reviewed == 'accepted'
+        # The decision is in the task history, next to the task itself.
+        rows = {row['id']: row for row in win.store.tasks()}
+        assert rows[win.chat_task_id]['status'] == 'accepted'
+        assert any(row['kind'] == 'accept_coding_change' for row in rows.values())
+        # The decision has been made, so there is nothing left to decide.
+        win.render_coding_card()
+        assert not win.chat_task_accept.isEnabled()
+        assert not win.chat_task_reject.isEnabled()
+        # The owner's own folder was not touched.
+        assert (project / 'app.py').read_text(encoding='utf-8') == \
+            'def login():\n    return True\n'
+    finally:
+        win.close()
+        win.deleteLater()
+
+
+def test_a_rejected_change_is_recorded_and_applies_nothing(tmp_path, monkeypatch, project):
+    win, app = window(tmp_path, monkeypatch)
+    try:
+        save_project(win, path=project)
+        fake_codex(monkeypatch)
+        monkeypatch.setattr('developer_studio.codex_task.run_local_tests',
+                            lambda folder, command, timeout=1800: ('passed', '2 passed'))
+        task = CodexTask(SavedProject('project-a', str(project), 'VS Code', 'pytest -q'),
+                         'login page validation',
+                         test_command='pytest -q',
+                         worktree_root=tmp_path / 'worktrees',
+                         codex_path='/usr/bin/true')
+        outcome = task.run()
+        saved = SavedProject('project-a', str(project), 'VS Code', 'pytest -q')
+        request = parse_coding_request('JARVIS, project-a open panni fix pannu', [saved])
+        win.coding = {'project': saved, 'outcome': outcome, 'text': 'fix the login',
+                      'request': request, 'editor': 'VS Code',
+                      'editor_status': editor_status('VS Code', None, 'en'),
+                      'steps': [], 'index': 0}
+        win.chat_task_id = win.store.task('codex_task', 'project-a')
+        win.store.finish(win.chat_task_id, 'running')
+
+        win.reject_coding_change()
+        assert win.coding_pending is not None
+        win.finish_coding_approval(True)
+        assert outcome.reviewed == 'rejected'
+        rows = {row['id']: row for row in win.store.tasks()}
+        assert rows[win.chat_task_id]['status'] == 'rejected'
+        assert any(row['kind'] == 'reject_coding_change' for row in rows.values())
+        # Nothing of the owner's own was changed, and the work is still
+        # there to read.
+        assert (project / 'app.py').read_text(encoding='utf-8') == \
+            'def login():\n    return True\n'
+        assert outcome.worktree and Path(outcome.worktree).exists()
     finally:
         win.close()
         win.deleteLater()
