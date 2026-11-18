@@ -14,7 +14,7 @@
 #
 #     python iphone-pwa/icons/restore-icons.py
 #
-# 694 files
+# 695 files
 811427777ef27750dc4a2b86240a03943355a35c020d18347b744316119736e7  .gitattributes
 d26faca3a8885396fa0aac85ff9c11be5c83eb2c95a4d9c2959c642bead72543  .github/workflows/android-integration.yml
 08a3cef7437a7b015f04dd505103f96fce5c896b7e7cae7f7aabfd6d1f5276e1  .github/workflows/import-upstream-sources.yml
@@ -183,8 +183,8 @@ c01aa7c535356f6dc11d94ca4475bdecaee6a5a726c1b0759035d0def8fe60a1  android/core/v
 a48e5414d6723b987fef0a80272d85a3de398373cb5e9f6ad06d77d26d854779  android/core/voice/src/test/kotlin/com/jarvisblue/core/voice/WakePhraseMatcherTest.kt
 34361718041e46cbd7b748998f5bf5ed846345acfa5ece0fdd8142b9ad2c3a5b  android/core/windows/build.gradle.kts
 5d5c255c3a74f1f217b85fe5f39b5bb82ab35138c67b19e35d5635dc2385ede5  android/core/windows/consumer-rules.pro
-67d69357682a2e8c8e861df80a7bef57b833b2720e7f48f109640127095ce914  android/core/windows/src/main/kotlin/com/jarvisblue/core/windows/BridgeClient.kt
-c6d61178599c7978adf84ddf2e53bbcc7788ee470039408a50e5f966481452e5  android/core/windows/src/main/kotlin/com/jarvisblue/core/windows/WindowsModule.kt
+f04deb581a8f5533d9902199b63cf93b2296c03280f9029643efba5be7f62bbe  android/core/windows/src/main/kotlin/com/jarvisblue/core/windows/BridgeClient.kt
+58120570b65368cd7e85c409a75e3d8486a9107947dbe691cf32043e5863a1ba  android/core/windows/src/main/kotlin/com/jarvisblue/core/windows/WindowsModule.kt
 4b09af0a3c1b2d7b1c9ec96c444fde4fe40d63026e6710999b0b74d8255d4bd8  android/core/windows/src/test/kotlin/com/jarvisblue/core/windows/BridgeSignatureTest.kt
 a4eeb0dbbcb46efc46a75ba7da1b924f44fc97199235611ed06b74b631fbfae1  android/docs/ANDROID_COMPATIBILITY.md
 cd6f63f591423fb7cbc7357c92aac69fc6a5f382df31a4dd3d45d8faac534b56  android/docs/ANDROID_SECURITY.md
@@ -227,6 +227,7 @@ bb54e57d10b7726376044bc52ace68e883890392c756fac5e9f70fbc50855b0c  android/featur
 eff2229d175c5e10445bd4aa9ce43e6a59ec69913c1ff302652ed5a4f42fd144  android/feature/studio/src/main/kotlin/com/jarvisblue/feature/studio/StudioScreen.kt
 f175449f0fbc38e584d33f7a32338031183a5f3f88653c5f2405e8ff3247b2ec  android/gradle.properties
 7865dd37d5b721ceb321db708e607d65ccea09f05e3bb245c20cd36204585202  android/gradle/libs.versions.toml
+2db75c40782f5e8ba1fc278a5574bab070adccb2d21ca5a6e5ed840888448046  android/gradle/wrapper/gradle-wrapper.jar
 b6bca4cb996403b747396254578aead524e6c2ea0abf8b998514ad8f5c825981  android/gradle/wrapper/gradle-wrapper.jar.b64
 d7010368a34c1c06df2bae1a85d8b24c39b2499c74ac892fc7e66d005dbd7b8a  android/gradle/wrapper/gradle-wrapper.properties
 f95bde3fe329b79c6a3f7db416d03d8a5abee2c00ddd74fe4949ca69792f2a3a  android/gradle/wrapper/restore-wrapper.sh
