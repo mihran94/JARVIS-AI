@@ -34,8 +34,12 @@ def test_file_and_folder_sections_reachable_without_another_main_menu(tmp_path, 
         assert window.pages.currentIndex() == window.page_indices["Files & Folders"]
         window.choose_attachment_files()
         assert len(window.attachments) == 1
+        assert window.attach_button.text() == "Attach (1)"
+        window.files_share_once.setChecked(True)
         window.choose_attachment_folder()
         assert len(window.attachments) == 2
+        assert window.attach_button.text() == "Attach (2)"
+        assert not window.files_share_once.isChecked()  # new content needs new consent
         assert not window.files_share_once.isChecked()
         assert window.attachment_list.count() == 2
         window.open_section("JARVIS Chat")
