@@ -105,3 +105,14 @@ def test_the_tags_are_shown_in_the_tooltip(panel):
     panel.remember()
     panel.show_all()
     assert 'habit' in panel.results.item(0).toolTip()
+
+
+def test_saving_an_edit_updates_the_existing_note(panel):
+    original = panel.service.remember('Greeting', 'First version')
+    panel.refresh()
+    panel.results.setCurrentRow(0)
+    panel.edit_selected()
+    panel.memory_body.setPlainText('Updated version')
+    panel.remember()
+    assert len(panel.service.all()) == 1
+    assert panel.service.get(original.id).body == 'Updated version'

@@ -858,7 +858,7 @@ class Window(QMainWindow):
     def handle_developer_command(self, text):
         """Dispatch only known commands through existing approval-gated features."""
         command = parse_command(text, load_projects(self.store))
-        if command is None:
+        if command is None or command.kind == 'analysis':
             return False
         if command.kind == 'error':
             self.show_local_system_reply(text, command.detail)
@@ -900,13 +900,15 @@ class Window(QMainWindow):
                 self.omega.switch('Omega')
             self.open_section('Settings & Safety')
             self.add_project()  # Owner selects the folder; never scan the disk.
-        elif command.kind in ('project_open', 'project_test', 'project_fix'):
+        elif command.kind == 'document':
+            self.preview_local_document()
+        elif command.kind in ('project_open', 'project_test', 'project_fix', 'project_fix_test'):
             request = CodingRequest(
                 project=command.target,
                 change=command.detail,
                 open_project=command.kind == 'project_open',
-                run_tests=command.kind == 'project_test',
-                make_change=command.kind == 'project_fix',
+                run_tests=command.kind in ('project_test', 'project_fix_test'),
+                make_change=command.kind in ('project_fix', 'project_fix_test'),
                 mentions_work=True,
             )
             if self.omega is not None and self.omega.mode != 'Omega':
@@ -925,6 +927,36 @@ class Window(QMainWindow):
             self.open_section(command.target)
             self.show_local_system_reply(text, f'Opened {command.target}.')
         return True
+
+    def preview_local_document(self):
+        selected, _ = QFileDialog.getOpenFileName(
+            self, 'Open a local document', '', 'Text and Markdown (*.txt *.md *.markdown)')
+        if not selected:
+            return
+        path = Path(selected)
+        try:
+            if path.suffix.lower() not in ('.txt', '.md', '.markdown') or not path.is_file():
+                raise ValueError('Choose a text or Markdown file.')
+            with path.open('rb') as document:
+                data = document.read(256 * 1024 + 1)
+            if len(data) > 256 * 1024:
+                raise ValueError('Choose a file up to 256 KiB.')
+            content = data.decode('utf-8-sig')
+            if '\x00' in content:
+                raise ValueError('Choose a plain text file.')
+        except (OSError, UnicodeError, ValueError) as error:
+            self.statusBar().showMessage('Document could not be opened: ' + str(error), 15000)
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle(path.name)
+        dialog.resize(720, 520)
+        layout = QVBoxLayout(dialog)
+        preview = QPlainTextEdit()
+        preview.setReadOnly(True)
+        preview.setPlainText(content)
+        layout.addWidget(preview)
+        self.button(layout, 'Close', dialog.accept)
+        dialog.exec()
 
     def local_system_reply(self, text):
         command = ' '.join(addressed_request(text).casefold().split()).strip('?!.,')
@@ -3596,13 +3628,11 @@ class Window(QMainWindow):
 
     def stored_chat_provider(self):
         """The primary chat provider the owner chose, or the default."""
-        saved = self.store.get('chat_provider')
-        names = provider_names()
-        return saved if saved in names else 'Gemini'
+        return routing.person_provider(self.store)
 
     def on_chat_provider_changed(self, name):
         """Remember the primary chat provider and show what it means."""
-        self.store.set('chat_provider', name)
+        routing.set_person_provider(self.store, name)
         self.guard_local_voice_provider()
         self.refresh_brain_label()
 
@@ -3794,58 +3824,62 @@ class Window(QMainWindow):
         except ValueError as error:
             self.show_local_system_reply(text, str(error))
             return
-        if self.handle_developer_command(text):
+        analysis = parse_command(text)
+        analysis = analysis if analysis is not None and analysis.kind == 'analysis' else None
+        if analysis is None and self.handle_developer_command(text):
             self.prompt.clear()
             return
         use_notes = allow_notes and self.use_notes.isChecked()
         if allow_notes:
             self.use_notes.setChecked(False)
-        local_reply = self.local_system_reply(text)
-        if local_reply is not None:
-            self.prompt.clear()
-            self.show_local_system_reply(text, local_reply)
-            return
-        desktop_task = parse_desktop_task(text)
-        if desktop_task is not None:
-            self.prompt.clear()
-            self.queue_desktop_task(text, desktop_task)
-            return
-        coding = self.coding_request(text)
-        if coding is not None:
-            self.prompt.clear()
-            self.open_section('JARVIS Chat')
-            self.start_coding_task(coding, text)
-            return
-        name = parse_voice_command(text)
-        if name:
-            if self.chat_launch is not None:
-                self.statusBar().showMessage('Approve or decline the pending action first.', 10000)
+        if analysis is None:
+            local_reply = self.local_system_reply(text)
+            if local_reply is not None:
+                self.prompt.clear()
+                self.show_local_system_reply(text, local_reply)
                 return
-            self.prompt.clear()
-            self.queue_chat_launch(text, name)
-            return
-        request_text = addressed_request(text)
-        if request_text.casefold().startswith('/video '):
-            if not allow_notes:
-                self.statusBar().showMessage(
-                    'Review the video brief and press Ask JARVIS to send it to Gemini.', 15000)
+            desktop_task = parse_desktop_task(text)
+            if desktop_task is not None:
+                self.prompt.clear()
+                self.queue_desktop_task(text, desktop_task)
                 return
-            brief = request_text[7:].strip()
-            if brief:
+            coding = self.coding_request(text)
+            if coding is not None:
+                self.prompt.clear()
                 self.open_section('JARVIS Chat')
-                self.video_brief.setPlainText(brief)
-                self.generate_video_plan(chat_brief=brief)
-                if self.worker is not None:
-                    self.prompt.clear()
+                self.start_coding_task(coding, text)
                 return
-        if self.route_task(text):
-            self.prompt.clear()
-            return
+            name = parse_voice_command(text)
+            if name:
+                if self.chat_launch is not None:
+                    self.statusBar().showMessage('Approve or decline the pending action first.', 10000)
+                    return
+                self.prompt.clear()
+                self.queue_chat_launch(text, name)
+                return
+            request_text = addressed_request(text)
+            if request_text.casefold().startswith('/video '):
+                if not allow_notes:
+                    self.statusBar().showMessage(
+                        'Review the video brief and press Ask JARVIS to send it to Gemini.', 15000)
+                    return
+                brief = request_text[7:].strip()
+                if brief:
+                    self.open_section('JARVIS Chat')
+                    self.video_brief.setPlainText(brief)
+                    self.generate_video_plan(chat_brief=brief)
+                    if self.worker is not None:
+                        self.prompt.clear()
+                    return
+            if self.route_task(text):
+                self.prompt.clear()
+                return
         def operation():
             self.chat_ticket = self.policy.ticket()
             provider = self.chat_provider.currentText()
             key = self.get_key(provider)
-            model = self.selected_model(provider)
+            profile = 'deep' if analysis and profile_models.supports_profiles(provider) else None
+            model = self.selected_model(provider, profile)
             backup = None
             if self.backup_consent.isChecked():
                 name = self.backup_provider.currentText()
@@ -3856,7 +3890,7 @@ class Window(QMainWindow):
                     raise ValueError('The local model never falls back to a cloud provider.')
                 backup = StreamTarget(name, self.selected_model(name),
                                       self.get_key(name))
-            prompt = self.prompt.toPlainText().strip()
+            prompt = analysis.detail if analysis else self.prompt.toPlainText().strip()
             messages = [message for message in self.store.messages(self.session)
                         if message['role'] in ('user', 'assistant')]
             messages.append({'role': 'user', 'content': prompt})

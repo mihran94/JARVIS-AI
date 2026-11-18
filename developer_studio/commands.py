@@ -54,6 +54,9 @@ HELP = (
     "/project NAME open — open in its configured editor (approval required)\n"
     "/project NAME test — run configured tests (approval required)\n"
     "/project NAME fix GOAL — prepare reviewed code changes in an isolated worktree\n"
+    "/project NAME fix and test GOAL — fix, test and show the diff for review\n"
+    "/analyze QUESTION — use Deep when your chat provider supports it\n"
+    "/document — choose a local UTF-8 text or Markdown file to preview\n"
     "/code, /pc, /voice, /mobile, /memory, /providers — open the existing tool\n"
     "/review, /tasks, /workflows, /history, /video, /business — open other tools\n"
     "/new — start a fresh conversation. /home — return to Chat.\n"
@@ -80,6 +83,12 @@ def parse_command(text, projects=()):
                        else "page", target="" if common in ("island", "island mode", "eyeland")
                        else "Settings & Safety")
     natural = {
+        "history kaatu": Command("page", target="Task History"),
+        "வரலாற்றைக் காட்டு": Command("page", target="Task History"),
+        "memory kaatu": Command("page", target="Memory"),
+        "நினைவுகளைக் காட்டு": Command("page", target="Memory"),
+        "document padi": Command("document"),
+        "ஆவணத்தைப் படி": Command("document"),
         "settings open pannu": Command("page", target="Settings & Safety"),
         "settings திறந்து வை": Command("page", target="Settings & Safety"),
         "island open pannu": Command("island"),
@@ -113,6 +122,11 @@ def parse_command(text, projects=()):
     if keyword == "/draft":
         return Command("code_draft", detail=remainder) if remainder else Command(
             "error", detail="Enter a coding goal: /draft GOAL")
+    if keyword == "/document" and not remainder:
+        return Command("document")
+    if keyword == "/analyze":
+        return Command("analysis", detail=remainder) if remainder else Command(
+            "error", detail="Enter a question: /analyze QUESTION")
     if keyword == "/new" and not remainder:
         return Command("new")
     if keyword in ("/project", "/projects"):
@@ -137,6 +151,10 @@ def parse_command(text, projects=()):
                 return Command("project_open", target=name)
             if verb in ("test", "tests", "run tests"):
                 return Command("project_test", target=name)
+            if instruction.casefold().startswith("fix and test "):
+                goal = instruction[len("fix and test "):].strip()
+                if goal:
+                    return Command("project_fix_test", target=name, detail=goal)
             if verb.startswith("fix ") or verb.startswith("change "):
                 goal = instruction.split(None, 1)[1].strip()
                 if goal:
