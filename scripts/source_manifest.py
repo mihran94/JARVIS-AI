@@ -22,6 +22,11 @@ import sys
 
 MANIFEST = os.path.join('docs', 'SOURCE_INTEGRITY.sha256')
 
+# Generated at Windows installer build time; never committed as source.
+GENERATED_FILES = {
+    'installers/JarvisAI.ico',
+}
+
 #: Directories that never belong to the source tree, by name.
 SKIP_DIRS = {
     '.git', '.github-cache', '.gradle', '.kotlin', '.mypy_cache', '.pytest_cache', '.venv',
@@ -88,9 +93,9 @@ def collect(root: str) -> list[str]:
             relative = os.path.relpath(path, root).replace(os.sep, '/')
             if relative in (MANIFEST.replace(os.sep, '/'), '.git'):
                 continue
-            if relative in SKIP_PATHS:
-                # A file that is never in the repository: the manifest must
-                # not list it, or the check would fail on a fresh checkout.
+            if relative in SKIP_PATHS or relative in GENERATED_FILES:
+                # Machine-local data and generated installer icons are not
+                # source files; restoring/building them must not break checks.
                 continue
             found.append(relative)
     return sorted(found)
