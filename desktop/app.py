@@ -1221,13 +1221,18 @@ class Window(QMainWindow):
         self.button(actions, 'Remove selected', self.remove_selected_attachment)
         self.button(actions, 'Clear all', self.clear_attachments)
         layout.addLayout(actions)
-        self.files_share_once = QCheckBox(
-            'Include selected file text in my NEXT AI message (also any enabled backup provider)')
+        self.files_share_once = QCheckBox('Share selected file text once with AI')
         self.files_share_once.setChecked(False)
         self.files_share_once.setToolTip(
             'Private files stay local unless you check this box and send a message. '
             'Do not attach passwords or private keys. The selected provider may retain data.')
         layout.addWidget(self.files_share_once)
+        sharing_note = QLabel(
+            'Only your next Ask JARVIS message shares this text with the selected AI '
+            'provider (and any separately enabled backup provider). '
+            'Keep the checkbox off to preview files locally.')
+        sharing_note.setWordWrap(True)
+        layout.addWidget(sharing_note)
         self.attachment_status = QLabel('')
         self.attachment_status.setWordWrap(True)
         layout.addWidget(self.attachment_status)
