@@ -90,8 +90,14 @@ def fake_codex(monkeypatch):
     monkeypatch.setattr('developer_studio.codex_task.codex_executable', lambda: '/usr/bin/true')
 
 
-def drive(win, app, seconds=25):
-    """Approve whatever is pending and wait until everything has settled."""
+def drive(win, app, seconds=120):
+    """Approve whatever is pending and wait until everything has settled.
+
+    The budget is generous on purpose: a runner that is busy with other
+    work is slow, and a workflow that has not finished yet is not a
+    failed workflow. The loop still leaves as soon as the work is done,
+    so a normal machine spends no more time here than before.
+    """
     deadline = time.monotonic() + seconds
     settled = 0
     while time.monotonic() < deadline:

@@ -407,7 +407,13 @@ def test_cancelling_the_tests_stops_the_test_process(tmp_path, monkeypatch, proj
     try:
         save_project(win, path=project, tests='pytest -q')
         marker = tmp_path / 'still-running.txt'
-        command = sleeper_command(tmp_path, 30, marker)
+        # The sleeper has to live longer than the time this test needs to
+        # notice that the process started. On a busy runner that noticing
+        # can take a while, and a sleeper that ends first makes the test
+        # say the process was not running when it had already finished.
+        # The process is killed by the emergency stop, so a long sleep
+        # costs nothing.
+        command = sleeper_command(tmp_path, 300, marker)
         win.start_test_run(SavedProject('project-a', str(project), 'VS Code', 'pytest -q'),
                            project, command)
         worker = win.test_worker
