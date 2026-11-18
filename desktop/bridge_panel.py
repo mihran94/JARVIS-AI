@@ -15,8 +15,8 @@ Nothing here grants a permission by itself:
 """
 import platform
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QRectF, Qt
+from PySide6.QtGui import QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
@@ -398,9 +398,20 @@ class BridgePanel(QWidget):
             self.code_qr.setText('The pairing code could not be drawn: ' + str(error))
             return
         renderer = QSvgRenderer(bytearray(svg.encode('utf-8')))
+        if not renderer.isValid():
+            self.code_qr.setText('The pairing code could not be drawn: '
+                                  'the picture was not understood.')
+            return
         picture = QPixmap(240, 240)
         picture.fill()
-        renderer.render(picture)
+        # Qt draws an SVG through a painter. Rendering straight into a
+        # pixmap was removed from PySide6, so the pairing code never
+        # reached the phone because the drawing raised instead.
+        painter = QPainter(picture)
+        try:
+            renderer.render(painter, QRectF(0, 0, 240, 240))
+        finally:
+            painter.end()
         self.code_qr.setPixmap(picture)
 
     def save_chat_settings(self):
