@@ -15,8 +15,8 @@ Nothing here grants a permission by itself:
 """
 import platform
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QRectF, Qt
+from PySide6.QtGui import QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
@@ -31,6 +31,7 @@ from desktop.bridge_pairing import (
 )
 from desktop.bridge_status import PlatformMetrics
 from providers.registry import specs
+from remote import certificate
 from remote.listener import BridgeListener, ListenerConfig, ListenerError
 from remote.pairing import PairingStore
 from remote.protocol import KEY_ID
@@ -88,11 +89,34 @@ class BridgePanel(QWidget):
         self.certificate.setPlaceholderText('Path to the PEM certificate')
         self.key = QLineEdit()
         self.key.setPlaceholderText('Path to the PEM private key')
+        self.certificate.textChanged.connect(self.refresh_fingerprint)
         self.plaintext = QCheckBox('Use HTTP behind my private TLS tunnel')
         listener_layout.addRow('Bind address', self.host)
         listener_layout.addRow('Port', self.port)
         listener_layout.addRow('TLS certificate', self.certificate)
         listener_layout.addRow('TLS private key', self.key)
+        certificate_row = QHBoxLayout()
+        self.create_certificate_button = QPushButton('Create a private certificate')
+        self.create_certificate_button.setToolTip(
+            'Make a self-signed certificate for this PC. The phone pins it by '
+            'fingerprint, so it does not need a certificate authority. The key '
+            'stays on this computer.')
+        self.create_certificate_button.clicked.connect(self.create_certificate)
+        certificate_row.addWidget(self.create_certificate_button)
+        self.fingerprint_label = QLabel('')
+        self.fingerprint_label.setWordWrap(True)
+        self.fingerprint_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        certificate_row.addWidget(self.fingerprint_label, 1)
+        listener_layout.addRow('Certificate', certificate_row)
+        self.peer_hosts = QLineEdit()
+        self.peer_hosts.setPlaceholderText(
+            'Extra peer addresses, separated by commas')
+        self.peer_hosts.setToolTip(
+            'The addresses a phone may reach this PC from, for example the '
+            'address of your VPN or private tunnel. The loopback addresses '
+            'are always allowed.')
+        listener_layout.addRow('Allowed peer addresses', self.peer_hosts)
         listener_layout.addRow(self.plaintext)
         row = QHBoxLayout()
         self.start_button = QPushButton('Start listener')
@@ -235,21 +259,67 @@ class BridgePanel(QWidget):
 
     # ---------------------------------------------------------------- actions
 
+    def create_certificate(self):
+        """Make a self-signed certificate for the private listener.
+
+        The key is written with owner-only permissions and never leaves
+        this computer. The phone pins the certificate by its fingerprint,
+        so it does not have to be signed by a certificate authority.
+        """
+        def operation():
+            folder = self.store.path.parent / 'bridge'
+            cert_path = folder / 'bridge-cert.pem'
+            key_path = folder / 'bridge-key.pem'
+            try:
+                pin = certificate.ensure_certificate(str(cert_path), str(key_path))
+            except certificate.CertificateError as error:
+                raise ValueError(str(error)) from None
+            self.certificate.setText(str(cert_path))
+            self.key.setText(str(key_path))
+            self.refresh_fingerprint()
+            return ('A private certificate was created. Its SHA-256 fingerprint is '
+                    'shown next to the certificate, and it travels in the pairing '
+                    'code so the phone pins exactly this certificate.')
+        self.notify(operation)
+
+    def refresh_fingerprint(self):
+        """Show the fingerprint of the certificate the owner chose."""
+        if not hasattr(self, 'fingerprint_label'):
+            return
+        path = self.certificate.text().strip()
+        if not path:
+            self.fingerprint_label.setText('No certificate chosen yet.')
+            return
+        try:
+            self.fingerprint_label.setText(certificate.describe(path))
+        except (OSError, certificate.CertificateError) as error:
+            self.fingerprint_label.setText('The certificate could not be read: ' + str(error))
+
+    def allowed_peer_hosts(self):
+        """The extra peer addresses the owner allowed, as a tuple."""
+        raw = self.peer_hosts.text() if hasattr(self, 'peer_hosts') else ''
+        return tuple(part.strip() for part in raw.replace(';', ',').split(',')
+                     if part.strip())
+
     def start_listener(self):
         def operation():
             try:
                 port = int(self.port.text().strip() or '0')
             except ValueError:
                 raise ValueError('Enter a valid port number.') from None
+            peers = self.allowed_peer_hosts()
             config = ListenerConfig(
                 host=self.host.text().strip() or '127.0.0.1',
                 port=port,
                 tls_cert=self.certificate.text().strip(),
                 tls_key=self.key.text().strip(),
                 allow_plaintext=self.plaintext.isChecked(),
-                allowed_hosts=('127.0.0.1', '::1'),
+                allowed_hosts=('127.0.0.1', '::1') + peers,
             )
             self.listener._config = config
+            # The peer list lives on the bridge, so a request from an
+            # allowed VPN or tunnel peer is not refused.
+            self.bridge.set_allowed_hosts(peers)
             address = self.listener.start()
             self.refresh()
             return 'Bridge listener started on ' + address
@@ -291,7 +361,8 @@ class BridgePanel(QWidget):
             if not secret:
                 raise ValueError('Pair this phone first, then show the pairing code.')
             payload = pairing_payload(address, key_id, secret,
-                                      expires_at(lifetime_seconds=DEFAULT_LIFETIME_SECONDS))
+                                      expires_at(lifetime_seconds=DEFAULT_LIFETIME_SECONDS),
+                                      fingerprint=self.certificate_fingerprint())
             self.code_text.setPlainText(payload)
             self._draw_qr(payload)
             if self.chat is not None:
@@ -303,6 +374,21 @@ class BridgePanel(QWidget):
                     f'{DEFAULT_LIFETIME_SECONDS // 60} minutes.')
         self.notify(operation)
 
+    def certificate_fingerprint(self):
+        """The fingerprint of the chosen certificate, or '' when there is none.
+
+        A code without a fingerprint still pairs, but the phone then
+        trusts whatever certificate the bridge presents, so the owner is
+        told which case they are in.
+        """
+        path = self.certificate.text().strip()
+        if not path:
+            return ''
+        try:
+            return certificate.fingerprint_from_file(path)
+        except (OSError, certificate.CertificateError):
+            return ''
+
     def _draw_qr(self, payload):
         """Draw the pairing code as a picture."""
         self.code_qr.show()
@@ -312,9 +398,20 @@ class BridgePanel(QWidget):
             self.code_qr.setText('The pairing code could not be drawn: ' + str(error))
             return
         renderer = QSvgRenderer(bytearray(svg.encode('utf-8')))
+        if not renderer.isValid():
+            self.code_qr.setText('The pairing code could not be drawn: '
+                                  'the picture was not understood.')
+            return
         picture = QPixmap(240, 240)
         picture.fill()
-        renderer.render(picture)
+        # Qt draws an SVG through a painter. Rendering straight into a
+        # pixmap was removed from PySide6, so the pairing code never
+        # reached the phone because the drawing raised instead.
+        painter = QPainter(picture)
+        try:
+            renderer.render(painter, QRectF(0, 0, 240, 240))
+        finally:
+            painter.end()
         self.code_qr.setPixmap(picture)
 
     def save_chat_settings(self):
@@ -389,6 +486,7 @@ class BridgePanel(QWidget):
         running = self.listener.running
         self.start_button.setEnabled(not running)
         self.stop_button.setEnabled(running)
+        self.refresh_fingerprint()
         if running:
             self.listener_status.setText('Listening on ' + self.listener.address)
         else:

@@ -15,6 +15,7 @@ usable.
 The format is fixed by `iphone-pwa/js/pairing.js` on the phone side, and the
 two are checked against each other by the test suite.
 """
+import re
 import time
 
 #: The first line of every pairing code.
@@ -38,8 +39,14 @@ def expires_at(now=None, lifetime_seconds: int = DEFAULT_LIFETIME_SECONDS) -> in
 
 
 def pairing_payload(bridge_url: str, key_id: str, secret: str,
-                    expires: int) -> str:
-    """The text of the pairing code."""
+                    expires: int, fingerprint: str = '') -> str:
+    """The text of the pairing code.
+
+    `fingerprint` is the SHA-256 of the bridge certificate, as lowercase
+    hex. When it is given, the phone pins that certificate, so it knows
+    which certificate to trust before it sends the secret. The line is
+    optional so a code made without a certificate still works.
+    """
     if not isinstance(bridge_url, str) or not bridge_url.strip():
         raise PairingCodeError('A bridge address for the phone is required.')
     if not bridge_url.strip().lower().startswith('https://'):
@@ -50,13 +57,21 @@ def pairing_payload(bridge_url: str, key_id: str, secret: str,
         raise PairingCodeError('The pairing secret is too short to use.')
     if not isinstance(expires, int) or expires <= 0:
         raise PairingCodeError('The pairing code needs an expiry.')
-    return '\n'.join([
+    lines = [
         PAIRING_FORMAT,
         'bridge=' + bridge_url.strip(),
         'key=' + key_id.strip(),
         'secret=' + secret,
         'expires=' + str(expires),
-    ])
+    ]
+    pin = str(fingerprint or '').strip().lower()
+    if pin:
+        if not re.fullmatch(r'[0-9a-f]{64}', pin):
+            raise PairingCodeError(
+                'The certificate fingerprint is damaged, so it was left out of '
+                'the pairing code rather than sent as a wrong one.')
+        lines.append('fp=' + pin)
+    return '\n'.join(lines)
 
 
 def pairing_svg(payload: str) -> str:

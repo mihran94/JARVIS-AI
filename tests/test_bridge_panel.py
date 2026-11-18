@@ -141,3 +141,58 @@ def test_the_listener_starts_on_the_loopback_interface(tmp_path):
         panel.stop_listener()
     assert not panel.listener.running
     panel.close()
+
+
+def test_the_page_can_make_a_private_certificate_and_show_its_fingerprint(tmp_path):
+    """The owner must be able to get a working certificate without a CA."""
+    from remote import certificate
+
+    if not certificate.shutil.which('openssl'):
+        pytest.skip('OpenSSL is not available on this machine')
+    app, panel = make_panel(tmp_path)
+    panel.create_certificate()
+    assert not panel.errors, panel.errors
+    assert panel.certificate.text().endswith('bridge-cert.pem')
+    assert panel.key.text().endswith('bridge-key.pem')
+    assert os.path.exists(panel.certificate.text())
+    assert os.path.exists(panel.key.text())
+    # The fingerprint the phone will pin is on the page.
+    assert 'SHA-256' in panel.fingerprint_label.text()
+    assert panel.certificate_fingerprint() == \
+        certificate.fingerprint_from_file(panel.certificate.text())
+    panel.close()
+
+
+def test_the_page_shows_that_no_certificate_has_been_chosen_yet(tmp_path):
+    app, panel = make_panel(tmp_path)
+    assert 'No certificate' in panel.fingerprint_label.text()
+    assert panel.certificate_fingerprint() == ''
+    panel.close()
+
+
+def test_the_owner_can_allow_a_vpn_or_tunnel_peer(tmp_path):
+    app, panel = make_panel(tmp_path)
+    panel.peer_hosts.setText('10.8.0.2, 192.168.1.9')
+    assert panel.allowed_peer_hosts() == ('10.8.0.2', '192.168.1.9')
+    panel.peer_hosts.setText('10.8.0.2; 192.168.1.9')
+    assert panel.allowed_peer_hosts() == ('10.8.0.2', '192.168.1.9')
+    panel.peer_hosts.setText('')
+    assert panel.allowed_peer_hosts() == ()
+    panel.close()
+
+
+def test_the_pairing_code_carries_the_certificate_fingerprint(tmp_path):
+    """The phone has to know which certificate to trust."""
+    from remote import certificate
+
+    if not certificate.shutil.which('openssl'):
+        pytest.skip('OpenSSL is not available on this machine')
+    app, panel = make_panel(tmp_path)
+    panel.create_certificate()
+    panel.pair_iphone()
+    panel.phone_address.setText('https://pc.example.lan:8765')
+    panel.show_pairing_code()
+    assert not panel.errors, panel.errors
+    code = panel.code_text.toPlainText()
+    assert 'fp=' + panel.certificate_fingerprint() in code
+    panel.close()

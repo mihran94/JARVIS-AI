@@ -89,3 +89,40 @@ test('the validity check agrees with the parser', () => {
   assert.equal(isPairingValid(pairing, { now: NOW + 61 }), false);
   assert.equal(isPairingValid(null), false);
 });
+
+test('the certificate fingerprint travels with the code', () => {
+  const fingerprint = 'a'.repeat(64);
+  const payload = buildPairingPayload({
+    bridgeUrl: 'https://pc.example.lan:8765',
+    keyId: 'iphone-mihran-01',
+    secret: SECRET,
+    expiresAt: NOW + 600,
+    fingerprint,
+  });
+  const pairing = parsePairingPayload(payload, { now: NOW });
+  assert.equal(pairing.fingerprint, fingerprint);
+});
+
+test('a code without a certificate still pairs', () => {
+  const payload = buildPairingPayload({
+    bridgeUrl: 'https://pc.example.lan:8765',
+    keyId: 'iphone-mihran-01',
+    secret: SECRET,
+    expiresAt: NOW + 600,
+  });
+  const pairing = parsePairingPayload(payload, { now: NOW });
+  assert.equal(pairing.fingerprint, '');
+});
+
+test('a damaged fingerprint is refused rather than trusted', () => {
+  const payload = [
+    PAIRING_FORMAT,
+    'bridge=https://pc.example.lan:8765',
+    'key=iphone-mihran-01',
+    `secret=${SECRET}`,
+    `expires=${NOW + 600}`,
+    'fp=not-a-fingerprint',
+  ].join('\n');
+  assert.throws(() => parsePairingPayload(payload, { now: NOW }),
+    /damaged certificate fingerprint/);
+});
