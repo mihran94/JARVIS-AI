@@ -259,7 +259,8 @@ def test_the_omega_modes_are_still_there(tmp_path, monkeypatch):
     win, app = window(tmp_path, monkeypatch)
     try:
         from desktop.omega import MODES
-        assert MODES == ('Omega', 'Island', 'Stealth')
+        # The retired Stealth presentation is not a production mode any more.
+        assert MODES == ('Omega', 'Island')
         win.enable_omega(smoke=True)
         app.processEvents()
         assert win.omega is not None

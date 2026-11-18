@@ -1,5 +1,6 @@
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 from desktop.app import Window, STYLE, launch_arguments
 
@@ -10,12 +11,17 @@ def test_desktop_navigation_stop_and_editor(tmp_path):
     window = Window(tmp_path)
     window.show()
     app.processEvents()
-    assert window.pages.count() == 16
+    assert window.pages.count() == 17
     assert window.nav.count() == 9
-    for index in range(window.nav.count()):
-        window.nav.setCurrentRow(index)
+    for row in range(window.nav.count()):
+        window.nav.setCurrentRow(row)
         app.processEvents()
-        assert window.pages.currentIndex() == index
+        # A nav row is not a page index. "Files & Folders" is a real page
+        # that is opened by command and by the Attach control, so it sits in
+        # the stack between the nav entries without taking a nav slot.
+        expected = window.nav.item(row).data(Qt.ItemDataRole.UserRole)
+        assert expected == window.page_indices[window.nav.item(row).text()]
+        assert window.pages.currentIndex() == expected
     window.confirm = lambda _: True
     window.editor.setPlainText('print("tested")')
     window.save_file()

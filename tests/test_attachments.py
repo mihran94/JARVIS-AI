@@ -24,6 +24,30 @@ def test_user_selected_text_files_are_snapshotted_and_never_send_absolute_paths(
     assert "Changed after" not in payload
 
 
+def test_windows_line_endings_stage_identically_and_never_touch_the_file(tmp_path):
+    """The Windows CRLF condition is reproduced on every platform.
+
+    The same file written on Windows arrives with CRLF endings and on Linux
+    with LF endings. Both must stage as the same text, and the bytes the
+    owner wrote must survive untouched.
+    """
+    crlf = tmp_path / "windows.md"
+    crlf.write_bytes(b"First line.\r\nSecond line.\r\n")
+    lf = tmp_path / "unix.md"
+    lf.write_bytes(b"First line.\nSecond line.\n")
+    staged_crlf = read_file(crlf)
+    staged_lf = read_file(lf)
+    assert staged_crlf.text == "First line.\nSecond line.\n"
+    assert staged_crlf.text == staged_lf.text
+    # The file on disk is unchanged; only the in-memory copy is normalised.
+    assert crlf.read_bytes() == b"First line.\r\nSecond line.\r\n"
+    assert lf.read_bytes() == b"First line.\nSecond line.\n"
+    # A lone carriage return is normalised as well.
+    old_mac = tmp_path / "old.txt"
+    old_mac.write_bytes(b"First line.\rSecond line.\r")
+    assert read_file(old_mac).text == "First line.\nSecond line.\n"
+
+
 def test_hidden_and_secret_files_are_refused(tmp_path):
     for name in (".env", "private.key", "secrets.json"):
         file = tmp_path / name
