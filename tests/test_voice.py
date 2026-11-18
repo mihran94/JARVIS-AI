@@ -19,13 +19,15 @@ def test_normalize_lowercases_strips_accents_and_punctuation():
     assert normalize('open   the\tfile') == 'open the file'
 
 
-def test_normalize_splits_tamil_marks_like_the_android_implementation():
-    # The Android implementation keeps only letters, numbers and spaces, so
-    # the Tamil vowel and virama signs become separators there as well. Both
-    # platforms therefore normalise a Tamil transcript in the same way, which
-    # is what matters for matching.
-    assert normalize('ஹே ஜார்விஸ்') == normalize('ஹே ஜார்விஸ்')
-    assert normalize('ஹே ஜார்விஸ்') == 'ஹ ஜ ர வ ஸ'
+def test_normalize_keeps_a_tamil_word_as_one_word():
+    # The Tamil vowel signs and the virama are letters of the word, not
+    # punctuation. They used to be turned into spaces, which split every
+    # Tamil sentence that came out of the microphone: "செய்ய" arrived as
+    # "ச ய ய", and a spoken Tamil request could not reach the application
+    # as words. Both platforms now keep them, and both are tested here.
+    assert normalize('ஹே ஜார்விஸ்') == 'ஹே ஜார்விஸ்'
+    assert normalize('என்ன செய்ய முடியும்') == 'என்ன செய்ய முடியும்'
+    assert normalize('செய்ய') == 'செய்ய'
 
 
 def test_tokens_and_similarity():

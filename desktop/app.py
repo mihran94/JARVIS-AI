@@ -26,6 +26,7 @@ from core.assistant_capabilities import (conversation_context, summary as capabi
 from quantum_core.studio_project import STUDIO_URL, studio_update_prompt, validate_studio_url
 from desktop.memory_page import MemoryPanel
 from desktop import documents
+from desktop import local_commands
 from desktop.attachments import (AttachmentError, as_untrusted_context,
                                  stage_files, stage_folder)
 from desktop.studio_inbox import StudioInboxDialog
@@ -982,18 +983,18 @@ class Window(QMainWindow):
         dialog.exec()
 
     def local_system_reply(self, text):
-        command = ' '.join(addressed_request(text).casefold().split()).strip('?!.,')
-        if command in ('capabilities', '/capabilities', 'what can you do',
-                       'what are your abilities', 'your skills', 'what can jarvis do',
-                       'உன்னால் என்ன செய்ய முடியும்', 'என்ன செய்ய முடியும்',
-                       'jarvis capabilities', 'tes capacités'):
+        """The questions that are answered here, on this computer.
+
+        These are the ones that do not need a model: what JARVIS can do,
+        what time it is, and what the machine is doing. A question that is
+        not one of them is not answered here, and goes on to the model.
+        """
+        intent = local_commands.match(text)
+        if intent == 'capabilities':
             return capability_summary(self)
-        if command in ('time', '/time', 'current time', 'what time is it', 'what is the time', "what's the time",
-                       'இப்போ நேரம் என்ன', 'நேரம்',
-                       'quelle heure est-il'):
+        if intent == 'time':
             return datetime.now().astimezone().strftime('%H:%M %Z')
-        if command in ('status', '/status', 'system status', 'system stats', 'cpu', 'ram',
-                       'கணினி நிலை', 'état du système'):
+        if intent == 'status':
             phone_status = 'Running' if self.bridge.listener.running else 'Stopped'
             return f'{self.state.text()}\nPhone Remote: {phone_status}\n\n{self.system_summary}'
         return None

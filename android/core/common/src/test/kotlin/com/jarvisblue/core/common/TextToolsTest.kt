@@ -12,6 +12,15 @@ class TextToolsTest {
     }
 
     @Test
+    fun `normalize keeps a tamil word as one word`() {
+        // The Tamil vowel signs and the virama are letters of the word,
+        // not punctuation. Turning them into spaces split every Tamil
+        // sentence that came out of the microphone.
+        assertEquals("செய்ய", TextTools.normalize("செய்ய"))
+        assertEquals("என்ன செய்ய முடியும்", TextTools.normalize("என்ன செய்ய முடியும்"))
+    }
+
+    @Test
     fun `similarity of identical strings is one`() {
         assertEquals(1.0, TextTools.similarity("open alarm", "open alarm"), 0.0001)
     }
