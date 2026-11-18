@@ -42,6 +42,7 @@ from core.coding_tasks import prepared as prepared_tasks, resumable as resumable
 from core.development import DevelopmentError, maintenance_goal
 from core.updates import installation_root, read_state, release_path
 from providers import routing
+from providers import pricing
 from desktop import prime_theme
 from desktop.omega_visuals import THEMES as OMEGA_THEMES, theme_sheet
 from desktop.blue_orb import BlueOrb
@@ -2178,6 +2179,9 @@ class Window(QMainWindow):
         advanced_form.addRow('Profile', self.profile_note)
         advanced_form.addRow('Model ID', self.model)
         advanced_form.addRow('HTTPS endpoint', self.endpoint)
+        self.price_note = QLabel()
+        self.price_note.setWordWrap(True)
+        advanced_form.addRow('List price', self.price_note)
         self.button(advanced_form, 'Use recommended model', self.reset_provider_model)
         layout.addWidget(self.provider_advanced_panel)
         self.provider_advanced_panel.hide()
@@ -2191,6 +2195,7 @@ class Window(QMainWindow):
         self.provider_health.setWordWrap(True)
         layout.addWidget(self.provider_health)
         self.provider.currentTextChanged.connect(self.load_provider)
+        self.model.textChanged.connect(self.refresh_price_note)
         self.load_provider()
         layout.addStretch()
         return page
@@ -2301,14 +2306,20 @@ class Window(QMainWindow):
     def usage_page(self):
         page, layout = self.page('Usage & Health',
             'Latest 200 API attempts. Token counts come from provider responses. '
-            'Unknown does not mean zero or free. Check your provider dashboard for billed costs. '
+            'The cost column is an estimate from the list price of the model, read on '
+            f'{pricing.PRICED_ON}; only the provider dashboard can say what was really charged. '
+            'Unknown does not mean zero or free. '
             'Duration is the local request time; checks are user-triggered, never background probes.')
-        self.usage_table = QTableWidget(0, 7)
+        self.usage_table = QTableWidget(0, 8)
         self.usage_table.setHorizontalHeaderLabels(
-            ['Provider / Model', 'Status', 'Seconds', 'Input', 'Output', 'Total', 'Created (UTC)'])
+            ['Provider / Model', 'Status', 'Seconds', 'Input', 'Output', 'Total',
+             'Est. cost', 'Created (UTC)'])
         self.usage_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.usage_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.usage_table)
+        self.usage_cost_summary = QLabel('')
+        self.usage_cost_summary.setWordWrap(True)
+        layout.addWidget(self.usage_cost_summary)
         return page
 
     def refresh_archives(self):
@@ -4073,6 +4084,8 @@ class Window(QMainWindow):
         self.secret.clear()
         health = self.store.get('health:' + provider + ':' + self.model.text())
         self.provider_health.setText('Last explicit check: ' + (health['summary'] if health else 'Not tested'))
+        if hasattr(self, 'price_note'):
+            self.price_note.setText(pricing.describe(provider, self.model.text()))
         if spec.local:
             self.key_status.setText('Not required: this model runs on this computer')
             return
@@ -4107,7 +4120,15 @@ class Window(QMainWindow):
         self.profile_note.setText(profile_models.PROFILE_NOTES.get(profile, ''))
         if profile:
             self.model.setText(self.selected_model(provider, profile))
+        self.refresh_price_note()
         self.refresh_brain_label()
+
+    def refresh_price_note(self):
+        """Show what the model in the box costs, or that the price is unknown."""
+        if not hasattr(self, 'price_note'):
+            return
+        self.price_note.setText(
+            pricing.describe(self.provider.currentText(), self.model.text()))
 
     def save_provider(self):
         def operation():
@@ -4593,14 +4614,32 @@ class Window(QMainWindow):
                 self.workflow_table.selectRow(index)
         attempts = self.store.usage_rows()
         self.usage_table.setRowCount(len(attempts))
+        estimated_total = 0.0
+        priced = 0
+        unknown = 0
         for index, attempt in enumerate(attempts):
+            cost = pricing.estimate(attempt['provider'], attempt['model'],
+                                     attempt['prompt_tokens'], attempt['completion_tokens'])
+            if cost is None:
+                unknown += 1
+            else:
+                estimated_total += cost
+                priced += 1
             values = [attempt['provider'] + ' / ' + attempt['model'], attempt['status'],
                       f"{attempt['duration_ms'] / 1000:.2f}",
                       *[attempt[k] if attempt[k] is not None else 'Unknown'
                         for k in ('prompt_tokens', 'completion_tokens', 'total_tokens')],
+                      pricing.format_cost(cost),
                       attempt['created']]
             for column, value in enumerate(values):
                 self.usage_table.setItem(index, column, QTableWidgetItem(str(value)))
+        if hasattr(self, 'usage_cost_summary'):
+            self.usage_cost_summary.setText(
+                f'Estimated total for the {len(attempts)} attempts shown: '
+                f'{pricing.format_cost(estimated_total)} '
+                f'({priced} priced, {unknown} without a known price). '
+                'The estimate uses the list price of the model; only the provider dashboard '
+                'can say what was really charged.')
 
     def request_exit(self):
         self.exit_requested = True
