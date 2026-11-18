@@ -14,6 +14,9 @@ OutputBaseFilename=JarvisAI-Setup-Windows-x64
 ArchitecturesAllowed=x64compatible
 Compression=lzma
 SolidCompression=yes
+; The icon the owner sees in the installer and in Windows. It is the same
+; orb the application draws.
+SetupIconFile=JarvisAI.ico
 UninstallDisplayIcon={app}\JarvisAI.exe
 WizardStyle=modern
 
