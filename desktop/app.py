@@ -9,7 +9,7 @@ from hashlib import sha256
 from PySide6.QtCore import QProcess, QThread, Signal, QTimer, Qt, QLockFile, QUrl, QEvent
 from PySide6.QtGui import QDesktopServices, QFont, QTextCursor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSizePolicy,
     QPushButton, QListWidget, QStackedWidget, QPlainTextEdit, QLineEdit,
     QComboBox, QMessageBox, QFormLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QCheckBox, QDialog, QFileDialog, QScrollArea, QLayout,
@@ -37,7 +37,8 @@ from core.coding_tasks import prepared as prepared_tasks, resumable as resumable
 from core.development import DevelopmentError, maintenance_goal
 from core.updates import installation_root, read_state, release_path
 from providers import routing
-from desktop.personal_theme import PERSONAL_STYLE
+from desktop import prime_theme
+from desktop.omega_visuals import THEMES as OMEGA_THEMES, theme_sheet
 from desktop.blue_orb import BlueOrb
 from desktop.omega import Omega
 from desktop.system_metrics import CpuSampler, snapshot, format_snapshot
@@ -89,7 +90,11 @@ from agents.gateway import Gateway
 from agents.queue import TaskQueue
 from agents.workflows import WorkflowQueue
 
-STYLE = PERSONAL_STYLE
+#: The stylesheet the application uses. It is the premium dark interface
+#: theme, and it is applied to the running application at startup — the
+#: stylesheet was previously only ever applied by the tests, so the shipping
+#: JARVIS rendered in the default light Qt theme.
+STYLE = prime_theme.PRIME_DARK
 
 
 class ChatWorker(QThread):
@@ -272,6 +277,9 @@ class Window(QMainWindow):
         self.resize(1180, 790)
         self.root = Path(data_root)
         self.store = Store(self.root / 'history.sqlite3')
+        saved_theme = self.store.get('omega:theme')
+        self.interface_theme = saved_theme if isinstance(saved_theme, str) and saved_theme in OMEGA_THEMES else 'MARK LVII'
+        self.setStyleSheet(theme_sheet(self.interface_theme))
         self.memory_service = MemoryService(self.root / 'history.sqlite3')
         self.router = ProviderRouter()
         self.policy = Policy()
@@ -319,11 +327,13 @@ class Window(QMainWindow):
         outer = QVBoxLayout(central)
         outer.setContentsMargins(24, 20, 24, 20)
         header = QHBoxLayout()
+        header.setSpacing(12)
         brand = QLabel('JARVIS AI')
-        brand.setObjectName('title')
+        brand.setObjectName('brandTitle')
         header.addWidget(brand)
         header.addStretch()
         self.state = QLabel('● READY · MANUAL APPROVAL')
+        self.state.setObjectName('statusChip')
         header.addWidget(self.state)
         self.resume_button = QPushButton('Resume')
         self.resume_button.clicked.connect(self.resume)
@@ -362,6 +372,8 @@ class Window(QMainWindow):
         # One main UI: specialized tools remain available under Settings.
         self.page_indices = {}
         self.add_page('JARVIS Chat', self.chat_page())
+        # Keep the composer outside the scrolling conversation.
+        outer.addWidget(self.composer_bar)
         self.add_page('PC Control', self.automation_page())
         self.add_page('Coding Assistant', self.editor_page())
         self.voice_panel = VoicePanel()
@@ -433,6 +445,18 @@ class Window(QMainWindow):
         self.refresh_system_metrics()
         self.refresh_voice_hud()
 
+    def on_theme_chosen(self, name: str) -> None:
+        if name not in OMEGA_THEMES:
+            return
+        self.interface_theme = name
+        if self.omega is not None:
+            self.omega.set_theme(name)
+        else:
+            self.store.set('omega:theme', name)
+            self.setStyleSheet(theme_sheet(name))
+            self.chat_reactor.theme = name
+            self.chat_reactor.update()
+
     def add_page(self, name, page, *, primary=True):
         index = self.pages.count()
         self.page_indices[name] = index
@@ -474,8 +498,9 @@ class Window(QMainWindow):
 
     def update_assistant_navigation(self, _index=None):
         """Keep the assistant central; reveal Back only on advanced pages."""
-        self.chat_home_button.setVisible(
-            self.pages.currentIndex() != self.page_indices['JARVIS Chat'])
+        in_chat = self.pages.currentIndex() == self.page_indices['JARVIS Chat']
+        self.chat_home_button.setVisible(not in_chat)
+        self.composer_bar.setVisible(in_chat)
 
     def open_plugins(self):
         """Open existing plugin switches without a large feature toolbar."""
@@ -685,10 +710,11 @@ class Window(QMainWindow):
         layout = QVBoxLayout(page)
         layout.setContentsMargins(22, 18, 10, 10)
         label = QLabel(title)
-        label.setStyleSheet('font-size:24px;font-weight:600')
+        label.setObjectName('pageTitle')
         layout.addWidget(label)
         if note:
             label = QLabel(note)
+            label.setObjectName('pageSubtitle')
             label.setWordWrap(True)
             layout.addWidget(label)
         return page, layout
@@ -982,9 +1008,12 @@ class Window(QMainWindow):
         hero = QHBoxLayout()
         self.orb = BlueOrb(page)
         self.orb.setFixedSize(52, 52)
+        self.orb.setObjectName('heroOrb')
         hero.addWidget(self.orb)
         details = QVBoxLayout()
         self.orb_status = QLabel('JARVIS  /  STANDBY')
+        self.orb_status.setObjectName('statusChip')
+        self.orb_status.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         details.addWidget(self.orb_status)
         self.system_metrics_label = QLabel('SYSTEM  /  Collecting local metrics...')
         self.system_metrics_label.setWordWrap(True)
@@ -996,14 +1025,16 @@ class Window(QMainWindow):
         # status and voice pipeline. It does not launch a second assistant.
         from desktop.omega_visuals import Reactor
         self.chat_reactor = Reactor()
+        self.chat_reactor.theme = self.interface_theme
         self.chat_reactor.setAccessibleName('JARVIS holographic core')
         self.chat_reactor.setFixedHeight(170)
-        layout.addWidget(self.chat_reactor)
+        layout.addWidget(self.chat_reactor, 0, Qt.AlignmentFlag.AlignCenter)
         # The active brain sits on its own line. It is information the owner
         # needs at a glance, and keeping it out of the provider row stops a
         # long model name from forcing the chat page to scroll sideways.
         self.brain_label = QLabel()
         self.brain_label.setObjectName('systemMetrics')
+        self.brain_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.brain_label.setWordWrap(True)
         self.brain_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.brain_label)
@@ -1047,9 +1078,11 @@ class Window(QMainWindow):
         self.refresh_archives()
         self.transcript = QPlainTextEdit()
         self.transcript.setReadOnly(True)
-        self.transcript.setMinimumHeight(158)
+        self.transcript.setObjectName('transcriptCard')
+        self.transcript.setMinimumHeight(96)
         layout.addWidget(self.transcript, 1)
         self.chat_approval = QWidget()
+        self.chat_approval.setObjectName('approvalCard')
         approval_row = QHBoxLayout(self.chat_approval)
         approval_row.setContentsMargins(0, 0, 0, 0)
         self.chat_approval_label = QLabel()
@@ -1063,6 +1096,7 @@ class Window(QMainWindow):
         self.chat_approval.hide()
         layout.addWidget(self.chat_approval)
         self.chat_task_card = QWidget()
+        self.chat_task_card.setObjectName('taskCard')
         card_layout = QVBoxLayout(self.chat_task_card)
         card_layout.setContentsMargins(0, 0, 0, 0)
         self.chat_task_text = QLabel()
@@ -1082,14 +1116,22 @@ class Window(QMainWindow):
         self.chat_task_card.hide()
         layout.addWidget(self.chat_task_card)
         self.prompt = QPlainTextEdit()
+        self.prompt.setObjectName('composerCard')
         self.prompt.setPlaceholderText(
             'என்ன செய்ய வேண்டும்? Tell me what you need… e.g. Jarvis, CapCut open pannu')
         self.prompt.setAccessibleName('Message to JARVIS')
-        self.prompt.setFixedHeight(78)
+        self.prompt.setMinimumHeight(54)
+        self.prompt.setMaximumHeight(150)
         self.chat_send_shortcut = QShortcut(QKeySequence('Ctrl+Return'), self.prompt)
         self.chat_send_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
         self.chat_send_shortcut.activated.connect(self.send)
-        layout.addWidget(self.prompt)
+        # The composer is NOT part of the scrolling page. It lives in the
+        # window's own bottom bar, so the conversation scrolls and the input
+        # is always in sight, whatever the window size.
+        self.composer_bar = QWidget()
+        composer_layout = QVBoxLayout(self.composer_bar)
+        composer_layout.setContentsMargins(2, 6, 2, 0)
+        composer_layout.addWidget(self.prompt)
         self.read_replies = QCheckBox('Read replies aloud')
         settings_layout.addWidget(self.read_replies)
         self.hands_free_voice = QCheckBox('Hands-free Hey Jarvis')
@@ -1105,8 +1147,9 @@ class Window(QMainWindow):
         self.review_pc_action_button = self.button(
             settings_actions, 'Review PC action', self.review_chat_pc_action)
         composer_actions = QHBoxLayout()
-        layout.addLayout(composer_actions)
+        composer_layout.addLayout(composer_actions)
         self.chat_mic = self.button(composer_actions, 'Speak', self.listen_to_user)
+        self.chat_mic.setObjectName('quiet')
         composer_actions.addStretch()
         self.send_button = self.button(composer_actions, 'Ask JARVIS', self.send)
         self.send_button.setObjectName('primary')
@@ -2210,6 +2253,15 @@ class Window(QMainWindow):
             'test and tool commands. Saved project folders are configured below.')
         command_help.setWordWrap(True)
         layout.addWidget(command_help)
+        appearance = QHBoxLayout()
+        appearance.addWidget(QLabel('Interface theme'))
+        self.theme_choice = QComboBox()
+        self.theme_choice.addItems(list(OMEGA_THEMES))
+        self.theme_choice.setCurrentText(self.interface_theme)
+        self.theme_choice.currentTextChanged.connect(self.on_theme_chosen)
+        appearance.addWidget(self.theme_choice)
+        appearance.addStretch()
+        layout.addLayout(appearance)
         self.button(layout, 'Updates & rollback', lambda: open_updates(self))
         self.button(layout, 'Review prepared changes', lambda: self.open_section('Review changes'))
         background = QHBoxLayout()

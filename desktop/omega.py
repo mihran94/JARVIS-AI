@@ -438,8 +438,14 @@ class HomeBackdrop(Backdrop):
         self.sides = sides
         self.compact = False
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
+    def apply_compact(self):
+        """Reflow for the width the backdrop has right now.
+
+        The window can be resized and a page can be opened in the same step,
+        and the layout runs after both. Reading the width in the resize
+        event alone therefore uses the width from before the reflow, and the
+        home stays wide when it should be compact.
+        """
         compact = self.width() < 850
         if hasattr(self, 'columns') and compact != self.compact:
             self.compact = compact
@@ -461,12 +467,16 @@ class HomeBackdrop(Backdrop):
                 self.columns.setColumnStretch(1, 4)
                 self.columns.setColumnStretch(2, 2)
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.apply_compact()
+
 
 class Omega:
     def __init__(self, window):
         self.window = window
         self.store = window.store
-        self.theme = setting(self.store, 'theme', THEMES, 'MARK LVII')
+        self.theme = window.interface_theme
         self.background = setting(self.store, 'background', BACKGROUNDS, BACKGROUNDS[0])
         self.mode = setting(self.store, 'mode', MODES, 'Omega')
         self.reduced = bool(self.store.get('omega:reduced', False))
@@ -617,11 +627,11 @@ class Omega:
         page.setObjectName('omegaFrame')
         form = QFormLayout(page)
         form.addRow(label('Omega Settings', 'omegaTitle'))
-        theme = QComboBox()
-        theme.addItems(THEMES)
-        theme.setCurrentText(self.theme)
-        theme.currentTextChanged.connect(self.set_theme)
-        form.addRow('Theme', theme)
+        self.theme_selector = QComboBox()
+        self.theme_selector.addItems(THEMES)
+        self.theme_selector.setCurrentText(self.theme)
+        self.theme_selector.currentTextChanged.connect(self.set_theme)
+        form.addRow('Theme', self.theme_selector)
         background = QComboBox()
         background.addItems(BACKGROUNDS)
         background.setCurrentText(self.background)
@@ -728,6 +738,9 @@ class Omega:
         self.window.open_section(page)
         if self.auto_hide:
             self.show_dock(False)
+        # The layout runs after the page is opened, so the home is reflowed
+        # for the width it really has.
+        QTimer.singleShot(0, self.home.apply_compact)
 
     def switch(self, mode, persist=True):
         if mode not in MODES:
@@ -750,8 +763,14 @@ class Omega:
         self.refresh_state()
 
     def set_theme(self, theme):
-        self.theme = theme
+        if theme not in THEMES:
+            return
+        self.theme = self.window.interface_theme = theme
         self.store.set('omega:theme', theme)
+        for selector in (self.theme_selector, self.window.theme_choice):
+            blocked = selector.blockSignals(True)
+            selector.setCurrentText(theme)
+            selector.blockSignals(blocked)
         self.apply_theme()
 
     def apply_theme(self):
