@@ -153,7 +153,10 @@ def test_a_failed_test_is_visible_in_the_final_result(tmp_path, monkeypatch, pro
     try:
         row = run_a_task(win, app, monkeypatch, project, test_status='failed')
         transcript = win.transcript.toPlainText()
-        assert 'Tests: failed' in transcript, transcript[-400:]
+        # The report is now written in the language the owner asked for, so
+        # both wordings are accepted here.
+        assert ('Tests: failed' in transcript
+                or 'பரிட்சை முடிவு: failed' in transcript), transcript[-400:]
         assert row is not None
         assert row['status'] == 'failed'
         assert 'tests=failed' in row['detail']
