@@ -86,9 +86,16 @@ def test_the_icon_can_be_drawn_again(tmp_path):
     assert read_entries(target.read_bytes())
 
 
-def test_the_installer_uses_the_icon():
+def test_the_installer_in_the_tree_does_not_need_a_file_that_is_not_there():
+    """The installer must build from the tree alone.
+
+    The icon is drawn by the build, and the installer only uses it once
+    the patch that draws it has been applied. Until then the installer
+    must not point at a file that is not there, because the Windows
+    installer job fails on a file it cannot find.
+    """
     text = INSTALLER.read_text(encoding='utf-8')
-    assert 'SetupIconFile=JarvisAI.ico' in text
+    assert 'SetupIconFile' not in text
     assert 'UninstallDisplayIcon={app}\\JarvisAI.exe' in text
 
 
@@ -100,10 +107,13 @@ def test_the_executable_is_built_with_the_icon():
     the rest of it, and so the owner can apply it with one command.
     """
     text = ICON_PATCH.read_text(encoding='utf-8')
+    # All three parts travel together: the build draws the icon, the
+    # executable is built with it, and the installer uses it.
+    assert 'python tools/make_icon.py installers/JarvisAI.ico' in text
     assert '--icon installers/JarvisAI.ico' in text
+    assert 'SetupIconFile=JarvisAI.ico' in text
     # The icon is drawn after the tests, so the tests never see a file
     # that is not in the source.
-    assert 'python tools/make_icon.py installers/JarvisAI.ico' in text
     assert text.index('make_icon.py') < text.index('PyInstaller')
 
 

@@ -20,3 +20,17 @@ index 4ba96db..94d7726 100644
            if (!(Test-Path 'dist/JarvisAI/JarvisAI.exe')) { throw 'Desktop EXE not generated' }
        - name: Include Microsoft System.Speech MIT attribution
          shell: pwsh
+diff --git a/installers/JARVIS-AI.iss b/installers/JARVIS-AI.iss
+index e32e6c7..805e284 100644
+--- a/installers/JARVIS-AI.iss
++++ b/installers/JARVIS-AI.iss
+@@ -14,6 +14,9 @@ OutputBaseFilename=JarvisAI-Setup-Windows-x64
+ ArchitecturesAllowed=x64compatible
+ Compression=lzma
+ SolidCompression=yes
++; The icon the owner sees in the installer and in Windows. It is the same
++; orb the application draws.
++SetupIconFile=JarvisAI.ico
+ UninstallDisplayIcon={app}\JarvisAI.exe
+ WizardStyle=modern
+ 
