@@ -25,7 +25,7 @@ def test_modes_return_to_same_window_and_keep_saved_preferences(tmp_path):
         ui.set_theme('Apple Silver')
         ui.set_background('Horizon')
         ui.set_reduced(True)
-        for mode in ('Island', 'Stealth'):
+        for mode in ('Island',):
             ui.switch(mode)
             app.processEvents()
             assert window.isHidden() and ui.floating.isVisible()
@@ -72,10 +72,14 @@ def test_dock_links_keyboard_and_order(tmp_path):
         ui.reveal.click()
         assert ui.dock.isVisible()
         window.resize(720, 770)
+        # Legacy pages are permanently redirected to PRIME, even in smoke.
         ui.open_page('Omega Home')
         app.processEvents()
-        assert ui.home.compact
-        assert ui.dock.buttons[0].toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly
+        assert window.pages.currentIndex() == window.page_indices['JARVIS Chat']
+        assert window.composer_bar.isVisibleTo(window)
+        ui.open_page('Omega Settings')
+        app.processEvents()
+        assert window.pages.currentIndex() == window.page_indices['Settings & Safety']
     finally:
         window.close()
 
@@ -117,7 +121,7 @@ def test_quick_command_goes_through_existing_chat_handler(tmp_path, monkeypatch)
     dispatch = Mock()
     monkeypatch.setattr(window, 'send', dispatch)
     try:
-        ui.switch('Stealth')
+        ui.switch('Island')
         ui.floating.flip()
         ui.floating.command.setText('/time')
         ui.floating.command.returnPressed.emit()
@@ -166,7 +170,7 @@ def test_floating_mic_shows_permissions_and_returns_voice_draft_to_chat(tmp_path
         assert ui.mode == 'Omega'
         assert window.pages.currentIndex() == window.page_indices['Voice / Hey Jarvis']
         window.voice_panel.allow.setChecked(True)
-        ui.switch('Stealth')
+        ui.switch('Island')
         window.on_voice_transcript('Check the design')
         assert ui.mode == 'Omega'
         assert window.pages.currentIndex() == window.page_indices['JARVIS Chat']
@@ -200,24 +204,28 @@ def test_chat_theme_paints_pages_and_keeps_navigation_reachable(tmp_path):
             assert f'color: {ink}' in sheet
             assert 'QMainWindow, QDialog {' in sheet
         window.omega.show_dock(False)
-        assert window.omega.reveal.isVisible()
+        assert not window.omega.reveal.isVisible()
+        window.omega.show_dock(True)
+        assert not window.omega.dock.isVisible()
+        assert not hasattr(window.omega, 'dock_shortcut')
     finally:
         window.close()
         app.processEvents()
 
-def test_auto_hide_dock_keeps_reveal_reachable(tmp_path):
+def test_old_dock_preferences_cannot_revive_the_retired_design(tmp_path):
     app = QApplication.instance() or QApplication([])
     window = Window(tmp_path)
     try:
         window.store.set('omega:auto_hide', True)
-        # Legacy dock mode stays available when the owner explicitly wants it.
+        # A historic opt-out must no longer resurrect the old menu.
         window.store.set('omega:command_first', False)
+        window.store.set('omega:show_dock_on_start', True)
         window.enable_omega()
         app.processEvents()
         assert not window.omega.dock.isVisible()
-        assert window.omega.reveal.isVisible()
-        window.omega.reveal.click()
-        assert window.omega.dock.isVisible()
+        assert not window.omega.reveal.isVisible()
+        window.omega.show_dock(True)
+        assert not window.omega.dock.isVisible()
     finally:
         window.close()
         app.processEvents()
