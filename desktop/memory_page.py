@@ -23,6 +23,7 @@ class MemoryPanel(QWidget):
                 raise ValueError('A memory service or a path is needed.')
             service = MemoryService(path)
         self.service = service
+        self.editing_id = None
         self._build()
         self.refresh()
 
@@ -57,6 +58,10 @@ class MemoryPanel(QWidget):
         self.remember_button = QPushButton('Remember')
         self.remember_button.clicked.connect(self.remember)
         write_row.addWidget(self.remember_button)
+        self.cancel_edit_button = QPushButton('Cancel edit')
+        self.cancel_edit_button.clicked.connect(self.clear_edit)
+        self.cancel_edit_button.hide()
+        write_row.addWidget(self.cancel_edit_button)
         write_layout.addRow(write_row)
         self.memory_status = QLabel('')
         self.memory_status.setTextFormat(Qt.TextFormat.PlainText)
@@ -87,6 +92,9 @@ class MemoryPanel(QWidget):
         layout.addWidget(self.results)
 
         actions = QHBoxLayout()
+        edit_button = QPushButton('Edit selected note')
+        edit_button.clicked.connect(self.edit_selected)
+        actions.addWidget(edit_button)
         self.forget_button = QPushButton('Forget the selected note')
         self.forget_button.clicked.connect(self.forget)
         actions.addWidget(self.forget_button)
@@ -101,15 +109,33 @@ class MemoryPanel(QWidget):
         body = self.memory_body.toPlainText().strip()
         tags = [part.strip() for part in self.memory_tags.text().split(',') if part.strip()]
         try:
-            memory = self.service.remember(title, body, tags)
+            editing = self.editing_id is not None
+            if editing:
+                memory = self.service.update(self.editing_id, title, body, tags)
+            else:
+                memory = self.service.remember(title, body, tags)
         except MemoryError as error:
             self.memory_status.setText(str(error))
             return
+        self.clear_edit()
+        self.memory_status.setText(('Updated: ' if editing else 'Remembered: ') + memory.title)
+        self.refresh()
+
+    def clear_edit(self):
+        self.editing_id = None
         self.memory_title.clear()
         self.memory_body.clear()
         self.memory_tags.clear()
-        self.memory_status.setText('Remembered: ' + memory.title)
-        self.refresh()
+        self.memory_status.clear()
+        self.remember_button.setText('Remember')
+        self.cancel_edit_button.hide()
+
+    def edit_selected(self):
+        item = self.results.currentItem()
+        if item is None:
+            self.memory_status.setText('Choose a note first.')
+            return
+        self.show_one(item)
 
     def find(self):
         """Look for the memories that match the word."""
@@ -144,6 +170,10 @@ class MemoryPanel(QWidget):
         memory = self.service.get(identifier)
         if memory is None:
             return
+        self.editing_id = memory.id
+        self.remember_button.setText('Save changes')
+        self.cancel_edit_button.show()
+        self.memory_status.setText('Editing: ' + memory.title)
         self.memory_title.setText(memory.title)
         self.memory_body.setPlainText(memory.body)
         self.memory_tags.setText(', '.join(memory.tags))
@@ -157,6 +187,8 @@ class MemoryPanel(QWidget):
         identifier = item.data(Qt.ItemDataRole.UserRole)
         title = item.text().split(' — ')[0]
         if self.service.forget(identifier):
+            if identifier == self.editing_id:
+                self.clear_edit()
             self.memory_status.setText('Forgotten: ' + title)
         else:
             self.memory_status.setText('That note was already gone.')

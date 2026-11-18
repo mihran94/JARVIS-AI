@@ -100,3 +100,28 @@ def test_addressed_video_brief_reaches_existing_workflow_unchanged(tmp_path, mon
     finally:
         win.close()
         app.processEvents()
+
+
+def test_explicit_analysis_cannot_schedule_coding(tmp_path, monkeypatch):
+    from developer_studio.projects import SavedProject
+    from providers.profiles import model_for
+
+    app = QApplication.instance() or QApplication([])
+    win = Window(tmp_path)
+    calls = []
+    monkeypatch.setattr(win, 'get_key', lambda *_: 'test-only')
+    monkeypatch.setattr(win, 'start_worker', lambda *args, **kwargs: calls.append(args))
+    monkeypatch.setattr('desktop.app.load_projects', lambda _: [
+        SavedProject('project-a', str(tmp_path), 'VS Code', 'pytest'),
+    ])
+    monkeypatch.setattr(win, 'start_coding_task', lambda *_: pytest.fail('Analysis scheduled a change'))
+    try:
+        win.prompt.setPlainText('/analyze project-a fix login and run tests')
+        win.send()
+        provider, model, _, messages, kind = calls[0]
+        assert (provider, model, kind) == ('Gemini', model_for('Gemini', 'deep'), 'chat')
+        assert messages[-1]['content'] == 'project-a fix login and run tests'
+        assert win.stored_profile('Gemini') == 'fast'
+    finally:
+        win.close()
+        app.processEvents()

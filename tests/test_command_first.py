@@ -47,3 +47,11 @@ def test_unknown_commands_cannot_become_shell_or_paid_cloud_requests():
     # Keep the older local and video command handlers operational.
     for value in ("/status", "/time", "/capabilities", "/video make a short reel"):
         assert parse_command(value, PROJECTS) is None
+
+
+def test_commands_for_analysis_and_fix_test_keep_the_requested_text():
+    analysis = parse_command('ஜார்விஸ், /analyze How should I fix project-a?')
+    assert (analysis.kind, analysis.detail) == ('analysis', 'How should I fix project-a?')
+    task = parse_command('/project AI Creative Studio fix and test login page', PROJECTS)
+    assert (task.kind, task.target, task.detail) == (
+        'project_fix_test', 'AI Creative Studio', 'login page')

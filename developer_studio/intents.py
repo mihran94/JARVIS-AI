@@ -29,6 +29,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 
+from core.conversation import addressed_request
+
 
 #: Phrases that mean "open this project".
 OPEN_PHRASES = (
@@ -39,7 +41,7 @@ OPEN_PHRASES = (
 #: Phrases that mean "make a change".
 CHANGE_PHRASES = (
     'fix pannu', 'fix panni', 'change pannu', 'change panni', 'do pannu',
-    'seiyyungal', 'seiyyum', 'fix', 'add', 'change', 'update', 'implement',
+    'debug pannu', 'debug panni', 'பிழையைச் சரிசெய்', 'பிழையை சரிசெய்', 'seiyyungal', 'seiyyum', 'fix', 'add', 'change', 'update', 'implement',
     'refactor', 'correct', 'create', 'write', 'remove', 'delete', 'rename',
     'மாற்று', 'செய்', 'பண்ணு', 'நிர்',
 )
@@ -47,17 +49,14 @@ CHANGE_PHRASES = (
 #: Phrases that mean "run the tests".
 TEST_PHRASES = (
     'tests run panni', 'tests run pannu', 'run the tests', 'run tests',
-    'test run panni', 'test run', 'tests run', 'run test', 'tests',
+    'சோதனைகளை இயக்கு', 'சோதனை செய்', 'test run panni', 'test run', 'tests run', 'run test', 'tests',
 )
 
 #: Phrases that mean "tell me the result".
 REPORT_PHRASES = (
-    'result sollu', 'result sol', 'tell the result', 'report the result',
+    'முடிவைச் சொல்', 'முடிவை சொல்', 'result sollu', 'result sol', 'tell the result', 'report the result',
     'say the result', 'result', 'sollu', 'sol',
 )
-
-#: The words that open a sentence and carry no instruction.
-WAKE_WORDS = ('hey jarvis', 'jarvis,', 'jarvis:', 'jarvis')
 
 #: Words removed from the request once the intent has been recognised.
 _NOISE = re.compile(
@@ -149,18 +148,19 @@ def parse_coding_request(text: str, projects, editor_from_text=None) -> CodingRe
     if not isinstance(text, str) or not text.strip():
         return CodingRequest()
 
-    original = ' '.join(text.split())
-    working = original
-    for wake in WAKE_WORDS:
-        if working.casefold().startswith(wake):
-            working = working[len(wake):].lstrip(' ,:')
-            break
+    working = ' '.join(addressed_request(text).split())
+    folded = working.casefold()
+    if (working.startswith(('"', "'", '“', '/'))
+            or folded.startswith(('how ', 'what ', 'why ', 'should ', 'do not ', "don't "))
+            or _contains(working, ('வேண்டாம்', 'pannatha', 'panna vendam'))):
+        return CodingRequest()
 
     project = _match_project(working, projects)
     editor = editor_from_text(working) if editor_from_text else ''
 
     open_project = _contains(working, OPEN_PHRASES)
-    make_change = _contains(working, CHANGE_PHRASES)
+    change_probe = _strip_phrases(working, TEST_PHRASES)
+    make_change = _contains(change_probe, CHANGE_PHRASES)
     run_tests = _contains(working, TEST_PHRASES)
     report = _contains(working, REPORT_PHRASES)
 
