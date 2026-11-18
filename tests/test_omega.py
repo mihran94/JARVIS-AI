@@ -193,11 +193,12 @@ def test_chat_theme_paints_pages_and_keeps_navigation_reachable(tmp_path):
         for theme, (background, _panel, _edge, ink, *_rest) in THEMES.items():
             window.omega.set_theme(theme)
             sheet = window.styleSheet()
-            assert f'QWidget {{ background: {background}; color: {ink};' in sheet
-            assert (
-                f'QMainWindow, QStackedWidget, QScrollArea, '
-                f'QWidget#omegaFrame {{ background: {background}; }}'
-            ) in sheet
+            # The palette the owner chose decides the ground and the ink of the
+            # whole application. The widgets themselves stay transparent, so
+            # the ground shows through the glass surfaces.
+            assert background in sheet
+            assert f'color: {ink}' in sheet
+            assert 'QMainWindow, QDialog {' in sheet
         window.omega.show_dock(False)
         assert window.omega.reveal.isVisible()
     finally:

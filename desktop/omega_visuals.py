@@ -25,55 +25,16 @@ def tint(color, alpha):
 
 
 def theme_sheet(name):
-    bg, panel, edge, ink, muted, cyan, gold = THEMES[name]
-    return f"""
-    QWidget {{ background: {bg}; color: {ink}; font-family: 'Segoe UI'; font-size: 13px; }}
-    QMainWindow, QStackedWidget, QScrollArea, QWidget#omegaFrame {{ background: {bg}; }}
-    QWidget#omegaFloat, QLabel {{ background: transparent; }}
-    QLabel#title {{ color: {cyan}; font-size: 23px; font-weight: 700; }}
-    QLabel#subtitle, QLabel#systemMetrics, QLabel#hudClock {{ color: {muted}; }}
-    QPushButton#primary {{ background: {cyan}; color: {bg}; }}
-    QTabBar::tab {{ background: {panel}; border: 1px solid {edge}; padding: 7px 10px; }}
-    QTabBar::tab:selected {{ border-color: {cyan}; }}
-    QListWidget::item {{ padding: 7px; }}
-    QListWidget::item:selected {{ background: {edge}; color: {ink}; }}
-    QHeaderView::section {{ background: {panel}; color: {ink}; padding: 6px; }}
-    QWidget#omegaFloatPanel {{ color: {ink}; }}
-    QLabel#omegaMuted, QLabel#omegaEyebrow, QLabel#omegaTitle, QLabel#omegaValue, QLabel#omegaState {{
-        background: transparent;
-    }}
-    QLabel#omegaMuted {{ color: {muted}; font-size: 12px; }}
-    QLabel#omegaEyebrow {{ color: {cyan}; font-weight: 700; letter-spacing: 2px; font-size: 11px; }}
-    QLabel#omegaTitle {{ color: {ink}; font-size: 30px; font-weight: 700; }}
-    QLabel#omegaValue {{ color: {cyan}; font-size: 25px; font-weight: 650; }}
-    QLabel#omegaState {{ color: {cyan}; font-weight: 650; }}
-    QFrame#omegaCard, QFrame#omegaDock, QFrame#omegaComposer, QWidget#omegaFloatPanel {{
-        background: qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 {panel},stop:1 {bg});
-        border: 1px solid {edge}; border-radius: 17px;
-    }}
-    QFrame#omegaDock {{ border-radius: 22px; }}
-    QFrame#omegaDock QToolButton {{ border-radius: 12px; padding: 2px 3px; font-size: 12px; }}
-    QScrollArea#omegaScroll, QScrollArea#omegaScroll > QWidget > QWidget {{ background: transparent; border: 0; }}
-    QPushButton, QToolButton, QComboBox, QLineEdit {{
-        color: {ink}; background: {panel}; border: 1px solid {edge};
-        border-radius: 8px; padding: 6px 10px;
-    }}
-    QPushButton:hover, QToolButton:hover, QComboBox:hover {{ border-color: {cyan}; }}
-    QPushButton:focus, QToolButton:focus, QLineEdit:focus, QComboBox:focus {{ border: 2px solid {cyan}; }}
-    QPushButton:disabled, QToolButton:disabled {{ color: {muted}; }}
-    QToolButton[active="true"], QPushButton#omegaPrimary {{
-        color: {bg}; background: {cyan}; border-color: {cyan}; font-weight: 700;
-    }}
-    QPushButton#stop {{ color: #ffffff; background: #702f3f; border-color: #be6470; font-weight: 700; }}
-    QPlainTextEdit, QTextEdit, QTableWidget, QListWidget, QComboBox QAbstractItemView {{
-        background: {bg}; color: {ink}; border: 1px solid {edge}; selection-background-color: {edge};
-    }}
-    QCheckBox, QGroupBox, QTabBar::tab, QStatusBar {{ color: {ink}; }}
-    QGroupBox {{ border: 1px solid {edge}; border-radius: 8px; margin-top: 8px; }}
-    QGroupBox::title {{ subcontrol-origin: margin; padding: 0 5px; }}
-    QProgressBar {{ border: 0; border-radius: 3px; background: {edge}; }}
-    QProgressBar::chunk {{ background: {cyan}; border-radius: 3px; }}
+    """The premium stylesheet for one of the Omega palettes.
+
+    The palette is still what the owner chooses in Settings; the sheet it
+    produces is the JARVIS PRIME interface system: glass surfaces, rounded
+    corners, an accent that matches the palette and one set of states for
+    every control.
     """
+    from desktop.prime_theme import build
+
+    return build(THEMES[name])
 
 
 class Backdrop(QWidget):
