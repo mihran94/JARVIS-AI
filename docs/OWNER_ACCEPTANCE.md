@@ -10,9 +10,9 @@ itself. The Windows installer job also built the executable and the
 installer. What those runners cannot do is talk to a microphone, draw on
 a scaled display, or hold a phone.
 
-**Order.** The stack is thirteen branches and each one builds on the one
+**Order.** The stack is fourteen branches and each one builds on the one
 before it, so they are merged in order. The checklist is written in the
-same order.
+same order. Section 0a says how to merge them in one command.
 
 | # | Phase | Pull request | Branch |
 | --- | --- | --- | --- |
@@ -29,18 +29,20 @@ same order.
 | 11 | P10 — reading a page | #60 | `feature/p10-web-research-20261118` |
 | 12 | P11 — the certificate is pinned on the phone | #61 | `feature/bridge-certificate-pinning-20261118` |
 | 13 | P12 — the key that brings JARVIS up | #62 | `feature/p12-global-hotkey-20261118` |
+| 14 | P13 — the workflow, and one command to merge the stack | #63 | `feature/p13-workflow-20261119` |
 
 ---
 
-## 0. Two patches, before anything else
+## 0. Three patches, before anything else
 
 The GitHub App that pushes this repository cannot write
-`.github/workflows/`, so two workflow changes travel as patches. They
-arrive with the P0 branch (#44). Apply them once, before you merge:
+`.github/workflows/`, so three workflow changes travel as patches. Apply
+them once, before you merge:
 
 ```
 git apply patches/github-actions-green.patch
 git apply patches/windows-app-icon.patch
+git apply patches/ci-stack-verification.patch
 ```
 
 * `github-actions-green.patch` turns off `fail-fast`, so a Linux only
@@ -50,13 +52,50 @@ git apply patches/windows-app-icon.patch
   the installer uses it. The three parts travel together on purpose: the
   installer must not point at an icon that is not there, because the
   Windows installer job fails on a file it cannot find.
+* `ci-stack-verification.patch` makes the CI check the work while it is
+  still a pull request. The Android application is built on a pull
+  request that touches the phone, and not only after it reaches `main`.
+  The rules of the phone, which live in `:core:common`, are run as
+  well, or the tests of those rules never happen. And the Windows
+  installer is built for a pull request to **any** branch, because the
+  work arrives as a stack of branches and each one of them is a pull
+  request to the branch below it.
 
-Check that both applied:
+Check that all three applied:
 
 ```
 git apply --check --reverse patches/github-actions-green.patch
 git apply --check --reverse patches/windows-app-icon.patch
+git apply --check --reverse patches/ci-stack-verification.patch
 ```
+
+They are checked by `tests/test_workflow_patches.py` on every run, so a
+patch that stops applying is caught before the owner meets it.
+
+## 0a. Merging the stack, in one command
+
+The thirteen branches were pushed through an API that cannot rewrite
+history, so they do not sit on one another's commits. Merging them one
+by one leaves a conflict in `docs/SOURCE_INTEGRITY.sha256`, because that
+file is written for the tree of one branch and two different trees give
+two different files. The script does the whole thing and checks the
+result:
+
+```
+git fetch origin
+python scripts/merge_stack.py --out merged/jarvis-prime
+git checkout merged/jarvis-prime
+python -m pytest -q
+```
+
+The script merges the branches in order, writes the manifest again for
+each merged tree, and stops and says so if it meets a conflict it does
+not know rather than choosing for the owner. It keeps the application
+icon, which the first branch carries and the later ones do not.
+
+If you merge by hand instead, the only conflict you should meet is the
+manifest, and the answer is always the same: write it again with
+`python scripts/source_manifest.py` and add it.
 
 ## 1. The installer (Phase 11)
 
