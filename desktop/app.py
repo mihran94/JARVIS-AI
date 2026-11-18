@@ -711,6 +711,9 @@ class Window(QMainWindow):
 
     def page(self, title, note=''):
         page = QWidget()
+        # The page root carries the premium surface, so the window is never
+        # transparent behind the conversation.
+        page.setObjectName('pageRoot')
         layout = QVBoxLayout(page)
         layout.setContentsMargins(22, 18, 10, 10)
         label = QLabel(title)

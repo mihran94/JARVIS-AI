@@ -22,10 +22,18 @@ import sys
 
 MANIFEST = os.path.join('docs', 'SOURCE_INTEGRITY.sha256')
 
-#: Directories that never belong to the source tree.
+#: Directories that never belong to the source tree, by name.
 SKIP_DIRS = {
     '.git', '.github-cache', '.mypy_cache', '.pytest_cache', '.venv',
     '__pycache__', 'build', 'dist', 'node_modules', 'venv',
+}
+
+#: Directories that never belong to the source tree, by path from the root.
+SKIP_PATHS = {
+    # The screenshots that tools/screenshots.py takes are build output, so
+    # the manifest does not list them and taking them never breaks the
+    # integrity check.
+    'tools/shots',
 }
 
 HEADER = """# JARVIS AI source integrity manifest
@@ -60,7 +68,14 @@ def collect(root: str) -> list[str]:
     """Every source file in the tree, in a stable order."""
     found = []
     for directory, sub_directories, files in os.walk(root):
-        sub_directories[:] = sorted(d for d in sub_directories if d not in SKIP_DIRS)
+        relative_directory = os.path.relpath(directory, root).replace(os.sep, '/')
+        if relative_directory == '.':
+            relative_directory = ''
+        sub_directories[:] = sorted(
+            d for d in sub_directories
+            if d not in SKIP_DIRS
+            and (f'{relative_directory}/{d}' if relative_directory else d) not in SKIP_PATHS
+        )
         for name in sorted(files):
             path = os.path.join(directory, name)
             relative = os.path.relpath(path, root).replace(os.sep, '/')
