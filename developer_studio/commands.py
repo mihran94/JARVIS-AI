@@ -36,6 +36,10 @@ PAGE_COMMANDS = {
     "review": "Review changes",
     "usage": "System & Usage",
     "home": "JARVIS Chat",
+    "files": "Files & Folders",
+    "folders": "Files & Folders",
+    "upload": "Files & Folders",
+    "attach": "Files & Folders",
 }
 
 
@@ -57,6 +61,7 @@ HELP = (
     "/project NAME fix and test GOAL — fix, test and show the diff for review\n"
     "/analyze QUESTION — use Deep when your chat provider supports it\n"
     "/document — choose a local UTF-8 text or Markdown file to preview\n"
+    "/files, /folders, /upload, /attach — select and preview local files/folders\n"
     "/code, /pc, /voice, /mobile, /memory, /providers — open the existing tool\n"
     "/review, /tasks, /workflows, /history, /video, /business — open other tools\n"
     "/new — start a fresh conversation. /home — return to Chat.\n"
@@ -88,6 +93,10 @@ def parse_command(text, projects=()):
         "memory kaatu": Command("page", target="Memory"),
         "நினைவுகளைக் காட்டு": Command("page", target="Memory"),
         "document padi": Command("document"),
+        "file upload pannu": Command("page", target="Files & Folders"),
+        "folder upload pannu": Command("page", target="Files & Folders"),
+        "files kaatu": Command("page", target="Files & Folders"),
+        "கோப்புகளைத் திற": Command("page", target="Files & Folders"),
         "ஆவணத்தைப் படி": Command("document"),
         "settings open pannu": Command("page", target="Settings & Safety"),
         "settings திறந்து வை": Command("page", target="Settings & Safety"),
