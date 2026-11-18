@@ -57,9 +57,10 @@ def test_hidden_and_secret_files_are_refused(tmp_path):
 
 
 def test_binary_pdf_and_too_large_files_are_rejected(tmp_path):
+    """A PDF that is not a PDF is refused with a sentence, not a shrug."""
     pdf = tmp_path / "invoice.pdf"
     pdf.write_bytes(b"%PDF-1.7")
-    with pytest.raises(AttachmentError, match="PDF is not yet supported"):
+    with pytest.raises(AttachmentError, match="PDF"):
         read_file(pdf)
     code = tmp_path / "main.py"
     code.write_bytes(b"\x00binary")
@@ -69,6 +70,25 @@ def test_binary_pdf_and_too_large_files_are_rejected(tmp_path):
     large.write_bytes(b"A" * 26000)
     with pytest.raises(AttachmentError, match="24 KiB"):
         read_file(large)
+
+
+def test_a_pdf_can_be_added_to_the_context_now(tmp_path):
+    """The PDF limit is gone: a real PDF is read, and read as text."""
+    from document_fixtures import make_pdf
+
+    path = make_pdf(tmp_path / "letter.pdf")
+    staged = read_file(path)
+    assert staged.name == "letter.pdf"
+    assert "Hello from the PDF" in staged.text
+
+
+def test_a_pdf_that_is_too_large_for_an_attachment_is_refused(tmp_path):
+    from document_fixtures import make_pdf
+
+    path = make_pdf(tmp_path / "big.pdf")
+    path.write_bytes(path.read_bytes() + b"A" * 26000)
+    with pytest.raises(AttachmentError, match="24 KiB"):
+        read_file(path)
 
 
 def test_folder_walk_skips_hidden_directories_symlinks_and_unsupported(tmp_path):
