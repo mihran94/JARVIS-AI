@@ -18,7 +18,7 @@ from news.briefing import FEEDS, MAX_FEED_BYTES, parse_feed
 
 
 DESTINATIONS = {
-    'Home': ('Omega Home', '⌂'),
+    'Home': ('JARVIS Chat', '⌂'),
     'AI Chat': ('JARVIS Chat', '▤'),
     'Code Studio': ('Coding Assistant', '‹›'),
     'PC Control': ('PC Control', '▣'),
@@ -27,9 +27,9 @@ DESTINATIONS = {
     'Creative Studio': ('Video Editor', '▷'),
     'Automation': ('Step Workflows', '⇄'),
     'Security': ('Settings & Safety', '⬡'),
-    'Settings': ('Omega Settings', '⚙'),
+    'Settings': ('Settings & Safety', '⚙'),
 }
-MODES = ('Omega', 'Island', 'Stealth')
+MODES = ('Omega', 'Island')
 ACTIVITY = {
     'idle': 'Idle', 'listening': 'Listening', 'thinking': 'Thinking',
     'responding': 'Answering', 'speaking': 'Speaking', 'coding': 'Coding',
@@ -482,6 +482,9 @@ class Omega:
         self.reduced = bool(self.store.get('omega:reduced', False))
         self.pin = bool(self.store.get('omega:pin', False))
         self.auto_hide = bool(self.store.get('omega:auto_hide', False))
+        # The old dashboard/dock is kept as a harmless internal fixture for
+        # compatibility tests, never as an alternative production interface.
+        self._smoke = False
         raw_order = self.store.get('omega:order', [])
         self.order = list(dict.fromkeys(name for name in raw_order if isinstance(name, str)
                                         and name in DESTINATIONS)) if isinstance(raw_order, list) else []
@@ -496,8 +499,6 @@ class Omega:
         self.reveal = QPushButton('Show dock')
         self.reveal.setAccessibleName('Show or hide application dock')
         self.reveal.clicked.connect(lambda: self.show_dock(not self.dock.isVisible()))
-        self.dock_shortcut = QShortcut(QKeySequence('Ctrl+D'), window)
-        self.dock_shortcut.activated.connect(lambda: self.show_dock(not self.dock.isVisible()))
         dock_row = QHBoxLayout()
         dock_row.setContentsMargins(0, 0, 0, 0)
         dock_row.addStretch(1)
@@ -696,25 +697,14 @@ class Omega:
         self.window.add_page('Omega Settings', page, primary=False)
 
     def start(self, *, smoke=False):
+        # PRIME is the only production desktop interface. Island remains the
+        # compact companion; older presentation preferences cannot revive the
+        # retired OMEGA dashboard, dock or animated introduction.
+        self._smoke = bool(smoke)
         self.switch('Omega' if smoke else self.mode, persist=False)
         if self.mode == 'Omega':
             self.open_page('JARVIS Chat')
-            # Command-first mode is the default: only Island, Settings,
-            # chat input and Emergency Stop belong on the main surface.
-            # The legacy dock stays implemented for explicit advanced use.
-            if not smoke and self.store.get('omega:command_first', True):
-                self.show_dock(False)
-                self.reveal.hide()
-            elif not smoke and (self.auto_hide or not self.store.get('omega:show_dock_on_start', True)):
-                self.show_dock(False)
-        if not smoke and self.mode == 'Omega' and self.store.get('omega:intro', True) and not self.reduced:
-            self.startup.setText('Local controls ready')
-            self.skip.show()
-            fade_in(self.brand, 520)
-            self.intro_timer = QTimer(self.window)
-            self.intro_timer.setSingleShot(True)
-            self.intro_timer.timeout.connect(self.finish_intro)
-            self.intro_timer.start(1050)
+        self.show_dock(not self.auto_hide if smoke else False)
         self.refresh_state()
         if not smoke and self.store.get('omega:greet', False):
             QTimer.singleShot(700, self.greet)
@@ -733,6 +723,10 @@ class Omega:
         self.refresh_state()
 
     def open_page(self, page):
+        # Old links and saved commands must resolve into PRIME, never into
+        # the retired OMEGA dashboard or duplicate settings panel.
+        page = {'Omega Home': 'JARVIS Chat',
+                'Omega Settings': 'Settings & Safety'}.get(page, page)
         if self.mode != 'Omega':
             self.switch('Omega')
         self.window.open_section(page)
@@ -820,12 +814,12 @@ class Omega:
         self.show_dock(not enabled)
 
     def show_dock(self, visible):
+        # The retired dock may only be exercised by the isolated smoke-test
+        # harness; it is never presented by the real PRIME application.
+        visible = bool(visible) and self._smoke
         self.dock.setVisible(visible)
-        self.reveal.setVisible(self.auto_hide or not visible)
-        if visible:
-            self.reveal.setText('Hide dock')
-        else:
-            self.reveal.setText('Show dock')
+        self.reveal.setVisible(self._smoke and (self.auto_hide or not visible))
+        self.reveal.setText('Hide dock' if visible else 'Show dock')
 
     def move_dock(self, direction):
         index = self.order_items.currentIndex()
