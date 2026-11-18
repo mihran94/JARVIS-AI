@@ -183,11 +183,55 @@ bridge=https://pc.example.lan:8765
 key=jarvis-iphone-v1
 secret=<the one time secret>
 expires=1764000000
+fp=<the SHA-256 of the bridge certificate>
 ```
 
 The code expires, the secret is shown once, and the phone holds it in memory
 only. The iPhone has its own key id, so revoking the Android phone does not
 revoke the iPhone.
+
+## The certificate the phone pins
+
+`fp` is the SHA-256 of the DER form of the bridge certificate, written as
+64 lowercase hex characters. It is optional: a code made without a
+certificate still pairs, and then the phone trusts whatever certificate the
+bridge presents.
+
+The fingerprint is computed from the PEM file alone, so the desktop can show
+it before the listener is started. The owner reads it out and compares it
+with the phone, which is what makes a self-signed certificate usable without
+a certificate authority.
+
+The desktop can make that certificate itself. `remote/certificate.py` writes
+a self-signed certificate and its key into the application data folder; the
+key is created with owner-only permissions and never leaves the machine.
+
+**What each client does with the fingerprint today**
+
+| Client | Reads `fp` | Enforces it |
+| --- | --- | --- |
+| Android | not yet | not yet |
+| iPhone PWA | yes | no — a browser draws its own TLS, so the fingerprint is shown to the owner, not enforced by the page |
+
+So today the fingerprint is **carried and shown, not enforced**. The Android
+app is where it can be enforced, and the shape of that work is:
+
+* the fingerprint is hex, and OkHttp's `CertificatePinner` wants
+  `sha256/<base64 of the DER digest>`, so the Android side converts it;
+* a `CertificatePinner` alone is not enough for a self-signed certificate,
+  because the chain is validated against the system trust store before the
+  pin is checked, and a self-signed certificate is not in that store. The
+  client needs a trust manager that trusts exactly the pinned certificate
+  and nothing else, together with a hostname verifier that accepts the
+  bridge address the owner typed;
+* the certificate the desktop makes has the subject `CN=JARVIS AI bridge`,
+  so the host the phone connects to has to be covered by a subject
+  alternative name, or the hostname check has to be the owner's choice
+  rather than the certificate's.
+
+That work has to be done on a real device, because a trust manager that is
+too permissive is worse than no trust manager at all. It is deliberately not
+written blind.
 
 ## Status
 
@@ -201,3 +245,8 @@ Not implemented and therefore not available to a user today: a tunnel, a
 public HTTPS address for the bridge, and the execution of the queued jobs.
 A phone still needs the owner to pair it and to reach the PC over a private
 network.
+
+Implemented and unit tested on the desktop side since then: the bridge
+certificate, its fingerprint, the fingerprint in the pairing code, and the
+owner being able to allow a VPN or private tunnel peer. What a client does
+with the fingerprint is described above.

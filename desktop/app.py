@@ -24,6 +24,7 @@ from core.assistant_capabilities import (conversation_context, summary as capabi
                                        system_context as capability_context)
 from quantum_core.studio_project import STUDIO_URL, studio_update_prompt, validate_studio_url
 from desktop.memory_page import MemoryPanel
+from desktop import documents
 from desktop.attachments import (AttachmentError, as_untrusted_context,
                                  stage_files, stage_folder)
 from desktop.studio_inbox import StudioInboxDialog
@@ -306,6 +307,7 @@ class Window(QMainWindow):
         self.workspace = Workspace(self.root / 'workspace')
         self.video_plan = None
         self.attachments = []  # A temporary local snapshot; never persisted.
+        self.document_under_read = None  # The document being previewed, if any.
         self.video_chat_brief = None
         self.chat_launch = None
         self.conversation_plan = ConversationPlan(self)
@@ -1227,6 +1229,25 @@ class Window(QMainWindow):
         folder_actions = QHBoxLayout(folders)
         self.button(folder_actions, 'Choose folder…', self.choose_attachment_folder)
         layout.addWidget(folders)
+        documents_box = QGroupBox('Documents')
+        document_actions = QHBoxLayout(documents_box)
+        self.button(document_actions, 'Read a document…', self.read_document_file)
+        self.button(document_actions, 'Compare with…', self.compare_document_file)
+        self.button(document_actions, 'Clear the preview', self.clear_document_preview)
+        document_actions.addStretch()
+        layout.addWidget(documents_box)
+        self.document_status = QLabel('')
+        self.document_status.setWordWrap(True)
+        layout.addWidget(self.document_status)
+        self.document_preview = QPlainTextEdit()
+        self.document_preview.setReadOnly(True)
+        self.document_preview.setAccessibleName('Document preview')
+        self.document_preview.setMinimumHeight(140)
+        self.document_preview.setMaximumHeight(320)
+        self.document_preview.setPlaceholderText(
+            'A document you read is shown here. Nothing is sent anywhere until you '
+            'choose to share a file with the assistant.')
+        layout.addWidget(self.document_preview)
         self.attachment_list = QListWidget()
         self.attachment_list.setAccessibleName('Selected local attachments')
         self.attachment_list.itemDoubleClicked.connect(
@@ -1272,8 +1293,74 @@ class Window(QMainWindow):
             f'{len(self.attachments)} file(s) selected; temporary text snapshots, '
             'not copied to the history database. Up to 12 files / '
             '24 KiB per file / 48,000 characters total. '
-            'Supported: UTF-8 text, Markdown, code, CSV, JSON and DOCX. '
-            'PDF and binary uploads are not yet supported.')
+            'Supported: UTF-8 text, Markdown, code, CSV, JSON, PDF and DOCX. '
+            'A binary file cannot be read.')
+
+    def read_document_file(self):
+        """Read one document the owner chose and show it here.
+
+        Reading is a local act: the text stays on this PC until the owner
+        chooses to share a file with the assistant, and the same one-turn
+        consent that guards every other file guards this one.
+        """
+        path, _ = QFileDialog.getOpenFileName(
+            self, 'Choose a document to read', '',
+            'Documents (*.pdf *.docx *.txt *.md *.markdown *.csv *.json *.rst);;'
+            'All files (*)')
+        if not path:
+            return
+        try:
+            document = documents.read_document(path)
+        except documents.DocumentError as exc:
+            self.document_status.setText(str(exc))
+            self.document_preview.setPlainText('')
+            return
+        self.document_under_read = document
+        self.document_preview.setPlainText(
+            self.document_preview_text(document))
+        note = f'{document.name}: {document.characters:,} characters'
+        if document.pages:
+            note += f' over {document.pages} page(s)'
+        note += '. Nothing was sent anywhere.'
+        if document.warnings:
+            note += ' ' + ' '.join(document.warnings)
+        self.document_status.setText(note)
+
+    def document_preview_text(self, document):
+        """The text shown for a document, bounded so the page stays usable."""
+        limit = 20000
+        if document.characters <= limit:
+            return document.text
+        return (document.text[:limit] +
+                f'\n\n… {document.characters - limit:,} more characters are not shown here.')
+
+    def compare_document_file(self):
+        """Compare the document that was read with another one."""
+        first = getattr(self, 'document_under_read', None)
+        if first is None:
+            self.document_status.setText('Read a document first, then compare it with another.')
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, 'Compare with', '',
+            'Documents (*.pdf *.docx *.txt *.md *.markdown *.csv *.json *.rst);;'
+            'All files (*)')
+        if not path:
+            return
+        try:
+            second = documents.read_document(path)
+            result = documents.compare_documents(first, second)
+        except documents.DocumentError as exc:
+            self.document_status.setText(str(exc))
+            return
+        self.document_preview.setPlainText(documents.comparison_text(result))
+        self.document_status.setText(
+            f'Compared {result["first"]} with {result["second"]}. Nothing was sent anywhere.')
+
+    def clear_document_preview(self):
+        """Forget the document that was read."""
+        self.document_under_read = None
+        self.document_preview.setPlainText('')
+        self.document_status.setText('')
 
     def choose_attachment_files(self):
         paths, _ = QFileDialog.getOpenFileNames(
