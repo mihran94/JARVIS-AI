@@ -15,7 +15,9 @@ def test_primary_sections_and_one_main_window(tmp_path):
             "JARVIS Chat", "PC Control", "Coding Assistant",
             "Voice / Hey Jarvis", "Phone Remote", "Settings & Safety", "Video Editor", "Business", "Memory"
         ]
-        assert win.pages.count() == 16
+        assert win.pages.count() == 17
+        # The Files & Folders workspace is one of the pages.
+        assert 'Files & Folders' in win.page_indices
         assert win.nav.currentRow() == 0
         assert win.pages.currentIndex() == 0
         assert win.orb._state == "idle"

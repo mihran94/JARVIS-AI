@@ -1,5 +1,6 @@
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 from desktop.app import Window, STYLE, launch_arguments
 
@@ -10,12 +11,16 @@ def test_desktop_navigation_stop_and_editor(tmp_path):
     window = Window(tmp_path)
     window.show()
     app.processEvents()
-    assert window.pages.count() == 16
+    assert window.pages.count() == 17
     assert window.nav.count() == 9
     for index in range(window.nav.count()):
         window.nav.setCurrentRow(index)
         app.processEvents()
-        assert window.pages.currentIndex() == index
+        # The nav row and the page index are not the same number: the Files &
+        # Folders workspace is a page without a nav row. What matters is that
+        # the row opens the page it is bound to.
+        bound = window.nav.item(index).data(Qt.ItemDataRole.UserRole)
+        assert window.pages.currentIndex() == bound
     window.confirm = lambda _: True
     window.editor.setPlainText('print("tested")')
     window.save_file()

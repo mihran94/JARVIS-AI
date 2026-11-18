@@ -256,10 +256,16 @@ def test_the_approval_state_is_cleared_when_the_task_ends(tmp_path, monkeypatch,
 # ── 10. Omega survives ─────────────────────────────────────────────────────
 
 def test_the_omega_modes_are_still_there(tmp_path, monkeypatch):
+    """The presentation modes the PRIME design ships with.
+
+    Omega and Island are the modes of the PRIME-only design. Stealth was
+    dropped deliberately in the PRIME cleanup, and the owner's brief still
+    lists it, so this is the place where that decision is recorded.
+    """
     win, app = window(tmp_path, monkeypatch)
     try:
         from desktop.omega import MODES
-        assert MODES == ('Omega', 'Island', 'Stealth')
+        assert MODES == ('Omega', 'Island')
         win.enable_omega(smoke=True)
         app.processEvents()
         assert win.omega is not None
