@@ -46,6 +46,7 @@ import uuid
 
 from core.protection import Protection
 from developer_studio.codex_cli import codex_executable, run_codex
+from developer_studio.intents import summary_labels
 
 
 #: The steps a task goes through. The card shows them and marks them done.
@@ -237,8 +238,9 @@ class CodexTask:
 
     def __init__(self, project, change: str, *, test_command: str = '',
                  worktree_root=None, progress=None, check_cancelled=None,
-                 codex_path=None):
+                 codex_path=None, language: str = ''):
         self.project = project
+        self.language = (language or '').strip().casefold()
         self.change = (change or '').strip()
         self.test_command = (test_command or '').strip()
         self.worktree_root = Path(worktree_root) if worktree_root else None
@@ -284,7 +286,7 @@ class CodexTask:
                 'was changed. Check that Git can write to this repository.')
         self.outcome.worktree = str(worktree)
         self._step('isolate_worktree',
-                   f'Isolated worktree ready at {worktree}. Your uncommitted work is untouched.')
+                   summary_labels(self.language)['worktree_ready'].format(worktree=worktree))
         # The commit the task starts from. Every change is reported against
         # it, so a task that commits as well as edits still shows the whole
         # difference and not just the last edit.
@@ -347,12 +349,18 @@ class CodexTask:
             self.outcome.test_output = ('No test command is configured for this project, so no '
                                         'tests were run.')
 
-        self._step('report', 'Reporting the changed files, the diff and the test results.')
+        self._step('report', summary_labels(self.language)['step_report'])
         self.outcome.status = 'completed'
         against = self.outcome.starting_commit[:8] if self.outcome.starting_commit else 'HEAD'
-        self.outcome.message = (
-            f'{len(changed)} file(s) changed against {against}. The diff is below and the '
-            f'worktree is at {worktree}. Nothing was pushed, merged or installed.')
+        if self.language == 'ta':
+            self.outcome.message = (
+                f'{against} முற்பட்ட நிலைக்கு எதிராக {len(changed)} கோப்பு(கள்) மாற்றப்பட்டன. '
+                f'வேறுபாடு கீழே உள்ளது, வேலைப்பாதை {worktree}. '
+                'எதுவும் push, merge அல்லது install செய்யப்படவில்லை.')
+        else:
+            self.outcome.message = (
+                f'{len(changed)} file(s) changed against {against}. The diff is below and the '
+                f'worktree is at {worktree}. Nothing was pushed, merged or installed.')
         return self.outcome
 
     # -- internals --------------------------------------------------------
@@ -428,3 +436,18 @@ class CodexTask:
     def _run_tests(self, worktree: Path):
         """Run the project's configured local tests, without a shell."""
         return run_local_tests(worktree, self.test_command)
+
+
+def reviewable_diff(worktree, starting_commit: str = '') -> str:
+    """The diff of a worktree against the commit the task started from.
+
+    This is how "show the diff" is answered later: the diff is not stored, it
+    is read back from the worktree, so it is always the truth about what is
+    on disk.
+    """
+    folder = Path(worktree)
+    if not folder.is_dir():
+        return ''
+    subprocess.run(['git', '-C', str(folder), 'add', '-A'], capture_output=True, timeout=60)
+    base = [starting_commit] if starting_commit else []
+    return git_output(folder, 'diff', '--cached', *base) or ''

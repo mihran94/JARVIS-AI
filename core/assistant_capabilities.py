@@ -45,6 +45,41 @@ def summary(window):
     )
 
 
+def conversation_context(window):
+    """What this conversation is about, so the assistant knows its own context.
+
+    The task card shows the owner what happened; this tells the *model* the
+    same thing, so a plain question like "which project were we on?" or
+    "what did you just change?" can be answered from the conversation's
+    memory instead of being a guess.
+    """
+    memory = getattr(window, 'memory', None)
+    if memory is None:
+        return ''
+    try:
+        context = memory.load()
+    except Exception:
+        return ''
+    parts = []
+    if context.project:
+        parts.append(f'This conversation is about the saved project {context.project}.')
+    task = context.last_task
+    if task is not None:
+        sentence = f'The last task was on {task.project}'
+        if task.change:
+            sentence += f', asking for {task.change}'
+        if task.status:
+            sentence += f', and it ended {task.status}'
+        parts.append(sentence + '.')
+        if task.worktree:
+            parts.append(f'Its worktree is {task.worktree}.')
+        if task.starting_commit:
+            parts.append(f'It started from revision {task.starting_commit[:12]}.')
+    if not parts:
+        return ''
+    return ' '.join(parts)
+
+
 def system_context(window):
     state = snapshot(window)
     return (

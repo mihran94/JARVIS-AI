@@ -231,8 +231,12 @@ def test_the_chat_task_card_shows_the_project_the_change_and_the_steps(
         card = win.chat_task_text.text()
         assert 'project-a' in card
         assert 'login page validation' in card
-        assert 'Open project-a in VS Code' in card
-        assert 'Ask Codex to' in card
+        # The card is written in the language the owner asked for, so both
+        # wordings are accepted here.
+        assert ('Open project-a in VS Code' in card
+                or 'project-a திறக்க' in card)
+        assert ('Ask Codex to' in card
+                or 'Codex-க்கு சொல்ல' in card)
         assert win.chat_task_card.isVisible() or not win.chat_task_card.isHidden()
     finally:
         win.close()
