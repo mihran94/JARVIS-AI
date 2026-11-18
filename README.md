@@ -2,11 +2,17 @@
 
 ## Command-first JARVIS (Island + Settings)
 
-The main Windows assistant is now chat/command-first. Its primary controls are
-**Island**, **Settings**, a chat composer and **Emergency Stop**; provider
-configuration, chat preferences, saved projects and other options are inside
-Settings. The older dock and specialized pages are retained in source, not
-deleted, and the legacy dock can be explicitly opened with `Ctrl+D`.
+The main Windows assistant uses the **JARVIS PRIME** design. Its primary
+controls are **Island**, **Settings**, a chat composer and **Emergency Stop**.
+Provider configuration, chat preferences, saved projects and advanced tools
+are accessible through Settings or typed commands. The retired Omega Home,
+duplicate Omega Settings, old dock and Stealth presentation are **not
+available in the production interface**; old navigation requests open PRIME
+Chat or Settings instead. Historic UI widgets remain isolated in the Omega
+controller temporarily for compatibility tests and to preserve its working
+Island, voice indicators and approvals. The obsolete stand-alone blue and
+personal Qt stylesheets and old migration script were removed. No conversation
+history, credentials or project source folders were deleted.
 
 Type `/help` in JARVIS to see local commands. Developer Studio is integrated
 through existing approval-gated project workflows rather than being launched
