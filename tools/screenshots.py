@@ -74,7 +74,20 @@ def main():
         app.processEvents()
     shoot(app, window, '05-files-and-folders')
 
-    # 6. A pending approval, which is what the owner has to answer.
+    # 6. A plan with more than one step, showing the state of each step.
+    window.prompt.setPlainText('/do open Notepad then open Calculator')
+    window.send()
+    app.processEvents()
+    # The plan card sits under the conversation, so it is scrolled into view
+    # before the picture is taken.
+    from PySide6.QtWidgets import QScrollArea
+    for area in window.findChildren(QScrollArea):
+        if area.widget() is not None and area.widget().isAncestorOf(window.plan_card):
+            area.ensureWidgetVisible(window.plan_card, 0, 0)
+    app.processEvents()
+    shoot(app, window, '06-plan-steps')
+
+    # 7. A pending approval, which is what the owner has to answer.
     window.open_section('JARVIS Chat')
     window.transcript.appendPlainText(
         'JARVIS\nI found the login check that fails in auth.py and can fix it '

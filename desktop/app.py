@@ -1169,6 +1169,28 @@ class Window(QMainWindow):
         card_layout.addLayout(task_buttons)
         self.chat_task_card.hide()
         layout.addWidget(self.chat_task_card)
+        # The plan of a job with more than one step: every step and the
+        # state it is really in. There is no percentage, because the work
+        # that is left cannot be measured before it is done.
+        self.plan_card = QWidget()
+        self.plan_card.setObjectName('taskCard')
+        plan_layout = QVBoxLayout(self.plan_card)
+        plan_layout.setContentsMargins(0, 0, 0, 0)
+        self.plan_text = QLabel()
+        self.plan_text.setWordWrap(True)
+        self.plan_text.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        plan_layout.addWidget(self.plan_text)
+        plan_buttons = QHBoxLayout()
+        self.plan_retry_button = self.button(
+            plan_buttons, 'Try this step again', self.retry_failed_plan_step)
+        self.plan_retry_button.setObjectName('primary')
+        self.plan_retry_button.setVisible(False)
+        plan_buttons.addWidget(self.plan_retry_button)
+        plan_buttons.addStretch()
+        plan_layout.addLayout(plan_buttons)
+        self.plan_card.hide()
+        layout.addWidget(self.plan_card)
         self.prompt = QPlainTextEdit()
         self.prompt.setObjectName('composerCard')
         self.prompt.setPlaceholderText(
@@ -3697,6 +3719,10 @@ class Window(QMainWindow):
             created=datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),
         )
         self.memory.remember_task(record)
+
+    def retry_failed_plan_step(self):
+        """Run only the step of a plan that failed."""
+        self.conversation_plan.retry_failed()
 
     def review_coding_diff(self):
         """Show the reviewable diff of the last task.
