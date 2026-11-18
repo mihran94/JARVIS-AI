@@ -24,7 +24,7 @@ MANIFEST = os.path.join('docs', 'SOURCE_INTEGRITY.sha256')
 
 #: Directories that never belong to the source tree, by name.
 SKIP_DIRS = {
-    '.git', '.github-cache', '.mypy_cache', '.pytest_cache', '.venv',
+    '.git', '.github-cache', '.gradle', '.kotlin', '.mypy_cache', '.pytest_cache', '.venv',
     '__pycache__', 'build', 'dist', 'node_modules', 'venv',
 }
 
@@ -34,6 +34,13 @@ SKIP_PATHS = {
     # the manifest does not list them and taking them never breaks the
     # integrity check.
     'tools/shots',
+    # The Gradle wrapper is restored from its base64 sidecar, so the
+    # binary is never in the repository. It is skipped here as well, so
+    # that an owner who restored it can still run the integrity check.
+    'android/gradle/wrapper/gradle-wrapper.jar',
+    # The Android SDK path is written by the machine that builds, and it
+    # is never in the repository.
+    'android/local.properties',
 }
 
 HEADER = """# JARVIS AI source integrity manifest
@@ -80,6 +87,10 @@ def collect(root: str) -> list[str]:
             path = os.path.join(directory, name)
             relative = os.path.relpath(path, root).replace(os.sep, '/')
             if relative in (MANIFEST.replace(os.sep, '/'), '.git'):
+                continue
+            if relative in SKIP_PATHS:
+                # A file that is never in the repository: the manifest must
+                # not list it, or the check would fail on a fresh checkout.
                 continue
             found.append(relative)
     return sorted(found)

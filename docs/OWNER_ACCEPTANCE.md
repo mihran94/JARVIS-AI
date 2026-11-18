@@ -174,33 +174,80 @@ git apply --check --reverse patches/windows-app-icon.patch
 46. Read a page with **Research a page**. Confirm the answer comes from
     that page. Confirm a page inside your own network is **refused**.
 
+### The certificate is pinned on the phone (Phase 10)
+
+47. On the **Phone Remote** page, press **Create a private certificate**
+    and then **Show the pairing code**. Copy the whole code.
+48. On the phone, in the **Windows JARVIS** card, paste the **whole code**
+    into the pairing field. Confirm the address, the secret and the
+    fingerprint are all read out of it.
+49. Confirm the phone says the certificate **is pinned**.
+50. Pair the phone. Confirm it connects.
+51. Now change the certificate on the desktop: press **Create a private
+    certificate** again and restart the listener. Confirm the phone is
+    **refused**, and that the refusal is not a silent hang.
+52. Pair a second phone with the **bare secret** instead of the whole
+    code. Confirm the phone says **no certificate was pinned** rather
+    than claiming a pinned connection.
+53. Unpair the phone. Confirm the certificate goes with the secret: pair
+    again and the phone is refused until it is paired with the code
+    again.
+
+Steps 47 to 53 are the checks for the certificate pinning. They need a
+real phone and a desktop on the same network. The rules behind them are
+tested without a phone (`CertificatePinTest` and `PairingCodeTest` in
+`android/core/common`), but a phone that is told to refuse a certificate
+is only really proved by a phone that refuses one.
+
+### The key that brings JARVIS up (Phase 12)
+
+54. Open **Settings**. Find **Key that brings JARVIS up**. Write
+    `Ctrl+Alt+Space` and press **Apply**. Confirm the line under it says
+    the key is ready.
+55. Switch to another application, for example the browser. Press the
+    key. Confirm JARVIS comes to the front.
+56. Confirm the microphone did **not** open. The key brings JARVIS up
+    and nothing else.
+57. Write `Ctrl+Alt+Del` and press **Apply**. Confirm the application
+    refuses it and says the key belongs to Windows.
+58. Write `Ctrl+T` and press **Apply**. Confirm it is accepted and that
+    the owner is told other applications use that key.
+59. Restart JARVIS. Confirm the key still works without setting it
+    again.
+
+Steps 54 to 59 need a real Windows desktop session. The rules behind
+them are tested on any machine (`tests/test_global_hotkey.py`), and the
+test that takes a key from Windows runs on the Windows runner of the
+workflow. On Linux and macOS the shortcut is saved and shown, and the
+application says that it does nothing there.
+
 ## 9. The developer flow (Phases 5 and 7)
 
-47. Point JARVIS at a project with a broken Python file. Confirm the
+62. Point JARVIS at a project with a broken Python file. Confirm the
     card names the file and the line **before** anything is changed.
-48. Let it make a change. Confirm it happened in a **worktree** and that
+63. Let it make a change. Confirm it happened in a **worktree** and that
     your own working folder, including uncommitted work, is untouched.
-49. Run the tests. Confirm the **actual** result is shown, including a
+64. Run the tests. Confirm the **actual** result is shown, including a
     failure as a failure.
-50. Press **Review diff**. Confirm it is a real diff.
-51. Press **Accept the change**. Confirm it is recorded and that nothing
+65. Press **Review diff**. Confirm it is a real diff.
+66. Press **Accept the change**. Confirm it is recorded and that nothing
     was written into your project folder.
-52. Press **Reject the change** on the next one. Confirm the worktree is
+67. Press **Reject the change** on the next one. Confirm the worktree is
     still there to read and your project is untouched.
 
 ## 10. The plan (Phase 7)
 
-53. Run a plan of two steps. Confirm the card names each step and its
+68. Run a plan of two steps. Confirm the card names each step and its
     **real state**: pending, waiting for approval, running, verified.
-54. Confirm there is **no percentage** anywhere on the card.
-55. Make a step fail. Confirm the steps that already succeeded are not
+69. Confirm there is **no percentage** anywhere on the card.
+70. Make a step fail. Confirm the steps that already succeeded are not
     run again when you retry the failed step.
 
 ## 11. The cost (Phase 2)
 
-56. Send a message. Open **System & Usage**. Confirm there is an
+71. Send a message. Open **System & Usage**. Confirm there is an
     **estimated cost** column and an estimated total.
-57. Confirm a model with no known price says **price unknown** and not
+72. Confirm a model with no known price says **price unknown** and not
     zero.
 
 ## What is deliberately not there
