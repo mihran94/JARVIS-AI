@@ -96,8 +96,8 @@ d3c6c7a3754c3ca2f89632c56b84fc37fc479d307002f5a8991b53bee46eb7bf  android/core/c
 d87bfd16f76d72e3603b558a4ea8353239163d65a1e46ff0672b46e215369fc4  android/core/common/src/main/kotlin/com/jarvisblue/core/common/Outcome.kt
 74d87d42ec97a264ceaf3642a56ba227d80b9c0e8c541b41f8b9cb6a9115e444  android/core/common/src/main/kotlin/com/jarvisblue/core/common/PairingCode.kt
 259b61bc4a64d871d926cb2cb0295c2dce4422e70b326eebab0e0f9eda5736a5  android/core/common/src/main/kotlin/com/jarvisblue/core/common/Redactor.kt
-d668a73a0f44120a697b2acb48215ffba7f9c87492ca0cf012a55c8dd0652a7c  android/core/common/src/main/kotlin/com/jarvisblue/core/common/TextTools.kt
-29a3522b7c2b9b27b7164dec6c55008c9a59b31a8f37be2fdc1766b5e77f8c68  android/core/common/src/test/kotlin/com/jarvisblue/core/common/CertificatePinTest.kt
+f5cbf2ae6af9e3ee50de85eadf235def8bacde519bc00c2502418890fc883a34  android/core/common/src/main/kotlin/com/jarvisblue/core/common/TextTools.kt
+7397545811c79904df5f28328c0be6000380816826e18373545d32c9beeda4f2  android/core/common/src/test/kotlin/com/jarvisblue/core/common/CertificatePinTest.kt
 e5f03b9da16ccfe4f238af9e722690376796bd575b4a70c1d20838c144267c21  android/core/common/src/test/kotlin/com/jarvisblue/core/common/PairingCodeTest.kt
 17d668672498eaed8ee87868d64ef8a55a5d161ed5101ca0bad7cb8144e68cb7  android/core/common/src/test/kotlin/com/jarvisblue/core/common/RedactorTest.kt
 bd4e27bd9f754ac2fa7232abcd708215675e5cb0bebb1395ba052c2f98865b55  android/core/common/src/test/kotlin/com/jarvisblue/core/common/TextToolsTest.kt
@@ -184,7 +184,7 @@ a48e5414d6723b987fef0a80272d85a3de398373cb5e9f6ad06d77d26d854779  android/core/v
 34361718041e46cbd7b748998f5bf5ed846345acfa5ece0fdd8142b9ad2c3a5b  android/core/windows/build.gradle.kts
 5d5c255c3a74f1f217b85fe5f39b5bb82ab35138c67b19e35d5635dc2385ede5  android/core/windows/consumer-rules.pro
 67d69357682a2e8c8e861df80a7bef57b833b2720e7f48f109640127095ce914  android/core/windows/src/main/kotlin/com/jarvisblue/core/windows/BridgeClient.kt
-30903644d9f93624410d78ae53a6c9bbebfec9006cb653518fa5795e9e1777c2  android/core/windows/src/main/kotlin/com/jarvisblue/core/windows/WindowsModule.kt
+c6d61178599c7978adf84ddf2e53bbcc7788ee470039408a50e5f966481452e5  android/core/windows/src/main/kotlin/com/jarvisblue/core/windows/WindowsModule.kt
 4b09af0a3c1b2d7b1c9ec96c444fde4fe40d63026e6710999b0b74d8255d4bd8  android/core/windows/src/test/kotlin/com/jarvisblue/core/windows/BridgeSignatureTest.kt
 a4eeb0dbbcb46efc46a75ba7da1b924f44fc97199235611ed06b74b631fbfae1  android/docs/ANDROID_COMPATIBILITY.md
 cd6f63f591423fb7cbc7357c92aac69fc6a5f382df31a4dd3d45d8faac534b56  android/docs/ANDROID_SECURITY.md

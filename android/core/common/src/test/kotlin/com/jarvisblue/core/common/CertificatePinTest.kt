@@ -6,7 +6,9 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayInputStream
 import java.security.MessageDigest
+import java.util.Base64
 import java.security.cert.CertificateException
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
@@ -147,19 +149,30 @@ class CertificatePinTest {
  */
 internal object CertificateFixture {
 
-    private fun read(name: String): X509Certificate {
-        val stream = CertificateFixture::class.java.getResourceAsStream(name)
-            ?: throw IllegalStateException("The test certificate $name is missing.")
-        return stream.use {
-            CertificateFactory.getInstance("X.509").generateCertificate(it) as X509Certificate
-        }
+    private fun read(encoded: String): X509Certificate {
+        val bytes = Base64.getDecoder().decode(encoded)
+        return CertificateFactory.getInstance("X.509")
+            .generateCertificate(ByteArrayInputStream(bytes)) as X509Certificate
     }
 
-    /** The certificate the phone is told to pin. */
-    val certificate: X509Certificate by lazy { read("/bridge-cert.pem") }
+    /**
+     * The certificate the phone is told to pin.
+     *
+     * The two certificates are written into this file and not kept as
+     * files next to it: the Android tree does not keep `.pem` files in
+     * the repository, so a test that read one from there would have
+     * nothing to read on a fresh checkout.
+     */
+    val certificate: X509Certificate by lazy { read(BRIDGE_CERTIFICATE) }
 
     /** A different, perfectly valid certificate that must be refused. */
-    val otherCertificate: X509Certificate by lazy { read("/other-cert.pem") }
+    val otherCertificate: X509Certificate by lazy { read(OTHER_CERTIFICATE) }
+
+    private const val BRIDGE_CERTIFICATE =
+        """MIIDPzCCAiegAwIBAgIUfh2KYDgYaaddw+QtwYu1Bt3eUQ8wDQYJKoZIhvcNAQELBQAwLzEZMBcGA1UEAwwQSkFSVklTIEFJIGJyaWRnZTESMBAGA1UECgwJSkFSVklTIEFJMB4XDTI2MTExODIwNTkxMVoXDTM2MTExNTIwNTkxMVowLzEZMBcGA1UEAwwQSkFSVklTIEFJIGJyaWRnZTESMBAGA1UECgwJSkFSVklTIEFJMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAv1mkdD1CBZfm9Rcz/1V99DOW78emZldgI4AhFliKDp8ACk1wn4vwbV8nHbEnrDwtvZVr3oy7Y/2/kJwKW/hC4KrSu0bOnxEI+JfD0V3ryTfZN2D9i6C2Oacsnm0nimiusuU3w1i0D36wi0CWYLIdgaaxag6lu3kEHef3UY+70Ce4ZbU1iiLBlRkOAauXlU8T7hNmDMU6R6uEJgJN7ySNH4jzU9mbuJmbVXFZC/Yc9fk9tacBsr82DIWG9MvmZ18418Cwn8AR9T3AztpVqBblEpu2AoLT81S8DeD885Me1rJw0xooZJmh4JEcsY9uy17UOqmoePT8kLM6wBopyCss0QIDAQABo1MwUTAdBgNVHQ4EFgQUliSIM7gADUfzyR6EfMAJY6Kt/wYwHwYDVR0jBBgwFoAUliSIM7gADUfzyR6EfMAJY6Kt/wYwDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEALcKgf+qIbFe5Mx5imSjHUVBDsIhdlQ9BGAml4s6g8BSs71InxRp874qdjPvE1fzsVsYUnDWZWZ+UtyZBWYOKAJcgVC3V42mqbIuI5hajX1DjPdcJKYYmQrl71Vlki+MYr2m/F4ue+9ffELXOtU5DIQehhEPDeYzhNSY3ryGeTYSYNGal3J7LVqU2igRRndSvkonO/ttIFZKJfvhjx37vUqh7Vjyhylunjyf+XTLEbxdNa5L3Id87xqUWgQKmQ6Udl+nWc0Gs4s/xfaiyL0ZpdrUjdasSNzND/0nYHZYDR50UsTKViCum6G3/WS/YaJ+qTpgT/KeccQ/ZIdjgcbs2Sg=="""
+
+    private const val OTHER_CERTIFICATE =
+        """MIIDLzCCAhegAwIBAgIUeN55AvSekOAFetF2ig7qToKFRi4wDQYJKoZIhvcNAQELBQAwJzEVMBMGA1UEAwwMU29tZW9uZSBFbHNlMQ4wDAYDVQQKDAVPdGhlcjAeFw0yNjExMTgyMDU5MTJaFw0zNjExMTUyMDU5MTJaMCcxFTATBgNVBAMMDFNvbWVvbmUgRWxzZTEOMAwGA1UECgwFT3RoZXIwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQCwASXUf7EoRx3mVm8kVgW9r8uvePub9NcYLY4hcfv2AIIq2BPdK+89pxLETE3q7+lOgLpE2PnaAuf0bcLB4kV+kgy+Q2znFnWBMLrpjWiVs1dKEmxV9UYVgVitBWunjvN2veQaSM1Cm/jAtsHHN/9tZZ/bNyPKZPFQMr6or4rET/azdmLfCEx5toYF+KalMFHimm4NnT+0gjYb5Gg+CtnrjgPvZUnYJcJIxcanhkQMlUw5wA9A64kiU3cJ8AJuF6VqXO/POmEX9n7DFaoskhOr/4bBOM1dmgqIExP2Hr7VLDC0TQKUXaSH5V10XXamoQxsmZXnkYSJFbrE65tk9xg/AgMBAAGjUzBRMB0GA1UdDgQWBBSFfG3SnzWI14iWjKyRItdzkoWDljAfBgNVHSMEGDAWgBSFfG3SnzWI14iWjKyRItdzkoWDljAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQCO56H3JzpSX/45ra2DHYJNwuiijfXZcvjjl2mfZA7wzXLAS+qD2W6r+/gMDs788/gMAgQr9B2BdVEAqJL/nvJdLF4R7x0IVkmPxMqq8GmU7bKPjspz5efXQn3tABtEYbkdDr82N4LUr9QvoVgS14fYgP0PalRRrqec/mt5Ez5un2c0QLKE9A7OZbS1QWyLpHSxw3pADaAy4uC9Yc79RrFMt/D/N5ood9Cv59UGUJ4fkjyc3lTolSyfXIoKVSSwbHJnzpyhjJD7BeGgjpLyv8UaYZKqBIE0TfL8hfE8HoWfeO2y8tXM/ZrItA2/0KMWPhK3xQGhKv8FTMUr6RRpaU5S"""
 
     fun fingerprintOf(certificate: X509Certificate): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(certificate.encoded)
