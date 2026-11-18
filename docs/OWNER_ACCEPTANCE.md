@@ -10,7 +10,7 @@ itself. The Windows installer job also built the executable and the
 installer. What those runners cannot do is talk to a microphone, draw on
 a scaled display, or hold a phone.
 
-**Order.** The stack is eleven branches and each one builds on the one
+**Order.** The stack is thirteen branches and each one builds on the one
 before it, so they are merged in order. The checklist is written in the
 same order.
 
@@ -27,6 +27,8 @@ same order.
 | 9 | P8 — the approval boundary | #58 | `feature/p8-safe-control-20261118` |
 | 10 | P9 — the document search | #59 | `feature/p9-document-search-20261118` |
 | 11 | P10 — reading a page | #60 | `feature/p10-web-research-20261118` |
+| 12 | P11 — the certificate is pinned on the phone | #61 | `feature/bridge-certificate-pinning-20261118` |
+| 13 | P12 — the key that brings JARVIS up | #62 | `feature/p12-global-hotkey-20261118` |
 
 ---
 
