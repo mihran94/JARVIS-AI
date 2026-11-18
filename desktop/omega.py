@@ -5,7 +5,7 @@ from urllib.parse import urlencode
 from xml.etree.ElementTree import ParseError
 
 from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QSize, Qt, QTimer, QUrl, QVariantAnimation
-from PySide6.QtGui import QGuiApplication, QKeySequence, QShortcut
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QFrame, QGraphicsOpacityEffect,
@@ -536,7 +536,6 @@ class Omega:
         top.addWidget(self.signal_meter)
         top.addWidget(self.clock)
         button(top, 'Island', lambda: self.switch('Island'))
-        button(top, 'Stealth', lambda: self.switch('Stealth'))
         button(top, 'Window', self.window.toggle_fullscreen)
         outer.addLayout(top)
 
