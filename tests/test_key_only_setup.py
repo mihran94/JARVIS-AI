@@ -21,6 +21,7 @@ def test_key_only_save(tmp_path, provider):
     assert window.chat_provider.currentText()==provider
     assert window.secret.text()=='' and window.worker is None
     window.close()
+    window.deleteLater()
 
 
 def test_custom_model_preserved_and_reset(tmp_path):
@@ -34,3 +35,4 @@ def test_custom_model_preserved_and_reset(tmp_path):
     window.reset_provider_model()
     assert window.model.text()==PROVIDERS['OpenAI'].default_model
     window.close()
+    window.deleteLater()

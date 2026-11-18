@@ -251,12 +251,13 @@ class FloatingAssistant(QWidget):
         self.place_on_screen()
 
     def sync_shape(self):
-        stealth = self.controller.mode == 'Stealth'
-        self.handle.setVisible(not stealth or self.expanded)
-        self.toggle.setVisible(not stealth or self.expanded)
+        # The retired Stealth presentation is gone: the mode is validated
+        # against MODES on read and on switch, so only Omega and Island exist.
+        self.handle.setVisible(True)
+        self.toggle.setVisible(True)
         self.contents.setVisible(self.expanded)
         self.toggle.setText('Collapse' if self.expanded else 'Expand')
-        self.setFixedWidth(348 if self.expanded else (72 if stealth else 286))
+        self.setFixedWidth(348 if self.expanded else 286)
         self.layout().activate()
         self.setFixedHeight(self.sizeHint().height())
 

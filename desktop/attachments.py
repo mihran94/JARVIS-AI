@@ -78,6 +78,17 @@ def _docx_text(path: Path) -> str:
     return "\n".join(paragraphs)
 
 
+def _normalize_newlines(text: str) -> str:
+    """Return the same text with CRLF and lone CR endings written as LF.
+
+    The file on disk is never modified. This only makes the snapshot that is
+    handed to the model identical on Windows and on Linux: the same file
+    written on Windows arrives with CRLF endings and would otherwise reach
+    the provider as a different byte stream than the Linux copy.
+    """
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def read_file(path: str | Path, *, label: str | None = None) -> StagedFile:
     """Snapshot a selected UTF-8 text/code or DOCX file, never execute it."""
     source = Path(path).expanduser()
@@ -101,6 +112,9 @@ def read_file(path: str | Path, *, label: str | None = None) -> StagedFile:
             text = raw.decode("utf-8-sig")
     except (UnicodeError, OSError) as exc:
         raise AttachmentError("Could not read this file as UTF-8 text.") from exc
+    # One text form on every platform. The bytes on disk stay exactly as the
+    # owner wrote them; only the in-memory copy is normalised.
+    text = _normalize_newlines(text)
     if not text.strip():
         raise AttachmentError("This file has no readable text.")
     if len(text) > MAX_TOTAL_CHARACTERS:

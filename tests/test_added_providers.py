@@ -46,6 +46,7 @@ def test_all_selectors_include_new_providers(tmp_path):
     for combo in (window.provider,window.chat_provider,window.backup_provider):
         assert all(combo.findText(name)>=0 for name in NEW)
     window.close()
+    window.deleteLater()
 
 
 def test_gemini_404_points_to_recommended_model_without_printing_provider_response():

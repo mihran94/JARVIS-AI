@@ -166,6 +166,7 @@ def test_the_task_runs_in_an_isolated_worktree_and_protects_uncommitted_work(
         assert outcome.protected
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_a_task_in_a_folder_that_is_not_a_git_repository_is_refused(tmp_path, monkeypatch):
@@ -181,6 +182,7 @@ def test_a_task_in_a_folder_that_is_not_a_git_repository_is_refused(tmp_path, mo
         assert 'Git repository' in outcome.message
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_a_missing_codex_cli_says_what_to_do(tmp_path, monkeypatch, project):
@@ -199,6 +201,7 @@ def test_a_missing_codex_cli_says_what_to_do(tmp_path, monkeypatch, project):
         assert 'codex login' in outcome.message
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_a_failed_test_is_reported_as_failed(tmp_path, monkeypatch, project):
@@ -216,6 +219,7 @@ def test_a_failed_test_is_reported_as_failed(tmp_path, monkeypatch, project):
         assert '1 failed' in outcome.test_output
     finally:
         win.close()
+        win.deleteLater()
 
 
 # ── the chat flow ────────────────────────────────────────────────────────────
@@ -236,6 +240,7 @@ def test_the_chat_task_card_shows_the_project_the_change_and_the_steps(
         assert win.chat_task_card.isVisible() or not win.chat_task_card.isHidden()
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_a_declined_action_changes_nothing(tmp_path, monkeypatch, project):
@@ -250,6 +255,7 @@ def test_a_declined_action_changes_nothing(tmp_path, monkeypatch, project):
         assert win.coding_worker is None
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_the_conversation_keeps_the_result_visible(tmp_path, monkeypatch, project):
@@ -275,6 +281,7 @@ def test_the_conversation_keeps_the_result_visible(tmp_path, monkeypatch, projec
         assert win.coding['outcome'].changed_files == ['app.py']
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_emergency_stop_cancels_the_task_and_it_stays_cancelled(tmp_path, monkeypatch, project):
@@ -302,6 +309,7 @@ def test_emergency_stop_cancels_the_task_and_it_stays_cancelled(tmp_path, monkey
         assert win.coding['outcome'].status == 'cancelled'
     finally:
         win.close()
+        win.deleteLater()
 
 
 # ── editors and routines ─────────────────────────────────────────────────────
@@ -317,6 +325,7 @@ def test_a_missing_editor_says_setup_needed(tmp_path, monkeypatch):
         assert state['capabilities']
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_each_editor_shows_its_capabilities_individually():
@@ -341,6 +350,7 @@ def test_a_trusted_routine_opens_the_project_without_asking(tmp_path, monkeypatc
         assert opened and opened[0][0] == 'VS Code'
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_an_untrusted_routine_asks_first(tmp_path, monkeypatch, project):
@@ -357,6 +367,7 @@ def test_an_untrusted_routine_asks_first(tmp_path, monkeypatch, project):
         assert 'Approve this task' in win.chat_task_text.text()
     finally:
         win.close()
+        win.deleteLater()
 
 
 # ── the settings page ────────────────────────────────────────────────────────
@@ -374,6 +385,7 @@ def test_the_saved_projects_page_lists_the_projects_and_the_editors(tmp_path, mo
         assert 'SETUP NEEDED' in status or 'installed' in status
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_the_assistant_language_is_remembered(tmp_path, monkeypatch):
@@ -387,6 +399,7 @@ def test_the_assistant_language_is_remembered(tmp_path, monkeypatch):
         assert assistant_language(win.store) == 'fr'
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_a_configured_launcher_is_remembered_and_reports_its_capabilities(tmp_path, monkeypatch):
@@ -404,3 +417,4 @@ def test_a_configured_launcher_is_remembered_and_reports_its_capabilities(tmp_pa
         assert state['capabilities'] == ['open_project', 'open_file']
     finally:
         win.close()
+        win.deleteLater()

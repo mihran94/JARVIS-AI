@@ -17,3 +17,6 @@ development/
 # written again by iphone-pwa/icons/restore-icons.py.
 iphone-pwa/icons/*.png
 iphone-pwa/node_modules/
+
+# The screenshots taken by tools/screenshots.py are build output, not source.
+tools/shots/

@@ -99,6 +99,7 @@ def test_voice_drafts_then_explicit_gemini_click_exports_plan(
         assert not any(button.isEnabled() for button in win.video_export_buttons)
     finally:
         win.close()
+        win.deleteLater()
         app.processEvents()
 
 
@@ -141,4 +142,5 @@ def test_business_voice_drafts_without_external_account_access(tmp_path, monkeyp
         assert not win.business_generate.isEnabled()
     finally:
         win.close()
+        win.deleteLater()
         app.processEvents()
