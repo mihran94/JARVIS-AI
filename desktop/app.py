@@ -3930,6 +3930,9 @@ class Window(QMainWindow):
         if self.confirm(Action('delete_conversation', self.session)):
             self.conversation_plan.cancel('Conversation deleted.')
             self.store.clear_messages(self.session)
+            # Deleting the conversation must also revoke any previously
+            # selected one-turn file sharing and discard local text snapshots.
+            self.clear_attachments()
             self.render_chat()
             self.refresh_archives()
 
