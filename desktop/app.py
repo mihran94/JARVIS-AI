@@ -71,7 +71,10 @@ from providers.models import check_model
 from providers.registry import provider_names
 from providers.router import ProviderRouter
 from providers.stream_fallback import StreamTarget, stream_with_fallback, FallbackBlocked
-from automation.windows import APPS, EDITOR_EXECUTABLES, editor_executable, launch_app, launch_editor
+from automation.windows import (APPS, EDITOR_EXECUTABLES, editor_executable, launch_app,
+                                launch_editor, open_path)
+from automation.organise import (OrganiseError, organise, plan_organise, plan_text,
+                                 result_text)
 from automation.desktop_tasks import parse_desktop_task, target_is_foreground, type_into_target
 from automation.inspection import inspect_windows
 from developer_studio.workspace import Workspace
@@ -990,6 +993,8 @@ class Window(QMainWindow):
         not one of them is not answered here, and goes on to the model.
         """
         intent = local_commands.match(text)
+        if intent == 'tidy':
+            return self.tidy_command()
         if intent == 'capabilities':
             return capability_summary(self)
         if intent == 'time':
@@ -998,6 +1003,30 @@ class Window(QMainWindow):
             phone_status = 'Running' if self.bridge.listener.running else 'Stopped'
             return f'{self.state.text()}\nPhone Remote: {phone_status}\n\n{self.system_summary}'
         return None
+
+    def tidy_command(self):
+        """Carry out the folder plan the owner has already seen.
+
+        Nothing moves without a plan that was shown first and an approval
+        for that exact plan.
+        """
+        plan = getattr(self, 'organise_plan', None)
+        if plan is None:
+            return ('There is no folder plan to carry out. Choose a folder on the '
+                    'Windows Automation page and read the plan first.')
+        folder = plan.folder
+        try:
+            result = self.gateway.run(
+                Action('organise_folder', folder),
+                lambda action: self.confirm(action),
+                lambda: organise(plan))
+        except Denied:
+            return 'Declined. Nothing was moved.'
+        except Stopped:
+            return 'Emergency stop. Nothing was moved.'
+        self.organise_plan = None
+        self.refresh_safety_report()
+        return result_text(result)
 
     def set_ai_visual_state(self, state):
         """Keep model work separate from microphone and playback activity."""
@@ -1459,16 +1488,108 @@ class Window(QMainWindow):
 
     def automation_page(self):
         page, layout = self.page('Windows Automation',
-            'Open approved apps, inspect windows, or read text from a connected camera.')
+            'Open approved apps, open a file or folder you chose, tidy a folder you chose, '
+            'or read text from a connected camera. Every action that changes something '
+            'needs your approval first.')
         self.app_choice = QComboBox()
         self.app_choice.addItems(APPS)
         layout.addWidget(self.app_choice)
         self.button(layout, 'Review and launch', self.launch)
+        self.button(layout, 'Open a file or folder…', self.open_chosen_path)
+        self.button(layout, 'Tidy a folder…', self.organise_chosen_folder)
         self.button(layout, 'Review visible window titles (read only)', self.inspect_visible_windows)
         self.button(layout, 'Watch & read connected camera',
                     lambda: self.notify(lambda: open_camera_reader(self)))
         layout.addStretch()
+        # What the approval boundary has actually done, in the owner's words.
+        safety_box = QGroupBox('Approval boundary')
+        safety_layout = QVBoxLayout(safety_box)
+        self.safety_report = QLabel('')
+        self.safety_report.setWordWrap(True)
+        safety_layout.addWidget(self.safety_report)
+        self.safety_details = QPlainTextEdit()
+        self.safety_details.setReadOnly(True)
+        self.safety_details.setMaximumHeight(120)
+        self.safety_details.setPlaceholderText(
+            'The last few decisions of the approval boundary.')
+        safety_layout.addWidget(self.safety_details)
+        layout.addWidget(safety_box)
+        self.refresh_safety_report()
         return page
+
+    def refresh_safety_report(self):
+        """Show what the approval boundary has allowed and refused."""
+        if not hasattr(self, 'safety_report'):
+            return
+        self.safety_report.setText(self.policy.summary())
+        lines = []
+        for decision in self.policy.decisions()[-8:]:
+            lines.append(f'{decision.outcome}: {decision.kind} — {decision.target}'
+                         + (f' ({decision.detail})' if decision.detail else ''))
+        self.safety_details.setPlainText('\n'.join(lines))
+
+    def open_chosen_path(self):
+        """Open a file or folder the owner chose, after they approve it."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, 'Choose a file to open', '', 'Anything (*.*)')
+        if not path:
+            return
+        target = Path(path)
+        if target.is_dir():
+            # A folder is opened with Explorer rather than with a program.
+            chosen = QFileDialog.getExistingDirectory(self, 'Choose a folder to open')
+            if not chosen:
+                return
+            target = Path(chosen)
+
+        def operation():
+            return open_path(str(target))
+
+        self.gateway.run(
+            Action('open_path', str(target)),
+            lambda action: self.confirm(action),
+            operation)
+        self.refresh_safety_report()
+
+    def organise_chosen_folder(self):
+        """Tidy a folder the owner chose, after they have seen the plan."""
+        chosen = QFileDialog.getExistingDirectory(
+            self, 'Choose a folder to tidy')
+        if not chosen:
+            return
+        try:
+            plan = plan_organise(chosen)
+        except OrganiseError as error:
+            self.show_local_system_reply(chosen, str(error))
+            return
+        if not plan.moves:
+            self.show_local_system_reply(chosen, plan_text(plan))
+            return
+        self.organise_plan = plan
+        self.organise_folder = chosen
+        self.show_local_system_reply(chosen, plan_text(plan))
+        self.show_local_system_reply(
+            chosen,
+            'Nothing has been moved yet. Say "tidy it" and the plan above is '
+            'carried out exactly as it is.')
+
+    def run_approved_organise(self):
+        """Carry out the plan the owner has seen."""
+        plan = getattr(self, 'organise_plan', None)
+        if plan is None:
+            self.show_local_system_reply('tidy it', 'There is no plan to carry out.')
+            return
+        folder = plan.folder
+
+        def operation():
+            return organise(plan)
+
+        self.gateway.run(
+            Action('organise_folder', folder),
+            lambda action: self.confirm(action),
+            operation)
+        self.organise_plan = None
+        self.refresh_safety_report()
 
     def video_page(self):
         page, layout = self.page(
