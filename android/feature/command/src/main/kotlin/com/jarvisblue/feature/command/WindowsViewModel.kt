@@ -88,6 +88,15 @@ class WindowsViewModel @Inject constructor(
                 error = "Enter the Windows address and paste the pairing code or its secret")
             return
         }
+        // The code carries the moment it stops being usable. The iPhone
+        // refuses an expired code when it scans it, and the desktop refuses
+        // an expired secret when it is used, so the phone refuses it here as
+        // well and the three sides agree.
+        if (details.isExpired(System.currentTimeMillis() / 1000L)) {
+            _state.value = _state.value.copy(
+                error = "That pairing code has expired. Show a new one in Windows JARVIS.")
+            return
+        }
         val port = runCatching {
             DesktopEndpoint.pairingPort(host, portInput).also { DesktopEndpoint.baseUrl(host, it) }
         }.getOrElse {

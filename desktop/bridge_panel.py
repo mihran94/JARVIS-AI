@@ -343,7 +343,8 @@ class BridgePanel(QWidget):
 
     def pair_device(self):
         def operation():
-            pairing = self.pairing.pair(key_id=KEY_ID, label='phone')
+            pairing = self.pairing.pair(key_id=KEY_ID, label='phone',
+                                        expires_epoch_ms=self._pairing_deadline())
             self.secret_display.setPlainText(pairing.secret)
             self.refresh()
             return ('Phone paired. Copy the shared secret below into the phone. '
@@ -354,23 +355,32 @@ class BridgePanel(QWidget):
         """Pair an iPhone under its own key id and show its pairing code."""
         def operation():
             key_id = self.phone_key.text().strip() or IPHONE_KEY_ID
-            pairing = self.pairing.pair(key_id=key_id, label='iphone')
+            pairing = self.pairing.pair(key_id=key_id, label='iphone',
+                                        expires_epoch_ms=self._pairing_deadline())
             self.secret_display.setPlainText(pairing.secret)
             self.refresh()
             return ('iPhone paired as ' + key_id + '. Show the pairing code and '
                     'scan it with the phone.')
         self.notify(operation)
 
+    def _pairing_deadline(self) -> int:
+        """The moment a pairing code stops being usable, in milliseconds."""
+        return expires_at(lifetime_seconds=DEFAULT_LIFETIME_SECONDS) * 1000
+
     def show_pairing_code(self):
         """Build the pairing code and draw it as a QR code."""
         def operation():
             address = self.phone_address.text().strip()
             key_id = self.phone_key.text().strip() or IPHONE_KEY_ID
+            # Asking for the code again means the owner is about to put it
+            # on the phone, so the deadline moves with it, and the record
+            # and the code carry the same moment.
+            expires_ms = self.pairing.extend_deadline(key_id, self._pairing_deadline())
             secret = self.pairing.secret_for(key_id)
             if not secret:
                 raise ValueError('Pair this phone first, then show the pairing code.')
             payload = pairing_payload(address, key_id, secret,
-                                      expires_at(lifetime_seconds=DEFAULT_LIFETIME_SECONDS),
+                                      expires_ms // 1000,
                                       fingerprint=self.certificate_fingerprint())
             self.code_text.setPlainText(payload)
             self._draw_qr(payload)
@@ -379,8 +389,9 @@ class BridgePanel(QWidget):
                                     paid_consent=self.chat_paid.isChecked(),
                                     memory_sync=self.chat_memory.isChecked())
             return ('Pairing code ready. Scan it with the iPhone, or copy the '
-                    'text. The secret in it stops working in '
-                    f'{DEFAULT_LIFETIME_SECONDS // 60} minutes.')
+                    'text. If the phone has not paired with it in '
+                    f'{DEFAULT_LIFETIME_SECONDS // 60} minutes, the secret in it '
+                    'stops working.')
         self.notify(operation)
 
     def certificate_fingerprint(self):
