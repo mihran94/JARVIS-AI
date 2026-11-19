@@ -46,12 +46,12 @@ The patch was verified with `git apply --check`.
 
 ## The CI improvement patch
 
-`patches/github-actions-green.patch` now only carries the change to the test
+`patches/github-actions-green.patch` carries the change to the test
 workflow: it reports both operating systems even when one of them fails, so a
-Linux only problem never hides the Windows result. The Qt runtime library
-that the Linux job needs is installed from the repository content
-(`scripts/qt_runtime.py`), so the recipe is already green without this
-patch.
+Linux only problem never hides the Windows result, and it installs the Qt
+runtime library that the Linux job needs from the repository content
+(`scripts/qt_runtime.py`). The `fail-fast` setting now also lives in
+`.github/workflows/tests.yml` itself, so the patch and the workflow agree.
 
 ## What they do
 
