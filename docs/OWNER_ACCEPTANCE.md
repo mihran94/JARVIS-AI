@@ -10,6 +10,56 @@ itself. The Windows installer job also built the executable and the
 installer. What those runners cannot do is talk to a microphone, draw on
 a scaled display, or hold a phone.
 
+## A. What the build servers have already proved
+
+These are done, on the exact tree of the integration pull request, at
+commit `21c29013dbfec5886dc34db1bd32c9abad77a407`. **The owner does not
+have to do any of them.**
+
+| What | Result | Where |
+| --- | --- | --- |
+| The desktop test suite on Ubuntu | **1071 passed, 9 skipped** | [run 44427139746](https://github.com/mihran94/JARVIS-AI/actions/runs/44427139746) |
+| The desktop test suite on Windows | **1067 passed, 13 skipped** | [run 44427139746](https://github.com/mihran94/JARVIS-AI/actions/runs/44427139746) |
+| The same suite on Linux, run by hand | **1075 passed, 5 skipped** | the tree of this branch |
+| The source integrity manifest | matches the tree | `python scripts/source_manifest.py --check` |
+| The Windows application | built with PyInstaller | [run 44427139768](https://github.com/mihran94/JARVIS-AI/actions/runs/44427139768) |
+| The Windows installer | built, Inno Setup reports **Successful compile** | the same run |
+| The Windows installer artefact | `JARVIS-unified-windows-unsigned-21c29013dbfec5886dc34db1bd32c9abad77a407` | download it from the run above |
+| The Android unit tests | **49 tests, 0 failures, 0 errors** | `:core:common:test`, `:core:windows:testDebugUnitTest`, `:feature:command:testDebugUnitTest`, `:app:testDebugUnitTest` |
+| The Android debug APK | built and audited | see below |
+| The three workflow patches | all three apply to this tree, in order | `git apply --check` |
+
+The Android APK built from this tree asks for `INTERNET`,
+`ACCESS_NETWORK_STATE` and `USE_BIOMETRIC`, and for none of the
+permissions the workflow forbids. It has no background component other
+than the launcher. Its SHA-256 is
+`9e0431ab64285162e9b69615774620b011717f85df361904ffe0894ab1971e19`.
+
+**What the servers did not do.** The Android application was not built by
+the workflow, because `android-integration.yml` has no `pull_request`
+trigger and the patch that adds one is not applied yet. It was built by
+hand here instead, with the same tasks the workflow runs.
+
+## B. What only the owner can answer
+
+Nothing below can be proven from a build server. Each line needs a
+person, a real machine and, in some cases, a real phone.
+
+| What | Why a server cannot answer it |
+| --- | --- |
+| The microphone, the Tamil speech input and the spoken reply | a runner has no microphone and no speaker |
+| The interface at 125 %, 150 % and 200 % scaling | a runner has one screen at one size |
+| The Tamil text in the interface on a real display | a runner has no font that shows it as a person does |
+| The Android pairing, a remote job, the revocation and the reconnection | a runner cannot hold a phone |
+| The certificate refusal on a real phone | the phone has to be the one that was told to refuse |
+| The global hotkey pressed in another application | a runner has no other application and no keyboard |
+| Install, launch, restart and uninstall of the Windows installer | a runner cannot install a program on a desktop |
+| The signed release | a signing key is not in the repository |
+
+The numbered list below is the detailed form of this table, in the order
+the work was done. Answer each line **yes** or **no**, and say which one
+could not be answered and why.
+
 **Order.** The stack is fourteen branches and each one builds on the one
 before it, so they are merged in order. The checklist is written in the
 same order. Section 0a says how to merge them in one command.
