@@ -240,6 +240,44 @@ QWidget#approvalCard {{
     border-radius: 14px;
 }}
 
+/* ── PRIME shell: one visible holographic hero and one compact dock ───── */
+QFrame#primeHero {{
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                stop:0 {t['glass_solid']}, stop:1 {t['surface']});
+    border: 1px solid {t['edge_strong']};
+    border-radius: 24px;
+}}
+QFrame#primeDock {{
+    background: {t['glass_solid']};
+    border: 1px solid {t['edge']};
+    border-radius: 20px;
+}}
+QFrame#primeDock QPushButton {{
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 12px;
+    padding: 7px 12px;
+}}
+QFrame#primeDock QPushButton:hover {{
+    background: {t['selection']};
+    border-color: {t['edge_strong']};
+}}
+QLabel#primeEyebrow {{
+    color: {t['accent']};
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1.6px;
+}}
+QLabel#primeHeroTitle {{
+    color: {t['text']};
+    font-size: 27px;
+    font-weight: 700;
+}}
+QLabel#primeHeroDescription {{
+    color: {t['muted']};
+    font-size: 13px;
+}}
+
 /* ── controls ───────────────────────────────────────────────────────────── */
 QPushButton {{
     background: {t['glass']};
