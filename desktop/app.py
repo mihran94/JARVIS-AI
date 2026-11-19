@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QPushButton, QListWidget, QStackedWidget, QPlainTextEdit, QLineEdit,
     QComboBox, QMessageBox, QFormLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QCheckBox, QDialog, QFileDialog, QScrollArea, QLayout,
-    QProgressBar, QGroupBox, QSizePolicy, QInputDialog,
+    QProgressBar, QGroupBox, QFrame, QSizePolicy, QInputDialog,
 )
 from dataclasses import replace
 
@@ -293,7 +293,7 @@ class TestRunWorker(QThread):
 class Window(QMainWindow):
     def __init__(self, data_root):
         super().__init__()
-        self.setWindowTitle('JARVIS AI • Your Windows Assistant')
+        self.setWindowTitle('JARVIS PRIME • MARK LVII')
         self.resize(1180, 790)
         self.root = Path(data_root)
         self.store = Store(self.root / 'history.sqlite3')
@@ -353,9 +353,15 @@ class Window(QMainWindow):
         outer.setContentsMargins(24, 20, 24, 20)
         header = QHBoxLayout()
         header.setSpacing(12)
-        brand = QLabel('JARVIS AI')
+        brand_stack = QVBoxLayout()
+        brand_stack.setSpacing(1)
+        brand = QLabel('JARVIS PRIME')
         brand.setObjectName('brandTitle')
-        header.addWidget(brand)
+        brand_stack.addWidget(brand)
+        edition = QLabel('MARK LVII  /  PERSONAL AI')
+        edition.setObjectName('brandSub')
+        brand_stack.addWidget(edition)
+        header.addLayout(brand_stack)
         header.addStretch()
         self.state = QLabel('● READY · MANUAL APPROVAL')
         self.state.setObjectName('statusChip')
@@ -370,21 +376,33 @@ class Window(QMainWindow):
         stop.clicked.connect(self.stop)
         header.addWidget(stop)
         outer.addLayout(header)
-        navigation = QHBoxLayout()
+        # One compact PRIME dock. All buttons open the existing, permission-
+        # gated pages; this is a layout replacement, not a second assistant.
+        self.prime_dock = QFrame(central)
+        self.prime_dock.setObjectName('primeDock')
+        navigation = QHBoxLayout(self.prime_dock)
+        navigation.setContentsMargins(10, 5, 10, 5)
+        navigation.setSpacing(7)
         self.chat_home_button = self.button(
-            navigation, 'Assistant', lambda: self.open_section('JARVIS Chat'))
+            navigation, 'Chat', lambda: self.open_section('JARVIS Chat'))
         self.chat_home_button.hide()
         self.tools_button = QPushButton('Tools')
         self.tools_button.setCheckable(True)
         self.tools_button.hide()
         navigation.addWidget(self.tools_button)
         self.island_button = self.button(navigation, 'Island', self.open_island)
+        self.coding_button = self.button(
+            navigation, 'Coding', lambda: self.open_section('Coding Assistant'))
+        self.pc_control_button = self.button(
+            navigation, 'PC Control', lambda: self.open_section('PC Control'))
+        self.voice_button = self.button(
+            navigation, 'Voice', lambda: self.open_section('Voice / Hey Jarvis'))
         self.settings_button = self.button(
             navigation, 'Settings', lambda: self.open_section('Settings & Safety'))
         self.plugins_button = self.button(navigation, 'Plugins', self.open_plugins)
         self.plugins_button.hide()  # The full plugin manager lives in Settings.
         navigation.addStretch()
-        outer.addLayout(navigation)
+        outer.addWidget(self.prime_dock)
         body = QHBoxLayout()
         self.nav = QListWidget()
         self.nav.setFixedWidth(174)
@@ -1094,31 +1112,57 @@ class Window(QMainWindow):
         self.hud_voice_reply.show()
 
     def chat_page(self):
-        page, layout = self.page('Home & Chat', 'Ask in Tamil, Tanglish, English or French.')
-        hero = QHBoxLayout()
+        # PRIME is the production Chat layout. Keep the old BlueOrb instance
+        # only as a state-signal compatibility object; it is never painted.
+        # The visible Reactor is the single assistant visual.
+        page = QWidget()
+        page.setObjectName('pageRoot')
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(18, 12, 14, 10)
+        layout.setSpacing(10)
         self.orb = BlueOrb(page)
-        self.orb.setFixedSize(52, 52)
-        self.orb.setObjectName('heroOrb')
-        hero.addWidget(self.orb)
+        self.orb.setObjectName('legacyStateOrb')
+        self.orb.hide()
+
+        self.prime_hero = QFrame(page)
+        self.prime_hero.setObjectName('primeHero')
+        hero = QHBoxLayout(self.prime_hero)
+        hero.setContentsMargins(22, 13, 16, 13)
+        hero.setSpacing(12)
         details = QVBoxLayout()
+        details.setSpacing(8)
+        eyebrow = QLabel('MARK LVII  /  PERSONAL INTELLIGENCE')
+        eyebrow.setObjectName('primeEyebrow')
+        details.addWidget(eyebrow)
+        headline = QLabel('Your AI command center')
+        headline.setObjectName('primeHeroTitle')
+        headline.setWordWrap(True)
+        details.addWidget(headline)
+        description = QLabel(
+            'Talk naturally. Create, code and manage your PC with your approval.')
+        description.setObjectName('primeHeroDescription')
+        description.setWordWrap(True)
+        details.addWidget(description)
         self.orb_status = QLabel('JARVIS  /  STANDBY')
         self.orb_status.setObjectName('statusChip')
-        self.orb_status.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        details.addWidget(self.orb_status)
+        self.orb_status.setSizePolicy(
+            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        details.addWidget(self.orb_status, 0, Qt.AlignmentFlag.AlignLeft)
+        details.addStretch()
+        hero.addLayout(details, 1)
+        from desktop.omega_visuals import Reactor
+        self.chat_reactor = Reactor()
+        self.chat_reactor.theme = self.interface_theme
+        self.chat_reactor.setAccessibleName('JARVIS PRIME holographic core')
+        self.chat_reactor.setFixedSize(180, 170)
+        hero.addWidget(self.chat_reactor, 0, Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.prime_hero)
+
         self.system_metrics_label = QLabel('SYSTEM  /  Collecting local metrics...')
         self.system_metrics_label.setWordWrap(True)
         self.system_metrics_label.setObjectName('systemMetrics')
         self.system_metrics_label.hide()
-        hero.addLayout(details, 1)
-        layout.addLayout(hero)
-        # The MARK LVII-inspired holographic reactor shares the existing AI
-        # status and voice pipeline. It does not launch a second assistant.
-        from desktop.omega_visuals import Reactor
-        self.chat_reactor = Reactor()
-        self.chat_reactor.theme = self.interface_theme
-        self.chat_reactor.setAccessibleName('JARVIS holographic core')
-        self.chat_reactor.setFixedHeight(170)
-        layout.addWidget(self.chat_reactor, 0, Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.system_metrics_label)
         # The active brain sits on its own line. It is information the owner
         # needs at a glance, and keeping it out of the provider row stops a
         # long model name from forcing the chat page to scroll sideways.
@@ -2760,9 +2804,12 @@ class Window(QMainWindow):
         self.worker.start()
 
     def permissions_page(self):
-        page, layout = self.page('Settings and safety',
-            'Commands run JARVIS. Only Settings and Island appear in the main toolbar. '
+        page, layout = self.page('JARVIS PRIME Settings',
+            'MARK LVII appearance, intelligence, voice and safety in one place. '
             'Every computer action needs your explicit approval.')
+        settings_edition = QLabel('MARK LVII  /  PERSONAL AI SETTINGS')
+        settings_edition.setObjectName('primeEyebrow')
+        layout.addWidget(settings_edition)
         assistant_group = QGroupBox('Chat, provider and voice preferences')
         assistant_layout = QVBoxLayout(assistant_group)
         assistant_layout.addWidget(self.chat_settings_panel)
