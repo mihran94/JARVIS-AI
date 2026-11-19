@@ -2,6 +2,7 @@ package com.jarvisblue.feature.command
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.jarvisblue.core.common.PairingCode
 import com.jarvisblue.core.database.PeerRepository
 import com.jarvisblue.core.model.BridgeJob
 import com.jarvisblue.core.model.BridgeJobKind
@@ -63,14 +64,37 @@ class WindowsViewModel @Inject constructor(
         _state.value = _state.value.copy(secretInput = secret)
     }
 
-    /** Stores the shared secret in the Keystore-backed vault and remembers the peer. */
+    /**
+     * Stores the shared secret in the Keystore-backed vault and remembers
+     * the peer.
+     *
+     * The owner can paste the whole pairing code that Windows JARVIS
+     * shows, and the address, the secret and the fingerprint of the
+     * certificate all come with it. A bare secret is still accepted, and
+     * then there is no certificate to pin, which is said plainly rather
+     * than left to be assumed.
+     */
     fun pair() {
-        val host = _state.value.hostInput.trim()
-        val portInput = _state.value.portInput
-        val secret = _state.value.secretInput.trim()
-        if (host.isEmpty() || secret.length < 32) {
+        val typed = _state.value.secretInput.trim()
+        val details = runCatching { PairingCode.parse(typed) }.getOrElse { error ->
             _state.value = _state.value.copy(
-                error = "Enter the Windows address and its 32+ character pairing secret")
+                error = "Paste the pairing code from Windows JARVIS, or its 32+ character secret")
+            return
+        }
+        val host = details.mergeHost(_state.value.hostInput)
+        val portInput = details.mergePort(_state.value.portInput)
+        if (host.isEmpty()) {
+            _state.value = _state.value.copy(
+                error = "Enter the Windows address and paste the pairing code or its secret")
+            return
+        }
+        // The code carries the moment it stops being usable. The iPhone
+        // refuses an expired code when it scans it, and the desktop refuses
+        // an expired secret when it is used, so the phone refuses it here as
+        // well and the three sides agree.
+        if (details.isExpired(System.currentTimeMillis() / 1000L)) {
+            _state.value = _state.value.copy(
+                error = "That pairing code has expired. Show a new one in Windows JARVIS.")
             return
         }
         val port = runCatching {
@@ -82,7 +106,13 @@ class WindowsViewModel @Inject constructor(
         }
         viewModelScope.launch {
             try {
-                secretVault.put(SecretVault.ALIAS_WINDOWS_PEER, secret)
+                secretVault.put(SecretVault.ALIAS_WINDOWS_PEER, details.secret)
+                val fingerprint = details.fingerprint
+                if (fingerprint != null) {
+                    secretVault.put(SecretVault.ALIAS_WINDOWS_PEER_CERT, fingerprint)
+                } else {
+                    secretVault.remove(SecretVault.ALIAS_WINDOWS_PEER_CERT)
+                }
                 val peer = WindowsPeer(
                     peerId = "windows-${host.lowercase()}",
                     displayName = "Windows JARVIS",
@@ -97,7 +127,11 @@ class WindowsViewModel @Inject constructor(
                 _state.value = _state.value.copy(
                     peer = peer,
                     secretInput = "",
-                    statusLine = "PC details saved; checking secure connection...",
+                    statusLine = if (fingerprint != null) {
+                        "PC details saved; the certificate is pinned. Checking the secure connection..."
+                    } else {
+                        "PC details saved; no certificate was pinned. Checking the secure connection..."
+                    },
                     error = null,
                 )
                 refresh()
@@ -112,6 +146,9 @@ class WindowsViewModel @Inject constructor(
     fun unpair() {
         viewModelScope.launch {
             secretVault.remove(SecretVault.ALIAS_WINDOWS_PEER)
+            // The pinned certificate goes with the secret, so a phone that
+            // is unpaired cannot reach a machine that was never paired.
+            secretVault.remove(SecretVault.ALIAS_WINDOWS_PEER_CERT)
             _state.value.peer?.let { peerRepository.delete(it.peerId) }
             _state.value = _state.value.copy(
                 peer = null,

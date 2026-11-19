@@ -1,5 +1,6 @@
 """The unified JARVIS desktop keeps one command center and one safety policy."""
 import os
+import time
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 from PySide6.QtWidgets import QApplication
@@ -19,7 +20,10 @@ def test_one_dashboard_has_orb_read_only_metrics_and_existing_pages(tmp_path):
         # The interface theme is the premium dark one, not the default Qt look.
         assert STYLE == PRIME_DARK
         assert isinstance(window.orb, BlueOrb)
-        assert window.pages.count() == 16
+        # 17 internal pages: 9 in the navigation bar plus the command-only
+        # workspaces, including the Files & Folders document workspace.
+        assert window.pages.count() == 17
+        assert window.nav.count() == 9
         assert 'CPU' in window.system_metrics_label.text()
         assert window.nav.item(4).text() == 'Phone Remote'
         assert window.nav.item(3).text() == 'Voice / Hey Jarvis'
@@ -34,6 +38,10 @@ def test_one_dashboard_has_orb_read_only_metrics_and_existing_pages(tmp_path):
         assert not window.bridge.listener.running
     finally:
         window.close()
+        # The window is destroyed, not just closed: a closed window keeps its
+        # widgets and its OpenGL resources alive, and the next test then
+        # renders far more slowly than it should.
+        window.deleteLater()
         app.processEvents()
 
 
@@ -92,6 +100,108 @@ def test_hud_and_local_commands_use_the_same_counters(tmp_path, monkeypatch):
         assert outbound[-1]['content'] == 'Explain how timelines work'
     finally:
         window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_the_hud_says_listening_while_the_microphone_is_listening(tmp_path, monkeypatch):
+    """The HUD must not say IDLE while the microphone is really listening.
+
+    The worker thread is not running yet when start() returns, so the state
+    read straight after the button is pressed can still say "not listening".
+    The panel refreshes when the thread really starts, and the HUD follows.
+    """
+    from threading import Event
+
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
+    voice = window.voice_panel
+    release = Event()
+
+    class Recognizer:
+        def wait_for_wake_phrase(self, timeout):
+            release.wait(30)
+            return '', ''
+
+        def recognize_once(self, timeout):
+            return ''
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(voice, '_recognizer_factory', lambda *_: Recognizer())
+    try:
+        window.open_section('Command Center')
+        voice.allow.setChecked(True)
+        voice.listen('continuous')
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            app.processEvents()
+            if window.hud_voice_status.text() == 'LISTENING':
+                break
+            time.sleep(0.01)
+        assert window.hud_voice_status.text() == 'LISTENING', (
+            'the HUD did not show LISTENING while the microphone was listening')
+    finally:
+        release.set()
+        window.stop()
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_the_voice_panel_refreshes_when_the_worker_thread_really_starts(tmp_path, monkeypatch):
+    """The panel must refresh again when the worker thread really starts.
+
+    The worker thread is not running yet when start() returns, so the state
+    read straight afterwards can still say "not listening". On a loaded
+    machine that is exactly when the HUD would keep saying IDLE while the
+    microphone is live. The refresh has to happen again when the thread
+    begins, so the status the owner reads is always the true one.
+    """
+    from threading import Event
+
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
+    voice = window.voice_panel
+    release = Event()
+
+    class Recognizer:
+        def wait_for_wake_phrase(self, timeout):
+            release.wait(30)
+            return '', ''
+
+        def recognize_once(self, timeout):
+            return ''
+
+        def stop(self):
+            pass
+
+    calls = []
+    original_refresh = voice.refresh
+
+    def counting_refresh():
+        calls.append(1)
+        original_refresh()
+
+    monkeypatch.setattr(voice, '_recognizer_factory', lambda *_: Recognizer())
+    monkeypatch.setattr(voice, 'refresh', counting_refresh)
+    try:
+        window.open_section('Command Center')
+        voice.allow.setChecked(True)
+        calls.clear()
+        voice.listen('continuous')
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and len(calls) < 2:
+            app.processEvents()
+            time.sleep(0.01)
+        assert len(calls) >= 2, (
+            'the voice panel did not refresh when the worker thread started')
+    finally:
+        release.set()
+        window.stop()
+        window.close()
+        window.deleteLater()
         app.processEvents()
 
 
@@ -112,7 +222,10 @@ def test_hud_continuous_voice_waits_for_playback_before_listening_again(tmp_path
     class Recognizer:
         def wait_for_wake_phrase(self, timeout):
             if len(recognizers) == 1:
-                release_input.wait(2)
+                # The stub holds for as long as the test needs. A short
+                # timeout here ends the recognition before a slow machine
+                # has delivered the state the test is waiting for.
+                release_input.wait(30)
                 return 'Hey Jarvis', ''
             voice.worker.msleep(20)
             return '', ''
@@ -127,7 +240,9 @@ def test_hud_continuous_voice_waits_for_playback_before_listening_again(tmp_path
         def speak_interruptibly(self, text, should_stop):
             replies.append(text)
             playback_started.set()
-            release_audio.wait(2)
+            # The playback holds until the test says so, so the HUD is
+            # SPEAKING for as long as the test waits for it.
+            release_audio.wait(30)
 
     def recognizer_factory(*_):
         recognizer = Recognizer()
@@ -153,7 +268,10 @@ def test_hud_continuous_voice_waits_for_playback_before_listening_again(tmp_path
         voice.allow.setChecked(True)
         window.read_replies.setChecked(True)
         voice.listen('continuous')
-        assert window.hud_voice_status.text() == 'LISTENING'
+        # The status arrives from the voice worker on its own thread, so the
+        # event loop has to deliver it. Waiting for it is what the test is
+        # about; the other states below are waited for the same way.
+        wait_for(lambda: window.hud_voice_status.text() == 'LISTENING')
         release_input.set()
         wait_for(playback_started.is_set)
         wait_for(lambda: window.hud_voice_status.text() == 'SPEAKING')
@@ -172,4 +290,5 @@ def test_hud_continuous_voice_waits_for_playback_before_listening_again(tmp_path
         release_input.set()
         release_audio.set()
         window.close()
+        window.deleteLater()
         app.processEvents()

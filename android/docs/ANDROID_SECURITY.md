@@ -108,3 +108,29 @@ that Play can attribute, not to turn the check off.
 | Play Store track | Needs the owner account and the new signing key |
 | Device test of the consent switches | Needs a physical device with Android 12 or newer |
 | `adb` install of the debug build | The debug APK is signed with a key the device does not know, so the phone asks to allow the source |
+
+## The bridge certificate is pinned
+
+The Windows desktop makes its own certificate for the private listener.
+Nobody signs it and no authority list knows it, so the phone cannot ask
+"is this certificate trusted?" the usual way. The pairing code carries
+the fingerprint of that one certificate, and the phone pins it.
+
+* The phone accepts **that certificate and no other**. A different
+  certificate on the same address is refused, even one that is perfectly
+  valid and signed by a public authority. That is the point of pinning.
+* The host name is not what decides. The certificate is for the bridge,
+  not for the address the owner typed, so the name is not checked; the
+  pinned certificate is what identifies the peer.
+* A fingerprint that is damaged is not used and is not repaired. A
+  pairing code that was tampered with is refused.
+* When the owner pastes a bare secret instead of the whole code there is
+  no fingerprint to pin, and the app says so rather than pretending the
+  connection is pinned.
+
+The fingerprint is kept beside the shared secret in the Keystore-backed
+vault, and the two are removed together when the phone is unpaired.
+
+The rules live in `core/common` as `CertificatePin` and `PairingCode`, so
+they can be tested without a phone: `CertificatePinTest` and
+`PairingCodeTest`.

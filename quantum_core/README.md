@@ -19,9 +19,10 @@ in PowerShell to use another model available to your key.
 Spoken replies use local text-to-speech. Add `--no-voice` for text only. To
 opt into continuous microphone input for a session, launch with
 `--listen --language ta-IN`. Change the locale to `en-US` or `fr-FR` if needed.
-Google speech recognition receives the recorded audio in this mode. General
-questions are then sent to Gemini as text. Close the HUD or press Ctrl+C to
-end the session.
+The launcher asks for the microphone before it opens it, and the recording is
+recognised **on this computer** by Windows speech recognition: no microphone
+audio is sent to any network service. General questions are then sent to
+Gemini as text. Close the HUD or press Ctrl+C to end the session.
 
 The launcher serves the interface on `127.0.0.1:8766`. Use `--port` if that
 port is occupied. For a manual browser launch, use `--browser none` and open

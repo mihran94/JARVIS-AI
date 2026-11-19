@@ -322,6 +322,25 @@ class BridgeServer:
 
     # ------------------------------------------------------------- authenticity
 
+    def set_allowed_hosts(self, hosts) -> None:
+        """The peer addresses that may talk to the bridge.
+
+        The loopback addresses are always allowed. The owner adds the
+        address of a VPN or a private tunnel, so the phone can reach the
+        desktop without the listener being published to the internet.
+
+        The addresses are the peer addresses the request came from, not
+        the addresses the owner types as the phone's address: a phone
+        behind a tunnel arrives from the tunnel's own address.
+        """
+        allowed = {host.strip() for host in hosts if host and host.strip()}
+        allowed.update(DEFAULT_ALLOWED_HOSTS)
+        self._allowed_hosts = tuple(sorted(allowed))
+
+    def allowed_hosts(self) -> tuple:
+        """The peer addresses that may talk to the bridge."""
+        return tuple(self._allowed_hosts)
+
     def _check_source(self, request: BridgeRequest) -> None:
         """Reject a request that did not arrive over an allowed interface."""
         if request.remote_addr not in self._allowed_hosts:
@@ -348,5 +367,10 @@ class BridgeServer:
             verify(request.method, request.path, timestamp, request.body, secret, nonce, signature)
         except ProtocolError:
             raise BridgeHandlerError(403, AUTH_MESSAGE) from None
+        # The device has proved itself: it made a signed request with the
+        # secret it was given. From here it is trusted until the owner
+        # revokes it, so the deadline for using the pairing code stops
+        # applying to it.
+        self._pairing.confirm(key_id)
         self._pairing.touch(key_id)
         return device

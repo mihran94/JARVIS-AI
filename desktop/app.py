@@ -13,14 +13,21 @@ from PySide6.QtWidgets import (
     QPushButton, QListWidget, QStackedWidget, QPlainTextEdit, QLineEdit,
     QComboBox, QMessageBox, QFormLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QCheckBox, QDialog, QFileDialog, QScrollArea, QLayout,
-    QProgressBar, QGroupBox, QSizePolicy,
+    QProgressBar, QGroupBox, QSizePolicy, QInputDialog,
 )
+from dataclasses import replace
+
 from core.store import Store
 from core.conversation import ASSISTANT_GUIDANCE, addressed_request
 from desktop.conversation_plan import ConversationPlan, parse_plan as parse_conversation_plan
-from core.assistant_capabilities import summary as capability_summary, system_context as capability_context
+from developer_studio.inspection import inspect_project
+from core.assistant_capabilities import (conversation_context, summary as capability_summary,
+                                       system_context as capability_context)
 from quantum_core.studio_project import STUDIO_URL, studio_update_prompt, validate_studio_url
 from desktop.memory_page import MemoryPanel
+from desktop import documents
+from desktop import local_commands
+from desktop.document_search import search_folder, search_result_text, summary_export
 from desktop.attachments import (AttachmentError, as_untrusted_context,
                                  stage_files, stage_folder)
 from desktop.studio_inbox import StudioInboxDialog
@@ -30,6 +37,7 @@ from desktop.camera_reader import open_camera_reader
 from desktop.update_dialog import ReleaseChecker, open_updates
 from desktop.voice_panel import VoicePanel
 from desktop.tray import BackgroundControls
+from desktop.global_hotkey import DEFAULT_SHORTCUT, GlobalHotkey
 from desktop.background import ImprovementWorker, SourceCheckWorker
 from desktop.review_panel import ReviewPanel
 from desktop.startup import (StartupError, set_start_at_signin, start_at_signin_enabled,
@@ -39,6 +47,7 @@ from core.coding_tasks import prepared as prepared_tasks, resumable as resumable
 from core.development import DevelopmentError, maintenance_goal
 from core.updates import installation_root, read_state, release_path
 from providers import routing
+from providers import pricing
 from desktop import prime_theme
 from desktop.omega_visuals import THEMES as OMEGA_THEMES, theme_sheet
 from desktop.blue_orb import BlueOrb
@@ -64,7 +73,10 @@ from providers.models import check_model
 from providers.registry import provider_names
 from providers.router import ProviderRouter
 from providers.stream_fallback import StreamTarget, stream_with_fallback, FallbackBlocked
-from automation.windows import APPS, EDITOR_EXECUTABLES, editor_executable, launch_app, launch_editor
+from automation.windows import (APPS, EDITOR_EXECUTABLES, editor_executable, launch_app,
+                                launch_editor, open_path)
+from automation.organise import (OrganiseError, organise, plan_organise, plan_text,
+                                 result_text)
 from automation.desktop_tasks import parse_desktop_task, target_is_foreground, type_into_target
 from automation.inspection import inspect_windows
 from developer_studio.workspace import Workspace
@@ -72,8 +84,14 @@ from developer_studio.codex_cli import codex_executable, run_codex
 from developer_studio.editors import (
     CAPABILITY_LABELS, all_statuses, editor_from_text, editor_status, editor_names, open_project_in_editor,
 )
-from developer_studio.intents import CodingRequest, parse_coding_request
 from developer_studio.commands import HELP as COMMAND_HELP, parse_command
+from developer_studio.context import (
+    ConversationMemory, TaskRecord, describe_task, task_is_resumable,
+)
+from developer_studio.intents import (
+    LANGUAGE_NAMES, CodingRequest, detect_reply_language, match_projects,
+    parse_coding_request, parse_follow_up, strip_language_marker, summary_labels,
+)
 from developer_studio.projects import (
     SavedProject, assistant_language, configured_launchers, find_project, load_projects,
     project_status, routine_allowed, save_projects, set_assistant_language,
@@ -296,6 +314,7 @@ class Window(QMainWindow):
         self.workspace = Workspace(self.root / 'workspace')
         self.video_plan = None
         self.attachments = []  # A temporary local snapshot; never persisted.
+        self.document_under_read = None  # The document being previewed, if any.
         self.video_chat_brief = None
         self.chat_launch = None
         self.conversation_plan = ConversationPlan(self)
@@ -307,6 +326,9 @@ class Window(QMainWindow):
         self.coding_worker = None
         self.test_worker = None
         self.chat_task_id = None
+        self.memory = ConversationMemory(self.store)
+        self.pending_clarification = None
+        self.assistant_language = assistant_language(self.store)
         self.site_export = None
         self.news_panel = None
         self.site_draft = None
@@ -348,6 +370,9 @@ class Window(QMainWindow):
         stop.clicked.connect(self.stop)
         header.addWidget(stop)
         outer.addLayout(header)
+        # The old chrome is kept in one list, so the PRIME composition can
+        # take it away in one step instead of leaving pieces of it behind.
+        self.legacy_chrome = [brand, self.state, self.resume_button, stop]
         navigation = QHBoxLayout()
         self.chat_home_button = self.button(
             navigation, 'Assistant', lambda: self.open_section('JARVIS Chat'))
@@ -363,6 +388,8 @@ class Window(QMainWindow):
         self.plugins_button.hide()  # The full plugin manager lives in Settings.
         navigation.addStretch()
         outer.addLayout(navigation)
+        self.legacy_chrome += [self.chat_home_button, self.tools_button, self.island_button,
+                               self.settings_button, self.plugins_button]
         body = QHBoxLayout()
         self.nav = QListWidget()
         self.nav.setFixedWidth(174)
@@ -435,6 +462,9 @@ class Window(QMainWindow):
         self.refresh_history()
         self.render_chat()
         self.background_controls = BackgroundControls(self)
+        self.hotkey = GlobalHotkey(self.summon_from_hotkey)
+        self.hotkey_status = ''
+        self.apply_hotkey(self.store.get('hotkey:shortcut', DEFAULT_SHORTCUT), save=False)
         self.release_checker = ReleaseChecker(self)
         self.maintenance_timer = QTimer(self)
         self.maintenance_timer.timeout.connect(self.check_maintenance)
@@ -448,6 +478,145 @@ class Window(QMainWindow):
         self.omega.start(smoke=smoke)
         self.refresh_system_metrics()
         self.refresh_voice_hud()
+        self.enable_prime()
+
+    # -- the PRIME composition -------------------------------------------
+
+    def enable_prime(self):
+        """Put the PRIME interface in place of the old chrome.
+
+        The old header, the old navigation and the old chat page are
+        taken out of the window and the new composition takes their
+        place. Nothing is removed: the pages, the composer and the
+        controls are the ones the application already had, so every
+        feature keeps working and none of them is lost.
+        """
+        from desktop.prime_ui import (
+            PrimeChat, PrimeIsland, PrimePalette, PrimeShell,
+        )
+
+        if getattr(self, 'prime_shell', None) is not None:
+            return self.prime_shell
+        palette = PrimePalette(dark=self.prime_is_dark())
+        self.prime_palette = palette
+        shell = PrimeShell(self, palette)
+        self.prime_shell = shell
+
+        central = self.centralWidget()
+        outer = central.layout()
+        # The old header and the old navigation row are taken out of the
+        # window's own layout. The widgets in them are hidden rather than
+        # deleted, so nothing that still points at them breaks.
+        for widget in getattr(self, 'legacy_chrome', []):
+            widget.hide()
+            widget.setParent(None)
+        # The old application dock is retired: the PRIME rail is the
+        # navigation now. It is taken out of the window, not only hidden.
+        if self.omega is not None:
+            for widget in (self.omega.dock, self.omega.reveal):
+                widget.hide()
+                widget.setParent(None)
+        for index in reversed(range(outer.count())):
+            item = outer.itemAt(index)
+            widget = item.widget()
+            if widget is self.pages or widget is self.composer_bar:
+                continue
+            if widget is not None:
+                widget.setParent(None)
+            else:
+                outer.removeItem(item)
+        outer.removeWidget(self.pages)
+        outer.removeWidget(self.composer_bar)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addWidget(shell)
+
+        # The chat becomes the PRIME chat. The old page stays alive: the
+        # transcript it holds is what the application still reads.
+        chat = PrimeChat(self, palette)
+        index = self.page_indices['JARVIS Chat']
+        was_current = self.pages.currentIndex() == index
+        old_chat = self.pages.widget(index)
+        self.pages.removeWidget(old_chat)
+        self.pages.insertWidget(index, chat)
+        if was_current:
+            # The page that was open stays open.
+            self.pages.setCurrentIndex(index)
+        # The old page is kept alive on purpose: the transcript it holds
+        # is what the application still reads and copies.
+        self.prime_old_chat = old_chat
+        self.prime_chat = chat
+        shell.content.addWidget(self.pages)
+
+        island = PrimeIsland(self, palette)
+        island.show()
+        self.prime_island = island
+        self.refresh_prime_state()
+        return shell
+
+    def prime_is_dark(self) -> bool:
+        """The PRIME surface follows the theme the owner chose."""
+        from desktop.prime_theme import _luminance
+
+        name = self.interface_theme if self.omega is None else self.omega.theme
+        palette = OMEGA_THEMES.get(name)
+        if palette is None:
+            return True
+        return _luminance(palette[0]) < 0.5
+
+    def refresh_prime_state(self):
+        """The PRIME surface follows what JARVIS is doing."""
+        shell = getattr(self, 'prime_shell', None)
+        if shell is None:
+            return
+        state = self.prime_state()
+        shell.set_state(state)
+        chat = getattr(self, 'prime_chat', None)
+        if chat is not None:
+            chat.set_state(state)
+        island = getattr(self, 'prime_island', None)
+        if island is not None:
+            island.set_state(state, self.prime_state_detail(state))
+
+    def refresh_prime_theme(self):
+        """The PRIME surface follows the theme the owner chose."""
+        shell = getattr(self, 'prime_shell', None)
+        if shell is None:
+            return
+        from desktop.prime_ui import PrimePalette
+
+        palette = PrimePalette(dark=self.prime_is_dark())
+        shell.palette_.adopt(palette)
+        shell.refresh_theme()
+        chat = getattr(self, 'prime_chat', None)
+        if chat is not None:
+            chat.refresh_theme()
+        island = getattr(self, 'prime_island', None)
+        if island is not None:
+            island.refresh_theme()
+
+    def prime_state(self) -> str:
+        """idle, listening, working or error, from the real state."""
+        if self.policy.stopped:
+            return 'error'
+        if self.chat_launch is not None:
+            return 'working'
+        if self.voice_panel.listening or self.voice_panel.speaking:
+            return 'listening'
+        if self.worker is not None or self.coding_worker is not None:
+            return 'working'
+        return 'idle'
+
+    def prime_state_detail(self, state: str) -> str:
+        if state == 'error':
+            return 'Stopped'
+        if state == 'listening':
+            return 'Listening'
+        if state == 'working':
+            if self.chat_launch is not None:
+                return 'Needs your approval'
+            return 'Working'
+        return 'Ready'
 
     def on_theme_chosen(self, name: str) -> None:
         if name not in OMEGA_THEMES:
@@ -460,6 +629,9 @@ class Window(QMainWindow):
             self.setStyleSheet(theme_sheet(name))
             self.chat_reactor.theme = name
             self.chat_reactor.update()
+        # After the theme is really in use, so the PRIME surface reads the
+        # theme that is in force and not the one before it.
+        self.refresh_prime_theme()
 
     def add_page(self, name, page, *, primary=True):
         index = self.pages.count()
@@ -489,6 +661,9 @@ class Window(QMainWindow):
                 self.nav.setCurrentRow(row)
                 break
         self.pages.setCurrentIndex(index)
+        shell = getattr(self, 'prime_shell', None)
+        if shell is not None:
+            shell.mark_active(name)
         if name == 'Settings & Safety':
             # The saved-project table lives in Settings, so it is refreshed
             # whenever the owner comes back to it.
@@ -711,6 +886,9 @@ class Window(QMainWindow):
 
     def page(self, title, note=''):
         page = QWidget()
+        # The page root carries the premium surface, so the window is never
+        # transparent behind the conversation.
+        page.setObjectName('pageRoot')
         layout = QVBoxLayout(page)
         layout.setContentsMargins(22, 18, 10, 10)
         label = QLabel(title)
@@ -963,21 +1141,47 @@ class Window(QMainWindow):
         dialog.exec()
 
     def local_system_reply(self, text):
-        command = ' '.join(addressed_request(text).casefold().split()).strip('?!.,')
-        if command in ('capabilities', '/capabilities', 'what can you do',
-                       'what are your abilities', 'your skills', 'what can jarvis do',
-                       'உன்னால் என்ன செய்ய முடியும்', 'என்ன செய்ய முடியும்',
-                       'jarvis capabilities', 'tes capacités'):
+        """The questions that are answered here, on this computer.
+
+        These are the ones that do not need a model: what JARVIS can do,
+        what time it is, and what the machine is doing. A question that is
+        not one of them is not answered here, and goes on to the model.
+        """
+        intent = local_commands.match(text)
+        if intent == 'tidy':
+            return self.tidy_command()
+        if intent == 'capabilities':
             return capability_summary(self)
-        if command in ('time', '/time', 'current time', 'what time is it', 'what is the time', "what's the time",
-                       'இப்போ நேரம் என்ன', 'நேரம்',
-                       'quelle heure est-il'):
+        if intent == 'time':
             return datetime.now().astimezone().strftime('%H:%M %Z')
-        if command in ('status', '/status', 'system status', 'system stats', 'cpu', 'ram',
-                       'கணினி நிலை', 'état du système'):
+        if intent == 'status':
             phone_status = 'Running' if self.bridge.listener.running else 'Stopped'
             return f'{self.state.text()}\nPhone Remote: {phone_status}\n\n{self.system_summary}'
         return None
+
+    def tidy_command(self):
+        """Carry out the folder plan the owner has already seen.
+
+        Nothing moves without a plan that was shown first and an approval
+        for that exact plan.
+        """
+        plan = getattr(self, 'organise_plan', None)
+        if plan is None:
+            return ('There is no folder plan to carry out. Choose a folder on the '
+                    'Windows Automation page and read the plan first.')
+        folder = plan.folder
+        try:
+            result = self.gateway.run(
+                Action('organise_folder', folder),
+                lambda action: self.confirm(action),
+                lambda: organise(plan))
+        except Denied:
+            return 'Declined. Nothing was moved.'
+        except Stopped:
+            return 'Emergency stop. Nothing was moved.'
+        self.organise_plan = None
+        self.refresh_safety_report()
+        return result_text(result)
 
     def set_ai_visual_state(self, state):
         """Keep model work separate from microphone and playback activity."""
@@ -1016,6 +1220,7 @@ class Window(QMainWindow):
             self.omega.set_voice(state)
         self.hud_talk.setEnabled(state not in ('stopped', 'listening', 'speaking')
                                  and not self.voice_panel.playback_busy)
+        self.refresh_prime_state()
 
     def answer_spoken_system_command(self, command):
         if self.worker is not None:
@@ -1148,16 +1353,42 @@ class Window(QMainWindow):
         self.chat_task_diff = self.button(task_buttons, 'Review diff', self.review_coding_diff)
         self.chat_task_tests = self.button(task_buttons, 'Run tests', self.run_coding_tests)
         self.chat_task_open = self.button(task_buttons, 'Open project', self.open_coding_project)
+        self.chat_task_accept = self.button(task_buttons, 'Accept the change', self.accept_coding_change)
+        self.chat_task_reject = self.button(task_buttons, 'Reject the change', self.reject_coding_change)
         card_layout.addLayout(task_buttons)
         self.chat_task_card.hide()
         layout.addWidget(self.chat_task_card)
+        # The plan of a job with more than one step: every step and the
+        # state it is really in. There is no percentage, because the work
+        # that is left cannot be measured before it is done.
+        self.plan_card = QWidget()
+        self.plan_card.setObjectName('taskCard')
+        plan_layout = QVBoxLayout(self.plan_card)
+        plan_layout.setContentsMargins(0, 0, 0, 0)
+        self.plan_text = QLabel()
+        self.plan_text.setWordWrap(True)
+        self.plan_text.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        plan_layout.addWidget(self.plan_text)
+        plan_buttons = QHBoxLayout()
+        self.plan_retry_button = self.button(
+            plan_buttons, 'Try this step again', self.retry_failed_plan_step)
+        self.plan_retry_button.setObjectName('primary')
+        self.plan_retry_button.setVisible(False)
+        plan_buttons.addWidget(self.plan_retry_button)
+        plan_buttons.addStretch()
+        plan_layout.addLayout(plan_buttons)
+        self.plan_card.hide()
+        layout.addWidget(self.plan_card)
         self.prompt = QPlainTextEdit()
         self.prompt.setObjectName('composerCard')
         self.prompt.setPlaceholderText(
             'என்ன செய்ய வேண்டும்? Tell me what you need… e.g. Jarvis, CapCut open pannu')
         self.prompt.setAccessibleName('Message to JARVIS')
-        self.prompt.setMinimumHeight(54)
-        self.prompt.setMaximumHeight(150)
+        # The prompt is tall enough for two lines of the placeholder, so
+        # nothing is cut off when the display is scaled to 150 % or 200 %.
+        self.prompt.setMinimumHeight(78)
+        self.prompt.setMaximumHeight(190)
         self.chat_send_shortcut = QShortcut(QKeySequence('Ctrl+Return'), self.prompt)
         self.chat_send_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
         self.chat_send_shortcut.activated.connect(self.send)
@@ -1169,6 +1400,11 @@ class Window(QMainWindow):
         composer_layout.setContentsMargins(2, 6, 2, 0)
         composer_layout.addWidget(self.prompt)
         self.read_replies = QCheckBox('Read replies aloud')
+        # Voice output is an explicit opt-in, remembered across restarts.
+        # Without this the user must tick the box on every launch.
+        self.read_replies.setChecked(bool(self.store.get('voice:read_replies', False)))
+        self.read_replies.toggled.connect(
+            lambda enabled: self.store.set('voice:read_replies', bool(enabled)))
         settings_layout.addWidget(self.read_replies)
         self.hands_free_voice = QCheckBox('Hands-free Hey Jarvis')
         self.hands_free_voice.setToolTip(
@@ -1183,6 +1419,7 @@ class Window(QMainWindow):
         self.review_pc_action_button = self.button(
             settings_actions, 'Review PC action', self.review_chat_pc_action)
         composer_actions = QHBoxLayout()
+        self.composer_actions = composer_actions
         composer_layout.addLayout(composer_actions)
         self.chat_mic = self.button(composer_actions, 'Speak', self.listen_to_user)
         self.chat_mic.setObjectName('quiet')
@@ -1191,11 +1428,23 @@ class Window(QMainWindow):
         self.attach_button.setObjectName('quiet')
         self.attach_button.setToolTip(
             'Choose files or a folder to preview. AI sharing is opt-in for one message.')
+        self.research_button = self.button(
+            composer_actions, 'Research a page', self.open_research_window)
+        self.research_button.setObjectName('quiet')
+        self.research_button.setToolTip(
+            'Read one page you name and ask a question about it. The page is read '
+            'here, and only its text goes to the provider.')
         composer_actions.addStretch()
         self.send_button = self.button(composer_actions, 'Ask JARVIS', self.send)
         self.send_button.setObjectName('primary')
         self.send_button.setToolTip('Send message (Ctrl+Enter)')
         return page
+
+    def open_research_window(self):
+        """Open the research window: the owner names a page and a question."""
+        from desktop.research_dialog import open_research
+
+        return open_research(self)
 
     def files_page(self):
         """User-chosen local files and folders; no background upload."""
@@ -1211,6 +1460,30 @@ class Window(QMainWindow):
         folder_actions = QHBoxLayout(folders)
         self.button(folder_actions, 'Choose folder…', self.choose_attachment_folder)
         layout.addWidget(folders)
+        documents_box = QGroupBox('Documents')
+        document_actions = QHBoxLayout(documents_box)
+        self.button(document_actions, 'Read a document…', self.read_document_file)
+        self.button(document_actions, 'Compare with…', self.compare_document_file)
+        self.button(document_actions, 'Clear the preview', self.clear_document_preview)
+        document_actions.addStretch()
+        search_row = QHBoxLayout()
+        self.button(search_row, 'Search a folder…', self.search_chosen_folder)
+        self.button(search_row, 'Summarise in chat', self.summarise_document)
+        self.button(search_row, 'Export the summary…', self.export_summary)
+        documents_box.layout().addLayout(search_row)
+        layout.addWidget(documents_box)
+        self.document_status = QLabel('')
+        self.document_status.setWordWrap(True)
+        layout.addWidget(self.document_status)
+        self.document_preview = QPlainTextEdit()
+        self.document_preview.setReadOnly(True)
+        self.document_preview.setAccessibleName('Document preview')
+        self.document_preview.setMinimumHeight(140)
+        self.document_preview.setMaximumHeight(320)
+        self.document_preview.setPlaceholderText(
+            'A document you read is shown here. Nothing is sent anywhere until you '
+            'choose to share a file with the assistant.')
+        layout.addWidget(self.document_preview)
         self.attachment_list = QListWidget()
         self.attachment_list.setAccessibleName('Selected local attachments')
         self.attachment_list.itemDoubleClicked.connect(
@@ -1256,8 +1529,139 @@ class Window(QMainWindow):
             f'{len(self.attachments)} file(s) selected; temporary text snapshots, '
             'not copied to the history database. Up to 12 files / '
             '24 KiB per file / 48,000 characters total. '
-            'Supported: UTF-8 text, Markdown, code, CSV, JSON and DOCX. '
-            'PDF and binary uploads are not yet supported.')
+            'Supported: UTF-8 text, Markdown, code, CSV, JSON, PDF and DOCX. '
+            'A binary file cannot be read.')
+
+    def read_document_file(self):
+        """Read one document the owner chose and show it here.
+
+        Reading is a local act: the text stays on this PC until the owner
+        chooses to share a file with the assistant, and the same one-turn
+        consent that guards every other file guards this one.
+        """
+        path, _ = QFileDialog.getOpenFileName(
+            self, 'Choose a document to read', '',
+            'Documents (*.pdf *.docx *.txt *.md *.markdown *.csv *.json *.rst);;'
+            'All files (*)')
+        if not path:
+            return
+        try:
+            document = documents.read_document(path)
+        except documents.DocumentError as exc:
+            self.document_status.setText(str(exc))
+            self.document_preview.setPlainText('')
+            return
+        self.document_under_read = document
+        self.document_preview.setPlainText(
+            self.document_preview_text(document))
+        note = f'{document.name}: {document.characters:,} characters'
+        if document.pages:
+            note += f' over {document.pages} page(s)'
+        note += '. Nothing was sent anywhere.'
+        if document.warnings:
+            note += ' ' + ' '.join(document.warnings)
+        self.document_status.setText(note)
+
+    def document_preview_text(self, document):
+        """The text shown for a document, bounded so the page stays usable."""
+        limit = 20000
+        if document.characters <= limit:
+            return document.text
+        return (document.text[:limit] +
+                f'\n\n… {document.characters - limit:,} more characters are not shown here.')
+
+    def compare_document_file(self):
+        """Compare the document that was read with another one."""
+        first = getattr(self, 'document_under_read', None)
+        if first is None:
+            self.document_status.setText('Read a document first, then compare it with another.')
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, 'Compare with', '',
+            'Documents (*.pdf *.docx *.txt *.md *.markdown *.csv *.json *.rst);;'
+            'All files (*)')
+        if not path:
+            return
+        try:
+            second = documents.read_document(path)
+            result = documents.compare_documents(first, second)
+        except documents.DocumentError as exc:
+            self.document_status.setText(str(exc))
+            return
+        self.document_preview.setPlainText(documents.comparison_text(result))
+        self.document_status.setText(
+            f'Compared {result["first"]} with {result["second"]}. Nothing was sent anywhere.')
+
+    def search_chosen_folder(self):
+        """Search the text of the files in a folder the owner chose.
+
+        The search happens here, on this computer. Nothing is sent
+        anywhere, and only the folder the owner chose is looked at.
+        """
+        folder = QFileDialog.getExistingDirectory(
+            self, 'Choose a folder to search')
+        if not folder:
+            return
+        query, ok = QInputDialog.getText(
+            self, 'Search', 'What are you looking for?')
+        if not ok or not query.strip():
+            return
+        result = search_folder(folder, query)
+        self.document_preview.setPlainText(search_result_text(result))
+        self.document_status.setText(
+            f'{result.match_count} match(es) for "{query.strip()}" in '
+            f'{len(result.files_with_matches)} file(s). Nothing was sent anywhere.')
+
+    def summarise_document(self):
+        """Put the document that was read in front of the assistant.
+
+        The text goes into the composer and the owner sends it. It is not
+        sent by itself, and the same one-turn consent that guards every
+        other file guards this one.
+        """
+        document = getattr(self, 'document_under_read', None)
+        if document is None:
+            self.document_status.setText('Read a document first, then summarise it.')
+            return
+        text = document.text.strip()
+        if not text:
+            self.document_status.setText('That document has no text to summarise.')
+            return
+        limit = 12000
+        excerpt = text[:limit]
+        if len(text) > limit:
+            excerpt += (f'\n\n… {len(text) - limit:,} more characters were left out. '
+                        'The whole document is on this page.')
+        self.open_section('JARVIS Chat')
+        self.prompt.setPlainText(
+            'Summarise this document in the language I am using:\n\n' + excerpt)
+        self.prompt.setFocus()
+        self.statusBar().showMessage(
+            'The document is in the composer. Press Ask JARVIS to send it.', 12000)
+
+    def export_summary(self):
+        """Save the summary the assistant gave, where the owner chooses."""
+        text = self.transcript.toPlainText()
+        if not text.strip():
+            self.statusBar().showMessage('There is nothing to save yet.', 10000)
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, 'Save the summary', 'jarvis-summary.md',
+            'Markdown (*.md);;Text (*.txt)')
+        if not path:
+            return
+        try:
+            Path(path).write_text(summary_export(text), encoding='utf-8')
+        except OSError as error:
+            self.statusBar().showMessage(f'The summary could not be saved: {error}', 15000)
+            return
+        self.statusBar().showMessage('The summary was saved to ' + path, 15000)
+
+    def clear_document_preview(self):
+        """Forget the document that was read."""
+        self.document_under_read = None
+        self.document_preview.setPlainText('')
+        self.document_status.setText('')
 
     def choose_attachment_files(self):
         paths, _ = QFileDialog.getOpenFileNames(
@@ -1330,16 +1734,108 @@ class Window(QMainWindow):
 
     def automation_page(self):
         page, layout = self.page('Windows Automation',
-            'Open approved apps, inspect windows, or read text from a connected camera.')
+            'Open approved apps, open a file or folder you chose, tidy a folder you chose, '
+            'or read text from a connected camera. Every action that changes something '
+            'needs your approval first.')
         self.app_choice = QComboBox()
         self.app_choice.addItems(APPS)
         layout.addWidget(self.app_choice)
         self.button(layout, 'Review and launch', self.launch)
+        self.button(layout, 'Open a file or folder…', self.open_chosen_path)
+        self.button(layout, 'Tidy a folder…', self.organise_chosen_folder)
         self.button(layout, 'Review visible window titles (read only)', self.inspect_visible_windows)
         self.button(layout, 'Watch & read connected camera',
                     lambda: self.notify(lambda: open_camera_reader(self)))
         layout.addStretch()
+        # What the approval boundary has actually done, in the owner's words.
+        safety_box = QGroupBox('Approval boundary')
+        safety_layout = QVBoxLayout(safety_box)
+        self.safety_report = QLabel('')
+        self.safety_report.setWordWrap(True)
+        safety_layout.addWidget(self.safety_report)
+        self.safety_details = QPlainTextEdit()
+        self.safety_details.setReadOnly(True)
+        self.safety_details.setMaximumHeight(120)
+        self.safety_details.setPlaceholderText(
+            'The last few decisions of the approval boundary.')
+        safety_layout.addWidget(self.safety_details)
+        layout.addWidget(safety_box)
+        self.refresh_safety_report()
         return page
+
+    def refresh_safety_report(self):
+        """Show what the approval boundary has allowed and refused."""
+        if not hasattr(self, 'safety_report'):
+            return
+        self.safety_report.setText(self.policy.summary())
+        lines = []
+        for decision in self.policy.decisions()[-8:]:
+            lines.append(f'{decision.outcome}: {decision.kind} — {decision.target}'
+                         + (f' ({decision.detail})' if decision.detail else ''))
+        self.safety_details.setPlainText('\n'.join(lines))
+
+    def open_chosen_path(self):
+        """Open a file or folder the owner chose, after they approve it."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, 'Choose a file to open', '', 'Anything (*.*)')
+        if not path:
+            return
+        target = Path(path)
+        if target.is_dir():
+            # A folder is opened with Explorer rather than with a program.
+            chosen = QFileDialog.getExistingDirectory(self, 'Choose a folder to open')
+            if not chosen:
+                return
+            target = Path(chosen)
+
+        def operation():
+            return open_path(str(target))
+
+        self.gateway.run(
+            Action('open_path', str(target)),
+            lambda action: self.confirm(action),
+            operation)
+        self.refresh_safety_report()
+
+    def organise_chosen_folder(self):
+        """Tidy a folder the owner chose, after they have seen the plan."""
+        chosen = QFileDialog.getExistingDirectory(
+            self, 'Choose a folder to tidy')
+        if not chosen:
+            return
+        try:
+            plan = plan_organise(chosen)
+        except OrganiseError as error:
+            self.show_local_system_reply(chosen, str(error))
+            return
+        if not plan.moves:
+            self.show_local_system_reply(chosen, plan_text(plan))
+            return
+        self.organise_plan = plan
+        self.organise_folder = chosen
+        self.show_local_system_reply(chosen, plan_text(plan))
+        self.show_local_system_reply(
+            chosen,
+            'Nothing has been moved yet. Say "tidy it" and the plan above is '
+            'carried out exactly as it is.')
+
+    def run_approved_organise(self):
+        """Carry out the plan the owner has seen."""
+        plan = getattr(self, 'organise_plan', None)
+        if plan is None:
+            self.show_local_system_reply('tidy it', 'There is no plan to carry out.')
+            return
+        folder = plan.folder
+
+        def operation():
+            return organise(plan)
+
+        self.gateway.run(
+            Action('organise_folder', folder),
+            lambda action: self.confirm(action),
+            operation)
+        self.organise_plan = None
+        self.refresh_safety_report()
 
     def video_page(self):
         page, layout = self.page(
@@ -2163,6 +2659,9 @@ class Window(QMainWindow):
         advanced_form.addRow('Profile', self.profile_note)
         advanced_form.addRow('Model ID', self.model)
         advanced_form.addRow('HTTPS endpoint', self.endpoint)
+        self.price_note = QLabel()
+        self.price_note.setWordWrap(True)
+        advanced_form.addRow('List price', self.price_note)
         self.button(advanced_form, 'Use recommended model', self.reset_provider_model)
         layout.addWidget(self.provider_advanced_panel)
         self.provider_advanced_panel.hide()
@@ -2176,6 +2675,7 @@ class Window(QMainWindow):
         self.provider_health.setWordWrap(True)
         layout.addWidget(self.provider_health)
         self.provider.currentTextChanged.connect(self.load_provider)
+        self.model.textChanged.connect(self.refresh_price_note)
         self.load_provider()
         layout.addStretch()
         return page
@@ -2286,14 +2786,20 @@ class Window(QMainWindow):
     def usage_page(self):
         page, layout = self.page('Usage & Health',
             'Latest 200 API attempts. Token counts come from provider responses. '
-            'Unknown does not mean zero or free. Check your provider dashboard for billed costs. '
+            'The cost column is an estimate from the list price of the model, read on '
+            f'{pricing.PRICED_ON}; only the provider dashboard can say what was really charged. '
+            'Unknown does not mean zero or free. '
             'Duration is the local request time; checks are user-triggered, never background probes.')
-        self.usage_table = QTableWidget(0, 7)
+        self.usage_table = QTableWidget(0, 8)
         self.usage_table.setHorizontalHeaderLabels(
-            ['Provider / Model', 'Status', 'Seconds', 'Input', 'Output', 'Total', 'Created (UTC)'])
+            ['Provider / Model', 'Status', 'Seconds', 'Input', 'Output', 'Total',
+             'Est. cost', 'Created (UTC)'])
         self.usage_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.usage_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.usage_table)
+        self.usage_cost_summary = QLabel('')
+        self.usage_cost_summary.setWordWrap(True)
+        layout.addWidget(self.usage_cost_summary)
         return page
 
     def refresh_archives(self):
@@ -2889,18 +3395,207 @@ class Window(QMainWindow):
         if project is not None:
             set_trusted_routine(self.store, 'tests:' + project.name, enabled)
 
+    # ── follow-ups about the task already in flight ─────────────────────────
+
+    def handle_follow_up(self, kind, text):
+        """Answer 'continue that task', 'show the diff', 'run the tests again'
+        or 'stop this task' against the task this conversation remembers."""
+        context = self.memory.load()
+        record = context.last_task
+        if kind == 'stop':
+            self.stop_saved_task(context, text)
+            return
+        if kind == 'show_diff':
+            self.show_saved_diff(context, text)
+            return
+        if kind == 'run_tests':
+            self.rerun_saved_tests(context, text)
+            return
+        self.resume_saved_task(context, text)
+
+    def _saved_project(self, context):
+        """The saved project a remembered task belongs to, or None."""
+        record = context.last_task
+        if not record or not record.project:
+            return None
+        return find_project(load_projects(self.store), record.project)
+
+    def show_saved_diff(self, context, text):
+        """Show the diff of the remembered task, read back from its worktree."""
+        record = context.last_task
+        allowed, reason = task_is_resumable(record)
+        if not allowed:
+            self.show_local_system_reply(text, reason)
+            return
+        from developer_studio.codex_task import reviewable_diff
+        diff = reviewable_diff(record.worktree, record.starting_commit)
+        if not diff.strip():
+            self.show_local_system_reply(
+                text, f'There is no difference in {record.worktree} against '
+                      f'{record.starting_commit[:8]}.')
+            return
+        self.show_local_system_reply(text, diff)
+
+    def rerun_saved_tests(self, context, text):
+        """Run the remembered task's tests again, in its worktree."""
+        record = context.last_task
+        allowed, reason = task_is_resumable(record)
+        if not allowed:
+            self.show_local_system_reply(text, reason)
+            return
+        project = self._saved_project(context)
+        if project is None:
+            self.show_local_system_reply(
+                text, f'The project {record.project} is not saved any more.')
+            return
+        command = project.test_command
+        if not command:
+            self.show_local_system_reply(
+                text, f'No test command is configured for {project.name}.')
+            return
+        action = Action('run_project_tests', f'{project.name}: {command}')
+        self.coding_action_gate(
+            action,
+            lambda: self.start_test_run(project, Path(record.worktree), command),
+            trusted=self.test_command_trusted(project, command))
+
+    def stop_saved_task(self, context, text):
+        """Stop the remembered task without stopping the whole assistant."""
+        record = context.last_task
+        if self.coding_worker is not None:
+            self.coding_worker.requestInterruption()
+        if self.test_worker is not None:
+            self.test_worker.requestInterruption()
+        if record and record.ident:
+            self.store.finish(record.ident, 'cancelled', 'Cancelled by the owner.')
+        self.show_local_system_reply(
+            text, 'The task is stopped. Nothing was pushed, merged or published.')
+
+    def resume_saved_task(self, context, text):
+        """Bring the remembered task back, after checking it is still valid."""
+        record = context.last_task
+        allowed, reason = task_is_resumable(record)
+        if not allowed:
+            self.show_local_system_reply(text, reason)
+            return
+        project = self._saved_project(context)
+        if project is None:
+            self.show_local_system_reply(
+                text, f'The project {record.project} is not saved any more, so the task '
+                      'cannot be continued. Save it again in Settings & Plugins.')
+            return
+        # The card comes back with what is known about the task, so the owner
+        # can carry on with it.
+        steps = [{'key': 'resume', 'done': True, 'state': 'done',
+                  'label': f'Continue {record.project}: {record.change or "the saved task"}',
+                  'approval': False}]
+        self.coding = {
+            'request': parse_coding_request(record.change or record.project,
+                                            [project], editor_from_text),
+            'project': project, 'editor': record.editor or project.editor,
+            'editor_status': editor_status(record.editor or project.editor, None,
+                                           self.assistant_language),
+            'steps': steps, 'index': len(steps), 'outcome': None, 'text': text,
+        }
+        self.chat_task_id = record.ident
+        self.render_coding_card()
+        self.show_local_system_reply(
+            text, f'Continuing {record.project}. The worktree is {record.worktree}. '
+                  'Say what to change next, or use Review diff, Run tests or Open project.')
+
     def coding_request(self, text):
         """The coding request in a chat sentence, or None.
 
         A sentence is only a coding request when it names a saved project.
         Anything else is ordinary chat and goes to the assistant, because a
         request that might be a coding task must never swallow a question.
+
+        When the sentence names more than one saved project, JARVIS does not
+        guess: it asks which one, and the answer is treated as the answer to
+        that question.
         """
         projects = load_projects(self.store)
-        request = parse_coding_request(text, projects, editor_from_text)
+        if not projects:
+            return None
+        matches = match_projects(text, projects)
+        if len(matches) > 1:
+            self.ask_which_project(text, matches)
+            return None
+        # The project this conversation is about is the default, so a request
+        # that names no project still knows where to go.
+        remembered = self.memory.load().project
+        if remembered and find_project(projects, remembered) is None:
+            remembered = ''
+        request = parse_coding_request(text, projects, editor_from_text,
+                                       default_project=remembered)
+        if request.question:
+            # The request is not clear enough to act on: ask one short
+            # question instead of guessing.
+            self.ask_clarification(text, request, projects)
+            return None
         if request.project and (request.open_project or request.make_change or request.run_tests):
             return request
         return None
+
+    def ask_which_project(self, text, candidates):
+        """Ask a short question when more than one project could be meant."""
+        names = ', '.join(project.name for project in candidates)
+        self.pending_clarification = {'kind': 'project', 'text': text,
+                                      'candidates': list(candidates)}
+        self.show_local_system_reply(
+            text, f'Which project do you mean? Choose one: {names}.')
+
+    def ask_clarification(self, text, request, projects):
+        """Ask the short question the request needs before anything happens.
+
+        Two kinds: the project to work on, and what to do in it. The answer
+        is folded back into the request, so the task that starts is the one
+        the owner actually described.
+        """
+        if request.question_kind == 'project':
+            names = ', '.join(project.name for project in projects[:6])
+            self.pending_clarification = {'kind': 'project', 'text': text,
+                                          'candidates': list(projects[:6])}
+            self.show_local_system_reply(
+                text, f'Which saved project is this for? Choose one: {names}.')
+            return
+        self.pending_clarification = {'kind': 'merge', 'text': text,
+                                      'question': request.question}
+        self.show_local_system_reply(text, request.question)
+
+    def answer_clarification(self, text):
+        """Use the owner's answer to finish the request, and start the task.
+
+        When the question was about the project, the answer has to name one
+        of them. When the question was about what to do, the answer is
+        folded back into the request, so "fix the contact form validation"
+        becomes the change the task works on.
+        """
+        pending = self.pending_clarification
+        self.pending_clarification = None
+        if pending is None:
+            return False
+        if pending['kind'] == 'merge':
+            # The owner said what to do: read the request again with it.
+            combined = pending['text'] + ' ' + text
+            request = self.coding_request(combined)
+            if request is not None:
+                self.start_coding_task(request, combined)
+            return True
+        candidates = pending['candidates']
+        matches = match_projects(text, candidates)
+        if len(matches) != 1:
+            self.pending_clarification = pending
+            self.show_local_system_reply(
+                text, 'Say the project name exactly, one of: '
+                + ', '.join(project.name for project in candidates) + '.')
+            return True
+        project = matches[0]
+        request = parse_coding_request(pending['text'], [project], editor_from_text)
+        if not request.project:
+            request = replace(request, project=project.name)
+        self.start_coding_task(request, pending['text'])
+        return True
 
     def coding_task_active(self):
         """True when a coding task is running or waiting for approval.
@@ -2934,40 +3629,56 @@ class Window(QMainWindow):
         launchers = configured_launchers(self.store)
         editor = request.editor or project.editor
         configured = next((item for item in launchers if item['name'] == editor), None)
-        status = editor_status(editor, configured)
+        status = editor_status(editor, configured, self.assistant_language)
         routines = trusted_routines(self.store)
         steps = []
         if request.open_project:
             steps.append({
                 'key': 'open', 'done': False, 'state': 'waiting',
-                'label': f'Open {project.name} in {editor}',
+                'label': summary_labels(self.assistant_language)['step_open'].format(
+                    project=project.name, editor=editor),
                 'approval': not routines.get('open:' + project.name),
             })
         if request.make_change:
             steps.append({
                 'key': 'change', 'done': False, 'state': 'waiting',
-                'label': f'Ask Codex to: {request.change or project.name}',
+                'label': summary_labels(self.assistant_language)['step_change'].format(
+                    change=request.change or project.name),
                 'approval': True,
             })
         if request.run_tests:
             steps.append({
                 'key': 'tests', 'done': False, 'state': 'waiting',
-                'label': f"Run the configured tests: {project.test_command or '(none configured)'}",
+                'label': summary_labels(self.assistant_language)['step_tests'].format(
+                    command=project.test_command or '(none configured)'),
                 # A test command the owner has not trusted is approved on its
                 # own, separately from the change that produced it.
                 'approval': not (routines.get('tests:' + project.name)
                                  and project.test_command),
             })
+        # The project is looked at before the model is called, so the report
+        # can say what was found instead of what was assumed. This reads
+        # files and compiles nothing: it never runs the project.
+        inspection = inspect_project(project.path)
         self.coding = {
             'request': request, 'project': project, 'editor': editor,
             'editor_status': status, 'steps': steps, 'index': 0,
             'outcome': None, 'text': text,
+            'inspection': inspection,
+            'inspection_findings': inspection.problems_text(),
         }
         # The task is recorded in the task history from the moment it starts,
         # so a task that is interrupted still leaves a trace.
         self.chat_task_id = self.store.task(
             'codex_task', f'{project.name} · {project.path} · {request.change or project.name}')
         self.store.finish(self.chat_task_id, 'running')
+        # Remember what this conversation is about, so a follow-up that names
+        # no project still knows where to go.
+        language = detect_reply_language(text) or self.assistant_language
+        if language:
+            self.assistant_language = language
+            set_assistant_language(self.store, language)
+        self.memory.remember(project=project.name, editor=editor, language=language)
         self.render_coding_card()
         self.advance_coding_task()
 
@@ -2996,40 +3707,64 @@ class Window(QMainWindow):
         project = coding['project']
         request = coding['request']
         status = coding['editor_status']
-        lines = [f'Task · {project.name}', f'Folder: {project.path}']
-        editor_line = f"Editor: {coding['editor']}"
+        labels = summary_labels(self.assistant_language)
+        lines = [f"{labels['task']} · {project.name}", f"{labels['folder']}: {project.path}"]
+        editor_line = f"{labels['editor']}: {coding['editor']}"
         if status['installed']:
             editor_line += f" — {status['path']}"
         else:
-            editor_line += ' — SETUP NEEDED'
+            editor_line += ' — ' + labels['setup_needed']
         lines.append(editor_line)
         if not status['installed'] and status['setup']:
             lines.append(status['setup'])
         if request.change:
-            lines.append('Change: ' + request.change)
+            lines.append(labels['change'] + ': ' + request.change)
+        inspection = coding.get('inspection')
+        if inspection is not None:
+            found = f'{inspection.files_inspected} file(s) looked at'
+            if inspection.problem_count:
+                found += f', {inspection.problem_count} problem(s) found'
+            lines.append(found)
+            for problem in inspection.problems[:5]:
+                lines.append('  ' + str(problem))
+            if inspection.problem_count > 5:
+                lines.append(f'  … and {inspection.problem_count - 5} more')
         lines.append('')
         for number, step in enumerate(coding['steps'], 1):
-            mark = {'done': 'done', 'running': 'running', 'waiting': 'waiting',
-                    'declined': 'declined', 'failed': 'failed'}.get(step['state'], 'waiting')
+            mark = {'done': labels['done'], 'running': labels['running'],
+                    'waiting': labels['waiting'], 'declined': labels['declined'],
+                    'failed': labels['failed']}.get(step['state'], labels['waiting'])
             if step['state'] == 'waiting' and coding.get('pending_step') is step:
-                mark = 'awaiting approval'
+                mark = labels['awaiting_approval']
             lines.append(f'{number}. {step["label"]}  [{mark}]')
         outcome = coding.get('outcome')
         if outcome is not None:
+            labels = summary_labels(self.assistant_language)
             lines.append('')
             lines.append(outcome.message)
             if outcome.changed_files:
-                lines.append('Changed files: ' + ', '.join(outcome.changed_files))
+                lines.append(labels['changed'] + ': ' + ', '.join(outcome.changed_files))
+            else:
+                lines.append(labels['changed'] + ': ' + labels['none'])
             if outcome.test_status not in ('', 'not run'):
-                lines.append(f'Tests: {outcome.test_status}')
+                lines.append(f"{labels['tests']}: {outcome.test_status}")
             if outcome.protected:
-                lines.append('Your uncommitted work was untouched: '
-                             + ', '.join(outcome.protected))
+                lines.append(labels['protected'] + ': ' + ', '.join(outcome.protected))
+            if outcome.files_inspected:
+                lines.append('Files looked at: ' + str(outcome.files_inspected))
+            if outcome.problems_found:
+                lines.append('Problems found: ' + str(outcome.problems_found))
         self.chat_task_text.setText('\n'.join(lines))
         self.chat_task_card.show()
         self.chat_task_diff.setEnabled(bool(outcome and outcome.diff))
         self.chat_task_tests.setEnabled(bool(outcome and outcome.worktree))
         self.chat_task_open.setEnabled(True)
+        # The owner accepts or rejects the change once there is one, and not
+        # before, so the buttons cannot be pressed on a task that has not
+        # produced anything.
+        decided = bool(outcome and outcome.diff and not outcome.reviewed)
+        self.chat_task_accept.setEnabled(decided)
+        self.chat_task_reject.setEnabled(decided)
 
     def advance_coding_task(self):
         """Run the next step, or ask for approval when it needs one."""
@@ -3245,7 +3980,11 @@ class Window(QMainWindow):
         task = CodexTask(project, request.change or project.name,
                          test_command='',
                          worktree_root=self.root / 'worktrees',
-                         codex_path=None)
+                         codex_path=None,
+                         language=self.assistant_language,
+                         findings=coding.get('inspection_findings', ''),
+                         files_inspected=coding['inspection'].files_inspected,
+                         problems_found=coding['inspection'].problem_count)
         self.worker_kind = 'coding'
         self.coding_worker = CodingTaskWorker(task, self.policy, self.policy.ticket())
         self.coding_worker.progress.connect(self.on_coding_progress)
@@ -3314,6 +4053,10 @@ class Window(QMainWindow):
         elif outcome.test_status == 'cancelled':
             status = 'cancelled'
         detail = 'tests=' + (outcome.test_status or 'not run')
+        if outcome.reviewed:
+            detail += ' · reviewed=' + outcome.reviewed
+        if outcome.files_inspected:
+            detail += ' · looked_at=' + str(outcome.files_inspected)
         if outcome.changed_files:
             detail += ' · files=' + str(len(outcome.changed_files))
         if outcome.worktree:
@@ -3323,27 +4066,67 @@ class Window(QMainWindow):
         self.store.finish(self.chat_task_id, status, detail)
 
     def finish_coding_task(self):
-        """Close the task card with the result in the conversation."""
+        """Close the task card with the result in the conversation.
+
+        The report says what actually happened: the files that changed, the
+        diff to review, the test outcome and where the work was saved. It is
+        written in the language the owner asked the answer in.
+        """
         coding = self.coding
         if coding is None:
             return
         outcome = coding.get('outcome')
         if outcome is not None:
+            labels = summary_labels(self.assistant_language)
             summary = outcome.message
             if outcome.changed_files:
-                summary += '\nChanged files: ' + ', '.join(outcome.changed_files)
+                summary += '\n' + labels['changed'] + ': ' + ', '.join(outcome.changed_files)
+            else:
+                summary += '\n' + labels['changed'] + ': ' + labels['none']
             # The test result is ALWAYS in the final result, pass or fail.
-            summary += '\nTests: ' + (outcome.test_status or 'not run')
+            summary += '\n' + labels['tests'] + ': ' + (outcome.test_status or 'not run')
+            if outcome.diff:
+                # The whole diff goes in, but it is bounded so one enormous
+                # change cannot fill the conversation.
+                diff = outcome.diff
+                if len(diff) > 8000:
+                    diff = diff[:8000] + '\n… the diff was shortened. Use Review diff for all of it.'
+                summary += '\n' + labels['diff'] + ':\n' + diff
             if outcome.worktree:
-                summary += '\nWorktree: ' + outcome.worktree
+                summary += '\n' + labels['saved'] + ': ' + outcome.worktree
             if outcome.refused:
                 summary += ('\nPut back (protected, not changed): '
                             + ', '.join(outcome.refused))
             self.store.message(self.session, 'system', summary)
             self.render_chat()
         self.record_coding_history(outcome)
+        self.remember_finished_task(outcome)
         self.refresh_archives()
         self.refresh_history()
+
+    def remember_finished_task(self, outcome):
+        """Keep the finished task so the owner can continue it later."""
+        coding = self.coding
+        if coding is None or outcome is None:
+            return
+        project = coding['project']
+        record = TaskRecord(
+            ident=self.chat_task_id or '',
+            project=project.name,
+            folder=project.path,
+            editor=coding.get('editor') or project.editor,
+            worktree=outcome.worktree,
+            starting_commit=outcome.starting_commit,
+            change=coding['request'].change or project.name,
+            test_command=project.test_command,
+            status=outcome.status,
+            created=datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),
+        )
+        self.memory.remember_task(record)
+
+    def retry_failed_plan_step(self):
+        """Run only the step of a plan that failed."""
+        self.conversation_plan.retry_failed()
 
     def review_coding_diff(self):
         """Show the reviewable diff of the last task.
@@ -3361,6 +4144,73 @@ class Window(QMainWindow):
         self.coding_action_gate(
             Action('review_diff', f'{coding["project"].name} · {outcome.starting_commit[:8]}'),
             lambda: outcome.diff, read_only=True)
+
+    def accept_coding_change(self):
+        """The owner says the change is wanted.
+
+        Accepting does not touch the owner's working folder. The change
+        lives in the worktree that was made for it, and the owner brings
+        it in themselves, because their own uncommitted work is in the way
+        and JARVIS does not put a change under it without being asked.
+        """
+        coding = self.coding
+        if coding is None:
+            return
+        outcome = coding.get('outcome')
+        if outcome is None or not outcome.diff:
+            self.statusBar().showMessage('There is no change to accept.', 10000)
+            return
+        project = coding['project']
+
+        def operation():
+            outcome.reviewed = 'accepted'
+            self.store.finish(self.chat_task_id, 'accepted')
+            self.render_coding_card()
+            where = outcome.worktree or str(project.folder)
+            self.show_local_system_reply(
+                coding['text'],
+                'You accepted the change. It is kept in ' + where + ' and your own '
+                'project folder was not touched. To bring it in, review the diff '
+                'and apply it yourself, for example: '
+                f'git -C "{project.folder}" diff --no-index '
+                f'"{where}" "{project.folder}" > change.patch, then apply that patch.')
+            return 'The change was accepted and kept in the worktree.'
+
+        self.coding_action_gate(
+            Action('accept_coding_change', f'{project.name} · keep the change in the worktree'),
+            operation)
+
+    def reject_coding_change(self):
+        """The owner says the change is not wanted.
+
+        The worktree is kept, because it holds work that may still be worth
+        reading, and the owner is told where it is. Nothing of the owner's
+        own is touched either way.
+        """
+        coding = self.coding
+        if coding is None:
+            return
+        outcome = coding.get('outcome')
+        if outcome is None or not outcome.diff:
+            self.statusBar().showMessage('There is no change to reject.', 10000)
+            return
+        project = coding['project']
+
+        def operation():
+            outcome.reviewed = 'rejected'
+            self.store.finish(self.chat_task_id, 'rejected')
+            self.render_coding_card()
+            where = outcome.worktree or str(project.folder)
+            self.show_local_system_reply(
+                coding['text'],
+                'You rejected the change. Your project was not touched. The work is '
+                'still in ' + where + ' so you can read it; delete that folder when '
+                'you do not want it.')
+            return 'The change was rejected and nothing was applied.'
+
+        self.coding_action_gate(
+            Action('reject_coding_change', f'{project.name} · do not use the change'),
+            operation)
 
     def coding_test_folder(self):
         """Where the tests run: the task worktree if there is one."""
@@ -3818,6 +4668,8 @@ class Window(QMainWindow):
         self.secret.clear()
         health = self.store.get('health:' + provider + ':' + self.model.text())
         self.provider_health.setText('Last explicit check: ' + (health['summary'] if health else 'Not tested'))
+        if hasattr(self, 'price_note'):
+            self.price_note.setText(pricing.describe(provider, self.model.text()))
         if spec.local:
             self.key_status.setText('Not required: this model runs on this computer')
             return
@@ -3852,7 +4704,15 @@ class Window(QMainWindow):
         self.profile_note.setText(profile_models.PROFILE_NOTES.get(profile, ''))
         if profile:
             self.model.setText(self.selected_model(provider, profile))
+        self.refresh_price_note()
         self.refresh_brain_label()
+
+    def refresh_price_note(self):
+        """Show what the model in the box costs, or that the price is unknown."""
+        if not hasattr(self, 'price_note'):
+            return
+        self.price_note.setText(
+            pricing.describe(self.provider.currentText(), self.model.text()))
 
     def save_provider(self):
         def operation():
@@ -3903,9 +4763,13 @@ class Window(QMainWindow):
         self.notify(operation)
 
     def render_chat(self):
+        messages = self.store.messages(self.session)
         self.transcript.setPlainText('\n\n'.join(
-            f'{m["role"].upper()}\n{m["content"]}' for m in self.store.messages(self.session)))
+            f'{m["role"].upper()}\n{m["content"]}' for m in messages))
         self.transcript.moveCursor(QTextCursor.MoveOperation.End)
+        chat = getattr(self, 'prime_chat', None)
+        if chat is not None:
+            chat.render(messages)
 
     def new_chat(self):
         if self.worker is not None:
@@ -3978,6 +4842,20 @@ class Window(QMainWindow):
             if local_reply is not None:
                 self.prompt.clear()
                 self.show_local_system_reply(text, local_reply)
+                return
+            # A follow-up such as "continue" or "show the diff" only means
+            # something while JARVIS still knows the task it refers to.
+            follow_up = parse_follow_up(text)
+            if follow_up:
+                self.prompt.clear()
+                self.open_section('JARVIS Chat')
+                self.handle_follow_up(follow_up, text)
+                return
+            # The answer to a question JARVIS asked comes before anything
+            # else, so it is never mistaken for a new request.
+            if self.pending_clarification is not None and self.answer_clarification(text):
+                self.prompt.clear()
+                self.open_section('JARVIS Chat')
                 return
             desktop_task = parse_desktop_task(text)
             if desktop_task is not None:
@@ -4052,8 +4930,14 @@ class Window(QMainWindow):
             self.render_chat()
             self.transcript.appendPlainText('\nJARVIS\n')
             self.prompt.clear()
+            language = detect_reply_language(text) or self.assistant_language
+            if language:
+                self.assistant_language = language
+                set_assistant_language(self.store, language)
             system = {'role': 'system', 'content':
-                ASSISTANT_GUIDANCE + capability_context(self)}
+                ASSISTANT_GUIDANCE + capability_context(self) + conversation_context(self)}
+            if language:
+                system['content'] += ' Answer in ' + LANGUAGE_NAMES.get(language, language) + '.'
             self.start_worker(provider, model, key, [system] + messages, 'chat', backup=backup)
             if shared_files:
                 self.clear_attachments()
@@ -4318,14 +5202,61 @@ class Window(QMainWindow):
                 self.workflow_table.selectRow(index)
         attempts = self.store.usage_rows()
         self.usage_table.setRowCount(len(attempts))
+        estimated_total = 0.0
+        priced = 0
+        unknown = 0
         for index, attempt in enumerate(attempts):
+            cost = pricing.estimate(attempt['provider'], attempt['model'],
+                                     attempt['prompt_tokens'], attempt['completion_tokens'])
+            if cost is None:
+                unknown += 1
+            else:
+                estimated_total += cost
+                priced += 1
             values = [attempt['provider'] + ' / ' + attempt['model'], attempt['status'],
                       f"{attempt['duration_ms'] / 1000:.2f}",
                       *[attempt[k] if attempt[k] is not None else 'Unknown'
                         for k in ('prompt_tokens', 'completion_tokens', 'total_tokens')],
+                      pricing.format_cost(cost),
                       attempt['created']]
             for column, value in enumerate(values):
                 self.usage_table.setItem(index, column, QTableWidgetItem(str(value)))
+        if hasattr(self, 'usage_cost_summary'):
+            self.usage_cost_summary.setText(
+                f'Estimated total for the {len(attempts)} attempts shown: '
+                f'{pricing.format_cost(estimated_total)} '
+                f'({priced} priced, {unknown} without a known price). '
+                'The estimate uses the list price of the model; only the provider dashboard '
+                'can say what was really charged.')
+
+    def apply_hotkey(self, text, *, save=True):
+        """Take the key that brings JARVIS up, or say why it cannot be taken.
+
+        The key is not the microphone. It brings JARVIS to the front, and
+        the owner decides there what happens next.
+        """
+        message = self.hotkey.register(text)
+        self.hotkey_status = message
+        if save:
+            shortcut = self.hotkey.shortcut
+            self.store.set('hotkey:shortcut', shortcut.describe() if shortcut else '')
+        omega = getattr(self, 'omega', None)
+        if omega is not None and getattr(omega, 'hotkey_status', None) is not None:
+            omega.hotkey_status.setText(message)
+        return message
+
+    def summon_from_hotkey(self):
+        """Bring JARVIS to the front. The microphone is not opened."""
+        controls = getattr(self, 'background_controls', None)
+        if controls is not None and controls.tray is not None:
+            controls.restore()
+        else:
+            self.showNormal()
+            self.raise_()
+            self.activateWindow()
+        omega = getattr(self, 'omega', None)
+        if omega is not None:
+            omega.window.activateWindow()
 
     def request_exit(self):
         self.exit_requested = True
@@ -4368,6 +5299,8 @@ class Window(QMainWindow):
             self.voice_panel.stop_voice()
             self.voice_panel.wait_for_workers()
             self.bridge.listener.stop()
+            if getattr(self, 'hotkey', None) is not None:
+                self.hotkey.unregister()
             if self.omega is not None:
                 self.omega.shutdown()
             event.accept()

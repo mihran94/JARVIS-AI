@@ -22,6 +22,7 @@ import time
 
 from providers.chat import ProviderError
 from remote.server import BridgeHandlerError
+from security.policy import Stopped
 
 #: The store key that holds the provider chosen for the bridge.
 PROVIDER_KEY = 'bridge:chat_provider'
@@ -95,9 +96,20 @@ class BridgeChatService:
             raise BridgeHandlerError(403, 'The Windows desktop has no key for that provider.')
         messages = self._messages(message)
         started = time.monotonic()
+        # The emergency stop can happen while the provider is working, so the
+        # ticket is taken once, before the request, and checked between the
+        # chunks. Asking the policy for the ticket *method* instead of the
+        # ticket itself would make every check fail, because a bound method
+        # is never equal to the generation number the policy compares against.
         try:
-            text = self._router.stream(spec, model, key, messages, self._check,
+            ticket = self._policy.ticket() if self._policy is not None else None
+        except Stopped:
+            raise BridgeHandlerError(503, 'The Windows desktop is stopped. Resume it first.') from None
+        try:
+            text = self._router.stream(spec, model, key, messages, self._check_for(ticket),
                                         self._emit)
+        except Stopped:
+            raise BridgeHandlerError(503, 'The Windows desktop was stopped. Resume it first.') from None
         except ProviderError as error:
             raise BridgeHandlerError(502, str(error)) from None
         except Exception:
@@ -129,10 +141,17 @@ class BridgeChatService:
         while len(self._history) > MAX_HISTORY:
             del self._history[0]
 
-    def _check(self) -> None:
-        """The provider call checks the emergency stop between chunks."""
-        if self._policy is not None:
-            self._policy.check(self._policy.ticket)
+    def _check_for(self, ticket):
+        """A check that the emergency stop has not happened since the ticket.
+
+        The ticket is taken once when the request starts, so a stop that
+        happens while the provider is working is noticed between the chunks
+        and the answer is abandoned instead of being finished and sent.
+        """
+        def check() -> None:
+            if self._policy is not None:
+                self._policy.check(ticket)
+        return check
 
     @staticmethod
     def _emit(chunk: str) -> None:

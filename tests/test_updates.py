@@ -129,6 +129,7 @@ def test_desktop_update_approval(install,tmp_path,monkeypatch,approved):
     assert read_state(install)['active']==(digest if approved else 'base')
     assert bool(list((tmp_path/'data').glob('history-before-update-*.sqlite3')))==approved
     window.close()
+    window.deleteLater()
 
 
 def test_launcher_uses_retained_environment(install,tmp_path,monkeypatch):

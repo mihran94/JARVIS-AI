@@ -161,3 +161,125 @@ def test_desktop_bridge_panel_reuses_pairing_after_reopen(tmp_path):
     assert final.devices.item(0, 2).text() == 'revoked'
     assert final.pairing.secret_for(KEY_ID) is None
     final.close()
+
+
+# --------------------------------------------------------------------------
+# The fifteen minute rule
+#
+# The desktop tells the owner that the secret in a pairing code stops
+# working after fifteen minutes. It used to be true only on the phone, which
+# checked the code when it was scanned. The desktop kept the secret for
+# ever, so a code that was never transferred, or one that leaked, stayed
+# usable until the owner noticed and revoked it by hand.
+# --------------------------------------------------------------------------
+
+
+def a_clock_at(seconds):
+    return lambda: seconds
+
+
+def test_a_pairing_code_that_is_never_used_stops_working(tmp_path):
+    store = Store(tmp_path / 'history.sqlite3')
+    pairing = PairingStore(VaultSecrets(FakeVault()), metadata_store=store,
+                            now=a_clock_at(1_000.0))
+    pairing.pair(key_id=KEY_ID, expires_epoch_ms=1_000_000 + 900_000)
+    assert pairing.secret_for(KEY_ID) is not None
+    # Twenty minutes later the window has passed.
+    pairing._now = a_clock_at(1_000.0 + 1_200)
+    assert pairing.secret_for(KEY_ID) is None
+    assert pairing.device(KEY_ID) is not None, 'the record is still there'
+
+
+def test_the_deadline_survives_a_restart(tmp_path):
+    store = Store(tmp_path / 'history.sqlite3')
+    vault = FakeVault()
+    pairing = PairingStore(VaultSecrets(vault), metadata_store=store,
+                            now=a_clock_at(1_000.0))
+    pairing.pair(key_id=KEY_ID, expires_epoch_ms=1_000_000 + 900_000)
+    reloaded = PairingStore(VaultSecrets(vault), metadata_store=Store(store.path),
+                             now=a_clock_at(1_000.0 + 1_200))
+    assert reloaded.secret_for(KEY_ID) is None
+
+
+def test_asking_for_the_code_again_moves_the_deadline(tmp_path):
+    store = Store(tmp_path / 'history.sqlite3')
+    pairing = PairingStore(VaultSecrets(FakeVault()), metadata_store=store,
+                            now=a_clock_at(1_000.0))
+    pairing.pair(key_id=KEY_ID, expires_epoch_ms=1_000_000 + 900_000)
+    pairing._now = a_clock_at(1_000.0 + 1_200)
+    assert pairing.secret_for(KEY_ID) is None
+    deadline = pairing.extend_deadline(KEY_ID, 2_000_000 + 900_000)
+    assert deadline == 2_000_000 + 900_000
+    assert pairing.secret_for(KEY_ID) is not None
+
+
+def test_a_device_that_has_proved_itself_keeps_working(tmp_path):
+    store = Store(tmp_path / 'history.sqlite3')
+    pairing = PairingStore(VaultSecrets(FakeVault()), metadata_store=store,
+                            now=a_clock_at(1_000.0))
+    pairing.pair(key_id=KEY_ID, expires_epoch_ms=1_000_000 + 900_000)
+    pairing.confirm(KEY_ID)
+    pairing._now = a_clock_at(1_000.0 + 86_400)
+    assert pairing.secret_for(KEY_ID) is not None
+
+
+def test_a_request_does_not_move_the_deadline(tmp_path):
+    """Seeing the device must not give the pending code a fresh life."""
+    store = Store(tmp_path / 'history.sqlite3')
+    pairing = PairingStore(VaultSecrets(FakeVault()), metadata_store=store,
+                            now=a_clock_at(1_000.0))
+    pairing.pair(key_id=KEY_ID, expires_epoch_ms=1_000_000 + 900_000)
+    pairing.touch(KEY_ID)
+    assert pairing.devices()[0].expires_epoch_ms == 1_000_000 + 900_000
+    pairing._now = a_clock_at(1_000.0 + 1_200)
+    assert pairing.secret_for(KEY_ID) is None
+
+
+def _a_signed_request(server, secret, nonce):
+    timestamp = str(int(server._now() * 1000))
+    return BridgeRequest('GET', '/api/status', headers={
+        'X-Jarvis-Key-Id': KEY_ID, 'X-Jarvis-Timestamp': timestamp,
+        'X-Jarvis-Nonce': nonce,
+        'X-Jarvis-Signature': sign('GET', '/api/status', timestamp, '', secret, nonce),
+    })
+
+
+def test_the_bridge_refuses_a_device_whose_code_expired(tmp_path):
+    store = Store(tmp_path / 'history.sqlite3')
+    vault = FakeVault()
+    pairing = PairingStore(VaultSecrets(vault), metadata_store=store,
+                            now=a_clock_at(1_000.0))
+    pairing.pair(key_id=KEY_ID, expires_epoch_ms=1_000_000 + 900_000)
+    # Twenty minutes later the window has passed, for the store and for the
+    # server, which share the clock.
+    pairing._now = a_clock_at(1_000.0 + 1_200)
+    server = BridgeServer(pairing, now=a_clock_at(1_000.0 + 1_200))
+    assert server.handle(_a_signed_request(server, vault.get('bridge:' + KEY_ID),
+                                            'late')).status == 403
+
+
+def test_the_bridge_trusts_a_device_that_has_made_a_request(tmp_path):
+    store = Store(tmp_path / 'history.sqlite3')
+    vault = FakeVault()
+    pairing = PairingStore(VaultSecrets(vault), metadata_store=store,
+                            now=a_clock_at(1_000.0))
+    pairing.pair(key_id=KEY_ID, expires_epoch_ms=1_000_000 + 900_000)
+    server = BridgeServer(pairing, now=a_clock_at(1_000.0))
+    secret = vault.get('bridge:' + KEY_ID)
+    assert server.handle(_a_signed_request(server, secret, 'first')).status == 200
+    # The device proved itself, so the deadline no longer applies to it.
+    pairing._now = a_clock_at(1_000.0 + 86_400)
+    later = BridgeServer(pairing, now=a_clock_at(1_000.0 + 86_400))
+    assert later.handle(_a_signed_request(later, secret, 'second')).status == 200
+
+
+def test_a_device_without_a_deadline_is_unaffected(tmp_path):
+    """A record made before the deadline existed keeps working."""
+    store = Store(tmp_path / 'history.sqlite3')
+    vault = FakeVault()
+    pairing = PairingStore(VaultSecrets(vault), metadata_store=store)
+    pairing.pair(key_id=KEY_ID)
+    assert pairing.secret_for(KEY_ID) is not None
+    assert pairing.devices()[0].confirmed is False
+    assert pairing.devices()[0].expires_epoch_ms == 0
+

@@ -44,14 +44,31 @@ job starts by itself and uploads the artifact `JarvisBlue-android-debug-apk`.
 
 The patch was verified with `git apply --check`.
 
-## The CI improvement patch
+## The CI improvement patches
 
-`patches/github-actions-green.patch` now only carries the change to the test
-workflow: it reports both operating systems even when one of them fails, so a
-Linux only problem never hides the Windows result. The Qt runtime library
-that the Linux job needs is installed from the repository content
-(`scripts/qt_runtime.py`), so the recipe is already green without this
-patch.
+The App that pushes this repository has no `workflows` permission, so it
+cannot write `.github/workflows/`. Every change to a workflow therefore
+travels as a patch, and the owner applies them once.
+
+`patches/github-actions-green.patch` turns off `fail-fast` in the desktop
+test workflow, so a Linux only failure never hides the Windows result.
+
+`patches/ci-libegl-failfast.patch` gives the Linux runner the Qt runtime
+libraries it needs, so the suite can import PySide6 at all. It used to add
+the `fail-fast` setting as well, with the very same lines that
+`github-actions-green.patch` adds, so the two could not both be applied.
+They now carry different halves of the same change, and the whole set
+applies together.
+
+`patches/ci-stack-verification.patch` makes the CI check the work while it
+is still a pull request: the Android application is built on a pull request
+that touches the phone, the rules of the phone in `:core:common` are run as
+well, and the Windows installer is built for a pull request to any branch,
+because the work arrives as a stack of branches.
+
+`tests/test_workflow_patches.py` applies the whole set to a copy of the
+tree and reads the workflows that come out, so the suite describes what
+the build servers will really run.
 
 ## What they do
 

@@ -230,14 +230,16 @@ fun WindowsScreen(
                             value = state.secretInput,
                             onValueChange = onSecretChange,
                             modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Pairing secret (32+ characters)") },
+                            label = { Text("Pairing code, or its secret") },
                             visualTransformation = PasswordVisualTransformation(),
                             singleLine = true,
                             shape = RoundedCornerShape(12.dp),
                         )
                         Button(
                             onClick = onPair,
-                            enabled = state.hostInput.isNotBlank() && state.secretInput.length >= 32,
+                            // The address may come from the pairing code, so
+                            // the button is ready once something was pasted.
+                            enabled = state.secretInput.isNotBlank(),
                         ) { Text("Pair") }
                     }
                 }

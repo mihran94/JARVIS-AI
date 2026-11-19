@@ -1,9 +1,17 @@
-"""Local launcher for the Quantum Core Eel HUD."""
+"""Local launcher for the Quantum Core Eel HUD.
+
+The microphone is opened only after the owner allowed it, and the recorded
+audio never leaves this PC. The HUD recognises speech with the project's own
+Windows System.Speech adapter, and there is no cloud service to fall back to.
+"""
 import argparse
 from datetime import datetime
+import importlib
 import os
 from pathlib import Path
 import re
+import sys
+import threading
 
 from bottle import Bottle, abort, request
 import eel
@@ -39,6 +47,15 @@ STATUS_COMMANDS = {
     '/status', 'status', 'system status', 'system stats', 'cpu', 'ram', 'cpu load',
     'ram usage', 'கணினி நிலை', 'état du système',
 }
+
+#: How long one listening turn may take. The local recogniser is bounded.
+LISTEN_TIMEOUT_SECONDS = 5.0
+
+#: What the owner is told about the microphone, in plain words.
+LOCAL_RECOGNITION_NOTE = (
+    'Speech recognition runs locally on this PC. No microphone audio is sent to '
+    'any network service.'
+)
 
 
 DRAFT_INSTRUCTIONS = {
@@ -134,18 +151,124 @@ class GeminiChat:
         return re.sub(r'[*`]', '', text).strip() or 'Gemini returned no text, Sir.'
 
 
+def voice_layer(name):
+    """Import one module of the project's voice layer.
+
+    The HUD is started from the repository root (`main.py --hud`) and also from
+    inside `quantum_core` (`python launcher.py`), so the repository root is put
+    on the path when the voice layer cannot be found there yet.
+    """
+    try:
+        return importlib.import_module('voice.' + name)
+    except ImportError:
+        root = str(Path(__file__).resolve().parent.parent)
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        return importlib.import_module('voice.' + name)
+
+
+def voice_error():
+    """The exception the voice layer raises when it refuses an operation."""
+    try:
+        return voice_layer('errors').VoiceError
+    except ImportError:
+        return RuntimeError
+
+
+def speech_language(locale):
+    """Map a locale such as `ta-IN` to the language the local recogniser knows.
+
+    The Windows recogniser needs an installed speech pack per language. A
+    language it does not know falls back to English, never to a cloud service.
+    """
+    languages = voice_layer('windows_stt').SPEECH_LANGUAGES
+    code = str(locale or '').strip().casefold().replace('_', '-').split('-')[0]
+    return code if code in languages else 'en'
+
+
+def local_recognizer(consent, language):
+    """Build the project's own offline speech recogniser.
+
+    Recognition runs on this PC through Windows System.Speech. When this
+    machine cannot run that recogniser, the microphone stays closed: there is
+    no cloud service to fall back to.
+    """
+    windows_stt = voice_layer('windows_stt')
+    return windows_stt.WindowsSpeechRecognizer(
+        consent=consent, language=speech_language(language))
+
+
+def ask_for_microphone(consent, answer=None):
+    """Ask the owner, in the terminal, whether the microphone may be opened.
+
+    The permission is kept in `VoiceConsent`, the single place where the
+    microphone permission of this project lives. Only an explicit yes opens
+    the microphone; an empty answer, a "no" and a missing terminal all leave
+    it closed.
+    """
+    print('The microphone is closed by default.')
+    print(LOCAL_RECOGNITION_NOTE)
+    reader = answer if answer is not None else input
+    try:
+        reply = reader('Allow the microphone for this session? [y/N]: ')
+    except (EOFError, KeyboardInterrupt, OSError):
+        print('No answer was given, so the microphone stays closed.')
+        return False
+    if str(reply).strip().casefold() in ('y', 'yes'):
+        consent.grant()
+        print('The microphone is allowed for this session.')
+        return True
+    print('The microphone stays closed. JARVIS will not listen.')
+    return False
+
+
+def watch_for_stop(consent, on_stop=None, on_resume=None):
+    """Let the owner close the microphone from the terminal.
+
+    The watcher reads one word from the keyboard in a thread of its own.
+    Typing `stop` closes the microphone and invalidates the permission, the
+    way the emergency stop of the voice panel does; typing `resume` asks for
+    the microphone again. The watcher never opens the microphone itself and
+    never sends anything anywhere.
+    """
+    def watch():
+        while True:
+            try:
+                line = input('')
+            except (EOFError, KeyboardInterrupt, OSError):
+                return
+            command = line.strip().casefold()
+            if command in ('stop', 'quit'):
+                consent.stop()
+                if on_stop is not None:
+                    on_stop()
+                return
+            if command in ('resume', 'start'):
+                try:
+                    consent.resume()
+                    consent.grant()
+                except voice_error():
+                    continue
+                if on_resume is not None:
+                    on_resume()
+
+    thread = threading.Thread(target=watch, name='jarvis-microphone-stop', daemon=True)
+    thread.start()
+    return thread
+
+
 class QuantumCore:
     """Eel calls run on the event loop. Blocking work runs on one native thread."""
 
-    def __init__(self, chat, *, speak, listen, language):
+    def __init__(self, chat, *, speak, listen, language, consent=None, recognizer=None):
         self.chat = chat
         self.voice_enabled = speak
         self.mic_enabled = listen
         self.language = language
+        self.consent = consent if consent is not None else voice_layer('consent').VoiceConsent()
+        self.recognizer = recognizer
         self.voice_loop_started = False
         self.engine = None
-        self.recognition = None
-        self.microphone = None
         self.worker = ThreadPool(1)
         self.turn = Semaphore(1)
 
@@ -155,7 +278,7 @@ class QuantumCore:
     def system_metrics(self):
         if self.mic_enabled and not self.voice_loop_started:
             self.voice_loop_started = True
-            self.state('ONLINE', 'Mic enabled. Google speech recognition receives recorded audio.')
+            self.state('ONLINE', 'Mic enabled. ' + LOCAL_RECOGNITION_NOTE)
             eel.spawn(self.voice_loop)
         return self.read_metrics()
 
@@ -269,53 +392,69 @@ class QuantumCore:
         self.engine.say(text)
         self.engine.runAndWait()
 
-    def capture(self):
-        import speech_recognition as sr
+    def listen_once(self):
+        """Listen once with the local recogniser and return the transcript.
 
-        if self.recognition is None:
-            self.recognition = sr.Recognizer()
-            self.recognition.operation_timeout = 10
-            self.microphone = sr.Microphone()
-            with self.microphone as source:
-                self.recognition.adjust_for_ambient_noise(source, duration=0.5)
-        try:
-            with self.microphone as source:
-                return self.recognition.listen(source, timeout=3, phrase_time_limit=6)
-        except sr.WaitTimeoutError:
-            return None
-
-    def transcribe(self, audio):
-        import speech_recognition as sr
-
-        try:
-            return self.recognition.recognize_google(audio, language=self.language)
-        except sr.UnknownValueError:
+        The microphone is only opened when the owner has allowed it. An empty
+        string means that nothing was said, or that the owner closed the
+        microphone while it was listening.
+        """
+        if self.recognizer is None or not self.consent.listening:
             return ''
+        try:
+            transcript = self.recognizer.recognize_once(LISTEN_TIMEOUT_SECONDS)
+        except voice_error():
+            # The owner closed the microphone while it was listening.
+            return ''
+        return str(transcript or '')
+
+    def close_recognizer(self):
+        """Close the microphone. The permission of the owner is not touched."""
+        if self.recognizer is None:
+            return
+        try:
+            self.recognizer.stop()
+        except Exception:
+            pass
+
+    def stop_microphone(self):
+        """Close the microphone. Only the owner may close it from the HUD."""
+        self.consent.stop()
+        return {'state': self.consent.listener}
 
     def voice_loop(self):
-        while self.mic_enabled:
+        if not self.consent.listening:
+            self.mic_enabled = False
+            self.voice_loop_started = False
+            self.state('ONLINE', 'The microphone is closed. ' + LOCAL_RECOGNITION_NOTE)
+            return
+        while self.mic_enabled and self.consent.listening:
             with self.turn:
                 self.state('LISTENING...')
                 try:
-                    audio = self.worker.apply(self.capture)
-                    if audio is not None:
-                        self.state('PROCESSING...')
-                        command = self.worker.apply(self.transcribe, (audio,)).strip()[:MAX_COMMAND_LENGTH]
-                        if command:
-                            self.state('ACTIVE', f'YOU (VOICE): {command}')
-                            speak_reply = self.voice_enabled
-                            reply = self.run_turn(command)
-                            if not speak_reply:
-                                self.state('ONLINE', f'JARVIS: {reply}')
+                    command = self.worker.apply(self.listen_once).strip()[:MAX_COMMAND_LENGTH]
                 except Exception:
                     self.mic_enabled = False
+                    self.close_recognizer()
                     self.state(
                         'ONLINE',
-                        'Microphone stopped. Check PyAudio, microphone permissions and the Google voice connection.',
+                        'Microphone stopped. Check the Windows speech pack, the microphone '
+                        'permission and the language.',
                     )
+                else:
+                    if command:
+                        self.state('ACTIVE', f'YOU (VOICE): {command}')
+                        speak_reply = self.voice_enabled
+                        reply = self.run_turn(command)
+                        if not speak_reply:
+                            self.state('ONLINE', f'JARVIS: {reply}')
                 finally:
                     self.state('ONLINE')
             eel.sleep(0.15)
+        self.close_recognizer()
+        self.voice_loop_started = False
+        if self.mic_enabled:
+            self.state('ONLINE', 'The microphone is closed. Nothing is recorded.')
 
 
 def loopback_app(port):
@@ -335,7 +474,9 @@ def loopback_app(port):
 
 def main():
     parser = argparse.ArgumentParser(description='Run the J.A.R.V.I.S. Quantum Core HUD.')
-    parser.add_argument('--listen', action='store_true', help='Send recorded speech to Google for recognition.')
+    parser.add_argument(
+        '--listen', action='store_true',
+        help='Ask for the microphone and listen with the local Windows recogniser.')
     parser.add_argument('--language', default='en-US', help='Speech recognition locale, e.g. ta-IN or fr-FR.')
     parser.add_argument('--no-voice', action='store_true', help='Show text without text-to-speech.')
     parser.add_argument('--browser', choices=('chrome', 'edge', 'none'), default='chrome')
@@ -350,7 +491,31 @@ def main():
         key, os.environ.get('GEMINI_MODEL', '').strip() or MODEL,
         os.environ.get('GEMINI_CODING_MODEL', '').strip() or DEEP_MODEL,
     )
-    hud = QuantumCore(chat, speak=not args.no_voice, listen=args.listen, language=args.language)
+    consent = voice_layer('consent').VoiceConsent()
+    recognizer = None
+    listening = args.listen
+    if args.listen:
+        try:
+            recognizer = local_recognizer(consent, args.language)
+        except voice_error() as error:
+            # There is no cloud service to fall back to, so the microphone stays
+            # closed and the owner is told plainly why.
+            print('The microphone stays closed: ' + str(error))
+            recognizer = None
+            listening = False
+        if recognizer is not None and not ask_for_microphone(consent):
+            listening = False
+    hud = QuantumCore(chat, speak=not args.no_voice, listen=listening,
+                      language=args.language, consent=consent, recognizer=recognizer)
+
+    def resume_voice():
+        """The owner asked for the microphone again in the terminal."""
+        hud.mic_enabled = True
+        hud.voice_loop_started = False
+
+    if listening:
+        # The owner may take the microphone back from the same terminal.
+        watch_for_stop(consent, on_resume=resume_voice)
     # Prime psutil's nonblocking CPU counter before the first browser poll.
     psutil.cpu_percent(interval=None)
     eel.init(str(Path(__file__).resolve().parent / 'web'))
@@ -362,6 +527,9 @@ def main():
     eel.expose('device_action')(hud.device_action)
     eel.expose('network_report')(hud.network_report)
     eel.expose('business_site')(hud.business_site)
+    # The HUD page may close the microphone. It may never open it: only the
+    # owner, in the terminal, can allow the microphone.
+    eel.expose('stop_microphone')(hud.stop_microphone)
     eel.start(
         'index.html', host='127.0.0.1', port=args.port,
         mode=None if args.browser == 'none' else args.browser, size=(1366, 768),

@@ -38,8 +38,16 @@ DEFAULT_THEME = 'Dark'
 #: The key the chosen theme is remembered under.
 THEME_KEY = 'appearance_theme'
 
-#: The fonts, in order of preference. Segoe UI Variable ships with Windows 11.
-FONT_STACK = "'Segoe UI Variable Display', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif"
+#: The interface font stack. Segoe UI Variable ships with Windows 11.
+#:
+#: A font that carries no Tamil glyphs is not enough on its own: the Latin
+#: characters are then measured with a font that has no Tamil, the Tamil
+#: characters are drawn from another font, and the two are laid out on top
+#: of each other. A font that carries Tamil has to be named here, so the
+#: Tamil the owner types and the Tamil the owner reads are laid out with
+#: the same measurement. Nirmala UI is the Tamil font of Windows.
+FONT_STACK = ("'Segoe UI Variable Display', 'Segoe UI Variable', 'Segoe UI', "
+              "'Nirmala UI', 'Noto Sans Tamil', 'Latha', system-ui, sans-serif")
 MONO_STACK = "'Cascadia Mono', 'Consolas', 'SF Mono', monospace"
 
 
@@ -143,15 +151,18 @@ def stylesheet(palette) -> str:
     t = _tokens(palette)
     return f"""
 /* ── ground ─────────────────────────────────────────────────────────────── */
-QMainWindow, QDialog {{
-    background: qlineargradient(x1:0, y1:0, x2:0.4, y2:1,
-                stop:0 {t['ground']}, stop:1 {t['ground_alt']});
-}}
+/* The generic widget rule comes first. A rule that matches the window as
+   well has to follow it, because the later rule is the one that wins, and
+   a transparent window would show the desktop through the whole interface. */
 QWidget {{
     background: transparent;
     color: {t['text']};
     font-family: {FONT_STACK};
     font-size: 14px;
+}}
+QMainWindow, QDialog {{
+    background: qlineargradient(x1:0, y1:0, x2:0.4, y2:1,
+                stop:0 {t['ground']}, stop:1 {t['ground_alt']});
 }}
 QWidget#pageRoot {{
     background: qlineargradient(x1:0, y1:0, x2:0.35, y2:1,

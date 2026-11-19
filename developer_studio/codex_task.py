@@ -46,6 +46,7 @@ import uuid
 
 from core.protection import Protection
 from developer_studio.codex_cli import codex_executable, run_codex
+from developer_studio.intents import summary_labels
 
 
 #: The steps a task goes through. The card shows them and marks them done.
@@ -86,6 +87,12 @@ class TaskOutcome:
     starting_commit: str = ''
     #: The protected files the task tried to change. They are put back.
     refused: list[str] = field(default_factory=list)
+    #: How many files were looked at before the model was called.
+    files_inspected: int = 0
+    #: How many real problems were found before the model was called.
+    problems_found: int = 0
+    #: What the owner said about the change: '', 'accepted' or 'rejected'.
+    reviewed: str = ''
 
     def as_dict(self) -> dict:
         return {
@@ -100,6 +107,9 @@ class TaskOutcome:
             'protected': list(self.protected),
             'starting_commit': self.starting_commit,
             'refused': list(self.refused),
+            'files_inspected': self.files_inspected,
+            'problems_found': self.problems_found,
+            'reviewed': self.reviewed,
         }
 
 
@@ -206,7 +216,7 @@ def uncommitted_files(folder: Path) -> list[str]:
     return [line for line in output.splitlines() if line.strip()]
 
 
-def build_prompt(project, change: str, protection=None) -> str:
+def build_prompt(project, change: str, protection=None, findings: str = '') -> str:
     """The instruction Codex receives.
 
     It says exactly what the owner asked for, and it says that the work must
@@ -215,10 +225,19 @@ def build_prompt(project, change: str, protection=None) -> str:
     When the project has files that hold secrets, or that its own
     `.gitignore` keeps out, they are named here. The model is told what is
     off limits instead of being trusted to guess.
+
+    `findings` is what was already found by looking at the project before
+    the model was called. It is given so the model works on the real
+    problem instead of looking for it again, and so the answer it gives
+    can be checked against something that was measured.
     """
     notice = ''
     if protection is not None:
         notice = protection.notice()
+    found = ''
+    if findings:
+        found = ("\n\nJARVIS already looked at the project and found this. Check it, "
+                 "and work on the real problem:\n" + findings)
     return (
         f"Work only inside this project folder. The owner asked for this change:\n\n"
         f"{change}\n\n"
@@ -229,6 +248,7 @@ def build_prompt(project, change: str, protection=None) -> str:
         "network. If the request is ambiguous, make the most reasonable reading of it and "
         "say in your answer what you assumed."
         + (f"\n\n{notice}" if notice else "")
+        + found
     )
 
 
@@ -237,15 +257,23 @@ class CodexTask:
 
     def __init__(self, project, change: str, *, test_command: str = '',
                  worktree_root=None, progress=None, check_cancelled=None,
-                 codex_path=None):
+                 codex_path=None, language: str = '', findings: str = '',
+                 files_inspected: int = 0, problems_found: int = 0):
         self.project = project
+        self.language = (language or '').strip().casefold()
         self.change = (change or '').strip()
         self.test_command = (test_command or '').strip()
         self.worktree_root = Path(worktree_root) if worktree_root else None
         self.progress = progress or (lambda step, text: None)
         self.check_cancelled = check_cancelled or (lambda: None)
         self.codex_path = codex_path
-        self.outcome = TaskOutcome()
+        #: What was found by looking at the project before the model was called.
+        self.findings = (findings or '').strip()
+        #: How many files were looked at, and how many real problems were found.
+        self.files_inspected = int(files_inspected or 0)
+        self.problems_found = int(problems_found or 0)
+        self.outcome = TaskOutcome(files_inspected=self.files_inspected,
+                                  problems_found=self.problems_found)
 
     # -- helpers ----------------------------------------------------------
 
@@ -284,7 +312,7 @@ class CodexTask:
                 'was changed. Check that Git can write to this repository.')
         self.outcome.worktree = str(worktree)
         self._step('isolate_worktree',
-                   f'Isolated worktree ready at {worktree}. Your uncommitted work is untouched.')
+                   summary_labels(self.language)['worktree_ready'].format(worktree=worktree))
         # The commit the task starts from. Every change is reported against
         # it, so a task that commits as well as edits still shows the whole
         # difference and not just the last edit.
@@ -347,12 +375,18 @@ class CodexTask:
             self.outcome.test_output = ('No test command is configured for this project, so no '
                                         'tests were run.')
 
-        self._step('report', 'Reporting the changed files, the diff and the test results.')
+        self._step('report', summary_labels(self.language)['step_report'])
         self.outcome.status = 'completed'
         against = self.outcome.starting_commit[:8] if self.outcome.starting_commit else 'HEAD'
-        self.outcome.message = (
-            f'{len(changed)} file(s) changed against {against}. The diff is below and the '
-            f'worktree is at {worktree}. Nothing was pushed, merged or installed.')
+        if self.language == 'ta':
+            self.outcome.message = (
+                f'{against} முற்பட்ட நிலைக்கு எதிராக {len(changed)} கோப்பு(கள்) மாற்றப்பட்டன. '
+                f'வேறுபாடு கீழே உள்ளது, வேலைப்பாதை {worktree}. '
+                'எதுவும் push, merge அல்லது install செய்யப்படவில்லை.')
+        else:
+            self.outcome.message = (
+                f'{len(changed)} file(s) changed against {against}. The diff is below and the '
+                f'worktree is at {worktree}. Nothing was pushed, merged or installed.')
         return self.outcome
 
     # -- internals --------------------------------------------------------
@@ -428,3 +462,18 @@ class CodexTask:
     def _run_tests(self, worktree: Path):
         """Run the project's configured local tests, without a shell."""
         return run_local_tests(worktree, self.test_command)
+
+
+def reviewable_diff(worktree, starting_commit: str = '') -> str:
+    """The diff of a worktree against the commit the task started from.
+
+    This is how "show the diff" is answered later: the diff is not stored, it
+    is read back from the worktree, so it is always the truth about what is
+    on disk.
+    """
+    folder = Path(worktree)
+    if not folder.is_dir():
+        return ''
+    subprocess.run(['git', '-C', str(folder), 'add', '-A'], capture_output=True, timeout=60)
+    base = [starting_commit] if starting_commit else []
+    return git_output(folder, 'diff', '--cached', *base) or ''

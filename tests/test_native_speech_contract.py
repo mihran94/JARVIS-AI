@@ -150,13 +150,63 @@ def test_sapi_voice_selection_uses_first_token_not_collection():
     class FakeVoice:
         Voice = None
         def GetVoices(self, criteria):
-            assert criteria == "Language=1033"
+            assert criteria == "Language=409"
             return Tokens()
 
     speaker = object.__new__(WindowsTextToSpeech)
     speaker._voice = FakeVoice()
     assert speaker.select_language("en")
     assert speaker._voice.Voice == "single-sapi-token"
+
+
+def test_sapi_tamil_voice_uses_correct_hex_language_and_sri_lanka_fallback():
+    calls = []
+
+    class Tokens:
+        def __init__(self, count):
+            self.Count = count
+
+        def Item(self, index):
+            assert index == 0
+            return "sri-lanka-tamil-voice"
+
+    class FakeVoice:
+        Voice = None
+
+        def GetVoices(self, criteria):
+            calls.append(criteria)
+            if criteria == "Language=449":
+                return Tokens(0)  # India Tamil is not installed
+            if criteria == "Language=849":
+                return Tokens(1)  # Sri Lanka Tamil is installed
+            raise AssertionError(f"Wrong locale requested: {criteria}")
+
+    speaker = object.__new__(WindowsTextToSpeech)
+    speaker._voice = FakeVoice()
+    assert speaker.select_language("ta")
+    assert calls == ["Language=449", "Language=849"]
+    assert speaker._voice.Voice == "sri-lanka-tamil-voice"
+
+
+def test_sapi_french_voice_uses_hex_filter():
+    class Tokens:
+        Count = 1
+
+        def Item(self, index):
+            assert index == 0
+            return "french-voice"
+
+    class FakeVoice:
+        Voice = None
+
+        def GetVoices(self, criteria):
+            assert criteria == "Language=40c"
+            return Tokens()
+
+    speaker = object.__new__(WindowsTextToSpeech)
+    speaker._voice = FakeVoice()
+    assert speaker.select_language("fr")
+    assert speaker._voice.Voice == "french-voice"
 
 
 def test_sapi_missing_language_returns_false():

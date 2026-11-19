@@ -1,0 +1,36 @@
+diff --git a/.github/workflows/windows-integration.yml b/.github/workflows/windows-integration.yml
+index 4ba96db..94d7726 100644
+--- a/.github/workflows/windows-integration.yml
++++ b/.github/workflows/windows-integration.yml
+@@ -42,6 +42,8 @@ jobs:
+         run: |
+           python -m pip install -r requirements-dev.txt
+           python -m pytest -q
++      - name: Draw the application icon
++        run: python tools/make_icon.py installers/JarvisAI.ico
+       - name: Build standalone desktop folder
+         run: |
+           python -m pip install pyinstaller==6.12.0 pythonnet==3.2.1 pywin32==312
+@@ -61,7 +63,7 @@ jobs:
+           if ($LASTEXITCODE -ne 0) { throw 'Build runner cannot load Microsoft System.Speech and SAPI' }
+           # The adapters import these modules dynamically when the owner
+           # enables voice, so PyInstaller cannot discover them automatically.
+-          python -m PyInstaller --noconfirm --clean --windowed --onedir --name JarvisAI --hidden-import keyring.backends.Windows --hidden-import clr --hidden-import win32com.client --hidden-import pythoncom --collect-all pythonnet --add-binary "build/System.Speech.dll;." main.py
++          python -m PyInstaller --noconfirm --clean --windowed --onedir --name JarvisAI --icon installers/JarvisAI.ico --hidden-import keyring.backends.Windows --hidden-import clr --hidden-import win32com.client --hidden-import pythoncom --collect-all pythonnet --add-binary "build/System.Speech.dll;." main.py
+           if (!(Test-Path 'dist/JarvisAI/JarvisAI.exe')) { throw 'Desktop EXE not generated' }
+       - name: Include Microsoft System.Speech MIT attribution
+         shell: pwsh
+diff --git a/installers/JARVIS-AI.iss b/installers/JARVIS-AI.iss
+index e32e6c7..805e284 100644
+--- a/installers/JARVIS-AI.iss
++++ b/installers/JARVIS-AI.iss
+@@ -14,6 +14,9 @@ OutputBaseFilename=JarvisAI-Setup-Windows-x64
+ ArchitecturesAllowed=x64compatible
+ Compression=lzma
+ SolidCompression=yes
++; The icon the owner sees in the installer and in Windows. It is the same
++; orb the application draws.
++SetupIconFile=JarvisAI.ico
+ UninstallDisplayIcon={app}\JarvisAI.exe
+ WizardStyle=modern
+ 
