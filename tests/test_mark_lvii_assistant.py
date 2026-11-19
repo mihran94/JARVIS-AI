@@ -78,3 +78,36 @@ def test_pending_app_approval_is_visible_in_mark_lvii_island(tmp_path):
     finally:
         win.close()
         app.processEvents()
+
+
+def test_prime_shell_replaces_visible_legacy_chat_layout(tmp_path):
+    """The installed Chat must visibly be PRIME, not an old orb and header."""
+    app = QApplication.instance() or QApplication([])
+    win = Window(tmp_path)
+    try:
+        win.resize(680, 510)
+        win.show()
+        app.processEvents()
+        assert win.windowTitle() == 'JARVIS PRIME • MARK LVII'
+        assert win.prime_hero.objectName() == 'primeHero'
+        assert win.prime_hero.isVisibleTo(win)
+        assert win.prime_dock.isVisibleTo(win)
+        assert win.chat_reactor.isVisibleTo(win)
+        assert not win.orb.isVisibleTo(win)
+        assert win.transcript.isVisibleTo(win)
+        assert win.composer_bar.isVisibleTo(win)
+        assert win.pages.currentWidget().horizontalScrollBar().maximum() == 0
+        win.coding_button.click()
+        assert win.pages.currentIndex() == win.page_indices['Coding Assistant']
+        assert not win.composer_bar.isVisibleTo(win)
+        win.settings_button.click()
+        assert win.pages.currentIndex() == win.page_indices['Settings & Safety']
+        assert win.theme_choice.currentText() == 'MARK LVII'
+        win.chat_home_button.click()
+        assert win.composer_bar.isVisibleTo(win)
+        assert not win.voice_panel.consent.granted
+        assert not win.bridge.listener.running
+    finally:
+        win.close()
+        win.deleteLater()
+        app.processEvents()
