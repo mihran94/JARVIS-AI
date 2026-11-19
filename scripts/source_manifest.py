@@ -129,6 +129,29 @@ def difference(current: str, expected: str) -> list[str]:
             problems.append(f'{path} is in the tree but not in the manifest')
         elif old[path] != new[path]:
             problems.append(f'{path} has a different content')
+    # The header carries the number of files. A manifest whose header
+    # disagrees with its own list is not right either, and saying so is
+    # the difference between a failure the owner can act on and one they
+    # cannot.
+    if not problems:
+        counted = len(new)
+        for line in current.splitlines():
+            if line.startswith('# ') and line.endswith(' files'):
+                try:
+                    stated = int(line[2:-len(' files')])
+                except ValueError:
+                    stated = None
+                if stated is not None and stated != counted:
+                    problems.append(
+                        f'the header says {stated} files and the manifest lists {counted}')
+                break
+    if not problems and current != expected:
+        # The same files with the same contents, but the text is not what
+        # the script writes. A stray empty line or a header that was
+        # edited by hand lands here.
+        problems.append(
+            'the manifest lists the same files, but its text is not what the script '
+            'writes: run python scripts/source_manifest.py')
     return problems
 
 
