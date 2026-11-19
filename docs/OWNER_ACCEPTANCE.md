@@ -21,13 +21,18 @@ have to do any of them.**
 | The desktop test suite on Ubuntu | **1071 passed, 9 skipped** | [run 44427139746](https://github.com/mihran94/JARVIS-AI/actions/runs/44427139746) |
 | The desktop test suite on Windows | **1067 passed, 13 skipped** | [run 44427139746](https://github.com/mihran94/JARVIS-AI/actions/runs/44427139746) |
 | The same suite on Linux, run by hand | **1075 passed, 5 skipped** | the tree of this branch |
-| The source integrity manifest | matches the tree | `python scripts/source_manifest.py --check` |
+| The source integrity manifest | matches the tree | `python scripts/source_manifest.py --check`, **after** `python iphone-pwa/icons/restore-icons.py` |
 | The Windows application | built with PyInstaller | [run 44427139768](https://github.com/mihran94/JARVIS-AI/actions/runs/44427139768) |
 | The Windows installer | built, Inno Setup reports **Successful compile** | the same run |
 | The Windows installer artefact | `JARVIS-unified-windows-unsigned-21c29013dbfec5886dc34db1bd32c9abad77a407` | download it from the run above |
-| The Android unit tests | **49 tests, 0 failures, 0 errors** | `:core:common:test`, `:core:windows:testDebugUnitTest`, `:feature:command:testDebugUnitTest`, `:app:testDebugUnitTest` |
+| The Android unit tests | **46 tests, 0 failures, 0 errors** | `:core:common:test`, `:core:windows:testDebugUnitTest`, `:feature:command:testDebugUnitTest` |
 | The Android debug APK | built and audited | see below |
-| The three workflow patches | all three apply to this tree, in order | `git apply --check` |
+| The workflow patches | all five apply to this tree, in order | `git apply --check` |
+
+The PWA icons are pictures, and the repository carries only their base64
+copies. **`python iphone-pwa/icons/restore-icons.py` has to be run first**,
+or the integrity check reports three files as missing and the served page has
+no icons and no offline shell.
 
 The Android APK built from this tree asks for `INTERNET`,
 `ACCESS_NETWORK_STATE` and `USE_BIOMETRIC`, and for none of the
@@ -83,40 +88,48 @@ same order. Section 0a says how to merge them in one command.
 
 ---
 
-## 0. Three patches, before anything else
+## 0. Five patches, before anything else
 
 The GitHub App that pushes this repository cannot write
-`.github/workflows/`, so three workflow changes travel as patches. Apply
+`.github/workflows/`, so some workflow changes travel as patches. Apply
 them once, before you merge:
 
 ```
 git apply patches/github-actions-green.patch
+git apply patches/ci-libegl-failfast.patch
 git apply patches/windows-app-icon.patch
 git apply patches/ci-stack-verification.patch
+git apply patches/android-debug-apk.patch
 ```
 
 * `github-actions-green.patch` turns off `fail-fast`, so a Linux only
   failure never hides the Windows result.
+* `ci-libegl-failfast.patch` gives the Linux runner the Qt runtime
+  libraries it needs, so the suite can import PySide6 at all. It used
+  to add the `fail-fast` setting as well, with the very same lines that
+  `github-actions-green.patch` adds, so the two could not both be
+  applied. They now carry different halves of the same change.
 * `windows-app-icon.patch` gives the application its own icon: the build
   draws the orb the desktop draws, the executable is built with it, and
   the installer uses it. The three parts travel together on purpose: the
   installer must not point at an icon that is not there, because the
   Windows installer job fails on a file it cannot find.
 * `ci-stack-verification.patch` makes the CI check the work while it is
-  still a pull request. The Android application is built on a pull
-  request that touches the phone, and not only after it reaches `main`.
-  The rules of the phone, which live in `:core:common`, are run as
-  well, or the tests of those rules never happen. And the Windows
-  installer is built for a pull request to **any** branch, because the
-  work arrives as a stack of branches and each one of them is a pull
-  request to the branch below it.
+  still a pull request. The Windows installer is built for a pull
+  request to **any** branch, because the work arrives as a stack of
+  branches and each one of them is a pull request to the branch below
+  it.
+* `android-debug-apk.patch` carries the Android build for the phone
+  client into the repository that holds it.
 
-Check that all three applied:
+Check that all five applied:
 
 ```
 git apply --check --reverse patches/github-actions-green.patch
+git apply --check --reverse patches/ci-libegl-failfast.patch
 git apply --check --reverse patches/windows-app-icon.patch
 git apply --check --reverse patches/ci-stack-verification.patch
+git apply --check --reverse patches/android-debug-apk.patch
 ```
 
 They are checked by `tests/test_workflow_patches.py` on every run, so a

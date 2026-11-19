@@ -135,4 +135,26 @@ class PairingCodeTest {
         assertEquals("pc.example.lan", details.host)
         assertEquals(0, details.port)
     }
+
+    @Test
+    fun `a code that has expired is expired`() {
+        val details = PairingCode.parse(code(expires = "1764000000"))
+        assertTrue(details.isExpired(1764000000L))
+        assertTrue(details.isExpired(1764000001L))
+        assertFalse(details.isExpired(1763999999L))
+    }
+
+    @Test
+    fun `a bare secret is not expired by the clock`() {
+        val details = PairingCode.parse(secret)
+        assertFalse(details.isExpired(1764000000L))
+        assertFalse(details.isExpired(Long.MAX_VALUE))
+    }
+
+    @Test
+    fun `a code without an expiry is not expired`() {
+        val details = PairingCode.parse(code(expires = "0"))
+        assertEquals(0L, details.expiresAt)
+        assertFalse(details.isExpired(1764000000L))
+    }
 }

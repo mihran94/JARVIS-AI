@@ -367,5 +367,10 @@ class BridgeServer:
             verify(request.method, request.path, timestamp, request.body, secret, nonce, signature)
         except ProtocolError:
             raise BridgeHandlerError(403, AUTH_MESSAGE) from None
+        # The device has proved itself: it made a signed request with the
+        # secret it was given. From here it is trusted until the owner
+        # revokes it, so the deadline for using the pairing code stops
+        # applying to it.
+        self._pairing.confirm(key_id)
         self._pairing.touch(key_id)
         return device

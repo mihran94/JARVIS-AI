@@ -11,6 +11,7 @@ from desktop.bridge_chat import (
 )
 from providers.router import ProviderRouter
 from remote.server import BridgeHandlerError
+from security.policy import Policy
 
 
 class FakeVault:
@@ -61,10 +62,13 @@ class FakePolicy:
 class FakeRouter:
     """A router that answers with a fixed text and records the call."""
 
-    def __init__(self, answer='The answer.', fail=None, local=False):
+    def __init__(self, answer='The answer.', fail=None, local=False, on_stream=None):
         self.answer_text = answer
         self.fail = fail
         self.local = local
+        #: Called in the middle of the stream, so a test can stop the desktop
+        #: while the provider is still working.
+        self.on_stream = on_stream
         self.calls = []
 
     def spec(self, name):
@@ -78,6 +82,9 @@ class FakeRouter:
 
     def stream(self, spec, model, key, messages, check, emit, metrics=None):
         self.calls.append({'model': model, 'key': key, 'messages': messages})
+        check()
+        if self.on_stream is not None:
+            self.on_stream()
         check()
         if self.fail is not None:
             raise self.fail
@@ -188,3 +195,47 @@ def test_the_router_of_the_desktop_is_used():
     router = ProviderRouter()
     service = BridgeChatService(router, FakeStore(), FakeVault())
     assert service.provider == ''
+
+
+# --------------------------------------------------------------------------
+# The real approval boundary
+#
+# These tests use the real `security.policy.Policy` on purpose. The fake
+# above answers `check()` whatever ticket it is given, so it could never
+# notice that the service was passing the *method* `ticket` where the
+# generation number was expected. That mistake made every request from a
+# paired phone fail with a 502, and the fake hid it.
+# --------------------------------------------------------------------------
+
+
+def test_the_real_policy_allows_the_answer():
+    router = FakeRouter(answer='Local answer.', local=True)
+    policy = Policy()
+    service = make_service(router=router, store=FakeStore({PROVIDER_KEY: 'ollama'}),
+                           policy=policy)
+    answer = service.answer('hello', False)
+    assert answer['text'] == 'Local answer.'
+    assert answer['local'] is True
+
+
+def test_the_real_policy_stops_a_stopped_desktop():
+    router = FakeRouter(local=True)
+    policy = Policy()
+    policy.stop()
+    service = make_service(router=router, store=FakeStore({PROVIDER_KEY: 'ollama'}),
+                           policy=policy)
+    with pytest.raises(BridgeHandlerError) as error:
+        service.answer('hello', False)
+    assert error.value.status == 503
+
+
+def test_an_emergency_stop_during_the_answer_abandons_it():
+    """A stop that happens while the provider works must not be answered."""
+    policy = Policy()
+    router = FakeRouter(answer='Local answer.', local=True, on_stream=policy.stop)
+    service = make_service(router=router, store=FakeStore({PROVIDER_KEY: 'ollama'}),
+                           policy=policy)
+    with pytest.raises(BridgeHandlerError) as error:
+        service.answer('hello', False)
+    assert error.value.status == 503
+    assert 'stopped' in error.value.message.lower()
