@@ -15,7 +15,7 @@ PC keeps the approval, and the phone asks.
 | Tasks | Send a task for the owner to approve, watch it, cancel it |
 | Memory | Read and write the memory the desktop allows to be synchronised |
 | Notifications | See what the desktop has waiting, mark it as seen |
-| Offline | The shell is cached, so the page opens without a network |
+| Offline | The shell is cached, so the page opens without a network, and the work you ask for while the PC is out of reach is kept on the phone |
 
 The page never holds a provider key. It signs every request with the shared
 scheme in `remote/protocol.py` on the desktop and
@@ -68,6 +68,12 @@ These are real limits, not missing work:
 
 - an installed web app **cannot run in the background**; nothing happens
   while it is closed;
+- **queued work is sent only while the app is open**. iOS Safari does not
+  implement Background Sync, so a chat message or a task that was asked for
+  while the PC was out of reach is kept on the phone and goes out when the
+  app is opened again, when the connection returns, and every few seconds
+  while the page is in front. It is never delivered while the app is closed,
+  and the page says so;
 - **voice recognition has to be started by a tap**, and it only works while
   the page is in front;
 - **notifications need the permission of the person**, and iOS only shows
@@ -80,12 +86,35 @@ These are real limits, not missing work:
 The Android client is the one that can act on the phone. This page is the
 companion.
 
+## The outbox
+
+`js/offline.js` keeps the work that could not be sent yet. The queue holds
+plain descriptors — a kind, a payload and the attempt state — and never a
+function, so the whole thing can be written to IndexedDB and read back after
+a reload. The page hands the executor over when it flushes, so the queue
+knows nothing about the bridge.
+
+- an item is keyed by its kind and its payload, so the same command is queued
+  once and sent once;
+- a failed item stays in the queue and waits longer, with the wait growing and
+  bounded;
+- the queue is flushed when the app starts, when the connection returns, when
+  the app comes back to the front, and every thirty seconds while the page is
+  open;
+- a memory entry is not queued: the desktop stores every entry it receives, so
+  sending it twice would write it twice.
+
 ## Privacy
 
 - The pairing secret is held in the memory of the page. It is never written
   to storage, never put in a URL and never logged.
-- The service worker caches the shell only. No API answer, no chat message
-  and no secret is ever cached.
+- The service worker caches the shell only. No API answer and no secret is
+  ever cached.
+- The outbox keeps the work that could not be sent yet: a chat message, a
+  task for approval, or the acknowledgement of a notification. It is written
+  to IndexedDB, so it survives a reload, and it is removed as soon as the PC
+  has it. A memory entry is not kept, because the desktop would store it a
+  second time.
 - The page sends `credentials: 'omit'` and refuses to follow a redirect, so a
   redirect cannot move a signed request somewhere else.
 
@@ -100,7 +129,7 @@ manifest.webmanifest  the install information
 js/bridge.js          the signed client
 js/pairing.js         reading the pairing code
 js/chat.js            the transcript
-js/offline.js         the outbox for a phone that is out of reach
+js/offline.js         the outbox for a phone that is out of reach, and the store that keeps it
 js/qr.js              reading a QR code from a picture
 js/speech.js          Tamil and English voice
 tests/                the node test suite
