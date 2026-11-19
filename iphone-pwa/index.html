@@ -26,6 +26,7 @@
   </header>
 
   <p id="banner" class="banner" role="status" aria-live="polite" hidden></p>
+  <p id="outboxStatus" class="status" role="status" aria-live="polite"></p>
 
   <section class="panel" id="pairing">
     <h2>1 · Pair with the PC</h2>
@@ -82,7 +83,9 @@
   <section class="panel" id="chatPanel">
     <h2>3 · Chat</h2>
     <p class="hint">The message goes to your PC. The provider key stays on the
-      PC and is never sent to the phone.</p>
+      PC and is never sent to the phone. If the PC cannot be reached, the
+      message is kept on this phone and goes out when the app is open and the
+      PC answers.</p>
     <div id="transcript" class="transcript" aria-live="polite"></div>
     <div class="row">
       <input id="message" type="text" autocomplete="off" placeholder="Ask JARVIS" enterkeyhint="send">
@@ -105,7 +108,9 @@
   <section class="panel" id="taskPanel">
     <h2>4 · Tasks</h2>
     <p class="hint">A task sent from here is queued on the PC. It runs only
-      after you approve it there.</p>
+      after you approve it there. If the PC cannot be reached, the task is
+      kept on this phone and goes out when the app is open and the PC
+      answers.</p>
     <label>What to do
       <input id="taskTitle" type="text" autocomplete="off" placeholder="Nightly backup">
     </label>
@@ -122,7 +127,8 @@
   <section class="panel" id="memoryPanel">
     <h2>5 · Memory</h2>
     <p class="hint">Only what you allow is synchronised. The desktop decides
-      whether to keep it.</p>
+      whether to keep it. A memory entry is not queued when the PC is out of
+      reach, because the desktop would store it a second time.</p>
     <div class="row">
       <input id="memoryText" type="text" autocomplete="off" placeholder="Remember this">
       <button id="remember" class="primary">Remember</button>
@@ -145,6 +151,9 @@
     <p class="hint">An installed web app cannot run in the background and
       cannot control the phone. Voice needs the app to be open. The PC must
       be on a private network with an approved bridge.</p>
+    <p class="hint">Work that is asked for while the PC is out of reach is
+      kept on this phone and sent when the app is open and the PC answers.
+      iOS does not let a web app deliver it while the app is closed.</p>
   </footer>
 </main>
 <script type="module" src="./app.js"></script>
