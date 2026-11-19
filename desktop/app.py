@@ -1247,6 +1247,11 @@ class Window(QMainWindow):
         composer_layout.setContentsMargins(2, 6, 2, 0)
         composer_layout.addWidget(self.prompt)
         self.read_replies = QCheckBox('Read replies aloud')
+        # Voice output is an explicit opt-in, remembered across restarts.
+        # Without this the user must tick the box on every launch.
+        self.read_replies.setChecked(bool(self.store.get('voice:read_replies', False)))
+        self.read_replies.toggled.connect(
+            lambda enabled: self.store.set('voice:read_replies', bool(enabled)))
         settings_layout.addWidget(self.read_replies)
         self.hands_free_voice = QCheckBox('Hands-free Hey Jarvis')
         self.hands_free_voice.setToolTip(

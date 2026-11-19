@@ -95,3 +95,26 @@ def test_project_fix_reuses_existing_coding_approval_path(tmp_path, monkeypatch)
         window.close()
         window.deleteLater()
         app.processEvents()
+
+
+def test_read_replies_preference_persists_after_restart(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    first = Window(tmp_path)
+    try:
+        assert not first.read_replies.isChecked()
+        first.read_replies.setChecked(True)
+        assert first.store.get('voice:read_replies') is True
+    finally:
+        first.close()
+        first.deleteLater()
+        app.processEvents()
+
+    reopened = Window(tmp_path)
+    try:
+        assert reopened.read_replies.isChecked()
+        reopened.read_replies.setChecked(False)
+        assert reopened.store.get('voice:read_replies') is False
+    finally:
+        reopened.close()
+        reopened.deleteLater()
+        app.processEvents()
