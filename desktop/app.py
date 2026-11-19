@@ -370,6 +370,9 @@ class Window(QMainWindow):
         stop.clicked.connect(self.stop)
         header.addWidget(stop)
         outer.addLayout(header)
+        # The old chrome is kept in one list, so the PRIME composition can
+        # take it away in one step instead of leaving pieces of it behind.
+        self.legacy_chrome = [brand, self.state, self.resume_button, stop]
         navigation = QHBoxLayout()
         self.chat_home_button = self.button(
             navigation, 'Assistant', lambda: self.open_section('JARVIS Chat'))
@@ -385,6 +388,8 @@ class Window(QMainWindow):
         self.plugins_button.hide()  # The full plugin manager lives in Settings.
         navigation.addStretch()
         outer.addLayout(navigation)
+        self.legacy_chrome += [self.chat_home_button, self.tools_button, self.island_button,
+                               self.settings_button, self.plugins_button]
         body = QHBoxLayout()
         self.nav = QListWidget()
         self.nav.setFixedWidth(174)
@@ -473,6 +478,145 @@ class Window(QMainWindow):
         self.omega.start(smoke=smoke)
         self.refresh_system_metrics()
         self.refresh_voice_hud()
+        self.enable_prime()
+
+    # -- the PRIME composition -------------------------------------------
+
+    def enable_prime(self):
+        """Put the PRIME interface in place of the old chrome.
+
+        The old header, the old navigation and the old chat page are
+        taken out of the window and the new composition takes their
+        place. Nothing is removed: the pages, the composer and the
+        controls are the ones the application already had, so every
+        feature keeps working and none of them is lost.
+        """
+        from desktop.prime_ui import (
+            PrimeChat, PrimeIsland, PrimePalette, PrimeShell,
+        )
+
+        if getattr(self, 'prime_shell', None) is not None:
+            return self.prime_shell
+        palette = PrimePalette(dark=self.prime_is_dark())
+        self.prime_palette = palette
+        shell = PrimeShell(self, palette)
+        self.prime_shell = shell
+
+        central = self.centralWidget()
+        outer = central.layout()
+        # The old header and the old navigation row are taken out of the
+        # window's own layout. The widgets in them are hidden rather than
+        # deleted, so nothing that still points at them breaks.
+        for widget in getattr(self, 'legacy_chrome', []):
+            widget.hide()
+            widget.setParent(None)
+        # The old application dock is retired: the PRIME rail is the
+        # navigation now. It is taken out of the window, not only hidden.
+        if self.omega is not None:
+            for widget in (self.omega.dock, self.omega.reveal):
+                widget.hide()
+                widget.setParent(None)
+        for index in reversed(range(outer.count())):
+            item = outer.itemAt(index)
+            widget = item.widget()
+            if widget is self.pages or widget is self.composer_bar:
+                continue
+            if widget is not None:
+                widget.setParent(None)
+            else:
+                outer.removeItem(item)
+        outer.removeWidget(self.pages)
+        outer.removeWidget(self.composer_bar)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addWidget(shell)
+
+        # The chat becomes the PRIME chat. The old page stays alive: the
+        # transcript it holds is what the application still reads.
+        chat = PrimeChat(self, palette)
+        index = self.page_indices['JARVIS Chat']
+        was_current = self.pages.currentIndex() == index
+        old_chat = self.pages.widget(index)
+        self.pages.removeWidget(old_chat)
+        self.pages.insertWidget(index, chat)
+        if was_current:
+            # The page that was open stays open.
+            self.pages.setCurrentIndex(index)
+        # The old page is kept alive on purpose: the transcript it holds
+        # is what the application still reads and copies.
+        self.prime_old_chat = old_chat
+        self.prime_chat = chat
+        shell.content.addWidget(self.pages)
+
+        island = PrimeIsland(self, palette)
+        island.show()
+        self.prime_island = island
+        self.refresh_prime_state()
+        return shell
+
+    def prime_is_dark(self) -> bool:
+        """The PRIME surface follows the theme the owner chose."""
+        from desktop.prime_theme import _luminance
+
+        name = self.interface_theme if self.omega is None else self.omega.theme
+        palette = OMEGA_THEMES.get(name)
+        if palette is None:
+            return True
+        return _luminance(palette[0]) < 0.5
+
+    def refresh_prime_state(self):
+        """The PRIME surface follows what JARVIS is doing."""
+        shell = getattr(self, 'prime_shell', None)
+        if shell is None:
+            return
+        state = self.prime_state()
+        shell.set_state(state)
+        chat = getattr(self, 'prime_chat', None)
+        if chat is not None:
+            chat.set_state(state)
+        island = getattr(self, 'prime_island', None)
+        if island is not None:
+            island.set_state(state, self.prime_state_detail(state))
+
+    def refresh_prime_theme(self):
+        """The PRIME surface follows the theme the owner chose."""
+        shell = getattr(self, 'prime_shell', None)
+        if shell is None:
+            return
+        from desktop.prime_ui import PrimePalette
+
+        palette = PrimePalette(dark=self.prime_is_dark())
+        shell.palette_.adopt(palette)
+        shell.refresh_theme()
+        chat = getattr(self, 'prime_chat', None)
+        if chat is not None:
+            chat.refresh_theme()
+        island = getattr(self, 'prime_island', None)
+        if island is not None:
+            island.refresh_theme()
+
+    def prime_state(self) -> str:
+        """idle, listening, working or error, from the real state."""
+        if self.policy.stopped:
+            return 'error'
+        if self.chat_launch is not None:
+            return 'working'
+        if self.voice_panel.listening or self.voice_panel.speaking:
+            return 'listening'
+        if self.worker is not None or self.coding_worker is not None:
+            return 'working'
+        return 'idle'
+
+    def prime_state_detail(self, state: str) -> str:
+        if state == 'error':
+            return 'Stopped'
+        if state == 'listening':
+            return 'Listening'
+        if state == 'working':
+            if self.chat_launch is not None:
+                return 'Needs your approval'
+            return 'Working'
+        return 'Ready'
 
     def on_theme_chosen(self, name: str) -> None:
         if name not in OMEGA_THEMES:
@@ -485,6 +629,9 @@ class Window(QMainWindow):
             self.setStyleSheet(theme_sheet(name))
             self.chat_reactor.theme = name
             self.chat_reactor.update()
+        # After the theme is really in use, so the PRIME surface reads the
+        # theme that is in force and not the one before it.
+        self.refresh_prime_theme()
 
     def add_page(self, name, page, *, primary=True):
         index = self.pages.count()
@@ -514,6 +661,9 @@ class Window(QMainWindow):
                 self.nav.setCurrentRow(row)
                 break
         self.pages.setCurrentIndex(index)
+        shell = getattr(self, 'prime_shell', None)
+        if shell is not None:
+            shell.mark_active(name)
         if name == 'Settings & Safety':
             # The saved-project table lives in Settings, so it is refreshed
             # whenever the owner comes back to it.
@@ -1070,6 +1220,7 @@ class Window(QMainWindow):
             self.omega.set_voice(state)
         self.hud_talk.setEnabled(state not in ('stopped', 'listening', 'speaking')
                                  and not self.voice_panel.playback_busy)
+        self.refresh_prime_state()
 
     def answer_spoken_system_command(self, command):
         if self.worker is not None:
@@ -1234,8 +1385,10 @@ class Window(QMainWindow):
         self.prompt.setPlaceholderText(
             'என்ன செய்ய வேண்டும்? Tell me what you need… e.g. Jarvis, CapCut open pannu')
         self.prompt.setAccessibleName('Message to JARVIS')
-        self.prompt.setMinimumHeight(54)
-        self.prompt.setMaximumHeight(150)
+        # The prompt is tall enough for two lines of the placeholder, so
+        # nothing is cut off when the display is scaled to 150 % or 200 %.
+        self.prompt.setMinimumHeight(78)
+        self.prompt.setMaximumHeight(190)
         self.chat_send_shortcut = QShortcut(QKeySequence('Ctrl+Return'), self.prompt)
         self.chat_send_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
         self.chat_send_shortcut.activated.connect(self.send)
@@ -1247,11 +1400,6 @@ class Window(QMainWindow):
         composer_layout.setContentsMargins(2, 6, 2, 0)
         composer_layout.addWidget(self.prompt)
         self.read_replies = QCheckBox('Read replies aloud')
-        # Voice output is an explicit opt-in, remembered across restarts.
-        # Without this the user must tick the box on every launch.
-        self.read_replies.setChecked(bool(self.store.get('voice:read_replies', False)))
-        self.read_replies.toggled.connect(
-            lambda enabled: self.store.set('voice:read_replies', bool(enabled)))
         settings_layout.addWidget(self.read_replies)
         self.hands_free_voice = QCheckBox('Hands-free Hey Jarvis')
         self.hands_free_voice.setToolTip(
@@ -1266,6 +1414,7 @@ class Window(QMainWindow):
         self.review_pc_action_button = self.button(
             settings_actions, 'Review PC action', self.review_chat_pc_action)
         composer_actions = QHBoxLayout()
+        self.composer_actions = composer_actions
         composer_layout.addLayout(composer_actions)
         self.chat_mic = self.button(composer_actions, 'Speak', self.listen_to_user)
         self.chat_mic.setObjectName('quiet')
@@ -4609,9 +4758,13 @@ class Window(QMainWindow):
         self.notify(operation)
 
     def render_chat(self):
+        messages = self.store.messages(self.session)
         self.transcript.setPlainText('\n\n'.join(
-            f'{m["role"].upper()}\n{m["content"]}' for m in self.store.messages(self.session)))
+            f'{m["role"].upper()}\n{m["content"]}' for m in messages))
         self.transcript.moveCursor(QTextCursor.MoveOperation.End)
+        chat = getattr(self, 'prime_chat', None)
+        if chat is not None:
+            chat.render(messages)
 
     def new_chat(self):
         if self.worker is not None:

@@ -56,22 +56,21 @@ def test_modes_return_to_same_window_and_keep_saved_preferences(tmp_path):
 def test_dock_links_keyboard_and_order(tmp_path):
     app, window, ui = launch(tmp_path)
     try:
-        for destination in tuple(ui.dock.buttons):
-            destination.click()
-            section = DESTINATIONS[destination.name][0]
+        # The old application dock is retired from the interface: the
+        # PRIME rail is the navigation now, and it reaches the same
+        # pages. The dock is still there for the settings that remember
+        # its order, and it is not in the window.
+        for section, button in window.prime_shell.rail_buttons.items():
+            button.click()
+            app.processEvents()
             assert window.pages.currentIndex() == window.page_indices[section]
-            assert destination.property('active') is True
-        ui.dock.buttons[0].setFocus()
-        QTest.keyClick(ui.dock.buttons[0], Qt.Key.Key_Right)
-        assert ui.dock.buttons[1].hasFocus()
+        assert not ui.dock.isVisible()
         ui.order_items.setCurrentText('AI Chat')
         ui.move_dock(-1)
         assert ui.dock.buttons[0].name == 'AI Chat'
         assert window.store.get('omega:order')[0] == 'AI Chat'
         ui.set_auto_hide(True)
         assert ui.dock.isHidden()
-        ui.reveal.click()
-        assert ui.dock.isVisible()
         window.resize(720, 770)
         # Legacy pages are permanently redirected to PRIME, even in smoke.
         ui.open_page('Omega Home')
@@ -198,8 +197,14 @@ def test_chat_theme_paints_pages_and_keeps_navigation_reachable(tmp_path):
         assert window.pages.currentIndex() == window.page_indices['JARVIS Chat']
         assert not window.omega.dock.isVisible()
         assert not window.omega.reveal.isVisible()
-        scroller = window.pages.widget(window.page_indices['JARVIS Chat'])
-        assert scroller.widget() is not None
+        # The chat is the PRIME chat now: the assistant, the conversation
+        # and the composer, in one composition.
+        from desktop.prime_ui import PrimeChat
+
+        chat = window.pages.widget(window.page_indices['JARVIS Chat'])
+        assert isinstance(chat, PrimeChat)
+        assert chat.conversation is not None
+        assert chat.composer is not None
         for theme, (background, _panel, _edge, ink, *_rest) in THEMES.items():
             window.omega.set_theme(theme)
             sheet = window.styleSheet()

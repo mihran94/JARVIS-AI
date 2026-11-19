@@ -31,13 +31,61 @@ def shoot(app, widget, name):
     return path
 
 
+def scaled_shots():
+    """The same surface at the scaling a person actually uses.
+
+    Windows is asked for 100 %, 125 %, 150 % and 200 % of the size. The
+    pictures are taken in separate processes, because the scale factor
+    is read when the application starts.
+    """
+    import subprocess
+    import sys
+
+    for factor in (1, 1.25, 1.5, 2):
+        environment = dict(os.environ)
+        environment['QT_SCALE_FACTOR'] = str(factor)
+        environment['QT_QPA_PLATFORM'] = 'offscreen'
+        width = int(1280 / factor)
+        height = int(800 / factor)
+        result = subprocess.run(
+            [sys.executable, os.path.abspath(__file__), '--one', str(width), str(height),
+             f'09-scaling-{int(factor * 100)}'],
+            env=environment, capture_output=True, text=True)
+        print(result.stdout.strip()[-400:])
+
+
+def one_shot(width, height, name):
+    """One picture of the chat at a given size."""
+    app = QApplication.instance() or QApplication([])
+    base = tempfile.mkdtemp(prefix='jarvis-shots-')
+    window = Window(base)
+    window.enable_omega(smoke=False)
+    window.showNormal()
+    window.resize(width, height)
+    window.show()
+    for _ in range(6):
+        app.processEvents()
+    window.open_section('JARVIS Chat')
+    shoot(app, window, name)
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == '--one':
+        width = int(sys.argv[2])
+        height = int(sys.argv[3])
+        name = sys.argv[4]
+        one_shot(width, height, name)
+        return
     app = QApplication.instance() or QApplication([])
     base = tempfile.mkdtemp(prefix='jarvis-shots-')
     window = Window(base)
     # The normal launch path, exactly as main.py starts it.
     window.enable_omega(smoke=False)
-    window.resize(1280, 820)
+    # The launch path maximises the window, which is right on a desktop and
+    # is a square in the offscreen renderer. The picture is taken at the
+    # size a person actually uses.
+    window.showNormal()
+    window.resize(1440, 900)
     window.show()
     for _ in range(6):
         app.processEvents()
@@ -53,16 +101,16 @@ def main():
     for _ in range(4):
         app.processEvents()
 
-    # 3. The Dynamic Island.
-    window.omega.switch('Island')
+    # 3. The Dynamic Island: the floating pill that says what JARVIS is
+    #    doing while the owner is doing something else.
+    island = window.prime_island
+    island.set_state('listening', 'Listening')
+    island.show()
     for _ in range(6):
         app.processEvents()
-    island = window.omega.floating
-    island.show()
     shoot(app, island, '03-island')
 
     # 4. Settings and Safety.
-    window.omega.switch('Omega')
     window.open_section('Settings & Safety')
     for _ in range(4):
         app.processEvents()
@@ -110,6 +158,7 @@ def main():
     window.deleteLater()
     app.processEvents()
     print('done')
+    scaled_shots()
 
 
 if __name__ == '__main__':
