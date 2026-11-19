@@ -12,11 +12,13 @@ import sys
 
 from voice.errors import VoiceUnavailable
 
-#: SAPI language identifiers for the languages JARVIS speaks.
+#: Windows SAPI GetVoices requires *hexadecimal* LANGIDs with no 0x prefix.
+#: Tamil supports India (0449) and Sri Lanka (0849). Decimal 1067 is
+#: Armenian, not Tamil. Keep a small ordered list for regional fallbacks.
 SAPI_LANGUAGES = {
-    'en': 1033,
-    'ta': 1067,
-    'fr': 1036,
+    'en': ('409',),
+    'ta': ('449', '849'),
+    'fr': ('40c',),
 }
 
 
@@ -49,18 +51,21 @@ class WindowsTextToSpeech:
 
     def select_language(self, language: str) -> bool:
         """Choose an installed voice for a language. False when none exists."""
-        identifier = SAPI_LANGUAGES.get(language)
-        if identifier is None:
-            return False
-        try:
-            # GetVoices returns a token collection, NOT one voice token.
-            tokens = self._voice.GetVoices(f'Language={identifier}')
-            if tokens is None or tokens.Count < 1:
-                return False
-            self._voice.Voice = tokens.Item(0)
-        except Exception:
-            return False
-        return True
+        identifiers = SAPI_LANGUAGES.get(language, ())
+        for identifier in identifiers:
+            try:
+                # SAPI filters voice tokens by hexadecimal language attribute.
+                # GetVoices returns a collection, not a single voice token.
+                tokens = self._voice.GetVoices(f'Language={identifier}')
+                if tokens is None or tokens.Count < 1:
+                    continue
+                self._voice.Voice = tokens.Item(0)
+                return True
+            except Exception:
+                # Try another regional token; do not silently speak Tamil
+                # with a non-Tamil voice when no matching voice is available.
+                continue
+        return False
 
     def speak(self, text: str, language: str | None = None, rate: int | None = None) -> None:
         """Speak the text. The call returns when the utterance is queued."""
