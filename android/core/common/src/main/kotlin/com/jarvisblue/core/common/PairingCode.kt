@@ -51,6 +51,21 @@ data class PairingDetails(
         if (entered.isNotEmpty()) return entered
         return if (port > 0) port.toString() else ""
     }
+
+    /**
+     * Whether the code has stopped being usable.
+     *
+     * The desktop tells the owner that the secret in a pairing code stops
+     * working after fifteen minutes, the iPhone checks the moment when it
+     * scans the code, and the desktop checks it when the secret is used.
+     * The phone checks it here, so all three sides agree.
+     *
+     * A bare secret carries no expiry, so this does not call it expired:
+     * it was given to the owner directly, and the owner decides when it is
+     * thrown away.
+     */
+    fun isExpired(nowSeconds: Long): Boolean =
+        wasPairingCode && expiresAt > 0L && expiresAt <= nowSeconds
 }
 
 object PairingCode {
