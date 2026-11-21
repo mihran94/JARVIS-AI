@@ -158,8 +158,8 @@ def test_the_owner_sees_the_state_of_every_step(window, monkeypatch):
     app = QApplication.instance()
     app.processEvents()
     card = window.plan_text.text()
-    assert '1. Open Notepad — verified' in card
-    assert 'verified' in card
+    assert '1. Open Notepad — dispatched' in card
+    assert 'dispatched' in card
     assert '%' not in card
     assert not window.plan_card.isHidden()
 
@@ -191,7 +191,7 @@ def test_the_state_of_a_plan_is_kept_when_the_window_closes(tmp_path, monkeypatc
         assert task is not None
         saved = window.store.get(PLAN_KEY + task['id'])
         assert saved is not None
-        assert saved['steps'][0]['state'] == StepState.VERIFIED
+        assert saved['steps'][0]['state'] == StepState.DISPATCHED
     finally:
         window.close()
         window.deleteLater()
@@ -238,7 +238,7 @@ def test_a_failed_step_is_tried_again_without_running_the_first_one_again(
     window.retry_failed_plan_step()
     assert window.conversation_plan.active is not None
     # The step that already worked is still verified, and it is not queued.
-    assert 'verified' in window.plan_text.text()
+    assert 'dispatched' in window.plan_text.text()
     assert window.chat_launch is not None
     assert window.chat_launch[0] == 'Calculator'
 

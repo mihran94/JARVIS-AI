@@ -52,7 +52,7 @@ def _safe_name(value: str) -> str:
                    for char in value)[:180]
 
 
-def _is_sensitive(path: Path) -> bool:
+def is_sensitive(path: Path) -> bool:
     return (path.name.casefold() in SENSITIVE_NAMES or
             any(part.casefold() in SKIP_DIRECTORIES for part in path.parts) or
             any(part.startswith(".") for part in path.parts if part not in (".", "..")))
@@ -78,7 +78,7 @@ def read_file(path: str | Path, *, label: str | None = None) -> StagedFile:
     it stays small however big the document is.
     """
     source = Path(path).expanduser()
-    if source.is_symlink() or not source.is_file() or _is_sensitive(source):
+    if source.is_symlink() or not source.is_file() or is_sensitive(source):
         raise AttachmentError("Choose a normal, non-hidden file; secrets and links are excluded.")
     if source.suffix.casefold() not in SUPPORTED_SUFFIXES:
         raise AttachmentError("Supported: text, Markdown, code, CSV, JSON, PDF and DOCX.")

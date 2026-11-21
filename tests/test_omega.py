@@ -53,8 +53,10 @@ def test_modes_return_to_same_window_and_keep_saved_preferences(tmp_path):
         restored.close()
 
 
-def test_dock_links_keyboard_and_order(tmp_path):
+def test_dock_links_keyboard_and_order(tmp_path, monkeypatch):
     app, window, ui = launch(tmp_path)
+    diagnostics = Mock()
+    monkeypatch.setattr(window, 'open_network_diagnostics', diagnostics)
     try:
         # The old application dock is retired from the interface: the
         # PRIME rail is the navigation now, and it reaches the same
@@ -63,7 +65,10 @@ def test_dock_links_keyboard_and_order(tmp_path):
         for section, button in window.prime_shell.rail_buttons.items():
             button.click()
             app.processEvents()
-            assert window.pages.currentIndex() == window.page_indices[section]
+            if section == 'Cybersecurity':
+                diagnostics.assert_called_once_with()
+            else:
+                assert window.pages.currentIndex() == window.page_indices[section]
         assert not ui.dock.isVisible()
         ui.order_items.setCurrentText('AI Chat')
         ui.move_dock(-1)
