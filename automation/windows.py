@@ -50,6 +50,7 @@ EDITOR_EXECUTABLES = {
     'CapCut': 'CapCut.exe',
     'DaVinci Resolve': 'Resolve.exe',
     'After Effects': 'AfterFX.exe',
+    'Photoshop': 'Photoshop.exe',
 }
 
 

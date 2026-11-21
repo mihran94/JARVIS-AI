@@ -186,11 +186,11 @@ class PrimeOrb(QWidget):
 
     def _colours(self):
         palette = self.palette_
-        if self.state == 'listening':
+        if self.state in ('listening', 'speaking'):
             return palette.good, palette.accent
         if self.state == 'working':
             return palette.accent, palette.accent_deep
-        if self.state == 'error':
+        if self.state in ('error', 'stopped'):
             return palette.danger, palette.danger
         return palette.accent, palette.accent_deep
 
@@ -612,6 +612,10 @@ class PrimeShell(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
         outer.addWidget(self.build_top_bar())
+        self.provider_label = QLabel()
+        self.provider_label.setWordWrap(True)
+        self.provider_label.setContentsMargins(18, 0, 18, 6)
+        outer.addWidget(self.provider_label)
 
         middle = QHBoxLayout()
         middle.setContentsMargins(0, 0, 0, 0)
@@ -645,7 +649,7 @@ class PrimeShell(QWidget):
         layout.addWidget(mark)
         self.mark = mark
 
-        brand = QLabel('JARVIS PRIME')
+        brand = QLabel('JARVIS AI')
         self.brand = brand
         brand.setStyleSheet(
             f'color: {palette.ink.name()}; font-size: 14px; font-weight: 700;'
@@ -666,6 +670,7 @@ class PrimeShell(QWidget):
             f'{palette.good.green()}, {palette.good.blue()}, 90); border-radius: 11px;'
             f' padding: 4px 12px;')
         layout.addWidget(self.state_chip)
+        layout.addWidget(self.window_ref.resume_button)
         self.stop_button = QPushButton('Emergency stop')
         self.stop_button.clicked.connect(self.window_ref.stop)
         self.stop_button.setStyleSheet(
@@ -733,7 +738,7 @@ class PrimeShell(QWidget):
             f'color: {palette.ink.name()}; font-size: 14px; font-weight: 700;'
             f' letter-spacing: 2.6px;')
         self.build_label.setStyleSheet(f'color: {palette.muted.name()}; font-size: 11px;')
-        self.set_state(self.state_chip.text().lower())
+        self.set_state(self.mark.state)
 
     def open_section(self, name: str):
         if name == 'Cybersecurity':
@@ -752,13 +757,19 @@ class PrimeShell(QWidget):
             'idle': palette.good,
             'listening': palette.good,
             'working': palette.accent,
-            'error': palette.danger,
+            'stopped': palette.danger,
+            'approval': palette.accent,
+            'speaking': palette.good,
         }.get(state, palette.muted)
         label = {
             'idle': 'READY',
             'listening': 'LISTENING',
             'working': 'WORKING',
-            'error': 'NEEDS YOU',
+            'stopped': 'STOPPED',
+            'approval': 'APPROVAL REQUIRED',
+            'speaking': 'SPEAKING',
+            'thinking': 'THINKING',
+            'responding': 'ANSWERING',
         }.get(state, 'READY')
         self.state_chip.setText(label)
         self.state_chip.setStyleSheet(
@@ -768,73 +779,5 @@ class PrimeShell(QWidget):
             f' padding: 4px 12px;')
         self.mark.set_state(state)
 
-
-class PrimeIsland(QWidget):
-    """The Dynamic Island: a floating pill that says what JARVIS is doing.
-
-    It is the same state the assistant shows, so the owner can leave the
-    window alone and still see that JARVIS heard them.
-    """
-
-    def __init__(self, window, palette: PrimePalette, parent=None):
-        super().__init__(parent)
-        self.window_ref = window
-        self.palette_ = palette
-        self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.Tool)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setFixedHeight(58)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(14, 8, 16, 8)
-        layout.setSpacing(11)
-        self.orb = PrimeOrb(palette)
-        self.orb.setFixedSize(34, 34)
-        layout.addWidget(self.orb)
-        column = QVBoxLayout()
-        column.setSpacing(0)
-        self.title = QLabel('JARVIS')
-        self.title.setStyleSheet(
-            f'color: {palette.ink.name()}; font-size: 12px; font-weight: 600;'
-            f' letter-spacing: 1.2px;')
-        column.addWidget(self.title)
-        self.detail = QLabel('Ready')
-        self.detail.setStyleSheet(f'color: {palette.muted.name()}; font-size: 11px;')
-        column.addWidget(self.detail)
-        layout.addLayout(column)
-        layout.addStretch(1)
-        self._position()
-
-    def _position(self):
-        screen = QApplication_screen(self)
-        if screen is None:
-            return
-        area = screen.availableGeometry()
-        self.move(area.center().x() - self.width() // 2, area.top() + 18)
-
-    def refresh_theme(self):
-        self.set_state(self.orb.state, self.detail.text())
-
-    def set_state(self, state: str, detail: str = ''):
-        self.orb.set_state(state)
-        palette = self.palette_
-        colour = {
-            'idle': palette.good,
-            'listening': palette.good,
-            'working': palette.accent,
-            'error': palette.danger,
-        }.get(state, palette.muted)
-        self.title.setStyleSheet(
-            f'color: {colour.name()}; font-size: 12px; font-weight: 600;'
-            f' letter-spacing: 1.2px;')
-        if detail:
-            self.detail.setText(detail)
-
-
-def QApplication_screen(widget):
-    instance = QApplication.instance()
-    if instance is None:
-        return None
-    screen = instance.primaryScreen()
-    return screen
+    def set_provider(self, text):
+        self.provider_label.setText(text)

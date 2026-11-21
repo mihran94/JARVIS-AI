@@ -99,6 +99,9 @@ jobs:
           & $compiler 'installers/JARVIS-AI.iss'
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup compiler failed" }
           if (!(Test-Path 'dist/JarvisAI-Setup-Windows-x64.exe')) { throw "Installer not generated" }
+      - name: Verify clean installer lifecycle
+        shell: pwsh
+        run: ./installers/Test-WindowsInstaller.ps1 -Installer dist/JarvisAI-Setup-Windows-x64.exe -EvidenceDirectory dist/installer-evidence
       - name: Publish SHA-256 for unsigned installer
         shell: pwsh
         run: |
@@ -111,5 +114,6 @@ jobs:
             dist/JarvisAI-RELEASE.txt
             dist/JarvisAI-Setup-Windows-x64.exe
             dist/JarvisAI-Setup-Windows-x64.sha256
+            dist/installer-evidence/*.log
           retention-days: 14
           if-no-files-found: error

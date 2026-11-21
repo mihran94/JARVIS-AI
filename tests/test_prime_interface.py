@@ -32,7 +32,8 @@ def test_the_window_has_the_prime_composition(tmp_path):
     try:
         assert isinstance(window.prime_shell, PrimeShell)
         assert isinstance(window.prime_chat, PrimeChat)
-        assert window.prime_island is not None
+        assert window.prime_shell.brand.text() == 'JARVIS AI'
+        assert not window.omega.floating.isVisible()
     finally:
         window.close()
 
@@ -42,6 +43,22 @@ def test_the_old_chrome_is_gone(tmp_path):
     try:
         for widget in window.legacy_chrome:
             assert not widget.isVisible(), widget.text() if hasattr(widget, 'text') else widget
+    finally:
+        window.close()
+
+
+def test_resume_stays_inside_the_assistant_and_provider_is_visible(tmp_path):
+    app, window = make_window(tmp_path)
+    try:
+        shell = window.prime_shell
+        assert shell.isAncestorOf(window.resume_button)
+        assert shell.provider_label.text() == window.brain_label.text()
+        shell.stop_button.click()
+        assert shell.state_chip.text() == 'STOPPED'
+        assert window.resume_button.isVisibleTo(window)
+        window.resume_button.click()
+        assert not window.policy.stopped
+        assert window.resume_button.isHidden()
     finally:
         window.close()
 
@@ -135,7 +152,7 @@ def test_the_state_reaches_the_shell_and_the_island(tmp_path):
         window.prime_state = lambda: 'listening'
         window.refresh_prime_state()
         assert window.prime_shell.state_chip.text() == 'LISTENING'
-        assert window.prime_island.orb.state == 'listening'
+        assert window.prime_shell.mark.state == 'listening'
         window.prime_state = lambda: 'working'
         window.refresh_prime_state()
         assert window.prime_shell.state_chip.text() == 'WORKING'

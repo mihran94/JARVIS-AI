@@ -46,8 +46,8 @@ def test_mark_lvii_chat_first_but_existing_pages_remain(tmp_path):
         win.chat_home_button.click()
         assert win.pages.currentIndex() == win.page_indices['JARVIS Chat']
         win.enable_omega(smoke=True)
-        assert win.omega.theme == 'MARK LVII'
-        assert 'MARK LVII' in THEMES
+        assert win.omega.theme == 'Quantum Dark'
+        assert 'MARK LVII' not in THEMES
         win.omega.set_voice('thinking')
         assert win.chat_reactor.activity == 'thinking'
         for name in ('PC Control', 'Coding Assistant', 'Voice / Hey Jarvis',

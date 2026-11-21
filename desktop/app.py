@@ -51,7 +51,7 @@ from providers import routing
 from providers import task_brain
 from providers import pricing
 from desktop import prime_theme
-from desktop.omega_visuals import THEMES as OMEGA_THEMES, theme_sheet
+from desktop.omega_visuals import DEFAULT_THEME, THEMES as OMEGA_THEMES, theme_sheet
 from desktop.blue_orb import BlueOrb
 from desktop.omega import Omega
 from desktop.system_metrics import CpuSampler, snapshot, format_snapshot
@@ -295,12 +295,14 @@ class TestRunWorker(QThread):
 class Window(QMainWindow):
     def __init__(self, data_root):
         super().__init__()
-        self.setWindowTitle('JARVIS AI • Your Windows Assistant')
+        self.setWindowTitle('JARVIS AI')
         self.resize(1180, 790)
         self.root = Path(data_root)
         self.store = Store(self.root / 'history.sqlite3')
         saved_theme = self.store.get('omega:theme')
-        self.interface_theme = saved_theme if isinstance(saved_theme, str) and saved_theme in OMEGA_THEMES else 'MARK LVII'
+        self.interface_theme = saved_theme if isinstance(saved_theme, str) and saved_theme in OMEGA_THEMES else DEFAULT_THEME
+        if saved_theme == 'MARK LVII':
+            self.store.set('omega:theme', DEFAULT_THEME)
         self.setStyleSheet(theme_sheet(self.interface_theme))
         self.memory_service = MemoryService(self.root / 'history.sqlite3')
         self.router = ProviderRouter()
@@ -496,7 +498,7 @@ class Window(QMainWindow):
         feature keeps working and none of them is lost.
         """
         from desktop.prime_ui import (
-            PrimeChat, PrimeIsland, PrimePalette, PrimeShell,
+            PrimeChat, PrimePalette, PrimeShell,
         )
 
         if getattr(self, 'prime_shell', None) is not None:
@@ -512,6 +514,8 @@ class Window(QMainWindow):
         # window's own layout. The widgets in them are hidden rather than
         # deleted, so nothing that still points at them breaks.
         for widget in getattr(self, 'legacy_chrome', []):
+            if widget is self.resume_button:
+                continue
             widget.hide()
             widget.setParent(None)
         # The old application dock is retired: the PRIME rail is the
@@ -553,9 +557,6 @@ class Window(QMainWindow):
         chat.adopt_task_panels()
         shell.content.addWidget(self.pages)
 
-        island = PrimeIsland(self, palette)
-        island.show()
-        self.prime_island = island
         self.refresh_prime_state()
         return shell
 
@@ -576,12 +577,10 @@ class Window(QMainWindow):
             return
         state = self.prime_state()
         shell.set_state(state)
+        shell.set_provider(self.brain_label.text())
         chat = getattr(self, 'prime_chat', None)
         if chat is not None:
             chat.set_state(state)
-        island = getattr(self, 'prime_island', None)
-        if island is not None:
-            island.set_state(state, self.prime_state_detail(state))
 
     def refresh_prime_theme(self):
         """The PRIME surface follows the theme the owner chose."""
@@ -596,33 +595,23 @@ class Window(QMainWindow):
         chat = getattr(self, 'prime_chat', None)
         if chat is not None:
             chat.refresh_theme()
-        island = getattr(self, 'prime_island', None)
-        if island is not None:
-            island.refresh_theme()
 
     def prime_state(self) -> str:
         """idle, listening, working or error, from the real state."""
         if self.policy.stopped:
-            return 'error'
-        if self.chat_launch is not None:
-            return 'working'
-        if self.voice_panel.listening or self.voice_panel.speaking:
+            return 'stopped'
+        if self.chat_launch is not None or getattr(self, 'coding_pending', None):
+            return 'approval'
+        if self.voice_panel.speaking:
+            return 'speaking'
+        if self.voice_panel.listening:
             return 'listening'
+        if self.ai_visual_state in ('thinking', 'responding'):
+            return self.ai_visual_state
         if (self.worker is not None or self.coding_worker is not None or self.test_worker is not None
                 or self.browser.task is not None or self.desktop_pending is not None):
             return 'working'
         return 'idle'
-
-    def prime_state_detail(self, state: str) -> str:
-        if state == 'error':
-            return 'Stopped'
-        if state == 'listening':
-            return 'Listening'
-        if state == 'working':
-            if self.chat_launch is not None:
-                return 'Needs your approval'
-            return 'Working'
-        return 'Ready'
 
     def on_theme_chosen(self, name: str) -> None:
         if name not in OMEGA_THEMES:
@@ -2959,6 +2948,7 @@ class Window(QMainWindow):
         self.worker = ChatWorker(self.router, provider, model, key, messages, self.policy,
                                  self.chat_ticket,
                                  backup=backup if kind == "chat" else None, news_region=news_region)
+        self.refresh_brain_label()
         self.worker.chunk.connect(self.on_chunk)
         self.worker.result.connect(self.on_result)
         self.worker.finished.connect(self.on_finished)
@@ -4722,7 +4712,10 @@ class Window(QMainWindow):
         provider = self.chat_provider.currentText()
         profile = self.stored_profile(provider)
         model = self.selected_model(provider)
+        if self.active_provider and self.active_model and self.worker is not None:
+            provider, profile, model = self.active_provider, '', self.active_model
         self.brain_label.setText('Active brain: ' + profile_models.describe(provider, profile, model))
+        self.refresh_prime_state()
 
     def load_provider(self):
         provider = self.provider.currentText()
@@ -5172,6 +5165,7 @@ class Window(QMainWindow):
     def on_finished(self):
         self.worker.deleteLater()
         self.worker = None
+        self.refresh_brain_label()
         self.video_cancel_render.hide()
         self.video_brief.setReadOnly(False)
         self.business_brief.setReadOnly(False)
@@ -5469,7 +5463,10 @@ def main():
     if smoke:
         # Offline native smoke test: no provider calls or remote listener.
         def finish_smoke():
-            if window.isVisible():
+            if (window.isVisible() and window.isAncestorOf(window.prime_shell)
+                    and window.prime_shell.brand.text() == 'JARVIS AI'
+                    and window.prime_shell.stop_button.isVisibleTo(window)
+                    and not window.omega.floating.isVisible()):
                 app.quit()
             else:
                 app.exit(10)
