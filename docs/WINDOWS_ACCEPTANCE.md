@@ -37,3 +37,12 @@ Record OS build, Python/dependency versions, provider/model (never key), exact p
 - Before updating, exit JARVIS and back up the per-user data folder at `%LOCALAPPDATA%\JarvisAI` to a protected location. Windows Credential Manager credentials are separate from the profile copy.
 - To restore data, exit JARVIS, move the current profile aside and restore the backed-up folder. Retain both copies until chat history, settings and task history are verified. The existing profile database is not encrypted by this procedure.
 - Use the rollback instructions in [UPDATES.md](UPDATES.md) for source-managed installations. Test installer upgrade and rollback in a disposable profile before using either with production data.
+
+## Optional Azure neural voice
+
+1. In **Settings and safety → AI providers → Azure Speech**, save the region and Speech resource key. The key is kept in Windows Credential Manager and the region is saved in JARVIS settings.
+2. Enable **Allow JARVIS to send spoken text to Microsoft Azure** and approve the dialog. Revoking this permission cancels queued speech and requests cancellation of in-flight cloud speech. A request Azure already received may still be billed.
+3. Use **Test Tamil Voice**, **Test English Voice** and **Test French Voice**. Confirm the complete sample is audible on the Windows default output. Verify the voice and session character count in settings. The count is an estimate based on successful synthesis and is not an Azure billing total.
+4. Enable **Read replies aloud** and try Tamil script, English, French and Tanglish. Recognition is local and based on script, vocabulary and the existing language preference. Common Romanized Tamil words are converted to Tamil script. Unrecognized Romanized words keep their spelling and may sound unnatural.
+5. Test mute and Emergency Stop during playback. Test a wrong key or unavailable network. Ordinary read-aloud should try the installed Windows voice after a cloud synthesis failure. A failed cloud voice sample should report the error.
+6. For opt-in live acceptance from source on the target Windows machine, set PowerShell variables `$env:JARVIS_AZURE_LIVE_AUDIO = '1'` and `$env:JARVIS_AZURE_REGION` to the resource region, then run `python -m pytest -q tests/test_azure_tts.py -k live_windows`. This uses the saved key and sends only the three fixed samples. Listen to each sample and record what you hear. The automated assertion verifies playback dispatch.

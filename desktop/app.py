@@ -37,6 +37,7 @@ from desktop.bridge_panel import BridgePanel
 from desktop.camera_reader import open_camera_reader
 from desktop.update_dialog import ReleaseChecker, open_updates
 from desktop.voice_panel import VoicePanel
+from desktop.azure_voice_settings import AzureVoiceSettings
 from desktop.tray import BackgroundControls
 from desktop.global_hotkey import DEFAULT_SHORTCUT, GlobalHotkey
 from desktop.background import ImprovementWorker, SourceCheckWorker
@@ -2711,6 +2712,8 @@ class Window(QMainWindow):
         self.provider.currentTextChanged.connect(self.load_provider)
         self.model.textChanged.connect(self.refresh_price_note)
         self.load_provider()
+        self.azure_voice = AzureVoiceSettings(self)
+        layout.addWidget(self.azure_voice)
         layout.addStretch()
         return page
 
@@ -5248,6 +5251,7 @@ class Window(QMainWindow):
 
     def resume(self):
         self.policy.resume()
+        self.voice_panel.resume_voice()
         if self.omega is not None:
             self.omega.refresh_feed.setEnabled(True)
             self.omega.refresh_state()
