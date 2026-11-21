@@ -312,7 +312,11 @@ def research(url: str, question: str, *, router=None, provider: str = '', model:
     """
     if not (question or '').strip():
         raise ResearchError('A question is required.')
+    if check:
+        check()
     page = fetch(url, client=client, timeout=timeout, allow_private=allow_private)
+    if check:
+        check()
     if not page.text.strip():
         raise ResearchError('The page had no readable text.')
     messages = build_prompt(question, page)
@@ -321,6 +325,10 @@ def research(url: str, question: str, *, router=None, provider: str = '', model:
     spec = router.spec(provider)
     answer = router.stream(spec, model or spec.default_model, key, messages,
                             check or (lambda: None), emit or (lambda _chunk: None))
+    if check:
+        check()
+    if not answer or not answer.strip():
+        raise ResearchError('The provider returned an empty answer.')
     return answer
 
 

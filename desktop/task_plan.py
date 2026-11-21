@@ -39,12 +39,13 @@ class StepState:
     PENDING = 'pending'
     WAITING = 'waiting for approval'
     RUNNING = 'running'
+    DISPATCHED = 'dispatched'
     VERIFIED = 'verified'
     FAILED = 'failed'
     CANCELLED = 'cancelled'
 
     #: The states a step can never leave on its own.
-    FINAL = (VERIFIED, CANCELLED)
+    FINAL = (DISPATCHED, VERIFIED, CANCELLED)
 
 
 @dataclass
@@ -134,7 +135,7 @@ class TaskPlan:
         step = self.step(ident)
         if step is None:
             raise KeyError(f'There is no step {ident} in this plan.')
-        if step.state in StepState.FINAL and state != StepState.CANCELLED:
+        if step.state in StepState.FINAL:
             raise ValueError(
                 f'Step {ident} is already {step.state} and cannot become {state}.')
         step.state = state
@@ -156,6 +157,10 @@ class TaskPlan:
     def verify(self, ident, detail='') -> PlanStep:
         """The step finished and the result was checked."""
         return self._move(ident, StepState.VERIFIED, detail)
+
+    def dispatch(self, ident, detail='') -> PlanStep:
+        """The OS accepted the request; repeating it may duplicate an effect."""
+        return self._move(ident, StepState.DISPATCHED, detail)
 
     def fail(self, ident, detail='') -> PlanStep:
         """The step did not finish."""
@@ -244,7 +249,7 @@ class TaskPlan:
             lines.append(line)
         counts = self.counts
         tail = []
-        for state in (StepState.VERIFIED, StepState.FAILED, StepState.CANCELLED,
+        for state in (StepState.VERIFIED, StepState.DISPATCHED, StepState.FAILED, StepState.CANCELLED,
                       StepState.RUNNING, StepState.WAITING, StepState.PENDING):
             if counts.get(state):
                 tail.append(f'{counts[state]} {state}')

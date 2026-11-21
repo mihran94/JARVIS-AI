@@ -10,8 +10,10 @@ from dataclasses import dataclass
 import ctypes
 import re
 import sys
+import time
 
 import psutil
+from automation import win_controls
 from core.conversation import addressed_request
 
 MAX_TEXT = 2000
@@ -24,6 +26,10 @@ VK_TAB = 0x09
 # Only a trusted app can receive text. App adapters may be added after they
 # have dedicated focus and outcome tests.
 TARGETS = {'Notepad': 'notepad.exe'}
+
+
+class VerifiedEdit(str):
+    """The foreground editor returned the expected contents after insertion."""
 
 
 @dataclass(frozen=True)
@@ -165,13 +171,17 @@ def type_into_target(app: str, text: str) -> str:
         raise ValueError('Desktop typing content is invalid or too large.')
     if not target_is_foreground(app):
         raise RuntimeError(f'{app} is not the active Windows application. No text was sent.')
+    hwnd = win_controls.focused_editor()
+    if hwnd is None:
+        raise RuntimeError('Click inside the document editor and try again. No text was sent.')
+    expected = win_controls.expected_edit(hwnd, text)
     # Do not send while a system shortcut modifier is being held down.
     user32 = ctypes.windll.user32
     for key in (0x10, 0x11, 0x12, 0x5B, 0x5C):
         if user32.GetAsyncKeyState(key) & 0x8000:
             raise RuntimeError('Release Shift/Ctrl/Alt/Windows keys before typing.')
     events = _events(text)
-    if not target_is_foreground(app):
+    if not target_is_foreground(app) or win_controls.focused_editor() != hwnd:
         raise RuntimeError('The target window changed. No text was sent.')
     array_type = _INPUT * len(events)
     array = array_type(*events)
@@ -179,7 +189,15 @@ def type_into_target(app: str, text: str) -> str:
     user32.SendInput.restype = ctypes.c_uint32
     sent = user32.SendInput(len(array), array, ctypes.sizeof(_INPUT))
     if sent != len(array):
-        raise RuntimeError(f'Only {sent}/{len(array)} keyboard events were accepted; '
-                           'the result is incomplete and must be reviewed.')
+        if not sent:
+            raise RuntimeError('Windows declined the keyboard input.')
+        return f'Windows accepted only {sent}/{len(array)} keyboard events. Review the editor before repeating.'
+    if expected is not None:
+        deadline = time.monotonic() + 0.25
+        while time.monotonic() < deadline and target_is_foreground(app) and win_controls.focused_editor() == hwnd:
+            observed = win_controls.contents(hwnd)
+            if observed is not None and win_controls.normal_text(observed) == expected:
+                return VerifiedEdit(f'Verified {len(text)} inserted characters in {app}. The document is still unsaved or its save status is unknown.')
+            time.sleep(0.015)
     return (f'{app} received {len(events)} keyboard events. '
             'Text delivery was requested but content and save status are not verified.')

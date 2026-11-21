@@ -146,8 +146,7 @@ class ConversationPlan:
         step = state['steps'][state['index']]
         plan = state['plan']
         current = plan.steps[state['index']]
-        current.state = StepState.WAITING
-        current.detail = 'awaiting your approval'
+        plan.wait(current.ident, 'awaiting your approval')
         self.save_plan(state)
         self.report(f'Step {state["index"] + 1}/{len(state["steps"])}: waiting for approval — {step.label}')
         command = f'Plan step {state["index"] + 1}'
@@ -161,7 +160,7 @@ class ConversationPlan:
 
     # ------------------------------------------------------------------ result
 
-    def result(self, success, detail):
+    def result(self, success, detail, *, verified=False):
         state = self.active
         if state is None:
             return
@@ -176,14 +175,18 @@ class ConversationPlan:
             else:
                 self.fail_step(detail)
             return
-        current.state = StepState.VERIFIED
-        current.detail = detail
+        if verified:
+            plan.verify(current.ident, detail)
+        else:
+            plan.dispatch(current.ident, detail)
         self.save_plan(state)
         self.report(f'Step {state["index"] + 1}: {detail}')
         state['index'] += 1
         if state['index'] == len(state['steps']):
-            self.finish('completed', 'All approved requests dispatched. '
-                        'Check the application windows; content and saved files are not verified.')
+            if len(plan.verified_steps) == len(plan.steps):
+                self.finish('verified', 'Every step has an observed result.')
+            else:
+                self.finish('dispatched', 'Review the results of the dispatched steps.')
         else:
             self.refresh_card()
             self.queue_step()
@@ -197,7 +200,6 @@ class ConversationPlan:
         current = plan.steps[state['index']]
         current.state = StepState.FAILED
         current.detail = detail
-        plan.cancel_remaining('not run, because an earlier step failed')
         self.save_plan(state)
         self.report(f'Plan failed at step {state["index"] + 1}/{len(state["steps"])}: {detail}. '
                     'The steps that already succeeded will not run again. '
@@ -246,8 +248,12 @@ class ConversationPlan:
         state = self.active
         if state is None:
             return
+        plan = state['plan']
+        if status == 'cancelled':
+            plan.cancel_remaining(detail)
+        self.save_plan(state)
         self.report(f'Plan {status}: {detail}')
-        self.window.store.finish(state['id'], status, state['summary'] + '\n' + detail)
+        self.window.store.finish(state['id'], status, plan.summary() + '\n' + detail)
         self.window.chat_reactor.setFixedHeight(state['reactor_height'])
         self.active = None
         self.retryable = None

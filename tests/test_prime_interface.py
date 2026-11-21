@@ -60,7 +60,7 @@ def test_the_rail_has_the_destinations(tmp_path):
     try:
         rail = window.prime_shell.rail_buttons
         for section in ('JARVIS Chat', 'Files & Folders', 'Voice / Hey Jarvis',
-                        'Coding Assistant', 'Memory', 'Settings & Safety'):
+                        'Cybersecurity', 'Memory', 'Settings & Safety'):
             assert section in rail, section
     finally:
         window.close()

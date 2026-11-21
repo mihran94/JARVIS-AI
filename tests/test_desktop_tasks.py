@@ -61,6 +61,8 @@ def test_windows_sendinput_structure_and_mock_dispatch(monkeypatch):
                         SimpleNamespace(user32=api), raising=False)
     monkeypatch.setattr(desktop_tasks, 'target_is_foreground',
                         lambda app: app == 'Notepad')
+    monkeypatch.setattr(desktop_tasks.win_controls, 'focused_editor', lambda: 42)
+    monkeypatch.setattr(desktop_tasks.win_controls, 'expected_edit', lambda *_: None)
     result = desktop_tasks.type_into_target('Notepad', 'வணக்கம்')
     assert api.SendInput.calls
     assert api.SendInput.calls[0][1] == expected

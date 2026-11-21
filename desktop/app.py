@@ -20,6 +20,7 @@ from dataclasses import replace
 from core.store import Store
 from core.conversation import ASSISTANT_GUIDANCE, addressed_request
 from desktop.conversation_plan import ConversationPlan, parse_plan as parse_conversation_plan
+from desktop.browser_control import BrowserControl
 from developer_studio.inspection import inspect_project
 from core.assistant_capabilities import (conversation_context, summary as capability_summary,
                                        system_context as capability_context)
@@ -47,6 +48,7 @@ from core.coding_tasks import prepared as prepared_tasks, resumable as resumable
 from core.development import DevelopmentError, maintenance_goal
 from core.updates import installation_root, read_state, release_path
 from providers import routing
+from providers import task_brain
 from providers import pricing
 from desktop import prime_theme
 from desktop.omega_visuals import THEMES as OMEGA_THEMES, theme_sheet
@@ -77,7 +79,7 @@ from automation.windows import (APPS, EDITOR_EXECUTABLES, editor_executable, lau
                                 launch_editor, open_path)
 from automation.organise import (OrganiseError, organise, plan_organise, plan_text,
                                  result_text)
-from automation.desktop_tasks import parse_desktop_task, target_is_foreground, type_into_target
+from automation.desktop_tasks import VerifiedEdit, parse_desktop_task, target_is_foreground, type_into_target
 from automation.inspection import inspect_windows
 from developer_studio.workspace import Workspace
 from developer_studio.codex_cli import codex_executable, run_codex
@@ -209,8 +211,8 @@ class ModelCheckWorker(QThread):
             status, text, payload = 'completed', answer.detail, answer.as_dict()
         except Stopped:
             status, text, payload = 'cancelled', 'Model check cancelled.', {}
-        except Exception as error:
-            status, text, payload = 'failed', str(error), {}
+        except Exception:
+            status, text, payload = 'failed', 'The model catalogue could not be checked.', {}
         finally:
             self.key = ''
         self.result.emit(status, text, payload)
@@ -303,6 +305,8 @@ class Window(QMainWindow):
         self.memory_service = MemoryService(self.root / 'history.sqlite3')
         self.router = ProviderRouter()
         self.policy = Policy()
+        self.browser = BrowserControl(self)
+        self.research_dialog = None
         self.vault = Vault()
         self.gateway = Gateway(self.policy, self.store)
         self.queue = TaskQueue(self.store, self.gateway)
@@ -546,6 +550,7 @@ class Window(QMainWindow):
         # is what the application still reads and copies.
         self.prime_old_chat = old_chat
         self.prime_chat = chat
+        chat.adopt_task_panels()
         shell.content.addWidget(self.pages)
 
         island = PrimeIsland(self, palette)
@@ -603,7 +608,8 @@ class Window(QMainWindow):
             return 'working'
         if self.voice_panel.listening or self.voice_panel.speaking:
             return 'listening'
-        if self.worker is not None or self.coding_worker is not None:
+        if (self.worker is not None or self.coding_worker is not None or self.test_worker is not None
+                or self.browser.task is not None or self.desktop_pending is not None):
             return 'working'
         return 'idle'
 
@@ -652,9 +658,17 @@ class Window(QMainWindow):
     def show_primary_page(self, row):
         item = self.nav.item(row)
         if item is not None:
-            self.pages.setCurrentIndex(item.data(Qt.ItemDataRole.UserRole))
+            self.open_section(item.text())
 
     def open_section(self, name):
+        name = {'Omega Home': 'JARVIS Chat', 'Omega Settings': 'Settings & Safety'}.get(name, name)
+        chat = getattr(self, 'prime_chat', None)
+        if chat is not None:
+            chat.show_task(name)
+            if name in chat.task_panels:
+                self.pages.setCurrentIndex(self.page_indices['JARVIS Chat'])
+                self.prime_shell.mark_active('JARVIS Chat')
+                return
         index = self.page_indices[name]
         for row in range(self.nav.count()):
             if self.nav.item(row).data(Qt.ItemDataRole.UserRole) == index:
@@ -1292,6 +1306,18 @@ class Window(QMainWindow):
         settings_layout.setContentsMargins(0, 0, 0, 0)
         settings_layout.addWidget(QLabel('AI provider'))
         settings_layout.addWidget(self.chat_provider)
+        self.auto_brain = QCheckBox('Route chat and analysis across configured Gemini, OpenAI and MiniMax accounts')
+        self.auto_brain.setToolTip('The chosen provider receives this conversation and any one-time attachments. '
+                                   'The local provider stays local. Provider billing limits still apply.')
+        self.auto_brain.setChecked(bool(self.store.get('brain:auto', False)))
+        self.auto_brain.toggled.connect(lambda value: self.store.set('brain:auto', value))
+        settings_layout.addWidget(self.auto_brain)
+        self.reasoning_effort = QComboBox()
+        self.reasoning_effort.addItems(task_brain.EFFORTS)
+        self.reasoning_effort.setCurrentText(self.store.get('brain:effort', 'Auto'))
+        self.reasoning_effort.currentTextChanged.connect(lambda value: self.store.set('brain:effort', value))
+        settings_layout.addWidget(QLabel('Reasoning profile'))
+        settings_layout.addWidget(self.reasoning_effort)
         settings_layout.addWidget(self.new_chat_button)
         self.backup_consent = QCheckBox('Allow one backup attempt')
         self.backup_consent.setToolTip('Shares the full conversation with the backup provider. Charges may apply.')
@@ -1318,6 +1344,12 @@ class Window(QMainWindow):
         settings_layout.addLayout(archives)
         self.refresh_archives()
         self.transcript = QPlainTextEdit()
+        self.browser_output = QPlainTextEdit()
+        self.browser_output.setAccessibleName('Browser result')
+        self.browser_output.setReadOnly(True)
+        self.browser_output.setMaximumHeight(135)
+        self.browser_output.hide()
+        layout.addWidget(self.browser_output)
         self.transcript.setReadOnly(True)
         self.transcript.setObjectName('transcriptCard')
         self.transcript.setMinimumHeight(96)
@@ -1444,7 +1476,20 @@ class Window(QMainWindow):
         """Open the research window: the owner names a page and a question."""
         from desktop.research_dialog import open_research
 
-        return open_research(self)
+        if self.research_dialog is None:
+            self.research_dialog = open_research(self)
+        self.research_dialog.show()
+        self.research_dialog.raise_()
+        return self.research_dialog
+
+    def show_browser_commands(self):
+        from automation.browser import HELP
+        self.open_section('JARVIS Chat')
+        self.browser_output.setPlainText(HELP)
+        self.browser_output.show()
+        if not self.prompt.toPlainText().strip():
+            self.prompt.insertPlainText('/browser ')
+        self.prompt.setFocus()
 
     def files_page(self):
         """User-chosen local files and folders; no background upload."""
@@ -2666,7 +2711,7 @@ class Window(QMainWindow):
         layout.addWidget(self.provider_advanced_panel)
         self.provider_advanced_panel.hide()
         self.advanced_provider.toggled.connect(self.provider_advanced_panel.setVisible)
-        self.button(layout, 'Save provider settings', self.save_provider)
+        self.button(layout, 'Save provider settings and check new keys', self.save_provider)
         self.button(layout, 'Remove stored key', self.remove_key)
         self.probe_button = self.button(layout, 'Test saved provider connection (uses API)', self.test_connection)
         self.availability_button = self.button(
@@ -2868,6 +2913,26 @@ class Window(QMainWindow):
 
     def on_model_check_result(self, status, text, payload=None):
         """Show the answer: which model, and whether the provider serves it."""
+        try:
+            self.policy.check(self.chat_ticket)
+        except Stopped:
+            return
+        if status == 'completed' and payload and payload.get('known'):
+            name = payload['provider']
+            catalogue = payload.get('models', [])
+            self.store.set('catalogue:' + name, catalogue)
+            if not payload.get('available') and self.store.get('model:' + name) == payload['model']:
+                selected = task_brain.catalogued_model(
+                    name, payload['model'], catalogue, self.stored_profile(name),
+                    custom=bool(self.store.get('custom_model:' + name, False)))
+                if selected:
+                    self.store.set('model:' + name, selected)
+                    if self.stored_profile(name):
+                        self.store.set('model:' + name + ':' + self.stored_profile(name), selected)
+                    text = f'{name} lists {selected}. Selected for the next request.'
+                    if self.provider.currentText() == name:
+                        self.load_provider()
+                    self.refresh_brain_label()
         if status == 'completed':
             self.provider_health.setText(text)
         else:
@@ -3162,7 +3227,7 @@ class Window(QMainWindow):
                 lambda _action: True,  # the exact text was approved in chat
                 lambda: type_into_target(task.app, task.text))
             self.show_local_system_reply('Desktop task result', str(result))
-            self.conversation_plan.result(True, str(result))
+            self.conversation_plan.result(True, str(result), verified=isinstance(result, VerifiedEdit))
         except (Denied, Stopped, RuntimeError, ValueError, OSError) as error:
             self.desktop_task_timer.stop()
             self.desktop_pending = None
@@ -4716,6 +4781,8 @@ class Window(QMainWindow):
 
     def save_provider(self):
         def operation():
+            if self.worker is not None:
+                raise ValueError('Wait for the current request before changing provider settings.')
             self.policy.ticket()
             provider = self.provider.currentText()
             spec = self.router.spec(provider)
@@ -4731,13 +4798,18 @@ class Window(QMainWindow):
                 self.chat_provider.setCurrentText(provider)
                 self.refresh_brain_label()
                 return 'Local model saved. Ready for chat; connection has not been tested.'
-            if self.secret.text():
+            new_key = bool(self.secret.text())
+            if new_key:
                 try:
                     self.vault.put(provider, self.secret.text())
                 except Exception:
                     raise RuntimeError('Could not save the key to Windows Credential Manager.') from None
                 finally:
                     self.secret.clear()
+                self.store.set('catalogue:' + provider, [])
+            self.store.set('custom_model:' + provider,
+                           self.advanced_provider.isChecked() and model not in
+                           {spec.default_model, *profile_models.profiles_for(provider).values()})
             self.store.set('model:' + provider, model)
             if profile:
                 # The model is remembered per profile, so switching back to the
@@ -4745,8 +4817,12 @@ class Window(QMainWindow):
                 self.store.set('model:' + provider + ':' + profile, model)
                 self.store.set('profile:' + provider, profile)
             self.load_provider()
-            self.chat_provider.setCurrentText(provider)
+            if not self.auto_brain.isChecked():
+                self.chat_provider.setCurrentText(provider)
             self.refresh_brain_label()
+            if new_key:
+                self.check_model_availability()
+                return 'Key saved. Checking the provider catalogue…'
             return 'Provider saved. Ready for chat; connection has not been tested.'
         self.notify(operation)
 
@@ -4804,7 +4880,18 @@ class Window(QMainWindow):
         if self.policy.stopped or self.worker is not None or not self.prompt.toPlainText().strip():
             return
         text = self.prompt.toPlainText().strip()
+        command, _, argument = addressed_request(text).partition(' ')
+        if command.casefold() == '/browser':
+            self.prompt.clear()
+            self.open_section('JARVIS Chat')
+            self.browser_output.show()
+            self.browser.command(argument)
+            return
         if addressed_request(text).casefold() in ('/cancel', 'cancel task', 'task cancel pannu'):
+            if self.browser.task:
+                self.browser.stop()
+                self.prompt.clear()
+                return
             cancelled = self.conversation_plan.cancel()
             if not cancelled and self.chat_launch is not None:
                 self.finish_chat_launch(False)
@@ -4896,9 +4983,23 @@ class Window(QMainWindow):
         def operation():
             self.chat_ticket = self.policy.ticket()
             provider = self.chat_provider.currentText()
+            effort = task_brain.effort_for(text, self.reasoning_effort.currentText(), bool(analysis))
+            if self.auto_brain.isChecked() and provider in ('Gemini', 'OpenAI', 'MiniMax'):
+                def available(name):
+                    try:
+                        return bool(self.get_key(name))
+                    except ValueError:
+                        return False
+                def model_for(name, style):
+                    wanted = self.selected_model(name, style)
+                    return task_brain.catalogued_model(name, wanted, self.store.get('catalogue:' + name, []),
+                        style, custom=self.store.get('custom_model:' + name, False))
+                provider, model = task_brain.select_route(provider, effort, available=available,
+                    model_for=model_for, history=self.store.usage_rows())
+            else:
+                explicit = self.reasoning_effort.currentText() != 'Auto' or analysis
+                model = self.selected_model(provider, effort if explicit else None)
             key = self.get_key(provider)
-            profile = 'deep' if analysis and profile_models.supports_profiles(provider) else None
-            model = self.selected_model(provider, profile)
             backup = None
             if self.backup_consent.isChecked():
                 name = self.backup_provider.currentText()
@@ -5112,6 +5213,9 @@ class Window(QMainWindow):
 
     def stop(self):
         self.policy.stop()
+        self.browser.stop()
+        if self.research_dialog:
+            self.research_dialog.cancel()
         self.conversation_plan.cancel('Emergency Stop. Resume will not replay this plan.')
         self.desktop_task_timer.stop()
         self.desktop_pending = None
@@ -5281,6 +5385,8 @@ class Window(QMainWindow):
             event.ignore()
             return
         if (self.worker is not None or self.coding_worker is not None
+                or self.browser.worker is not None
+                or (self.research_dialog and self.research_dialog.worker is not None)
                 or self.test_worker is not None or self.release_checker.source_worker is not None
                 or self.improvement_worker is not None):
             # A coding task runs the Codex CLI and the test command in their

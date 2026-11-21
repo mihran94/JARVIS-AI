@@ -503,6 +503,14 @@ class PrimeChat(QWidget):
         self.states.addWidget(self.assistant)
         self.states.addWidget(self.conversation)
         layout.addWidget(self.states, 1)
+        self.task_panels = {}
+        self.task_area = QStackedWidget()
+        self.task_area.hide()
+        self.dismiss_task = QPushButton('Close task details')
+        self.dismiss_task.clicked.connect(lambda: window.open_section('JARVIS Chat'))
+        self.dismiss_task.hide()
+        layout.addWidget(self.dismiss_task)
+        layout.addWidget(self.task_area, 2)
 
         # The approval the owner has to answer, the card of a running
         # job, and the plan of a job with more than one step come with
@@ -531,12 +539,15 @@ class PrimeChat(QWidget):
         for widget in (window.chat_mic, window.attach_button, window.research_button):
             window.composer_actions.removeWidget(widget)
             controls.addWidget(widget)
+        browser = QPushButton('Browser')
+        browser.clicked.connect(window.show_browser_commands)
+        controls.addWidget(browser)
         window.composer_actions.removeWidget(window.send_button)
         controls.addStretch(1)
         controls.addWidget(window.send_button)
         self.composer.body.addLayout(controls)
 
-        for card in (getattr(window, 'chat_approval', None),
+        for card in (window.browser_output, getattr(window, 'chat_approval', None),
                      getattr(window, 'chat_task_card', None),
                      getattr(window, 'plan_card', None)):
             if card is None:
@@ -545,6 +556,30 @@ class PrimeChat(QWidget):
             if old_layout is not None:
                 old_layout.removeWidget(card)
             self.cards.addWidget(card)
+
+    def adopt_task_panels(self):
+        window = self.window_ref
+        names = ('Coding Assistant', 'Video Editor', 'Business', 'PC Control', 'Step Workflows',
+                 'Task Queue', 'Command Center')
+        # Move existing reviewed controls into the conversation. Keep compatibility
+        # indices for shortcuts and settings without leaving another reachable page.
+        widgets = {name: window.pages.widget(index) for name, index in window.page_indices.items()}
+        for name in names:
+            scroller = widgets[name]
+            window.pages.removeWidget(scroller)
+            self.task_panels[name] = self.task_area.addWidget(scroller)
+        for name, widget in widgets.items():
+            window.page_indices[name] = window.pages.indexOf(self if name in names else widget)
+        for index in range(window.nav.count()):
+            item = window.nav.item(index)
+            item.setData(Qt.ItemDataRole.UserRole, window.page_indices[item.text()])
+
+    def show_task(self, name):
+        active = name in self.task_panels
+        if active:
+            self.task_area.setCurrentIndex(self.task_panels[name])
+        self.task_area.setVisible(active)
+        self.dismiss_task.setVisible(active)
 
     def refresh_theme(self):
         self.assistant.refresh_theme()
@@ -665,7 +700,7 @@ class PrimeShell(QWidget):
             ('◉', 'Chat', 'JARVIS Chat'),
             ('◈', 'Files', 'Files & Folders'),
             ('◐', 'Voice', 'Voice / Hey Jarvis'),
-            ('⌘', 'Code', 'Coding Assistant'),
+            ('◇', 'Cybersecurity', 'Cybersecurity'),
             ('◎', 'Memory', 'Memory'),
             ('⚙', 'Settings', 'Settings & Safety'),
         ):
@@ -701,7 +736,10 @@ class PrimeShell(QWidget):
         self.set_state(self.state_chip.text().lower())
 
     def open_section(self, name: str):
-        self.window_ref.open_section(name)
+        if name == 'Cybersecurity':
+            self.window_ref.open_network_diagnostics()
+        else:
+            self.window_ref.open_section(name)
 
     def mark_active(self, name: str):
         for section, button in self.rail_buttons.items():
