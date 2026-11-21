@@ -1,6 +1,7 @@
 """The main composer's browser actions. Page contents remain transient and local."""
 import asyncio
 from dataclasses import replace
+from hashlib import sha256
 from pathlib import Path
 from queue import Empty, Queue
 import threading
@@ -8,7 +9,8 @@ import threading
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 from PySide6.QtWidgets import QFileDialog, QInputDialog
 
-from automation.browser import BrowserSession, BrowserTaskError, HELP, origin, parse_browser
+from automation.browser import BrowserSession, BrowserTaskError, origin, parse_browser, read_asset
+from desktop.attachments import is_sensitive
 from security.policy import Action, Denied, Stopped
 
 
@@ -69,6 +71,7 @@ class BrowserControl(QObject):
         self.window = window
         self.worker = self.task = self.document = None
         self.ticket = None
+        self.reviewing = False
 
     def stop(self):
         self.document = None
@@ -77,6 +80,9 @@ class BrowserControl(QObject):
 
     def command(self, request):
         w = self.window
+        if self.reviewing:
+            return
+        self.reviewing = True
         try:
             action = parse_browser(request)
             if action.verb == 'close':
@@ -86,6 +92,7 @@ class BrowserControl(QObject):
             if self.task or (self.worker and self.worker.halt.is_set()):
                 raise BrowserTaskError('Wait for the current browser action to finish.')
             ticket = w.policy.ticket()
+            document = self.document
             if action.verb == 'open':
                 destination = origin(action.target)
                 preview = 'Open this address in the dedicated browser profile?\n' + action.target
@@ -107,12 +114,11 @@ class BrowserControl(QObject):
                 if not chosen:
                     return
                 path = Path(chosen)
-                from desktop.attachments import is_sensitive
-                if not path.is_file() or path.is_symlink() or is_sensitive(path) or path.stat().st_size > 100_000_000:
-                    raise BrowserTaskError('Choose a regular non-sensitive asset under 100 MB.')
-                action = replace(action, value=str(path))
+                if is_sensitive(path):
+                    raise BrowserTaskError('Choose a non-sensitive asset.')
+                asset_hash = sha256(read_asset(path)).hexdigest()
+                action = replace(action, value=str(path), asset_hash=asset_hash)
                 preview += '\nSend file to this site: ' + str(path)
-            document = self.document
             digest = action.digest(document)
             audit = Action('browser_' + action.verb, destination, digest)
             token = w.policy.approve(audit, lambda _: w.confirm(Action(audit.kind, preview, digest)))
@@ -132,6 +138,8 @@ class BrowserControl(QObject):
             w.policy.execute(audit, token, enqueue)
         except (BrowserTaskError, Denied, Stopped, OSError) as error:
             w.browser_output.setPlainText(str(error))
+        finally:
+            self.reviewing = False
 
     @Slot(str, str, object)
     def finished_action(self, status, message, document):

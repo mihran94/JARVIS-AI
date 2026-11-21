@@ -1,13 +1,17 @@
 """Owner-operated browser actions in a dedicated, visible browser profile."""
+import asyncio
 from dataclasses import dataclass
 from hashlib import sha256
+import mimetypes
 from pathlib import Path
 import json
 import shutil
 import sys
 from urllib.parse import urlsplit
 
-from playwright.async_api import Error as BrowserError, async_playwright
+from playwright.async_api import async_playwright
+
+MAX_ASSET_BYTES = 25_000_000
 
 
 class BrowserTaskError(ValueError):
@@ -33,9 +37,11 @@ class BrowserAction:
     verb: str
     target: str = ''
     value: str = ''
+    asset_hash: str = ''
 
     def digest(self, document):
-        payload = json.dumps([document, self.verb, self.target, self.value], ensure_ascii=False)
+        payload = json.dumps([document, self.verb, self.target, self.value, self.asset_hash],
+                             ensure_ascii=False)
         return sha256(payload.encode()).hexdigest()
 
 
@@ -68,14 +74,20 @@ def system_browser():
 
 
 class BrowserSession:
-    def __init__(self, profile):
+    def __init__(self, profile, *, headless=False):
         self.profile = str(Path(profile))
+        self.headless = headless
         self.driver = self.context = self.page = None
         self.allowed = ''
         self.revision = 0
 
     def navigated(self, frame):
         if self.page and frame == self.page.main_frame:
+            self.revision += 1
+
+    def context_closed(self, context):
+        if self.context == context:
+            self.context = self.page = None
             self.revision += 1
 
     def document(self):
@@ -91,8 +103,9 @@ class BrowserSession:
             self.driver = await async_playwright().start()
         if self.context is None:
             self.context = await self.driver.chromium.launch_persistent_context(
-                self.profile, headless=False, accept_downloads=False, timeout=15000,
+                self.profile, headless=self.headless, accept_downloads=False, timeout=15000,
                 **system_browser())
+            self.context.on('close', self.context_closed)
             self.context.set_default_timeout(4500)
         if self.page is None or self.page.is_closed():
             self.page = next((p for p in self.context.pages if not p.is_closed()), None)
@@ -178,10 +191,18 @@ class BrowserSession:
             if not await element.evaluate("e => e.tagName === 'INPUT' && e.type === 'file'"):
                 raise BrowserTaskError('Choose a labelled file input.')
             path = Path(action.value)
+            contents = await asyncio.to_thread(read_asset, path)
+            if sha256(contents).hexdigest() != action.asset_hash:
+                raise BrowserTaskError('The file changed after selection. Choose it again.')
             check()
-            await element.set_input_files(str(path), timeout=4500)
+            if self.document() != current:
+                raise BrowserTaskError('The page changed while verifying the file.')
+            await element.set_input_files(
+                {'name': path.name, 'mimeType': mimetypes.guess_type(path)[0] or 'application/octet-stream',
+                 'buffer': contents},
+                timeout=4500)
             chosen = await element.evaluate('e => Array.from(e.files, f => [f.name, f.size])')
-            if chosen != [[path.name, path.stat().st_size]]:
+            if chosen != [[path.name, len(contents)]]:
                 raise BrowserTaskError('The selected file could not be verified.')
             evidence = 'The file input contains the selected name and byte size. Server acceptance is unknown.'
         else:
@@ -189,3 +210,16 @@ class BrowserSession:
         if self.document() != current:
             raise BrowserTaskError('The page changed before the result was verified.')
         return ('verified', evidence, current)
+
+
+def read_asset(path):
+    try:
+        if path.is_symlink() or not path.is_file():
+            raise BrowserTaskError('The selected file is no longer available.')
+        with path.open('rb') as stream:
+            contents = stream.read(MAX_ASSET_BYTES + 1)
+    except OSError:
+        raise BrowserTaskError('The selected file could not be read.') from None
+    if len(contents) > MAX_ASSET_BYTES:
+        raise BrowserTaskError('Select an asset no larger than 25 MB.')
+    return contents
