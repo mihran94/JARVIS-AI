@@ -38,6 +38,7 @@ from desktop.camera_reader import open_camera_reader
 from desktop.update_dialog import ReleaseChecker, open_updates
 from desktop.voice_panel import VoicePanel
 from desktop.azure_voice_settings import AzureVoiceSettings
+from desktop.audio_test import AudioTest
 from desktop.tray import BackgroundControls
 from desktop.global_hotkey import DEFAULT_SHORTCUT, GlobalHotkey
 from desktop.background import ImprovementWorker, SourceCheckWorker
@@ -108,7 +109,10 @@ from video_studio.planning import (
     planning_messages, shot_list, spoken_brief, suggest_workflow,
 )
 from business.site_preview import LANGUAGES, WebsiteExport
-from business.drafting import TASKS as BUSINESS_TASKS, draft_messages, spoken_business_request
+from business.drafting import (
+    EDITOPRO_REPLY, TASKS as BUSINESS_TASKS, draft_messages, parse_editopro_reply,
+    spoken_business_request,
+)
 from agents.gateway import Gateway
 from agents.queue import TaskQueue
 from agents.workflows import WorkflowQueue
@@ -610,6 +614,7 @@ class Window(QMainWindow):
             # The saved-project table lives in Settings, so it is refreshed
             # whenever the owner comes back to it.
             self.refresh_projects_page()
+            self.audio_test.refresh_devices()
 
     def open_island(self):
         """The only optional presentation mode on the main assistant toolbar."""
@@ -702,12 +707,17 @@ class Window(QMainWindow):
     def on_wake_detected(self, transcript, command):
         if self.policy.stopped or not self.voice_panel.consent.listening:
             return
+        if self.omega is not None and self.omega.mode == 'Island':
+            self.omega.switch('Omega')
+        if not self.isVisible() or self.isMinimized() or not self.isActiveWindow():
+            self.summon_from_hotkey()
+        self.open_section('JARVIS Chat')
+        self.prime_shell.pulse_wake()
         text = (command or '').strip()[:4000]
         if text:
             self.show_hud_text('Heard: ' + text)
         if self.answer_spoken_system_command(text) or self.route_task(text):
             return
-        self.open_section('JARVIS Chat')
         if (text and self.local_voice_allowed() and self.worker is None
                 and not self.prompt.toPlainText().strip()):
             # Exact opt-in, local model only: no cloud API charges, no shell
@@ -2138,6 +2148,7 @@ class Window(QMainWindow):
         self.business_generate = self.button(layout, 'Generate business draft', self.generate_business)
         studio_row = QHBoxLayout()
         self.button(studio_row, 'Prepare site update prompt', self.prepare_website_update)
+        self.editopro_english_reply = None
         self.business_copy = self.button(studio_row, 'Copy draft', self.copy_business_draft)
         self.business_copy.setEnabled(False)
         layout.addLayout(studio_row)
@@ -2273,12 +2284,16 @@ class Window(QMainWindow):
 
     def copy_business_draft(self):
         if not self.policy.stopped:
-            draft = self.business_preview.toPlainText()
+            draft = self.editopro_english_reply or self.business_preview.toPlainText()
             if draft.strip():
                 QApplication.clipboard().setText(draft)
-                self.statusBar().showMessage('Business draft copied.', 5000)
+                message = ('English reply copied.' if self.editopro_english_reply
+                           else 'Business draft copied.')
+                self.statusBar().showMessage(message, 5000)
 
     def clear_business_draft(self):
+        self.editopro_english_reply = None
+        self.business_copy.setText('Copy draft')
         self.site_draft = None
         self.site_preview_path = None
         self.site_open_preview.setEnabled(False)
@@ -2287,7 +2302,7 @@ class Window(QMainWindow):
         self.business_status.setText('Review the brief and select Generate business draft.')
 
     def route_business_brief(self, text):
-        request = spoken_business_request(text)
+        request = spoken_business_request(addressed_request(text))
         if request is None:
             return False
         return self.open_business_request(*request)
@@ -2299,6 +2314,9 @@ class Window(QMainWindow):
             return True
         self.business_task.setCurrentText(task)
         self.business_brief.setPlainText(brief)
+        if task == EDITOPRO_REPLY:
+            self.business_status.setText(
+                'Review the client message, then select Generate business draft to share it with Gemini.')
         self.business_brief.setFocus()
         return True
 
@@ -2937,6 +2955,9 @@ class Window(QMainWindow):
         assistant_layout = QVBoxLayout(assistant_group)
         assistant_layout.addWidget(self.chat_settings_panel)
         layout.addWidget(assistant_group)
+        self.audio_test = AudioTest(self.voice_panel, self.policy)
+        self.audio_test.finished.connect(self.schedule_local_voice_rearm)
+        layout.addWidget(self.audio_test)
 
         preferences = QGroupBox('Appearance and startup')
         preference_layout = QVBoxLayout(preferences)
@@ -5108,8 +5129,17 @@ class Window(QMainWindow):
                 self.business_status.setText(status + ': ' + text)
         elif self.worker_kind == 'business_draft':
             if status == 'completed' and text.strip():
-                self.business_preview.setPlainText(text.strip())
-                self.business_status.setText('Draft ready to review and copy.')
+                try:
+                    if self.business_task.currentText() == EDITOPRO_REPLY:
+                        summary, reply = parse_editopro_reply(text)
+                        self.editopro_english_reply = reply
+                        self.business_copy.setText('Copy English reply')
+                        text = f'தமிழ் சுருக்கம்\n{summary}\n\nEnglish reply\n{reply}'
+                    self.business_preview.setPlainText(text.strip())
+                    self.business_status.setText('Draft ready to review and copy.')
+                except ValueError as error:
+                    status = 'failed'
+                    self.business_status.setText(str(error))
             elif status == 'completed':
                 status = 'failed'
                 self.business_status.setText('Gemini returned an empty draft. Try again.')
@@ -5356,6 +5386,7 @@ class Window(QMainWindow):
 
     def closeEvent(self, event):
         self.conversation_plan.cancel('Window closed; remaining steps cancelled.')
+        self.audio_test.stop()
         self.cancel_launch_verification()
         self.desktop_task_timer.stop()
         self.desktop_pending = None

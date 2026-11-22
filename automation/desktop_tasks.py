@@ -52,6 +52,10 @@ def parse_desktop_task(message: str) -> DesktopTask | None:
         (True, r'open\s+notepad\s+and\s+(?:type|write|enter)\s*:\s*([\s\S]+)'),
         (False, r'(?:type|write|enter)\s+in(?:to)?\s+notepad\s*:\s*([\s\S]+)'),
         (True, r'notepad\s+open\s+panni\s+(?:type|write)\s+pannu\s*:\s*([\s\S]+)'),
+        (True, r'ouvre\s+(?:le\s+)?(?:bloc-notes|notepad)\s+et\s+(?:écris|saisis)\s*:\s*([\s\S]+)'),
+        (False, r'(?:écris|saisis)\s+dans\s+(?:le\s+)?(?:bloc-notes|notepad)\s*:\s*([\s\S]+)'),
+        (True, r'(?:நோட்பேட்|நோட்பேடை|notepad)\s+திறந்து\s+எழுது\s*:\s*([\s\S]+)'),
+        (False, r'(?:நோட்பேடில்|notepad[ -]?ல்)\s+எழுது\s*:\s*([\s\S]+)'),
     )
     for launch, pattern in patterns:
         match = re.fullmatch(pattern, cleaned, flags=re.IGNORECASE)

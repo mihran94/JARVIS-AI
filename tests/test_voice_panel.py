@@ -370,3 +370,79 @@ def test_the_privacy_line_follows_the_stop(panel):
     panel.allow.setChecked(True)
     panel.stop_voice()
     assert 'Stopped' in panel.privacy.text()
+
+
+def test_settings_audio_test_requires_permission_and_discards_samples(tmp_path, monkeypatch):
+    from array import array
+    from types import SimpleNamespace
+
+    from desktop.app import Window
+
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
+    panel = window.audio_test
+    monkeypatch.setattr('desktop.audio_test.QMediaDevices', None)
+    panel.refresh_devices()
+    panel.test_microphone()
+    assert 'unavailable' in panel.devices.text()
+    assert 'unavailable' in panel.status.text()
+    monkeypatch.setattr('desktop.audio_test.QMediaDevices', object())
+    monkeypatch.setattr('desktop.audio_test.QAudio',
+                        SimpleNamespace(Error=SimpleNamespace(NoError=0)))
+    try:
+        panel.test_microphone()
+        assert 'Allow the microphone' in panel.status.text()
+        assert panel.mode is None
+
+        window.voice_panel.allow.setChecked(True)
+        monkeypatch.setattr(panel, 'pcm_format', lambda _device: object())
+        assert panel.begin('microphone', SimpleNamespace(isNull=lambda: False), 5)
+        samples = array('h', [0, -8192, 16384]).tobytes()
+        stopped = []
+        panel.buffer = SimpleNamespace(readAll=lambda: samples)
+        panel.stream = SimpleNamespace(error=lambda: 0,
+                                       stop=lambda: stopped.append(True),
+                                       deleteLater=lambda: None)
+        panel.poll()
+        assert panel.level.value() == 50
+        window.voice_panel.allow.setChecked(False)
+        assert stopped == [True]
+        assert not window.voice_panel.audio_test_active
+        assert panel.buffer is None
+        assert panel.mode is None
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_settings_speaker_test_plays_a_local_tone_and_releases_buffer(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from desktop.app import Window
+
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
+    panel = window.audio_test
+    fmt = SimpleNamespace(sampleRate=lambda: 8000, channelCount=lambda: 1)
+    monkeypatch.setattr(panel, 'pcm_format', lambda _device: fmt)
+    monkeypatch.setattr('desktop.audio_test.QMediaDevices', SimpleNamespace(
+        defaultAudioOutput=lambda: SimpleNamespace(isNull=lambda: False)))
+    monkeypatch.setattr('desktop.audio_test.QAudio', SimpleNamespace(
+        Error=SimpleNamespace(NoError=0), State=SimpleNamespace(IdleState=1)))
+    played = []
+    monkeypatch.setattr('desktop.audio_test.QAudioSink', lambda *_: SimpleNamespace(
+        start=lambda source: played.append(bytes(source.readAll())),
+        error=lambda: 0, state=lambda: 1,
+        stop=lambda: None, deleteLater=lambda: None))
+    try:
+        panel.test_speaker()
+        assert len(played) == 1 and len(played[0]) == 8000 and any(played[0])
+        panel.poll()
+        assert 'If you heard it' in panel.status.text()
+        assert panel.buffer is None
+        assert not window.voice_panel.audio_test_active
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()

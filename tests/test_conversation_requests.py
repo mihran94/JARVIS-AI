@@ -128,3 +128,16 @@ def test_explicit_analysis_cannot_schedule_coding(tmp_path, monkeypatch):
     finally:
         win.close()
         app.processEvents()
+
+
+
+@pytest.mark.parametrize('text', [
+    'Déboguer les erreurs du projet',
+    'இந்தப் பிழையைக் கண்டுபிடி',
+    'padi padiya explain pannu',
+])
+def test_auto_effort_recognizes_multilingual_analysis(text):
+    from providers.task_brain import effort_for
+
+    assert effort_for(text) == 'deep'
+    assert effort_for(text, 'Fast') == 'fast'

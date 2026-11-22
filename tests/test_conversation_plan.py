@@ -31,11 +31,26 @@ def test_natural_steps_and_literal_text_are_separate():
     assert parse_plan('ஜார்விஸ், notepad திற பிறகு calculator திற')[1].app == 'Calculator'
 
 
+@pytest.mark.parametrize('text, payload', [
+    ('JARVIS, ouvre la calculatrice, puis ouvre le bloc-notes et écris: Bonjour puis au revoir',
+     'Bonjour puis au revoir'),
+    ('ஜார்விஸ், கால்குலேட்டர் திற, பிறகு நோட்பேட் திறந்து எழுது: வணக்கம் பிறகு சந்திப்போம்',
+     'வணக்கம் பிறகு சந்திப்போம்'),
+    ('Jarvis, calculator open pannu appuram notepad open panni type pannu: Hello appuram bye',
+     'Hello appuram bye'),
+])
+def test_multilingual_commands_keep_the_final_payload_literal(text, payload):
+    steps = parse_plan(text)
+    assert [step.app for step in steps] == ['Calculator', 'Notepad']
+    assert steps[1].typing.text == payload
+
+
 @pytest.mark.parametrize('text', [
     'How do I open Notepad then open Calculator?',
     'Do not open Notepad then open Calculator',
     '"open Notepad then open Calculator"',
     'Jarvis, should I open Notepad then open Calculator?',
+    'Ouvre le bloc-notes puis ouvre la calculatrice ?',
 ])
 def test_questions_and_quotes_stay_conversation(text):
     assert parse_plan(text) is None

@@ -6,7 +6,13 @@ from providers import pricing
 
 SPECIALISTS = ('OpenAI', 'MiniMax')
 EFFORTS = ('Auto', 'Fast', 'Deep')
-COMPLEX = re.compile(r'\b(debug|reason|trade-?offs?|architect(?:ure)?|analyse[rz]?|analy[sz]e|multi.?step|compare|diagnostiquer|comparer|oppidu)\b|ஒப்பிடு|ஆராய்|படிப்படியாக', re.I)
+COMPLEX = re.compile(
+    r'\b(debug(?:ging)?|reason|trade-?offs?|architect(?:ure)?|analyse[rz]?|analy[sz]e|'
+    r'multi.?step|compare|diagnostiquer|comparer|déboguer|dépanner|'
+    r'étape par étape|oppidu|padi padiya)\b'
+    r'|ஒப்பிடு|ஆராய்|பகுப்பாய்வு|படிப்படியாக|பிழையைக் கண்டுபிடி',
+    re.IGNORECASE,
+)
 NON_CHAT = re.compile(r'embed|image|audio|tts|realtime|transcri|moderation|vision-only|computer-use|deep-research|robotics|music|video|instruct-preview|code-interpreter', re.I)
 
 

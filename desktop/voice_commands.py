@@ -17,15 +17,19 @@ COMMANDS = {
     "நோட்பேடை திற": "Notepad",
     "கால்குலேட்டர் திற": "Calculator",
     "கால்குலேட்டரை திற": "Calculator",
+    "ouvre la calculatrice": "Calculator",
 }
 
 aliases = {name.casefold(): name for name in (*VIDEO_TOOLS, *EDITOR_EXECUTABLES)}
 aliases.update({'notepad': 'Notepad', 'calculator': 'Calculator'})
+aliases.update({'bloc-notes': 'Notepad', 'calculatrice': 'Calculator'})
 aliases.update({'flow': 'Google Flow', 'davinci': 'DaVinci Resolve', 'adobe photoshop': 'Photoshop'})
 for alias, name in aliases.items():
     COMMANDS.update({
         f'open {alias}': name,
         f'launch {alias}': name,
+        f'ouvre {alias}': name,
+        f'ouvrir {alias}': name,
         f'{alias} திறந்து வை': name,
         f'{alias} open பண்ணு': name,
         f'{alias} open pannu': name,
@@ -37,5 +41,5 @@ def parse_voice_command(text):
     """Return allowlisted app name or None; require a complete utterance match."""
     if not isinstance(text, str):
         return None
-    normalized = re.sub(r"\s+", " ", addressed_request(text).casefold()).strip(" .!?।,")
+    normalized = re.sub(r"\s+", " ", addressed_request(text).casefold()).strip(" .!।,")
     return COMMANDS.get(normalized)

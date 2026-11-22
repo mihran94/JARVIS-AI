@@ -221,6 +221,7 @@ class VoicePanel(QWidget):
         self._recognizer_factory = recognizer_factory or default_recognizer_factory
         self._speaker_factory = speaker_factory or default_speaker_factory
         self.worker = None
+        self.audio_test_active = False
         self.speaker_worker = None
         self.muted = False
         self.speaking = False
@@ -374,6 +375,8 @@ class VoicePanel(QWidget):
 
     def listen(self, mode='once'):
         """Start one recognition request on a worker thread."""
+        if self.audio_test_active:
+            return
         if self.playback_busy:
             self.status('Wait for JARVIS to finish speaking.')
             return
@@ -494,6 +497,8 @@ class VoicePanel(QWidget):
 
     def speak_response(self, text, *, sample_language=None):
         """Speak on a dedicated worker so Qt remains responsive."""
+        if self.audio_test_active:
+            return
         text = (text or '').strip()[:600]
         if not text:
             return
@@ -624,12 +629,14 @@ class VoicePanel(QWidget):
         self.allow.blockSignals(False)
         self.stop_button.setEnabled(not self.consent.stopped)
         self.resume_button.setEnabled(self.consent.stopped)
-        microphone_ready = (self.consent.listening and not self.playback_busy and
+        microphone_ready = (self.consent.listening and not self.audio_test_active
+                            and not self.playback_busy and
                             not (self.worker is not None and self.worker.isRunning()))
         self.listen_button.setEnabled(microphone_ready)
         self.wake_button.setEnabled(microphone_ready)
         self.continuous_button.setEnabled(microphone_ready and not self.continuous)
-        self.speak_button.setEnabled(not self.muted and not self.consent.stopped and
+        self.speak_button.setEnabled(not self.muted and not self.consent.stopped
+                                     and not self.audio_test_active and
                                      not self.playback_busy and not self.pending_speech)
         self.activity_changed.emit()
 

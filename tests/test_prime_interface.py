@@ -318,3 +318,20 @@ def test_packaged_revision_reads_the_installed_build(tmp_path, monkeypatch):
     monkeypatch.setenv('JARVIS_BUILD_COMMIT', 'abcdef0')
     (tmp_path / 'JARVIS-AI-REVISION.txt').write_text('0123456789' * 4, encoding='ascii')
     assert ui.build_commit() == '0123456'
+
+
+def test_wake_summons_the_window_and_animates_the_m_after_consent(tmp_path, monkeypatch):
+    app, window = make_window(tmp_path)
+    summoned = []
+    monkeypatch.setattr(window, 'isActiveWindow', lambda: False)
+    monkeypatch.setattr(window, 'summon_from_hotkey', lambda: summoned.append(True))
+    try:
+        window.on_wake_detected('Hey Jarvis', '')
+        assert summoned == []
+        window.voice_panel.allow.setChecked(True)
+        window.on_wake_detected('Hey Jarvis', '')
+        assert summoned == [True]
+        assert window.pages.currentWidget() is window.prime_chat
+        assert window.prime_chat.assistant.orb._wake_timer.isActive()
+    finally:
+        window.close()

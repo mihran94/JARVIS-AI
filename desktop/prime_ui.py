@@ -171,6 +171,8 @@ class PrimeOrb(QWidget):
         self.state = 'idle'
         self._phase = 0.0
         self._motion = True
+        self._wake_timer = QTimer(self, singleShot=True, interval=900)
+        self._wake_timer.timeout.connect(self.end_wake_pulse)
         self.setMinimumSize(64, 64)
         self.setAccessibleName('JARVIS M hologram')
         self._timer = QTimer(self)
@@ -183,12 +185,13 @@ class PrimeOrb(QWidget):
             self._timer.start()
 
     def hideEvent(self, event):
+        self._wake_timer.stop()
         self._timer.stop()
         super().hideEvent(event)
 
     def set_motion(self, enabled):
         self._motion = enabled
-        if enabled and self.isVisible():
+        if (enabled or self._wake_timer.isActive()) and self.isVisible():
             if not self._timer.isActive():
                 self._timer.start()
         else:
@@ -200,8 +203,19 @@ class PrimeOrb(QWidget):
             self.state = state
             self.update()
 
+    def pulse_wake(self):
+        self._wake_timer.start()
+        self._timer.start()
+        self.update()
+
+    def end_wake_pulse(self):
+        if not self._motion:
+            self._timer.stop()
+        self.update()
+
     def _tick(self):
-        self._phase = (self._phase + 0.012) % (math.pi * 2)
+        speed = 0.15 if self._wake_timer.isActive() else 0.012
+        self._phase = (self._phase + speed) % (math.pi * 2)
         self.update()
 
     def _colours(self):
@@ -697,6 +711,12 @@ class PrimeShell(QWidget):
         middle.addWidget(self.activity)
         outer.addLayout(middle, 1)
         window.pages.currentChanged.connect(self.refresh_mark)
+
+    def pulse_wake(self):
+        if self.window_ref.store.get('omega:reduced', False):
+            return
+        orb = self.window_ref.prime_chat.assistant.orb if self.mark.isHidden() else self.mark
+        orb.pulse_wake()
 
     def refresh_mark(self, _index=None):
         chat = getattr(self.window_ref, 'prime_chat', None)
