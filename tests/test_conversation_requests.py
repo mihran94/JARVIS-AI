@@ -171,7 +171,7 @@ def test_suggestion_mode_keeps_action_requests_in_chat(tmp_path, monkeypatch):
         win.files_share_once.setChecked(True)
         win.use_notes.setChecked(True)
         win.backup_consent.setChecked(True)
-        for text in ('Open Notepad and type: Hello', '/browser open https://example.com'):
+        for text in ('Open Notepad', '/browser open https://example.com'):
             win.prompt.setPlainText(text)
             win.send()
             messages, backup = requests[-1]
@@ -260,3 +260,38 @@ def test_unsupported_suggestion_stays_advice(proposal):
 
     reply = 'Possible steps.\nJARVIS_PLAN: ' + proposal
     assert extract_suggested_plan(reply) == (reply, ())
+
+
+def test_suggested_notepad_uses_user_text_and_existing_approval(tmp_path, monkeypatch):
+    from automation.desktop_tasks import VerifiedEdit
+
+    app = QApplication.instance() or QApplication([])
+    win = Window(tmp_path)
+    typed = []
+    payload = 'நாளைக்கு Promo edit\nKeep: Case and punctuation!'
+    monkeypatch.setattr(win, 'start_worker', lambda *_a, **_kw: pytest.fail('Text sent to AI'))
+    monkeypatch.setattr('desktop.app.target_is_foreground', lambda _: True)
+
+    def type_text(target, text):
+        typed.append((target, text))
+        return VerifiedEdit('Text verified in the editor')
+
+    monkeypatch.setattr('desktop.app.type_into_target', type_text)
+    try:
+        win.prompt.setPlainText('/suggest type in Notepad: ' + payload)
+        win.send()
+        assert win.suggested_steps[0].typing.text == payload
+        assert 'Typing will not save a file.' in win.transcript.toPlainText()
+        assert win.chat_launch is None
+        win.review_suggested_plan()
+        assert typed == []
+        assert win.chat_launch is not None
+        win.finish_chat_launch(True)
+        assert typed == []
+        win.complete_desktop_task()
+        assert typed == [('Notepad', payload)]
+        assert 'Text verified in the editor' in win.transcript.toPlainText()
+    finally:
+        win.close()
+        win.deleteLater()
+        app.processEvents()

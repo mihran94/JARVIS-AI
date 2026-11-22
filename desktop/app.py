@@ -20,7 +20,7 @@ from dataclasses import replace
 from core.store import Store
 from core.conversation import (ASSISTANT_GUIDANCE, SUGGESTION_GUIDANCE,
                                addressed_request, suggestion_argument)
-from desktop.conversation_plan import (ConversationPlan, extract_suggested_plan,
+from desktop.conversation_plan import (ConversationPlan, Step, extract_suggested_plan,
                                        parse_plan as parse_conversation_plan)
 from desktop.browser_control import BrowserControl
 from developer_studio.inspection import inspect_project
@@ -4907,6 +4907,12 @@ class Window(QMainWindow):
         self.suggested_steps = ()
         self.suggestion_card.hide()
 
+    def show_suggested_steps(self, steps):
+        self.suggested_steps = steps
+        self.suggestion_preview.setText('Suggested steps:\n' +
+            '\n'.join(f'{index}. {step.label}' for index, step in enumerate(steps, 1)))
+        self.suggestion_card.show()
+
     def review_suggested_plan(self):
         if not self.suggested_steps or self.policy.stopped:
             return
@@ -4948,6 +4954,21 @@ class Window(QMainWindow):
             goal = text if requested_goal is None else requested_goal
             if not goal:
                 self.statusBar().showMessage('Usage: /suggest followed by your goal.', 10000)
+                return
+            try:
+                typing = parse_desktop_task(goal)
+            except ValueError as error:
+                self.statusBar().showMessage(str(error), 10000)
+                return
+            if typing is not None:
+                self.prompt.clear()
+                self.use_notes.setChecked(False)
+                self.files_share_once.setChecked(False)
+                self.backup_consent.setChecked(False)
+                self.show_local_system_reply(goal,
+                    'Review the exact text JARVIS would enter in Notepad:\n' + typing.text
+                    + '\n\nTyping will not save a file.')
+                self.show_suggested_steps((Step(typing.app, typing),))
                 return
             self.send_chat_reply(goal, suggestion=True)
             return
@@ -5216,11 +5237,7 @@ class Window(QMainWindow):
                 if self.worker_kind == 'suggestion':
                     text, steps = extract_suggested_plan(text)
                     if steps:
-                        self.suggested_steps = steps
-                        self.suggestion_preview.setText('Suggested steps:\n' +
-                            '\n'.join(f'{index}. {step.label}'
-                                      for index, step in enumerate(steps, 1)))
-                        self.suggestion_card.show()
+                        self.show_suggested_steps(steps)
                 self.store.message(self.session, 'assistant', text)
                 self.render_chat()
                 self.show_hud_text(text)

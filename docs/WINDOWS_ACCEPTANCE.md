@@ -56,6 +56,8 @@ Record OS build, Python/dependency versions, provider/model (never key), exact p
 
 ## Suggestion Mode
 
-- Configure a chat AI. In JARVIS Chat, turn on **Suggestion Mode** and send `Open Notepad and type: Hello`. Confirm a plan appears in the chat, with no task approval card or new Notepad window. Try a Tamil or Tanglish goal and confirm the reply follows the language of the request.
+- Configure a chat AI. In JARVIS Chat, turn on **Suggestion Mode** and send `Open Notepad`. Confirm a plan appears in the chat, with no task approval card or new Notepad window. Try a Tamil or Tanglish goal and confirm the reply follows the language of the request.
 - Try an actionable voice request with Suggestion Mode on. With ordinary dictation, confirm it appears in the composer for review. If local hands-free chat is enabled, confirm the reply comes from Ollama and no task workflow is opened.
 - Turn off Suggestion Mode. Send `/suggest Create a promotional Reel`, then send `Open Notepad`. Confirm the first message returns advice and the second returns to the normal app approval flow.
+
+- Send `/suggest Open Notepad and type: Hello`. Confirm the exact text is shown locally. Select **Review suggested steps**, then **Approve**. Confirm the text was entered in the verified Notepad window and no file was saved. Repeat with **Decline** and confirm no text was entered.
