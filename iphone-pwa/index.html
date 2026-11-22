@@ -112,10 +112,10 @@
       kept on this phone and goes out when the app is open and the PC
       answers.</p>
     <label>What to do
-      <input id="taskTitle" type="text" autocomplete="off" placeholder="Nightly backup">
+      <input id="taskTitle" type="text" autocomplete="off" placeholder="Check PC disk space">
     </label>
-    <label>Details
-      <textarea id="taskPayload" rows="2" spellcheck="false" placeholder="Optional details"></textarea>
+    <label>Action (use the example to check PC disk space)
+      <textarea id="taskPayload" rows="2" spellcheck="false" placeholder='{"action":"check_disk_space"}'></textarea>
     </label>
     <div class="row">
       <button id="submitTask" class="primary">Send for approval</button>
