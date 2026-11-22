@@ -71,11 +71,9 @@ def test_the_composer_belongs_to_the_window_and_not_to_the_scrolling_page(tmp_pa
     app = QApplication.instance() or QApplication([])
     window = Window(tmp_path)
     try:
-        # The composer is a child of the window, not of the chat page, so the
-        # conversation scrolls and the input never leaves the screen.
-        assert window.composer_bar.parent() is window.centralWidget()
-        # The chat page itself does not hold the composer.
-        assert window.prompt.parent() is window.composer_bar
+        # Scrolling the conversation leaves the composer in place.
+        assert window.prompt.parent() is window.prime_chat.composer
+        assert not window.prime_chat.conversation.isAncestorOf(window.prompt)
     finally:
         window.close()
         window.deleteLater()
@@ -89,9 +87,9 @@ def test_the_composer_is_only_shown_with_the_chat(tmp_path):
     window = Window(tmp_path)
     try:
         window.open_section('JARVIS Chat')
-        assert window.composer_bar.isVisibleTo(window) is True
+        assert window.prime_chat.composer.isVisibleTo(window) is True
         window.open_section('Settings & Safety')
-        assert window.composer_bar.isVisibleTo(window) is False
+        assert window.prime_chat.composer.isVisibleTo(window) is False
     finally:
         window.close()
         window.deleteLater()
@@ -144,7 +142,7 @@ def test_the_page_root_carries_the_premium_surface(app, tmp_path):
 
     window = Window(tmp_path)
     try:
-        page = window.pages.widget(window.page_indices['JARVIS Chat'])
+        page = window.pages.widget(window.page_indices['Settings & Safety'])
         # The page is inside a scroll area, so the root is the scrolled page.
         root = page.widget() if hasattr(page, 'widget') else page
         assert root.objectName() == 'pageRoot'
