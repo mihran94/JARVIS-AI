@@ -1388,6 +1388,18 @@ class Window(QMainWindow):
         suggestion_layout.addLayout(suggestion_actions)
         self.suggestion_card.hide()
         layout.addWidget(self.suggestion_card)
+        self.desktop_export_text = None
+        self.desktop_result_card = QWidget()
+        self.desktop_result_card.setObjectName('taskCard')
+        result_layout = QVBoxLayout(self.desktop_result_card)
+        self.desktop_result_label = QLabel()
+        self.desktop_result_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.desktop_result_label.setWordWrap(True)
+        result_layout.addWidget(self.desktop_result_label)
+        self.desktop_save_button = self.button(result_layout, 'Save inserted text as…',
+                                               self.save_desktop_result)
+        self.desktop_result_card.hide()
+        layout.addWidget(self.desktop_result_card)
         self.prompt = QPlainTextEdit()
         self.prompt.setObjectName('composerCard')
         self.prompt.setPlaceholderText(
@@ -2857,6 +2869,7 @@ class Window(QMainWindow):
             return
         session = self.archives.currentData()
         if session:
+            self.clear_desktop_result()
             self.clear_suggested_plan()
             self.conversation_plan.cancel('Conversation changed; remaining steps cancelled.')
             if self.chat_launch is not None:
@@ -3239,6 +3252,57 @@ class Window(QMainWindow):
         return (f'Desktop plan approved for {task.app}. Waiting for its '
                 'foreground window; text not entered yet.')
 
+    def show_desktop_result(self, detail, verified_text=None):
+        self.desktop_export_text = verified_text
+        self.desktop_result_label.setText(detail)
+        self.desktop_save_button.setVisible(verified_text is not None)
+        self.desktop_result_card.show()
+
+    def clear_desktop_result(self):
+        self.desktop_export_text = None
+        self.desktop_result_card.hide()
+
+    def save_desktop_result(self):
+        text = self.desktop_export_text
+        if text is None or self.policy.stopped:
+            return
+        ticket = self.policy.ticket()
+        session = self.session
+        destination, _ = QFileDialog.getSaveFileName(
+            self, 'Save inserted text as a new file', 'Notepad-text.txt', 'Text files (*.txt)',
+            options=QFileDialog.Option.DontConfirmOverwrite)
+        if not destination or self.session != session or self.desktop_export_text is not text:
+            return
+
+        def save():
+            self.policy.check(ticket)
+            path = Path(destination)
+            if not path.suffix:
+                path = path.with_suffix('.txt')
+            if path.suffix.lower() != '.txt':
+                raise ValueError('Choose a .txt filename.')
+            payload = text.encode('utf-8')
+
+            def write_verified():
+                try:
+                    with path.open('xb') as output:
+                        output.write(payload)
+                except FileExistsError:
+                    raise ValueError('That file already exists. Choose a new filename.') from None
+                with path.open('rb') as output:
+                    if output.read(len(payload) + 1) != payload:
+                        raise OSError('The saved file could not be verified.')
+                return f'Inserted text saved and verified in {path}'
+
+            ident = self.store.task('desktop_text_export', str(path))
+            detail = self.gateway.run(Action('desktop_text_export', str(path)),
+                                      lambda _action: True, write_verified,
+                                      task_id=ident, completion_status='verified')
+            self.show_desktop_result(detail)
+            self.show_local_system_reply('Save inserted text', detail)
+
+        self.notify(save)
+
     def complete_desktop_task(self):
         """Only type after Windows verifies the target foreground process."""
         pending = self.desktop_pending
@@ -3254,6 +3318,8 @@ class Window(QMainWindow):
                 self.show_local_system_reply('Desktop task',
                     f'{task.app} did not become foreground in time. '
                     'No text was entered. Activate the correct window and retry.')
+                self.show_desktop_result(
+                    f'{task.app} did not come to the foreground. No text was sent.')
                 self.conversation_plan.result(False, 'Target window did not become foreground in time.')
                 return
             if not target_is_foreground(task.app):
@@ -3271,11 +3337,15 @@ class Window(QMainWindow):
             status = 'verified' if verified else 'unverified'
             detail = f'{task.app} foreground confirmed. {result} JARVIS did not save a file.'
             self.store.finish(task_id, status, detail)
+            self.show_desktop_result(
+                detail if verified else detail + ' Check the editor before trying again.',
+                task.text if verified else None)
             self.show_local_system_reply('Desktop task result', detail)
             self.conversation_plan.result(True, detail, verified=verified)
         except (Denied, Stopped, RuntimeError, ValueError, OSError) as error:
             self.desktop_task_timer.stop()
             self.desktop_pending = None
+            self.show_desktop_result(f'Typing failed. {error}')
             self.show_local_system_reply('Desktop task failed', str(error))
             self.conversation_plan.result(False, str(error))
         finally:
@@ -4904,6 +4974,7 @@ class Window(QMainWindow):
             self.statusBar().showMessage(
                 'A task is still running. Finish or decline it before starting a new chat.', 12000)
             return
+        self.clear_desktop_result()
         self.clear_suggested_plan()
         self.conversation_plan.cancel('New conversation; remaining steps cancelled.')
         self.cancel_launch_verification()
@@ -4920,6 +4991,7 @@ class Window(QMainWindow):
         if self.worker is not None:
             return
         if self.confirm(Action('delete_conversation', self.session)):
+            self.clear_desktop_result()
             self.clear_suggested_plan()
             self.conversation_plan.cancel('Conversation deleted.')
             self.cancel_launch_verification()
@@ -5350,6 +5422,7 @@ class Window(QMainWindow):
         self.browser.stop()
         if self.research_dialog:
             self.research_dialog.cancel()
+        self.clear_desktop_result()
         self.clear_suggested_plan()
         self.conversation_plan.cancel('Emergency Stop. Resume will not replay this plan.')
         self.cancel_launch_verification()

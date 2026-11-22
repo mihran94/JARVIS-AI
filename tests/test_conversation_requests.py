@@ -300,6 +300,17 @@ def test_suggested_notepad_uses_user_text_and_existing_approval(tmp_path, monkey
         assert 'foreground confirmed' in row['detail']
         assert 'JARVIS did not save a file.' in row['detail']
         assert activity.live_detail.text() == ''
+        destination = tmp_path / 'inserted.txt'
+        monkeypatch.setattr('desktop.app.QFileDialog.getSaveFileName',
+                            lambda *_a, **_kw: (str(destination), ''))
+        assert not win.desktop_save_button.isHidden()
+        win.desktop_save_button.click()
+        assert destination.read_bytes() == payload.encode('utf-8')
+        assert 'saved and verified' in win.desktop_result_label.text()
+        assert win.desktop_save_button.isHidden()
+        assert any(row['kind'] == 'desktop_text_export' and row['status'] == 'verified'
+                   for row in win.store.tasks())
+
     finally:
         win.close()
         win.deleteLater()

@@ -624,7 +624,8 @@ class PrimeChat(QWidget):
 
         for card in (window.browser_output, getattr(window, 'chat_approval', None),
                      getattr(window, 'chat_task_card', None),
-                     getattr(window, 'plan_card', None), window.suggestion_card):
+                     getattr(window, 'plan_card', None), window.suggestion_card,
+                     window.desktop_result_card):
             if card is None:
                 continue
             old_layout = card.parentWidget().layout() if card.parentWidget() else None
