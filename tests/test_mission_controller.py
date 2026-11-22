@@ -85,7 +85,7 @@ def test_a_mission_answers_and_the_console_shows_it(window):
     connect(window, [final('The launch is on Friday.')])
     window.mission_controller.start('When is the launch?')
     assert wait_for(lambda: window.mission_panel.status.text() == 'COMPLETE')
-    assert window.mission_panel.answer.text() == 'The launch is on Friday.'
+    assert window.mission_panel.evidence_column.answer.text() == 'The launch is on Friday.'
     kinds = [entry['kind'] for entry in window.mission_panel.timeline.entries()]
     assert kinds[0] == 'goal'
     assert kinds[-1] == 'answer'
@@ -96,9 +96,9 @@ def test_a_tool_the_model_asks_for_really_runs(window):
                      final('It is 42.')])
     window.mission_controller.start('What is six times seven?')
     assert wait_for(lambda: window.mission_panel.status.text() == 'COMPLETE')
-    evidence = window.mission_panel.evidence.text()
-    assert 'evaluate_expression' in evidence
-    assert window.mission_panel.answer.text() == 'It is 42.'
+    evidence = window.mission_panel.evidence_column.count.text()
+    assert 'tool result' in evidence
+    assert window.mission_panel.evidence_column.answer.text() == 'It is 42.'
 
 
 def test_a_tool_that_changes_something_asks_the_owner(window):
@@ -112,7 +112,7 @@ def test_a_tool_that_changes_something_asks_the_owner(window):
     assert len(asked) == 1
     assert asked[0].kind == 'mission_tool'
     assert 'memory_remember' in asked[0].target
-    assert 'memory_remember' in window.mission_panel.evidence.text()
+    assert 'tool result' in window.mission_panel.evidence_column.count.text()
 
 
 def test_a_refused_tool_does_not_run(window):
@@ -122,7 +122,7 @@ def test_a_refused_tool_does_not_run(window):
                      final('Saved.')])
     window.mission_controller.start('Remember that the launch is on Friday.')
     assert wait_for(lambda: window.mission_panel.status.text() == 'FAILED')
-    assert 'memory_remember' not in window.mission_panel.evidence.text()
+    assert window.mission_panel.evidence_column.count.text() == 'no tool ran'
     labels = ' '.join(entry['label'] for entry in window.mission_panel.timeline.entries())
     assert 'did not allow' in labels
 

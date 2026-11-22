@@ -142,6 +142,17 @@ class MemoryService:
                               (int(limit),)).fetchall()
         return [self._to_memory(row) for row in rows]
 
+    def count(self) -> int:
+        """How many memories there are.
+
+        The count is the real number, not the number that one page
+        happens to hold, so the interface can say how many notes exist
+        without quietly stopping at a limit.
+        """
+        with self.connect() as db:
+            row = db.execute('SELECT COUNT(*) FROM memories').fetchone()
+        return int(row[0]) if row else 0
+
     def get(self, identifier: str):
         """One memory, or None."""
         with self.connect() as db:

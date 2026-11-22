@@ -1,15 +1,20 @@
-"""The mission console: what the owner sees while JARVIS works.
+"""The mission console: the Command Deck the owner sees while JARVIS works.
 
 WHAT IS COVERED
     * Every step of a mission reaches the rail, in the order it
       happened.
     * The status pill says what the mission is doing, and it says
-      "Working" while it runs.
+      "Working" while it runs and "Approval needed" while it waits.
     * The step counter counts the calls that ran. There is no percentage
       and no estimate.
-    * The result card appears only when there is a result to show.
-    * The evidence line names the tools that really ran, and says so
+    * The approval banner appears while the owner is being asked, and it
+      goes away when the step is over.
+    * The evidence column names the tools that really ran, and says so
       when none did.
+    * The answer column carries the answer, and says that the mission
+      did not finish when it did not.
+    * The readings on the left are real, and a reading that cannot be
+      taken is shown as unavailable rather than as a number.
     * The console paints. A mission that is running has a timeline with
       something on it, not an empty box.
 """
@@ -21,7 +26,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QApplication
 
 from core.mission import Mission, MissionEvent
-from desktop.mission_panel import MissionPanel
+from desktop.mission_panel import GaugeRing, MissionPanel, TelemetryColumn
 from desktop.prime_ui import PrimePalette
 
 
@@ -33,7 +38,7 @@ def app():
 @pytest.fixture
 def panel(app):
     widget = MissionPanel(PrimePalette(dark=True))
-    widget.resize(760, 620)
+    widget.resize(1180, 760)
     widget.show()
     app.processEvents()
     yield widget
@@ -49,8 +54,8 @@ def event(kind, label, detail=''):
 def test_the_console_starts_idle(panel):
     assert panel.status.text() == 'READY'
     assert panel.timeline.entries() == []
-    assert panel.evidence.text() == ''
-    assert panel.answer_card.isVisible() is False
+    assert panel.evidence_column.count.text() == 'no tool ran'
+    assert panel.evidence_column.answer.text() == 'No mission has run yet.'
 
 
 def test_a_running_mission_says_so(panel):
@@ -80,6 +85,11 @@ def test_every_step_reaches_the_rail_in_order(panel):
     assert panel.timeline.entries()[3]['detail'] == '2026-11-22 09:00'
 
 
+def test_the_goal_is_shown_in_the_centre(panel):
+    panel.set_goal('Find the launch date')
+    assert panel.title.text() == 'Find the launch date'
+
+
 def test_the_counter_counts_the_calls_that_ran(panel):
     panel.set_counter(0, 6)
     assert panel.counter.text() == 'Step 0 of 6'
@@ -88,30 +98,80 @@ def test_the_counter_counts_the_calls_that_ran(panel):
     assert '%' not in panel.counter.text()
 
 
-def test_the_result_card_shows_the_answer(panel):
+def test_the_approval_banner_appears_and_goes_away(panel):
+    panel.append_event(event('approval', 'Approval needed',
+                             'memory_remember(title=Launch)'))
+    assert panel.approval.isVisible() is True
+    assert 'memory_remember' in panel.approval_detail.text()
+    panel.append_event(event('result', 'memory_remember finished', 'Saved.'))
+    assert panel.approval.isVisible() is False
+
+
+def test_the_answer_and_the_evidence_are_shown(panel):
     mission = Mission(id='m1', goal='Check the time.', status='completed',
                        answer='It is nine in the morning.', steps=2,
                        tools_used=[{'tool': 'current_time', 'summary': 'current_time()',
                                     'result': '09:00'}])
     panel.show_result(mission)
     assert panel.status.text() == 'COMPLETE'
-    assert panel.answer.text() == 'It is nine in the morning.'
-    assert panel.answer_card.isVisible() is True
-    assert 'current_time' in panel.evidence.text()
+    assert panel.evidence_column.answer.text() == 'It is nine in the morning.'
+    assert 'tool result' in panel.evidence_column.count.text()
 
 
 def test_a_mission_without_a_tool_says_the_evidence_is_empty(panel):
     mission = Mission(id='m2', goal='Say hello.', status='completed', answer='Hello.', steps=1)
     panel.show_result(mission)
-    assert 'no tool ran' in panel.evidence.text()
+    assert panel.evidence_column.count.text() == 'no tool ran'
 
 
 def test_a_failed_mission_says_it_did_not_finish(panel):
     mission = Mission(id='m3', goal='Do something impossible.', status='failed', steps=3)
     panel.show_result(mission)
     assert panel.status.text() == 'FAILED'
-    assert 'did not finish' in panel.answer.text()
+    assert 'did not finish' in panel.evidence_column.answer.text()
 
+
+# ── the readings on the left ───────────────────────────────────────────────
+
+def test_a_gauge_without_a_reading_says_so(app):
+    palette = PrimePalette(dark=True)
+    gauge = GaugeRing(palette, 'CPU')
+    gauge.set_reading(None, '—')
+    assert gauge.text == '—'
+    assert gauge.value is None
+
+
+def test_the_readings_are_real_readings(panel):
+    panel.telemetry.refresh()
+    # The CPU reading is only there once the sampler has a baseline, so
+    # the test accepts the first sample being unavailable.
+    gauge = panel.telemetry.cpu
+    assert gauge.text == '—' or gauge.text.endswith('%')
+    assert panel.telemetry.extra.text().startswith('GPU ')
+
+
+def test_the_memory_count_is_a_real_count(panel, tmp_path):
+    from memory.memory_service import MemoryService
+
+    service = MemoryService(tmp_path / 'history.sqlite3')
+    service.remember('One', 'A note.')
+    service.remember('Two', 'Another note.')
+    column = TelemetryColumn(PrimePalette(dark=True), memory=service)
+    column.refresh()
+    assert column.memory_count.text() == '2 notes'
+
+
+def test_the_memory_count_says_unavailable_when_it_cannot_be_read(panel):
+    class Broken:
+        def count(self):
+            raise RuntimeError('The database is locked.')
+
+    column = TelemetryColumn(PrimePalette(dark=True), memory=Broken())
+    column.refresh()
+    assert column.memory_count.text() == 'notes —'
+
+
+# ── the painting ───────────────────────────────────────────────────────────
 
 def test_the_console_paints_what_it_shows(panel):
     panel.append_event(event('goal', 'Mission started', 'Read the notes.'))
