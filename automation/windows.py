@@ -7,6 +7,22 @@ import sys
 APPS = {'Notepad': 'notepad.exe', 'Calculator': 'calc.exe'}
 
 
+class LaunchRequest(str):
+    """A dispatched native launch and its OS-assigned process identity."""
+
+    def __new__(cls, name, pid):
+        result = super().__new__(cls, f'Launch requested for {name} (process {pid}).')
+        result.pid = pid
+        return result
+
+
+def launch_is_foreground(request):
+    """Confirm a visible foreground window belongs to the dispatched process."""
+    from automation.win_controls import foreground_process
+
+    return foreground_process() == request.pid
+
+
 def launch_app(name):
     if name not in APPS:
         raise ValueError('Application is not allowlisted.')
@@ -20,7 +36,7 @@ def launch_app(name):
     if not executable.is_file():
         raise RuntimeError('This Windows application is not installed.')
     process = subprocess.Popen([str(executable)], shell=False, close_fds=True)
-    return f'Launch request accepted; process ID {process.pid}. Verify the app window on your desktop.'
+    return LaunchRequest(name, process.pid)
 
 
 def open_path(path):
@@ -69,4 +85,4 @@ def launch_editor(name, value):
         raise RuntimeError('Editor launching is available on Windows only.')
     executable = editor_executable(name, value)
     process = subprocess.Popen([str(executable)], shell=False, close_fds=True)
-    return f'{name} launch requested (process {process.pid}).'
+    return LaunchRequest(name, process.pid)

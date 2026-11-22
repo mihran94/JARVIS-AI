@@ -209,3 +209,56 @@ def test_closed_window_leaves_no_replayable_plan(window):
     assert window.chat_launch is None
     plan = next(t for t in window.store.tasks() if t['kind'] == 'conversation_plan')
     assert plan['status'] == 'cancelled'
+
+
+def test_native_launch_verifies_the_window_before_advancing(window, monkeypatch):
+    from automation.windows import LaunchRequest
+
+    monkeypatch.setattr('desktop.app.launch_app', lambda name: LaunchRequest(name, 42))
+    monkeypatch.setattr('automation.win_controls.foreground_process', lambda: 99)
+    send(window, '/do open Notepad then open Calculator')
+    window.finish_chat_launch(True)
+    task = next(task for task in window.store.tasks() if task['kind'] == 'launch_app')
+    assert task['status'] == 'dispatched'
+    window.check_chat_launch()
+    assert window.chat_launch is None
+    assert window.launch_verification is not None
+
+    monkeypatch.setattr('automation.win_controls.foreground_process', lambda: 42)
+    window.check_chat_launch()
+    updated = next(row for row in window.store.tasks() if row['id'] == task['id'])
+    assert updated['status'] == 'verified'
+    assert 'PID 42' in updated['detail']
+    assert window.chat_launch[0] == 'Calculator'
+    window.finish_chat_launch(False)
+
+
+def test_native_launch_timeout_reports_unverified(window, monkeypatch):
+    from automation.windows import LaunchRequest
+
+    monkeypatch.setattr('desktop.app.launch_app', lambda name: LaunchRequest(name, 42))
+    monkeypatch.setattr('automation.win_controls.foreground_process', lambda: None)
+    send(window, '/do open Notepad')
+    window.finish_chat_launch(True)
+    deadline = window.launch_verification[-1]
+    monkeypatch.setattr('desktop.app.time.monotonic', lambda: deadline)
+    window.check_chat_launch()
+    task = next(task for task in window.store.tasks() if task['kind'] == 'launch_app')
+    assert task['status'] == 'unverified'
+    assert 'could not be verified' in task['detail']
+    assert window.launch_verification is None
+
+
+def test_cancelling_a_launch_check_does_not_advance_the_plan(window, monkeypatch):
+    from automation.windows import LaunchRequest
+
+    monkeypatch.setattr('desktop.app.launch_app', lambda name: LaunchRequest(name, 42))
+    send(window, '/do open Notepad then open Calculator')
+    window.finish_chat_launch(True)
+    send(window, '/cancel')
+    window.check_chat_launch()
+    task = next(task for task in window.store.tasks() if task['kind'] == 'launch_app')
+    assert task['status'] == 'cancelled'
+    assert window.chat_launch is None
+    assert window.launch_verification is None
+    assert not window.launch_timer.isActive()
