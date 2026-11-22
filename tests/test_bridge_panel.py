@@ -3,6 +3,7 @@
 The page is exercised offscreen. The listener is not started on a public
 address and no phone is involved: the owner side is what is under test.
 """
+import json
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
@@ -13,6 +14,7 @@ from desktop.bridge_panel import BridgePanel
 from remote.pairing import PairingStore
 from remote.protocol import KEY_ID
 from security.policy import Policy
+from test_bridge_server import SECRET, signed_request
 
 
 class FakeVault:
@@ -93,13 +95,95 @@ def test_a_remote_job_waits_for_the_owner(tmp_path):
     assert panel.bridge.jobs.get(job.id).state == 'QUEUED'
     panel.jobs.setCurrentCell(0, 0)
     panel.approve_job()
-    assert panel.bridge.jobs.get(job.id).state == 'RUNNING'
+    result = panel.bridge.jobs.get(job.id)
+    assert result.state == 'REJECTED'
+    assert result.started_at is None
+    assert result.error == 'No supported desktop action was requested.'
+    panel.close()
+
+
+def test_approved_disk_check_reads_real_capacity(tmp_path):
+    app, panel = make_panel(tmp_path)
+    panel.pairing.pair(key_id=KEY_ID, label='Test phone', secret=SECRET)
+    body = json.dumps({'kind': 'CUSTOM', 'title': 'Disk check',
+                       'payload': '{"action":"check_disk_space"}', 'requireApproval': False})
+    queued = panel.bridge.handle(signed_request(panel.bridge, 'POST', '/api/jobs', body))
+    assert queued.status == 200
+    assert queued.payload['state'] == 'QUEUED'
+    assert queued.payload['requires_approval'] is True
+    panel.refresh()
+    panel.jobs.setCurrentCell(0, 0)
+    panel.approve_job()
+    request = signed_request(panel.bridge, 'GET', '/api/jobs/' + queued.payload['id'], nonce='result')
+    response = panel.bridge.handle(request)
+    assert response.status == 200
+    result = response.payload
+    assert result['state'] == 'SUCCEEDED'
+    assert result['started_at'] <= result['finished_at']
+    assert result['progress'] == 1.0
+    assert len(result['outputs']) == 1 and ' GiB free of ' in result['outputs'][0]
+    panel.close()
+
+
+def test_revoked_phone_cannot_run_a_queued_disk_check(tmp_path):
+    app, panel = make_panel(tmp_path)
+    pairing = panel.pairing.pair(key_id=KEY_ID, label='Test phone', secret=SECRET)
+    job = panel.bridge.jobs.submit('CUSTOM', 'Disk check', '{"action":"check_disk_space"}',
+                                   True, peer_id=pairing.device.peer_id)
+    panel.pairing.revoke(KEY_ID)
+    panel.refresh()
+    panel.jobs.setCurrentCell(0, 0)
+    panel.approve_job()
+    result = panel.bridge.jobs.get(job.id)
+    assert result.state == 'REJECTED'
+    assert result.started_at is None
+    assert result.error == 'The requesting phone is no longer paired.'
+    panel.close()
+
+
+def test_failed_disk_check_has_no_output_or_private_error(tmp_path, monkeypatch):
+    app, panel = make_panel(tmp_path)
+    job = panel.bridge.jobs.submit('CUSTOM', 'Disk check', '{"action":"check_disk_space"}', True)
+    panel.refresh()
+    panel.jobs.setCurrentCell(0, 0)
+
+    def unavailable(path):
+        assert panel.bridge.jobs.get(job.id).state == 'RUNNING'
+        raise OSError('private test path')
+
+    monkeypatch.setattr('desktop.bridge_panel.shutil.disk_usage', unavailable)
+    panel.approve_job()
+    result = panel.bridge.jobs.get(job.id)
+    assert result.state == 'FAILED'
+    assert result.outputs == []
+    assert result.error == 'Could not verify disk capacity.'
+    assert panel.errors == [result.error]
+    panel.close()
+
+
+def test_cancelled_disk_check_discards_late_output(tmp_path, monkeypatch):
+    from collections import namedtuple
+
+    app, panel = make_panel(tmp_path)
+    job = panel.bridge.jobs.submit('CUSTOM', 'Disk check', '{"action":"check_disk_space"}', True)
+    panel.refresh()
+    panel.jobs.setCurrentCell(0, 0)
+
+    def cancel_during_check(path):
+        assert panel.bridge.jobs.cancel(job.id)
+        return namedtuple('Usage', 'total free')(1024, 512)
+
+    monkeypatch.setattr('desktop.bridge_panel.shutil.disk_usage', cancel_during_check)
+    panel.approve_job()
+    result = panel.bridge.jobs.get(job.id)
+    assert result.state == 'CANCELLED'
+    assert result.outputs == []
     panel.close()
 
 
 def test_declining_the_approval_leaves_the_job_queued(tmp_path):
     app, panel = make_panel(tmp_path, confirm=lambda action: False)
-    job = panel.bridge.jobs.submit('CODE_REVIEW', 'Review the bridge', '{}', True)
+    job = panel.bridge.jobs.submit('CUSTOM', 'Disk check', '{"action":"check_disk_space"}', True)
     panel.refresh()
     panel.jobs.setCurrentCell(0, 0)
     panel.approve_job()

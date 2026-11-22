@@ -283,6 +283,12 @@ function drawJobs(jobs) {
     const title = document.createElement('span');
     title.textContent = job.title || job.id;
     item.append(badge, title);
+    const details = job.error || (Array.isArray(job.outputs) ? job.outputs.join(' ') : '');
+    if (details) {
+      const result = document.createElement('p');
+      result.textContent = details;
+      item.append(result);
+    }
     const progress = document.createElement('div');
     progress.className = 'progress';
     const bar = document.createElement('span');
