@@ -240,6 +240,11 @@ QWidget#approvalCard {{
     border-radius: 14px;
 }}
 
+QLabel#approvalTitle {{
+    color: {t['text']};
+    font-weight: 700;
+}}
+
 /* ── controls ───────────────────────────────────────────────────────────── */
 QPushButton {{
     background: {t['glass']};

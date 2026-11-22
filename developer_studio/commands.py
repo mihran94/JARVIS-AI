@@ -46,6 +46,7 @@ PAGE_COMMANDS = {
 HELP = (
     "JARVIS commands (no extra dashboard needed):\n"
     "/help — list commands\n"
+    "/suggest GOAL — get advice and a plan in chat\n"
     "/do open Calculator then open Notepad and type: Your text — review steps in chat\n"
     "Tamil: கால்குலேட்டர் திற பிறகு நோட்பேட் திறந்து எழுது: உங்கள் உரை\n"
     "French: ouvre la calculatrice puis ouvre le bloc-notes et écris: Votre texte\n"

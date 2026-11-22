@@ -53,3 +53,18 @@ Record OS build, Python/dependency versions, provider/model (never key), exact p
 4. Enable **Read replies aloud** and try Tamil script, English, French and Tanglish. Recognition is local and based on script, vocabulary and the existing language preference. Common Romanized Tamil words are converted to Tamil script. Unrecognized Romanized words keep their spelling and may sound unnatural.
 5. Test mute and Emergency Stop during playback. Test a wrong key or unavailable network. Ordinary read-aloud should try the installed Windows voice after a cloud synthesis failure. A failed cloud voice sample should report the error.
 6. For opt-in live acceptance from source on the target Windows machine, set PowerShell variables `$env:JARVIS_AZURE_LIVE_AUDIO = '1'` and `$env:JARVIS_AZURE_REGION` to the resource region, then run `python -m pytest -q tests/test_azure_tts.py -k live_windows`. This uses the saved key and sends only the three fixed samples. Listen to each sample and record what you hear. The automated assertion verifies playback dispatch.
+
+## Suggestion Mode
+
+- Configure a chat AI. In JARVIS Chat, turn on **Suggestion Mode** and send `Open Notepad`. Confirm a plan appears in the chat, with no task approval card or new Notepad window. Try a Tamil or Tanglish goal and confirm the reply follows the language of the request.
+- Try an actionable voice request with Suggestion Mode on. With ordinary dictation, confirm it appears in the composer for review. If local hands-free chat is enabled, confirm the reply comes from Ollama and no task workflow is opened.
+- Turn off Suggestion Mode. Send `/suggest Create a promotional Reel`, then send `Open Notepad`. Confirm the first message returns advice and the second returns to the normal app approval flow.
+
+- Send `/suggest Open Notepad and type: Hello`. Confirm the exact text is shown locally. Select **Review suggested steps**, then **Approve**. Confirm the text was entered in the verified Notepad window and no file was saved. Repeat with **Decline** and confirm no text was entered.
+
+
+### Tamil and Tanglish voice review
+
+- With a compatible speech recognizer and microphone permission enabled, say “Calculator open pannu” or “Notepad open panni ezhuthu நாளைக்கு promo video” using chat dictation. Repeat after “Hey Jarvis” with local hands-free enabled.
+- Check that the recognized command appears in the editable composer. Correct any recognition errors before sending. Sending should show a task preview, with no launch or typing until you choose **Review suggested steps** and **Approve**. Repeat with **Decline**.
+- Repeat while an unsent draft is in the composer. Confirm the current draft is preserved and read the status prompt before repeating the command.

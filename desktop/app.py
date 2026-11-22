@@ -18,8 +18,10 @@ from PySide6.QtWidgets import (
 from dataclasses import replace
 
 from core.store import Store
-from core.conversation import ASSISTANT_GUIDANCE, addressed_request
-from desktop.conversation_plan import ConversationPlan, parse_plan as parse_conversation_plan
+from core.conversation import (ASSISTANT_GUIDANCE, SUGGESTION_GUIDANCE,
+                               addressed_request, suggestion_argument)
+from desktop.conversation_plan import (ConversationPlan, Step, extract_suggested_plan,
+                                       parse_plan as parse_conversation_plan)
 from desktop.browser_control import BrowserControl
 from developer_studio.inspection import inspect_project
 from core.assistant_capabilities import (conversation_context, summary as capability_summary,
@@ -519,10 +521,25 @@ class Window(QMainWindow):
             return
         state = self.prime_state()
         shell.set_state(state)
+        shell.activity.set_live_detail(self.current_desktop_activity(state))
         shell.set_provider(self.brain_label.text())
         chat = getattr(self, 'prime_chat', None)
         if chat is not None:
             chat.set_state(state)
+
+    def current_desktop_activity(self, state):
+        if state == 'approval' and self.chat_launch is not None:
+            name, _, action, _ = self.chat_launch
+            if action.kind == 'desktop_plan_approval':
+                return f'{name} · Review the exact text in Chat before approving.'
+            return f'{name} · Approve or decline in Chat.'
+        if state == 'working' and self.desktop_pending is not None:
+            target = self.desktop_pending['task'].app
+            return f'{target} · Checking the foreground window before entering text.'
+        if state == 'working' and self.launch_verification is not None:
+            name = self.launch_verification[0]
+            return f'{name} · Checking whether Windows opened the requested window.'
+        return ''
 
     def refresh_prime_theme(self):
         """The PRIME surface follows the theme the owner chose."""
@@ -704,6 +721,27 @@ class Window(QMainWindow):
             return
         self.voice_panel.listen('dialogue')
 
+    def draft_spoken_desktop_action(self, text):
+        """Require a visible, editable review for a spoken desktop command."""
+        if suggestion_argument(text) is not None:
+            return False
+        try:
+            typing = parse_desktop_task(text)
+        except ValueError:
+            return False
+        if typing is None and parse_voice_command(text) is None:
+            return False
+        self.open_section('JARVIS Chat')
+        if self.prompt.toPlainText().strip():
+            self.statusBar().showMessage(
+                'Finish or clear the current draft, then repeat the voice command.', 15000)
+            return True
+        self.prompt.setPlainText('/suggest ' + text)
+        self.prompt.setFocus()
+        self.statusBar().showMessage(
+            'Check or edit what JARVIS heard, then send it to preview the action.', 15000)
+        return True
+
     def on_wake_detected(self, transcript, command):
         if self.policy.stopped or not self.voice_panel.consent.listening:
             return
@@ -716,7 +754,10 @@ class Window(QMainWindow):
         text = (command or '').strip()[:4000]
         if text:
             self.show_hud_text('Heard: ' + text)
-        if self.answer_spoken_system_command(text) or self.route_task(text):
+        if self.draft_spoken_desktop_action(text):
+            return
+        if (not self.suggestion_mode.isChecked() and suggestion_argument(text) is None
+                and (self.answer_spoken_system_command(text) or self.route_task(text))):
             return
         if (text and self.local_voice_allowed() and self.worker is None
                 and not self.prompt.toPlainText().strip()):
@@ -743,7 +784,10 @@ class Window(QMainWindow):
         if self.omega is not None and self.omega.mode != 'Omega':
             self.omega.switch('Omega')
         self.show_hud_text('Heard: ' + text)
-        if self.answer_spoken_system_command(text) or self.route_task(text):
+        if self.draft_spoken_desktop_action(text):
+            return
+        if (not self.suggestion_mode.isChecked() and suggestion_argument(text) is None
+                and (self.answer_spoken_system_command(text) or self.route_task(text))):
             return
         self.open_section('JARVIS Chat')
         existing = self.prompt.toPlainText().strip()
@@ -1294,11 +1338,16 @@ class Window(QMainWindow):
         layout.addWidget(self.transcript, 1)
         self.chat_approval = QWidget()
         self.chat_approval.setObjectName('approvalCard')
-        approval_row = QHBoxLayout(self.chat_approval)
-        approval_row.setContentsMargins(0, 0, 0, 0)
+        approval_layout = QVBoxLayout(self.chat_approval)
+        approval_title = QLabel('Approval required')
+        approval_title.setObjectName('approvalTitle')
+        approval_layout.addWidget(approval_title)
+        approval_row = QHBoxLayout()
+        approval_layout.addLayout(approval_row)
         self.chat_approval_label = QLabel()
         self.chat_approval_label.setTextFormat(Qt.TextFormat.PlainText)
         self.chat_approval_label.setWordWrap(True)
+        self.chat_approval_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         approval_row.addWidget(self.chat_approval_label, 1)
         self.chat_approve_button = self.button(
             approval_row, 'Approve', lambda: self.finish_chat_launch(True))
@@ -1350,6 +1399,32 @@ class Window(QMainWindow):
         plan_layout.addLayout(plan_buttons)
         self.plan_card.hide()
         layout.addWidget(self.plan_card)
+        self.suggested_steps = ()
+        self.suggestion_card = QWidget()
+        self.suggestion_card.setObjectName('taskCard')
+        suggestion_layout = QVBoxLayout(self.suggestion_card)
+        self.suggestion_preview = QLabel()
+        self.suggestion_preview.setTextFormat(Qt.TextFormat.PlainText)
+        self.suggestion_preview.setWordWrap(True)
+        suggestion_layout.addWidget(self.suggestion_preview)
+        suggestion_actions = QHBoxLayout()
+        self.button(suggestion_actions, 'Review suggested steps', self.review_suggested_plan)
+        self.button(suggestion_actions, 'Dismiss', self.clear_suggested_plan)
+        suggestion_layout.addLayout(suggestion_actions)
+        self.suggestion_card.hide()
+        layout.addWidget(self.suggestion_card)
+        self.desktop_export_text = None
+        self.desktop_result_card = QWidget()
+        self.desktop_result_card.setObjectName('taskCard')
+        result_layout = QVBoxLayout(self.desktop_result_card)
+        self.desktop_result_label = QLabel()
+        self.desktop_result_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.desktop_result_label.setWordWrap(True)
+        result_layout.addWidget(self.desktop_result_label)
+        self.desktop_save_button = self.button(result_layout, 'Save inserted text as…',
+                                               self.save_desktop_result)
+        self.desktop_result_card.hide()
+        layout.addWidget(self.desktop_result_card)
         self.prompt = QPlainTextEdit()
         self.prompt.setObjectName('composerCard')
         self.prompt.setPlaceholderText(
@@ -1408,6 +1483,13 @@ class Window(QMainWindow):
         self.send_button = self.button(composer_actions, 'Ask JARVIS', self.send)
         self.send_button.setObjectName('primary')
         self.send_button.setToolTip('Send message (Ctrl+Enter)')
+        self.suggestion_mode = QPushButton('Suggestion Mode')
+        self.suggestion_mode.setCheckable(True)
+        self.suggestion_mode.setToolTip(
+            'Get a plan in chat using your configured AI and conversation history. '
+            'This mode does not start task workflows.')
+        self.suggestion_mode.toggled.connect(self.update_suggestion_mode)
+        composer_actions.insertWidget(composer_actions.indexOf(self.send_button), self.suggestion_mode)
         return page
 
     def open_research_window(self):
@@ -2812,6 +2894,8 @@ class Window(QMainWindow):
             return
         session = self.archives.currentData()
         if session:
+            self.clear_desktop_result()
+            self.clear_suggested_plan()
             self.conversation_plan.cancel('Conversation changed; remaining steps cancelled.')
             if self.chat_launch is not None:
                 self.finish_chat_launch(False)
@@ -3193,6 +3277,57 @@ class Window(QMainWindow):
         return (f'Desktop plan approved for {task.app}. Waiting for its '
                 'foreground window; text not entered yet.')
 
+    def show_desktop_result(self, detail, verified_text=None):
+        self.desktop_export_text = verified_text
+        self.desktop_result_label.setText(detail)
+        self.desktop_save_button.setVisible(verified_text is not None)
+        self.desktop_result_card.show()
+
+    def clear_desktop_result(self):
+        self.desktop_export_text = None
+        self.desktop_result_card.hide()
+
+    def save_desktop_result(self):
+        text = self.desktop_export_text
+        if text is None or self.policy.stopped:
+            return
+        ticket = self.policy.ticket()
+        session = self.session
+        destination, _ = QFileDialog.getSaveFileName(
+            self, 'Save inserted text as a new file', 'Notepad-text.txt', 'Text files (*.txt)',
+            options=QFileDialog.Option.DontConfirmOverwrite)
+        if not destination or self.session != session or self.desktop_export_text is not text:
+            return
+
+        def save():
+            self.policy.check(ticket)
+            path = Path(destination)
+            if not path.suffix:
+                path = path.with_suffix('.txt')
+            if path.suffix.lower() != '.txt':
+                raise ValueError('Choose a .txt filename.')
+            payload = text.encode('utf-8')
+
+            def write_verified():
+                try:
+                    with path.open('xb') as output:
+                        output.write(payload)
+                except FileExistsError:
+                    raise ValueError('That file already exists. Choose a new filename.') from None
+                with path.open('rb') as output:
+                    if output.read(len(payload) + 1) != payload:
+                        raise OSError('The saved file could not be verified.')
+                return f'Inserted text saved and verified in {path}'
+
+            ident = self.store.task('desktop_text_export', str(path))
+            detail = self.gateway.run(Action('desktop_text_export', str(path)),
+                                      lambda _action: True, write_verified,
+                                      task_id=ident, completion_status='verified')
+            self.show_desktop_result(detail)
+            self.show_local_system_reply('Save inserted text', detail)
+
+        self.notify(save)
+
     def complete_desktop_task(self):
         """Only type after Windows verifies the target foreground process."""
         pending = self.desktop_pending
@@ -3208,22 +3343,34 @@ class Window(QMainWindow):
                 self.show_local_system_reply('Desktop task',
                     f'{task.app} did not become foreground in time. '
                     'No text was entered. Activate the correct window and retry.')
+                self.show_desktop_result(
+                    f'{task.app} did not come to the foreground. No text was sent.')
                 self.conversation_plan.result(False, 'Target window did not become foreground in time.')
                 return
             if not target_is_foreground(task.app):
                 return
             self.desktop_task_timer.stop()
             self.desktop_pending = None
+            action = Action('desktop_type', f'{task.app}: {len(task.text)} characters',
+                            pending['digest'])
+            task_id = self.store.task(action.kind, action.target)
             result = self.gateway.run(
-                Action('desktop_type', f'{task.app}: {len(task.text)} characters',
-                       pending['digest']),
-                lambda _action: True,  # the exact text was approved in chat
-                lambda: type_into_target(task.app, task.text))
-            self.show_local_system_reply('Desktop task result', str(result))
-            self.conversation_plan.result(True, str(result), verified=isinstance(result, VerifiedEdit))
+                action, lambda _action: True,  # the exact text was approved in chat
+                lambda: type_into_target(task.app, task.text),
+                task_id=task_id, completion_status='dispatched')
+            verified = isinstance(result, VerifiedEdit)
+            status = 'verified' if verified else 'unverified'
+            detail = f'{task.app} foreground confirmed. {result} JARVIS did not save a file.'
+            self.store.finish(task_id, status, detail)
+            self.show_desktop_result(
+                detail if verified else detail + ' Check the editor before trying again.',
+                task.text if verified else None)
+            self.show_local_system_reply('Desktop task result', detail)
+            self.conversation_plan.result(True, detail, verified=verified)
         except (Denied, Stopped, RuntimeError, ValueError, OSError) as error:
             self.desktop_task_timer.stop()
             self.desktop_pending = None
+            self.show_desktop_result(f'Typing failed. {error}')
             self.show_local_system_reply('Desktop task failed', str(error))
             self.conversation_plan.result(False, str(error))
         finally:
@@ -4852,6 +4999,8 @@ class Window(QMainWindow):
             self.statusBar().showMessage(
                 'A task is still running. Finish or decline it before starting a new chat.', 12000)
             return
+        self.clear_desktop_result()
+        self.clear_suggested_plan()
         self.conversation_plan.cancel('New conversation; remaining steps cancelled.')
         self.cancel_launch_verification()
         if self.chat_launch is not None:
@@ -4867,6 +5016,8 @@ class Window(QMainWindow):
         if self.worker is not None:
             return
         if self.confirm(Action('delete_conversation', self.session)):
+            self.clear_desktop_result()
+            self.clear_suggested_plan()
             self.conversation_plan.cancel('Conversation deleted.')
             self.cancel_launch_verification()
             self.store.clear_messages(self.session)
@@ -4876,17 +5027,34 @@ class Window(QMainWindow):
             self.render_chat()
             self.refresh_archives()
 
+    def clear_suggested_plan(self):
+        self.suggested_steps = ()
+        self.suggestion_card.hide()
+
+    def show_suggested_steps(self, steps):
+        self.suggested_steps = steps
+        self.suggestion_preview.setText('Suggested steps:\n' +
+            '\n'.join(f'{index}. {step.label}' for index, step in enumerate(steps, 1)))
+        self.suggestion_card.show()
+
+    def review_suggested_plan(self):
+        if not self.suggested_steps or self.policy.stopped:
+            return
+
+        def review():
+            self.conversation_plan.start('Review suggested steps', self.suggested_steps)
+            self.clear_suggested_plan()
+
+        self.notify(review)
+
+    def update_suggestion_mode(self, enabled):
+        self.send_button.setText('Get suggestions' if enabled else 'Send')
+
     def send(self, *, allow_notes=True):
         if self.policy.stopped or self.worker is not None or not self.prompt.toPlainText().strip():
             return
+        self.clear_suggested_plan()
         text = self.prompt.toPlainText().strip()
-        command, _, argument = addressed_request(text).partition(' ')
-        if command.casefold() == '/browser':
-            self.prompt.clear()
-            self.open_section('JARVIS Chat')
-            self.browser_output.show()
-            self.browser.command(argument)
-            return
         if addressed_request(text).casefold() in ('/cancel', 'cancel task', 'task cancel pannu'):
             if self.browser.task:
                 self.browser.stop()
@@ -4904,6 +5072,45 @@ class Window(QMainWindow):
             self.show_local_system_reply(text, 'Pending desktop requests cancelled. Already opened apps remain open.'
                                          if cancelled else 'No pending conversation plan. Use Emergency Stop to cancel other active work.')
             self.prompt.clear()
+            return
+        requested_goal = suggestion_argument(text)
+        if requested_goal is not None or self.suggestion_mode.isChecked():
+            goal = text if requested_goal is None else requested_goal
+            if not goal:
+                self.statusBar().showMessage('Usage: /suggest followed by your goal.', 10000)
+                return
+            try:
+                typing = parse_desktop_task(goal)
+            except ValueError as error:
+                self.statusBar().showMessage(str(error), 10000)
+                return
+            if typing is not None:
+                self.prompt.clear()
+                self.use_notes.setChecked(False)
+                self.files_share_once.setChecked(False)
+                self.backup_consent.setChecked(False)
+                self.show_local_system_reply(goal,
+                    'Review the exact text JARVIS would enter in Notepad:\n' + typing.text
+                    + '\n\nTyping will not save a file.')
+                self.show_suggested_steps((Step(typing.app, typing),))
+                return
+            app = parse_voice_command(goal) if requested_goal is not None else None
+            if app:
+                self.prompt.clear()
+                self.use_notes.setChecked(False)
+                self.files_share_once.setChecked(False)
+                self.backup_consent.setChecked(False)
+                self.show_local_system_reply(goal, f'Review the proposed launch of {app}.')
+                self.show_suggested_steps((Step(app),))
+                return
+            self.send_chat_reply(goal, suggestion=True)
+            return
+        command, _, argument = addressed_request(text).partition(' ')
+        if command.casefold() == '/browser':
+            self.prompt.clear()
+            self.open_section('JARVIS Chat')
+            self.browser_output.show()
+            self.browser.command(argument)
             return
         if self.launch_verification is not None:
             self.statusBar().showMessage(
@@ -4985,6 +5192,9 @@ class Window(QMainWindow):
             if self.route_task(text):
                 self.prompt.clear()
                 return
+        self.send_chat_reply(text, analysis=analysis, use_notes=use_notes)
+
+    def send_chat_reply(self, text, *, analysis=None, use_notes=False, suggestion=False):
         def operation():
             self.chat_ticket = self.policy.ticket()
             provider = self.chat_provider.currentText()
@@ -5006,7 +5216,7 @@ class Window(QMainWindow):
                 model = self.selected_model(provider, effort if explicit else None)
             key = self.get_key(provider)
             backup = None
-            if self.backup_consent.isChecked():
+            if not suggestion and self.backup_consent.isChecked():
                 name = self.backup_provider.currentText()
                 if name == provider:
                     raise ValueError('Choose a different backup provider.')
@@ -5015,7 +5225,7 @@ class Window(QMainWindow):
                     raise ValueError('The local model never falls back to a cloud provider.')
                 backup = StreamTarget(name, self.selected_model(name),
                                       self.get_key(name))
-            prompt = analysis.detail if analysis else self.prompt.toPlainText().strip()
+            prompt = analysis.detail if analysis else text
             messages = [message for message in self.store.messages(self.session)
                         if message['role'] in ('user', 'assistant')]
             messages.append({'role': 'user', 'content': prompt})
@@ -5027,7 +5237,9 @@ class Window(QMainWindow):
             # Only the explicit one-turn checkbox grants file-content sharing.
             # A chosen path alone never uploads content. The app never saves
             # these file bytes in the conversation database.
-            shared_files = tuple(self.attachments) if self.files_share_once.isChecked() else ()
+            shared_files = ()
+            if not suggestion and self.files_share_once.isChecked():
+                shared_files = tuple(self.attachments)
             if shared_files:
                 messages[-1]['content'] += '\n\n' + as_untrusted_context(shared_files)
             if sum(len(m['content']) for m in messages) > 90000:
@@ -5040,11 +5252,19 @@ class Window(QMainWindow):
             if language:
                 self.assistant_language = language
                 set_assistant_language(self.store, language)
-            system = {'role': 'system', 'content':
-                ASSISTANT_GUIDANCE + capability_context(self) + conversation_context(self)}
+            guidance = ASSISTANT_GUIDANCE
+            if suggestion:
+                guidance += SUGGESTION_GUIDANCE
+            else:
+                guidance += capability_context(self) + conversation_context(self)
+            system = {'role': 'system', 'content': guidance}
             if language:
                 system['content'] += ' Answer in ' + LANGUAGE_NAMES.get(language, language) + '.'
-            self.start_worker(provider, model, key, [system] + messages, 'chat', backup=backup)
+            kind = 'suggestion' if suggestion else 'chat'
+            self.start_worker(provider, model, key, [system] + messages, kind, backup=backup)
+            if suggestion:
+                self.use_notes.setChecked(False)
+                self.files_share_once.setChecked(False)
             if shared_files:
                 self.clear_attachments()
                 self.statusBar().showMessage(
@@ -5054,7 +5274,7 @@ class Window(QMainWindow):
         self.notify(operation)
 
     def on_chunk(self, text):
-        if self.worker_kind != 'chat':
+        if self.worker_kind not in ('chat', 'suggestion'):
             return
         try:
             self.policy.check(self.chat_ticket)
@@ -5145,9 +5365,14 @@ class Window(QMainWindow):
                 self.business_status.setText('Gemini returned an empty draft. Try again.')
             else:
                 self.business_status.setText(status + ': ' + text)
-        elif self.worker_kind == 'chat':
+        elif self.worker_kind in ('chat', 'suggestion'):
             if status == 'completed':
+                if self.worker_kind == 'suggestion':
+                    text, steps = extract_suggested_plan(text)
+                    if steps:
+                        self.show_suggested_steps(steps)
                 self.store.message(self.session, 'assistant', text)
+                self.render_chat()
                 self.show_hud_text(text)
                 if self.read_replies.isChecked() and not self.policy.stopped:
                     self.voice_panel.speak_response(text[:600])
@@ -5231,6 +5456,8 @@ class Window(QMainWindow):
         self.browser.stop()
         if self.research_dialog:
             self.research_dialog.cancel()
+        self.clear_desktop_result()
+        self.clear_suggested_plan()
         self.conversation_plan.cancel('Emergency Stop. Resume will not replay this plan.')
         self.cancel_launch_verification()
         self.desktop_task_timer.stop()

@@ -100,7 +100,7 @@ def test_chat_executes_previewed_task_only_after_approval(tmp_path, monkeypatch)
         window.complete_desktop_task()
         assert typed == [('Notepad', 'Bonjour')]
         assert window.desktop_pending is None
-        assert window.store.tasks()[0]['status'] == 'completed'
+        assert window.store.tasks()[0]['status'] == 'unverified'
     finally:
         window.close()
         window.deleteLater()
