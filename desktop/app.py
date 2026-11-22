@@ -108,7 +108,10 @@ from video_studio.planning import (
     planning_messages, shot_list, spoken_brief, suggest_workflow,
 )
 from business.site_preview import LANGUAGES, WebsiteExport
-from business.drafting import TASKS as BUSINESS_TASKS, draft_messages, spoken_business_request
+from business.drafting import (
+    EDITOPRO_REPLY, TASKS as BUSINESS_TASKS, draft_messages, parse_editopro_reply,
+    spoken_business_request,
+)
 from agents.gateway import Gateway
 from agents.queue import TaskQueue
 from agents.workflows import WorkflowQueue
@@ -2138,6 +2141,7 @@ class Window(QMainWindow):
         self.business_generate = self.button(layout, 'Generate business draft', self.generate_business)
         studio_row = QHBoxLayout()
         self.button(studio_row, 'Prepare site update prompt', self.prepare_website_update)
+        self.editopro_english_reply = None
         self.business_copy = self.button(studio_row, 'Copy draft', self.copy_business_draft)
         self.business_copy.setEnabled(False)
         layout.addLayout(studio_row)
@@ -2273,12 +2277,16 @@ class Window(QMainWindow):
 
     def copy_business_draft(self):
         if not self.policy.stopped:
-            draft = self.business_preview.toPlainText()
+            draft = self.editopro_english_reply or self.business_preview.toPlainText()
             if draft.strip():
                 QApplication.clipboard().setText(draft)
-                self.statusBar().showMessage('Business draft copied.', 5000)
+                message = ('English reply copied.' if self.editopro_english_reply
+                           else 'Business draft copied.')
+                self.statusBar().showMessage(message, 5000)
 
     def clear_business_draft(self):
+        self.editopro_english_reply = None
+        self.business_copy.setText('Copy draft')
         self.site_draft = None
         self.site_preview_path = None
         self.site_open_preview.setEnabled(False)
@@ -2287,7 +2295,7 @@ class Window(QMainWindow):
         self.business_status.setText('Review the brief and select Generate business draft.')
 
     def route_business_brief(self, text):
-        request = spoken_business_request(text)
+        request = spoken_business_request(addressed_request(text))
         if request is None:
             return False
         return self.open_business_request(*request)
@@ -2299,6 +2307,9 @@ class Window(QMainWindow):
             return True
         self.business_task.setCurrentText(task)
         self.business_brief.setPlainText(brief)
+        if task == EDITOPRO_REPLY:
+            self.business_status.setText(
+                'Review the client message, then select Generate business draft to share it with Gemini.')
         self.business_brief.setFocus()
         return True
 
@@ -5108,8 +5119,17 @@ class Window(QMainWindow):
                 self.business_status.setText(status + ': ' + text)
         elif self.worker_kind == 'business_draft':
             if status == 'completed' and text.strip():
-                self.business_preview.setPlainText(text.strip())
-                self.business_status.setText('Draft ready to review and copy.')
+                try:
+                    if self.business_task.currentText() == EDITOPRO_REPLY:
+                        summary, reply = parse_editopro_reply(text)
+                        self.editopro_english_reply = reply
+                        self.business_copy.setText('Copy English reply')
+                        text = f'தமிழ் சுருக்கம்\n{summary}\n\nEnglish reply\n{reply}'
+                    self.business_preview.setPlainText(text.strip())
+                    self.business_status.setText('Draft ready to review and copy.')
+                except ValueError as error:
+                    status = 'failed'
+                    self.business_status.setText(str(error))
             elif status == 'completed':
                 status = 'failed'
                 self.business_status.setText('Gemini returned an empty draft. Try again.')

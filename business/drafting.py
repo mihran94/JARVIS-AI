@@ -1,5 +1,9 @@
 """Draft seller and website work from a user-provided brief."""
+import json
 import re
+
+
+EDITOPRO_REPLY = "Editopro reply (Tamil + English)"
 
 TASKS = {
     "Fiverr gig": (
@@ -12,6 +16,14 @@ TASKS = {
         "Draft one concise client reply. Ask only for missing details needed to quote or start, "
         "such as footage, references, subtitles, format or deadline. Keep communication and "
         "payment on Fiverr. Make no unconfirmed promises on prices, dates or deliverables."
+    ),
+    EDITOPRO_REPLY: (
+        'Summarize the customer request in Tamil, then draft an English reply for Editopro on Fiverr. '
+        'In the summary, identify any missing details needed to quote or start. '
+        'In the reply, ask only for those details and keep communication and payment on Fiverr. '
+        'Make no unconfirmed promises about pricing, delivery dates, or completed work. '
+        'Return plain JSON with exactly two string fields: "tamil_summary" and "english_reply". '
+        'Do not include Markdown fences.'
     ),
     "Fiverr delivery or revision": (
         "Draft a short client-facing delivery or revision message using the verified items in "
@@ -28,7 +40,7 @@ TASKS = {
 }
 _PREFIX = re.compile(
     r"^(?P<mode>fiverr gig|fiverr client reply|fiverr delivery|website update|"
-    r"fiverr|வெப்சைட் அப்டேட்)\s*[,：:]\s*(?P<brief>\S.*)$",
+    r"editopro reply|editopro பதில்|fiverr|வெப்சைட் அப்டேட்)\s*[,：:]\s*(?P<brief>\S.*)$",
     re.IGNORECASE | re.DOTALL,
 )
 _VOICE_TASKS = {
@@ -36,6 +48,8 @@ _VOICE_TASKS = {
     "fiverr client reply": "Fiverr client reply",
     "fiverr delivery": "Fiverr delivery or revision",
     "fiverr": "Fiverr client reply",
+    "editopro reply": EDITOPRO_REPLY,
+    "editopro பதில்": EDITOPRO_REPLY,
     "website update": "Website content update",
     "வெப்சைட் அப்டேட்": "Website content update",
 }
@@ -61,3 +75,19 @@ def draft_messages(task, brief):
         )},
         {"role": "user", "content": brief},
     ]
+
+
+
+def parse_editopro_reply(text):
+    """Validate the two fields before enabling the reply-only copy action."""
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text.strip(), re.IGNORECASE | re.DOTALL)
+    try:
+        data = json.loads(fenced[1] if fenced else text)
+    except ValueError:
+        raise ValueError("The response did not contain a structured Editopro draft. Try again.") from None
+    fields = ("tamil_summary", "english_reply")
+    if (not isinstance(data, dict) or set(data) != set(fields)
+            or any(not isinstance(data[field], str) or not data[field].strip()
+                   for field in fields)):
+        raise ValueError("The response omitted the Tamil summary or English reply. Try again.")
+    return data["tamil_summary"].strip(), data["english_reply"].strip()
