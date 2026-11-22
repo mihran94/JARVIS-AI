@@ -56,6 +56,8 @@ from desktop import prime_theme
 from desktop.omega_visuals import DEFAULT_THEME, THEMES as OMEGA_THEMES, theme_sheet
 from desktop.blue_orb import BlueOrb
 from desktop.omega import Omega
+from desktop.mission_panel import MissionPanel
+from desktop.mission_controller import MissionController
 from desktop.system_metrics import CpuSampler, snapshot, format_snapshot
 from desktop.network_diagnostics import NetworkDiagnostics
 from desktop.news_panel import NewsPanel
@@ -400,6 +402,7 @@ class Window(QMainWindow):
         self.add_page('Video Editor', self.video_page())
         self.add_page('Business', self.business_page())
         self.add_page('Memory', MemoryPanel(service=self.memory_service))
+        self.add_page('Mission Control', self.mission_page())
         self.add_page('Command Center', self.dashboard(), primary=False)
         self.voice_panel.activity_changed.connect(self.refresh_voice_hud)
         self.voice_panel.recognition_failed.connect(lambda: self.hands_free_voice.setChecked(False))
@@ -446,6 +449,15 @@ class Window(QMainWindow):
         self.maintenance_timer.start(60_000)
         self.enable_prime()
         QTimer.singleShot(0, self.check_maintenance)
+
+    def mission_page(self):
+        """The mission console: one goal, watched step by step."""
+        from desktop.prime_ui import PrimePalette
+
+        panel = MissionPanel(PrimePalette(dark=self.prime_is_dark()))
+        self.mission_panel = panel
+        self.mission_controller = MissionController(self, panel)
+        return panel
 
     def enable_omega(self, *, smoke=False):
         if self.omega is None:
@@ -537,6 +549,11 @@ class Window(QMainWindow):
         chat = getattr(self, 'prime_chat', None)
         if chat is not None:
             chat.refresh_theme()
+        panel = getattr(self, 'mission_panel', None)
+        if panel is not None:
+            panel.palette_.adopt(palette)
+            panel.timeline.palette_.adopt(palette)
+            panel.refresh_theme()
 
     def prime_state(self) -> str:
         """idle, listening, working or error, from the real state."""
@@ -4377,6 +4394,16 @@ class Window(QMainWindow):
         if self.close_when_done and self.coding_worker is None and self.test_worker is None:
             self.close()
 
+    def mission_finished(self):
+        """The mission stopped, so the window may close if it was waiting."""
+        controller = getattr(self, 'mission_controller', None)
+        if controller is not None and controller.worker is not None:
+            controller.worker.deleteLater()
+            controller.worker = None
+        if (self.close_when_done and self.coding_worker is None and self.test_worker is None
+                and self.worker is None):
+            self.close()
+
     def open_coding_project(self):
         """Open the project folder in the editor the owner saved.
 
@@ -5229,6 +5256,9 @@ class Window(QMainWindow):
     def stop(self):
         self.policy.stop()
         self.browser.stop()
+        controller = getattr(self, 'mission_controller', None)
+        if controller is not None:
+            controller.cancel()
         if self.research_dialog:
             self.research_dialog.cancel()
         self.conversation_plan.cancel('Emergency Stop. Resume will not replay this plan.')
@@ -5404,11 +5434,14 @@ class Window(QMainWindow):
             self.background_controls.hide()
             event.ignore()
             return
+        controller = getattr(self, 'mission_controller', None)
+        mission_running = (controller is not None and controller.worker is not None
+                           and controller.worker.isRunning())
         if (self.worker is not None or self.coding_worker is not None
                 or self.browser.worker is not None
                 or (self.research_dialog and self.research_dialog.worker is not None)
                 or self.test_worker is not None or self.release_checker.source_worker is not None
-                or self.improvement_worker is not None):
+                or self.improvement_worker is not None or mission_running):
             # A coding task runs the Codex CLI and the test command in their
             # own processes. Closing the window must not leave them running
             # behind the owner's back, so the stop happens first and the
