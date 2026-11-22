@@ -109,6 +109,8 @@ class MissionController(QObject):
         worker.failed.connect(self.on_failed)
         self.worker = worker
         self._steps = 0
+        self.panel.max_steps = self.max_steps
+        self.panel.set_goal(goal)
         self.panel.set_running(True)
         self.panel.set_counter(0, self.max_steps)
         worker.start()
@@ -180,7 +182,10 @@ class MissionController(QObject):
         self.panel.append_event(event)
         if event.kind == 'tool':
             self._steps += 1
-            self.panel.set_counter(self._steps, self.max_steps)
+        if event.step:
+            # The counter is the mission's step of its budget, and it is
+            # the same number before and after the mission.
+            self.panel.set_counter(event.step, self.max_steps)
         if event.kind == 'approval':
             # The mission is waiting for the owner, and the pill says so.
             self.panel.set_status('approval')
