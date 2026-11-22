@@ -36,7 +36,6 @@ from desktop.studio_inbox import StudioInboxDialog
 from memory.memory_service import MemoryService
 from desktop.bridge_panel import BridgePanel
 from desktop.memory_page import MemoryPanel
-from desktop.research_dialog import open_research
 from desktop.camera_reader import open_camera_reader
 from desktop.update_dialog import ReleaseChecker, open_updates
 from desktop.voice_panel import VoicePanel
@@ -399,7 +398,6 @@ class Window(QMainWindow):
         self.voice_panel.utterance_detected.connect(self.on_voice_transcript)
         self.voice_panel.cycle_finished.connect(self.schedule_local_voice_rearm)
         self.voice_panel.speech_finished.connect(self.schedule_local_voice_rearm)
-        self.memory_service = MemoryService(self.root / 'history.sqlite3')
         self.add_page('Voice / Hey Jarvis', self.voice_panel)
         self.add_page('Phone Remote', self.bridge_page())
         self.add_page('Settings & Safety', self.permissions_page())
