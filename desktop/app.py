@@ -20,7 +20,8 @@ from dataclasses import replace
 from core.store import Store
 from core.conversation import (ASSISTANT_GUIDANCE, SUGGESTION_GUIDANCE,
                                addressed_request, suggestion_argument)
-from desktop.conversation_plan import ConversationPlan, parse_plan as parse_conversation_plan
+from desktop.conversation_plan import (ConversationPlan, extract_suggested_plan,
+                                       parse_plan as parse_conversation_plan)
 from desktop.browser_control import BrowserControl
 from developer_studio.inspection import inspect_project
 from core.assistant_capabilities import (conversation_context, summary as capability_summary,
@@ -1353,6 +1354,19 @@ class Window(QMainWindow):
         plan_layout.addLayout(plan_buttons)
         self.plan_card.hide()
         layout.addWidget(self.plan_card)
+        self.suggested_steps = ()
+        self.suggestion_card = QWidget()
+        suggestion_layout = QVBoxLayout(self.suggestion_card)
+        self.suggestion_preview = QLabel()
+        self.suggestion_preview.setTextFormat(Qt.TextFormat.PlainText)
+        self.suggestion_preview.setWordWrap(True)
+        suggestion_layout.addWidget(self.suggestion_preview)
+        suggestion_actions = QHBoxLayout()
+        self.button(suggestion_actions, 'Review suggested steps', self.review_suggested_plan)
+        self.button(suggestion_actions, 'Dismiss', self.clear_suggested_plan)
+        suggestion_layout.addLayout(suggestion_actions)
+        self.suggestion_card.hide()
+        layout.addWidget(self.suggestion_card)
         self.prompt = QPlainTextEdit()
         self.prompt.setObjectName('composerCard')
         self.prompt.setPlaceholderText(
@@ -2822,6 +2836,7 @@ class Window(QMainWindow):
             return
         session = self.archives.currentData()
         if session:
+            self.clear_suggested_plan()
             self.conversation_plan.cancel('Conversation changed; remaining steps cancelled.')
             if self.chat_launch is not None:
                 self.finish_chat_launch(False)
@@ -4862,6 +4877,7 @@ class Window(QMainWindow):
             self.statusBar().showMessage(
                 'A task is still running. Finish or decline it before starting a new chat.', 12000)
             return
+        self.clear_suggested_plan()
         self.conversation_plan.cancel('New conversation; remaining steps cancelled.')
         self.cancel_launch_verification()
         if self.chat_launch is not None:
@@ -4877,6 +4893,7 @@ class Window(QMainWindow):
         if self.worker is not None:
             return
         if self.confirm(Action('delete_conversation', self.session)):
+            self.clear_suggested_plan()
             self.conversation_plan.cancel('Conversation deleted.')
             self.cancel_launch_verification()
             self.store.clear_messages(self.session)
@@ -4886,12 +4903,27 @@ class Window(QMainWindow):
             self.render_chat()
             self.refresh_archives()
 
+    def clear_suggested_plan(self):
+        self.suggested_steps = ()
+        self.suggestion_card.hide()
+
+    def review_suggested_plan(self):
+        if not self.suggested_steps or self.policy.stopped:
+            return
+
+        def review():
+            self.conversation_plan.start('Review suggested steps', self.suggested_steps)
+            self.clear_suggested_plan()
+
+        self.notify(review)
+
     def update_suggestion_mode(self, enabled):
         self.send_button.setText('Get suggestions' if enabled else 'Send')
 
     def send(self, *, allow_notes=True):
         if self.policy.stopped or self.worker is not None or not self.prompt.toPlainText().strip():
             return
+        self.clear_suggested_plan()
         text = self.prompt.toPlainText().strip()
         if addressed_request(text).casefold() in ('/cancel', 'cancel task', 'task cancel pannu'):
             if self.browser.task:
@@ -5181,6 +5213,14 @@ class Window(QMainWindow):
                 self.business_status.setText(status + ': ' + text)
         elif self.worker_kind in ('chat', 'suggestion'):
             if status == 'completed':
+                if self.worker_kind == 'suggestion':
+                    text, steps = extract_suggested_plan(text)
+                    if steps:
+                        self.suggested_steps = steps
+                        self.suggestion_preview.setText('Suggested steps:\n' +
+                            '\n'.join(f'{index}. {step.label}'
+                                      for index, step in enumerate(steps, 1)))
+                        self.suggestion_card.show()
                 self.store.message(self.session, 'assistant', text)
                 self.render_chat()
                 self.show_hud_text(text)
@@ -5266,6 +5306,7 @@ class Window(QMainWindow):
         self.browser.stop()
         if self.research_dialog:
             self.research_dialog.cancel()
+        self.clear_suggested_plan()
         self.conversation_plan.cancel('Emergency Stop. Resume will not replay this plan.')
         self.cancel_launch_verification()
         self.desktop_task_timer.stop()

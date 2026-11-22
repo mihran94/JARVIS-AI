@@ -78,6 +78,24 @@ def parse_plan(text):
     return tuple(steps)
 
 
+def extract_suggested_plan(reply):
+    """Extract an optional final launch-only proposal for owner review."""
+    advice, separator, proposal = reply.rstrip().rpartition('\n')
+    marker = 'JARVIS_PLAN: /do '
+    if not separator or not advice.strip() or not proposal.startswith(marker):
+        return reply, ()
+    command = proposal[len('JARVIS_PLAN: '):]
+    if len(command) > 300:
+        return reply, ()
+    try:
+        steps = parse_plan(command)
+    except ValueError:
+        return reply, ()
+    if not steps or any(step.typing is not None for step in steps):
+        return reply, ()
+    return advice.rstrip(), steps
+
+
 class ConversationPlan:
     """Progress reporting only; execution stays in the window's existing gateway."""
     def __init__(self, window):

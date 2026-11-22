@@ -222,3 +222,41 @@ def test_suggestion_mode_dictation_bypasses_spoken_task_routing(tmp_path, monkey
         win.close()
         win.deleteLater()
         app.processEvents()
+
+
+def test_suggestion_requires_review_then_existing_step_approval(tmp_path, monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    win = Window(tmp_path)
+    launches = []
+    monkeypatch.setattr('desktop.app.launch_app', launches.append)
+    try:
+        win.worker_kind = 'suggestion'
+        win.chat_ticket = win.policy.ticket()
+        win.chat_task = win.store.task('suggestion', 'test')
+        win.on_result('completed', 'Open the editor.\nJARVIS_PLAN: /do open Notepad')
+        assert win.suggested_steps[0].app == 'Notepad'
+        assert win.chat_launch is None
+        assert 'Open Notepad' in win.suggestion_preview.text()
+
+        win.review_suggested_plan()
+        assert win.chat_launch is not None
+        assert not win.suggested_steps
+        assert launches == []
+        win.finish_chat_launch(False)
+        assert launches == []
+    finally:
+        win.close()
+        win.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.parametrize('proposal', [
+    '/do open Notepad and type: example',
+    '/do open Notepad then open PowerShell',
+    '/do open Calculator\nMore text',
+])
+def test_unsupported_suggestion_stays_advice(proposal):
+    from desktop.conversation_plan import extract_suggested_plan
+
+    reply = 'Possible steps.\nJARVIS_PLAN: ' + proposal
+    assert extract_suggested_plan(reply) == (reply, ())

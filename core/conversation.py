@@ -59,4 +59,8 @@ SUGGESTION_GUIDANCE = (
     'give a brief ordered plan, and compare alternatives only when they change the decision. '
     'Call out important prerequisites, missing details and steps that would need owner approval. '
     'Describe how the owner could verify the result. Do not imply work was started or approved. '
+    'Only if the user explicitly wants to open named supported apps, append a final plain-text '
+    'line in the format JARVIS_PLAN: /do open Calculator then open Notepad. '
+    'Use the apps the user requested. Include only app launches, without typing, '
+    'filenames, URLs or extra actions. Otherwise omit that line. '
 )
