@@ -62,14 +62,20 @@ class MissionEvent:
     The kinds are fixed, so the HUD and the owner see the same words
     every time: goal, thought, tool, approval, result, answer, error and
     cancelled.
+
+    `step` is the step of the mission the event belongs to, so the
+    interface can say which step of how many without counting anything
+    twice.
     """
 
     kind: str
     label: str
     detail: str = ''
+    step: int = 0
 
     def as_dict(self) -> dict:
-        return {'kind': self.kind, 'label': self.label, 'detail': self.detail}
+        return {'kind': self.kind, 'label': self.label, 'detail': self.detail,
+                'step': self.step}
 
 
 @dataclass
@@ -243,8 +249,9 @@ class AgentRuntime:
 
     # ------------------------------------------------------------------
 
-    def _emit(self, mission: Mission, kind: str, label: str, detail: str = '') -> None:
-        event = MissionEvent(kind=kind, label=label, detail=detail)
+    def _emit(self, mission: Mission, kind: str, label: str, detail: str = '',
+              step: int = 0) -> None:
+        event = MissionEvent(kind=kind, label=label, detail=detail, step=step)
         mission.events.append(event)
         if len(mission.events) > MAX_EVENTS:
             del mission.events[:-MAX_EVENTS]
@@ -309,7 +316,7 @@ class AgentRuntime:
             decision, problem = parse_decision(raw)
             if decision is None:
                 errors += 1
-                self._emit(mission, 'error', 'The answer could not be read', problem)
+                self._emit(mission, 'error', 'The answer could not be read', problem, step)
                 if errors >= MAX_RECOVERABLE_ERRORS:
                     return self._fail(mission, 'Mission stopped',
                                       f'The model did not give a usable decision ({problem}).')
@@ -323,8 +330,8 @@ class AgentRuntime:
                 mission.answer = decision['answer']
                 mission.status = 'completed'
                 if decision['thought']:
-                    self._emit(mission, 'thought', 'JARVIS decided', decision['thought'])
-                self._emit(mission, 'answer', 'Mission complete', decision['answer'])
+                    self._emit(mission, 'thought', 'JARVIS decided', decision['thought'], step)
+                self._emit(mission, 'answer', 'Mission complete', decision['answer'], step)
                 return mission
 
             tool = self.registry.get(decision['tool'])
@@ -337,7 +344,7 @@ class AgentRuntime:
                 arguments = self.registry.check_arguments(tool, decision['arguments'])
             except ToolError as problem:
                 errors += 1
-                self._emit(mission, 'error', 'The arguments were refused', str(problem))
+                self._emit(mission, 'error', 'The arguments were refused', str(problem), step)
                 if errors >= MAX_RECOVERABLE_ERRORS:
                     return self._fail(mission, 'Mission stopped', str(problem))
                 messages.append({'role': 'assistant', 'content': raw})
@@ -346,9 +353,9 @@ class AgentRuntime:
                 continue
 
             if decision['thought']:
-                self._emit(mission, 'thought', 'JARVIS decided', decision['thought'])
+                self._emit(mission, 'thought', 'JARVIS decided', decision['thought'], step)
             summary = tool.summary(arguments)
-            self._emit(mission, 'tool', f'Calling {tool.name}', summary)
+            self._emit(mission, 'tool', f'Calling {tool.name}', summary, step)
 
             try:
                 if tool.read_only:
@@ -363,7 +370,7 @@ class AgentRuntime:
                             f'{tool.name} changes something and there was no way '
                             'to ask the owner, so it did not run.')
                     self._emit(mission, 'approval', 'Approval needed',
-                               f'{tool.name}: {summary}')
+                               f'{tool.name}: {summary}', step)
                     result = self.gateway.run(
                         Action('mission_tool', summary), confirm,
                         lambda: self._call(tool, arguments, check))
@@ -375,7 +382,7 @@ class AgentRuntime:
                                   'The mission was cancelled before the next step.')
             except ToolError as problem:
                 errors += 1
-                self._emit(mission, 'error', f'{tool.name} did not run', str(problem))
+                self._emit(mission, 'error', f'{tool.name} did not run', str(problem), step)
                 if errors >= MAX_RECOVERABLE_ERRORS:
                     return self._fail(mission, 'Mission stopped', str(problem))
                 messages.append({'role': 'assistant', 'content': raw})
@@ -387,7 +394,7 @@ class AgentRuntime:
                                   'The tool failed and nothing was changed.')
 
             text = str(result)
-            self._emit(mission, 'result', f'{tool.name} finished', text[:400])
+            self._emit(mission, 'result', f'{tool.name} finished', text[:400], step)
             mission.tools_used.append({'tool': tool.name, 'summary': summary, 'result': text[:400]})
             messages.append({'role': 'assistant', 'content': raw})
             messages.append({'role': 'user', 'content': observation(tool.name, text)})
