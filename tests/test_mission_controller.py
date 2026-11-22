@@ -13,6 +13,8 @@ WHAT IS COVERED
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
+from threading import Event
+
 import json
 import time
 
@@ -128,14 +130,18 @@ def test_a_refused_tool_does_not_run(window):
 
 
 def test_a_second_mission_does_not_disturb_the_first(window):
+    entered = Event()
+    release = Event()
+
     def slow(request):
-        time.sleep(0.2)
+        entered.set()
+        assert release.wait(30)
         return httpx.Response(200, text=answer_stream(tool_call(
             'evaluate_expression', {'expression': '1 + 1'})))
 
     window.router = ProviderRouter(transport=httpx.MockTransport(slow))
     window.mission_controller.start('Add one and one.')
-    assert wait_for(lambda: window.mission_panel.timeline.entries())
+    assert wait_for(entered.is_set)
     window.mission_controller.start('And another thing.')
     labels = ' '.join(entry['label'] for entry in window.mission_panel.timeline.entries())
     assert 'A mission is already running' in labels
@@ -143,6 +149,7 @@ def test_a_second_mission_does_not_disturb_the_first(window):
     # that a mission failed while one of them is still working.
     assert window.mission_panel.status.text() == 'WORKING'
     window.mission_controller.cancel()
+    release.set()
     assert wait_for(lambda: window.mission_panel.status.text() in ('CANCELLED', 'FAILED'))
 
 
