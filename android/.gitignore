@@ -1,5 +1,6 @@
 *.iml
 .gradle/
+.kotlin/
 local.properties
 .idea/
 .DS_Store
@@ -40,3 +41,8 @@ __pycache__/
 *.aab
 dist/
 release-output/
+
+# The Gradle wrapper is restored from its base64 sidecar by
+# gradle/wrapper/restore-wrapper.sh, so the binary itself is never in the
+# repository.
+gradle/wrapper/gradle-wrapper.jar

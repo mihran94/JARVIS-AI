@@ -69,6 +69,7 @@ def test_the_primary_chat_provider_is_remembered(tmp_path):
             again.close()
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_the_active_brain_names_the_provider_profile_and_model(tmp_path):
@@ -80,6 +81,7 @@ def test_the_active_brain_names_the_provider_profile_and_model(tmp_path):
         assert profiles.PROFILE_MODELS['Gemini']['fast'] in text
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_a_provider_without_profiles_shows_only_its_model(tmp_path):
@@ -91,6 +93,7 @@ def test_a_provider_without_profiles_shows_only_its_model(tmp_path):
         assert PROVIDERS['OpenAI'].default_model in text
     finally:
         win.close()
+        win.deleteLater()
 
 
 # ── Fast and Deep ────────────────────────────────────────────────────────────
@@ -131,6 +134,7 @@ def test_switching_the_profile_changes_the_model(tmp_path):
         assert win.model.text() == profiles.PROFILE_MODELS['Gemini']['fast']
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_a_model_the_owner_typed_is_not_replaced_by_a_default(tmp_path):
@@ -144,6 +148,7 @@ def test_a_model_the_owner_typed_is_not_replaced_by_a_default(tmp_path):
         assert win.selected_model('Gemini') == 'gemini-3.8-flash'
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_a_provider_without_profiles_keeps_its_single_model(tmp_path):
@@ -154,6 +159,7 @@ def test_a_provider_without_profiles_keeps_its_single_model(tmp_path):
         assert win.model.text() == PROVIDERS['OpenAI'].default_model
     finally:
         win.close()
+        win.deleteLater()
 
 
 # ── failure classification ───────────────────────────────────────────────────
@@ -388,6 +394,7 @@ def test_saving_a_provider_in_the_manager_switches_the_chat_provider(tmp_path):
         assert win.chat_provider.currentText() == 'OpenAI'
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_the_backup_provider_is_remembered_and_only_used_when_enabled(tmp_path):
@@ -398,6 +405,7 @@ def test_the_backup_provider_is_remembered_and_only_used_when_enabled(tmp_path):
         assert win.backup_consent.isChecked() is False
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_the_hud_status_never_carries_a_key():
@@ -430,6 +438,7 @@ def test_the_speech_language_can_be_chosen(tmp_path):
         assert win.voice_panel.set_language('not-a-language') is False
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_the_voice_states_use_the_words_the_owner_reads(tmp_path):
@@ -445,6 +454,7 @@ def test_the_voice_states_use_the_words_the_owner_reads(tmp_path):
         assert win.hud_voice_status.text() == 'SPEAKING'
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_a_missing_language_voice_is_reported_clearly():
@@ -539,6 +549,7 @@ def test_the_chosen_provider_really_receives_the_request(tmp_path, monkeypatch):
         assert 'Vanakkam' in win.transcript.toPlainText()
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_the_profile_decides_the_model_that_is_sent(tmp_path, monkeypatch):
@@ -556,6 +567,7 @@ def test_the_profile_decides_the_model_that_is_sent(tmp_path, monkeypatch):
         assert body['model'] == profiles.PROFILE_MODELS['Gemini']['deep']
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_the_backup_provider_is_not_used_when_it_is_not_enabled(tmp_path, monkeypatch):
@@ -569,6 +581,7 @@ def test_the_backup_provider_is_not_used_when_it_is_not_enabled(tmp_path, monkey
         assert str(seen[0].url) == PROVIDERS['OpenAI'].endpoint
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_the_backup_provider_is_used_when_it_is_enabled_and_allowed(tmp_path, monkeypatch):
@@ -585,6 +598,7 @@ def test_the_backup_provider_is_used_when_it_is_enabled_and_allowed(tmp_path, mo
         assert win.backup_consent.isChecked() is False
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_a_rejected_key_never_reaches_the_backup_provider(tmp_path, monkeypatch):
@@ -601,6 +615,7 @@ def test_a_rejected_key_never_reaches_the_backup_provider(tmp_path, monkeypatch)
         assert 'KEY' in transcript.upper() or 'rejected' in transcript.lower()
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_an_empty_key_stops_the_chat_before_any_request(tmp_path, monkeypatch):
@@ -614,6 +629,7 @@ def test_an_empty_key_stops_the_chat_before_any_request(tmp_path, monkeypatch):
         assert 'key' in win.transcript.toPlainText().lower()
     finally:
         win.close()
+        win.deleteLater()
 
 # The six tests above drive the REAL entry point: Window.send() -> ChatWorker
 # -> providers.chat.stream_chat, with only the HTTP transport replaced. They were

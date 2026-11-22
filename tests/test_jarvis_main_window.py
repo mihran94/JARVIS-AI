@@ -15,7 +15,16 @@ def test_primary_sections_and_one_main_window(tmp_path):
             "JARVIS Chat", "PC Control", "Coding Assistant",
             "Voice / Hey Jarvis", "Phone Remote", "Settings & Safety", "Video Editor", "Business", "Memory"
         ]
-        assert win.pages.count() == 16
+        assert win.pages.count() == 10
+        # The full internal page order, including the command-only pages that
+        # have no navigation slot of their own.
+        assert list(win.page_indices) == [
+            "JARVIS Chat", "Files & Folders", "PC Control", "Coding Assistant",
+            "Voice / Hey Jarvis", "Phone Remote", "Settings & Safety",
+            "Video Editor", "Business", "Memory", "Command Center",
+            "Task Queue", "Step Workflows", "Task History", "AI Providers",
+            "System & Usage", "Review changes",
+        ]
         assert win.nav.currentRow() == 0
         assert win.pages.currentIndex() == 0
         assert win.orb._state == "idle"
@@ -23,7 +32,8 @@ def test_primary_sections_and_one_main_window(tmp_path):
         assert not win.bridge.listener.running
         assert not win.voice_panel.consent.granted
         win.open_section("Coding Assistant")
-        assert win.pages.currentIndex() == win.page_indices["Coding Assistant"]
+        assert win.pages.currentWidget() is win.prime_chat
+        assert win.prime_chat.task_area.isVisibleTo(win.prime_chat)
         win.open_section("AI Providers")
         assert win.pages.currentIndex() == win.page_indices["AI Providers"]
         win.open_section("JARVIS Chat")
@@ -31,6 +41,7 @@ def test_primary_sections_and_one_main_window(tmp_path):
         assert win.pages.currentIndex() == 0
     finally:
         win.close()
+        win.deleteLater()
         app.processEvents()
 
 
@@ -58,6 +69,7 @@ def test_hey_jarvis_only_drafts_a_chat_message(tmp_path):
         assert not win.voice_panel.consent.granted
     finally:
         win.close()
+        win.deleteLater()
         app.processEvents()
 
 

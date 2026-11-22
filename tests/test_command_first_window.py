@@ -19,30 +19,30 @@ def make_window(tmp_path):
 def test_main_toolbar_is_chat_island_settings_and_safety(tmp_path):
     app, window = make_window(tmp_path)
     try:
-        assert window.island_button.isVisible()
-        assert window.settings_button.isVisible()
+        rail = window.prime_shell.rail_buttons
+        assert window.prime_shell.island_button.isVisible()
+        assert rail["Settings & Safety"].isVisible()
         assert not window.resume_button.isVisible()
-        assert any(button.text() == "EMERGENCY STOP" and button.isVisible()
+        assert any(button.text() == "Emergency stop" and button.isVisible()
                    for button in window.findChildren(QPushButton))
-        assert window.plugins_button.isHidden()
-        assert window.tools_button.isHidden()
         assert window.pages.currentIndex() == window.page_indices["JARVIS Chat"]
         assert not window.chat_provider.isVisible()
         window.enable_omega()
         app.processEvents()
         assert not window.omega.dock.isVisible()
         assert window.omega.reveal.isHidden()
-        window.open_island()
+        window.prime_shell.island_button.click()
         app.processEvents()
         assert window.omega.mode == "Island"
         assert window.omega.floating.isVisible()
         window.omega.switch("Omega")
-        window.settings_button.click()
+        rail["Settings & Safety"].click()
         app.processEvents()
         assert window.pages.currentIndex() == window.page_indices["Settings & Safety"]
         assert window.chat_provider.isVisible()
     finally:
         window.close()
+        window.deleteLater()
         app.processEvents()
 
 
@@ -64,6 +64,7 @@ def test_project_list_and_unknown_command_stay_local(tmp_path, monkeypatch):
         assert window.worker is None
     finally:
         window.close()
+        window.deleteLater()
         app.processEvents()
 
 
@@ -91,4 +92,28 @@ def test_project_fix_reuses_existing_coding_approval_path(tmp_path, monkeypatch)
         assert seen[-1][0].make_change is False
     finally:
         window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_read_replies_preference_persists_after_restart(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    first = Window(tmp_path)
+    try:
+        assert not first.read_replies.isChecked()
+        first.read_replies.setChecked(True)
+        assert first.store.get('voice:read_replies') is True
+    finally:
+        first.close()
+        first.deleteLater()
+        app.processEvents()
+
+    reopened = Window(tmp_path)
+    try:
+        assert reopened.read_replies.isChecked()
+        reopened.read_replies.setChecked(False)
+        assert reopened.store.get('voice:read_replies') is False
+    finally:
+        reopened.close()
+        reopened.deleteLater()
         app.processEvents()

@@ -23,10 +23,34 @@ def launch_app(name):
     return f'Launch request accepted; process ID {process.pid}. Verify the app window on your desktop.'
 
 
+def open_path(path):
+    """Open a file with its own program, or a folder, on this computer.
+
+    The path is one the owner chose. Nothing is run from it: a file is
+    handed to the program Windows has associated with it, and a folder is
+    opened in Explorer. A path that is not there, or that is a link, is
+    refused rather than followed.
+    """
+    if sys.platform != 'win32':
+        raise RuntimeError('Opening a file is available on Windows only.')
+    target = Path(path).expanduser()
+    if target.is_symlink():
+        raise ValueError('Choose the real file or folder, not a link.')
+    if not target.exists():
+        raise ValueError('That file or folder is not there.')
+    if not (target.is_file() or target.is_dir()):
+        raise ValueError('That is not a file or a folder.')
+    import os
+    os.startfile(str(target))
+    kind = 'folder' if target.is_dir() else 'file'
+    return f'Open request accepted for the {kind} {target.name}. Check your desktop.'
+
+
 EDITOR_EXECUTABLES = {
     'CapCut': 'CapCut.exe',
     'DaVinci Resolve': 'Resolve.exe',
     'After Effects': 'AfterFX.exe',
+    'Photoshop': 'Photoshop.exe',
 }
 
 

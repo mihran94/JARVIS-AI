@@ -9,8 +9,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from xml.etree import ElementTree
-from zipfile import BadZipFile, ZipFile
+from desktop import documents
 
 MAX_FILES = 12
 MAX_FILE_BYTES = 24 * 1024
@@ -24,7 +23,7 @@ TEXT_SUFFIXES = frozenset({
     ".log", ".ini", ".java", ".kt", ".sql", ".sh", ".ps1", ".bat",
     ".cmd", ".rst",
 })
-SUPPORTED_SUFFIXES = TEXT_SUFFIXES | {".docx"}
+SUPPORTED_SUFFIXES = TEXT_SUFFIXES | {".docx", ".pdf"}
 SKIP_DIRECTORIES = frozenset({
     ".git", ".venv", "venv", "node_modules", "__pycache__", ".idea",
     ".vscode", "dist", "build", ".pytest_cache", "target",
@@ -53,38 +52,36 @@ def _safe_name(value: str) -> str:
                    for char in value)[:180]
 
 
-def _is_sensitive(path: Path) -> bool:
+def is_sensitive(path: Path) -> bool:
     return (path.name.casefold() in SENSITIVE_NAMES or
             any(part.casefold() in SKIP_DIRECTORIES for part in path.parts) or
             any(part.startswith(".") for part in path.parts if part not in (".", "..")))
 
 
-def _docx_text(path: Path) -> str:
-    try:
-        with ZipFile(path) as archive:
-            info = archive.getinfo("word/document.xml")
-            if info.file_size > 128 * 1024:
-                raise AttachmentError("DOCX text is too large for one chat attachment.")
-            data = archive.read(info)
-        root = ElementTree.fromstring(data)
-    except (BadZipFile, KeyError, ElementTree.ParseError, RuntimeError, OSError) as exc:
-        raise AttachmentError("This DOCX document could not be read.") from exc
-    word_ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
-    paragraphs = []
-    for paragraph in root.iter(word_ns + "p"):
-        line = "".join(element.text or "" for element in paragraph.iter(word_ns + "t"))
-        if line.strip():
-            paragraphs.append(line)
-    return "\n".join(paragraphs)
+def _normalize_newlines(text: str) -> str:
+    """Return the same text with CRLF and lone CR endings written as LF.
+
+    The file on disk is never modified. This only makes the snapshot that is
+    handed to the model identical on Windows and on Linux: the same file
+    written on Windows arrives with CRLF endings and would otherwise reach
+    the provider as a different byte stream than the Linux copy.
+    """
+    return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def read_file(path: str | Path, *, label: str | None = None) -> StagedFile:
-    """Snapshot a selected UTF-8 text/code or DOCX file, never execute it."""
+    """Snapshot a selected UTF-8 text/code, DOCX or PDF file, never execute it.
+
+    A document is read by `desktop.documents`, which knows how to read a
+    PDF and a DOCX properly. The limits that apply here are the smaller
+    ones: an attachment is a snippet the owner sends to the assistant, so
+    it stays small however big the document is.
+    """
     source = Path(path).expanduser()
-    if source.is_symlink() or not source.is_file() or _is_sensitive(source):
+    if source.is_symlink() or not source.is_file() or is_sensitive(source):
         raise AttachmentError("Choose a normal, non-hidden file; secrets and links are excluded.")
     if source.suffix.casefold() not in SUPPORTED_SUFFIXES:
-        raise AttachmentError("Supported: text, Markdown, code, CSV, JSON and DOCX. PDF is not yet supported.")
+        raise AttachmentError("Supported: text, Markdown, code, CSV, JSON, PDF and DOCX.")
     try:
         size = source.stat().st_size
     except OSError as exc:
@@ -92,8 +89,8 @@ def read_file(path: str | Path, *, label: str | None = None) -> StagedFile:
     if size > MAX_FILE_BYTES:
         raise AttachmentError("File exceeds the 24 KiB per-file text limit.")
     try:
-        if source.suffix.casefold() == ".docx":
-            text = _docx_text(source)
+        if source.suffix.casefold() in (".docx", ".pdf"):
+            text = documents.read_document(source).text
         else:
             raw = source.read_bytes()
             if b"\x00" in raw:
@@ -101,6 +98,11 @@ def read_file(path: str | Path, *, label: str | None = None) -> StagedFile:
             text = raw.decode("utf-8-sig")
     except (UnicodeError, OSError) as exc:
         raise AttachmentError("Could not read this file as UTF-8 text.") from exc
+    except documents.DocumentError as exc:
+        raise AttachmentError(str(exc)) from exc
+    # One text form on every platform. The bytes on disk stay exactly as the
+    # owner wrote them; only the in-memory copy is normalised.
+    text = _normalize_newlines(text)
     if not text.strip():
         raise AttachmentError("This file has no readable text.")
     if len(text) > MAX_TOTAL_CHARACTERS:

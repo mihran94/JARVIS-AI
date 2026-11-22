@@ -10,6 +10,7 @@ adapters. Three rules shape it:
 - on a machine that is not Windows the adapters are not available, and the
   page says so instead of pretending.
 """
+import asyncio
 import sys
 
 from PySide6.QtCore import QThread, QTimer, Signal
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from voice.consent import VoiceConsent
+from voice import azure_tts
 from voice.echo_guard import EchoGuard
 from voice.errors import VoiceError, VoiceUnavailable
 from voice.wake import DEFAULT_PHRASE, WakePhraseMatcher
@@ -116,16 +118,45 @@ class VoiceSpeakerWorker(QThread):
 
     failed = Signal(str)
     playing = Signal()
+    cloud_usage = Signal(int, str)
 
-    def __init__(self, speaker_factory, text, language='en'):
+    def __init__(self, speaker_factory, text, language='en', *, cloud=None, sample_language=None):
         super().__init__()
         self._speaker_factory = speaker_factory
         self._text = text
         self._language = language
+        self._cloud = cloud
+        self.uses_cloud = cloud is not None
+        self._sample_language = sample_language
+
+    def play_cloud(self, config):
+        language, text = azure_tts.speech_text(
+            self._text, self._language, sample_language=self._sample_language)
+        try:
+            audio = asyncio.run(azure_tts.cancellable_synthesis(
+                config, text, language, self.isInterruptionRequested))
+        except VoiceError as error:
+            if not self.isInterruptionRequested():
+                suffix = ' Trying the installed Windows voice.' if not self._sample_language else ''
+                self.failed.emit(str(error) + suffix)
+            return bool(self._sample_language) or self.isInterruptionRequested()
+        if audio is None:
+            return True
+        self.cloud_usage.emit(len(text), azure_tts.VOICES[language][1])
+        if not self.isInterruptionRequested():
+            try:
+                azure_tts.play_wav(audio, self.isInterruptionRequested, self.playing.emit)
+            except (VoiceError, OSError) as error:
+                self.failed.emit(str(error) if isinstance(error, VoiceError)
+                                 else 'Windows could not prepare Azure audio for playback.')
+        return True
 
     def run(self):
         apartment = None
         try:
+            cloud, self._cloud = self._cloud, None
+            if cloud and self.play_cloud(cloud):
+                return
             if sys.platform == 'win32' and self._speaker_factory is default_speaker_factory:
                 # The actual SAPI factory requires COM on its worker thread.
                 # Test doubles and non-COM backends must not require pywin32.
@@ -137,7 +168,7 @@ class VoiceSpeakerWorker(QThread):
             speaker = self._speaker_factory()
             if self.isInterruptionRequested():
                 return
-            language = self._language
+            language = azure_tts.speech_text(self._text, self._language)[0] if cloud else self._language
             if language != 'ta' and any('஀' <= char <= '௿' for char in self._text):
                 # No other voice can read the Tamil script, so Tamil text is
                 # always spoken with a Tamil voice when one is installed.
@@ -180,6 +211,7 @@ class VoicePanel(QWidget):
     audio_level = Signal(int)
     recognition_failed = Signal()
     feedback = Signal(str)
+    cloud_usage = Signal(int, str)
 
     def __init__(self, *, consent=None, recognizer_factory=None, speaker_factory=None,
                  matcher=None, parent=None):
@@ -193,6 +225,8 @@ class VoicePanel(QWidget):
         self.muted = False
         self.speaking = False
         self.pending_speech = ''
+        self.pending_sample = None
+        self.cloud_config = None
         self.spoken_text = ''
         self.echo_guard = EchoGuard()
         self.continuous = False
@@ -294,6 +328,7 @@ class VoicePanel(QWidget):
         self.mute_button.setText('Unmute replies' if muted else 'Mute replies')
         if muted:
             self.pending_speech = ''
+            self.pending_sample = None
             if self.playback_busy:
                 self.speaker_worker.requestInterruption()
         self.refresh()
@@ -360,6 +395,12 @@ class VoicePanel(QWidget):
         self.worker.wake_call.connect(self.on_wake_call)
         self.worker.failed.connect(self.on_recognition_failed)
         self.worker.finished.connect(self.on_recognition_finished)
+        # The thread is not running yet when start() returns, so the state
+        # that is read straight afterwards would still say "not listening".
+        # The worker tells the panel when it is really running, and the panel
+        # refreshes then: the microphone is listening from that moment, and
+        # the owner's interface says so.
+        self.worker.started.connect(self.refresh)
         self.worker.start()
         self.refresh()
 
@@ -395,8 +436,12 @@ class VoicePanel(QWidget):
             return
         self.audio_level.emit(0)
         pending, self.pending_speech = self.pending_speech, ''
+        sample, self.pending_sample = self.pending_sample, None
         if pending:
-            self.speak_response(pending)
+            if sample:
+                self.speak_response(pending, sample_language=sample)
+            else:
+                self.speak_response(pending)
         self.refresh()
         self.cycle_finished.emit()
         if self.continuous and not self.playback_busy:
@@ -447,7 +492,7 @@ class VoicePanel(QWidget):
         """Start optional text-to-speech without blocking Emergency Stop."""
         self.speak_response(self.speak_text.text())
 
-    def speak_response(self, text):
+    def speak_response(self, text, *, sample_language=None):
         """Speak on a dedicated worker so Qt remains responsive."""
         text = (text or '').strip()[:600]
         if not text:
@@ -464,10 +509,26 @@ class VoicePanel(QWidget):
         self.spoken_text = text
         if self.worker is not None and self.worker.isRunning():
             self.pending_speech = text
+            self.pending_sample = sample_language
             self.cancel_listening()
             return
-        self.speaker_worker = VoiceSpeakerWorker(self._speaker_factory, text, self.language_code)
+        cloud = None
+        if self.cloud_config:
+            try:
+                cloud = self.cloud_config()
+            except VoiceError as error:
+                if not sample_language:
+                    self.status(str(error) + ' Trying the installed Windows voice.')
+                else:
+                    self.status(str(error))
+                    return
+        if sample_language and not cloud:
+            self.status('Allow Azure Speech in API Provider Manager before testing cloud voices.')
+            return
+        self.speaker_worker = VoiceSpeakerWorker(self._speaker_factory, text, self.language_code,
+                                                 cloud=cloud, sample_language=sample_language)
         self.speaker_worker.failed.connect(self.status)
+        self.speaker_worker.cloud_usage.connect(self.cloud_usage)
         self.speaker_worker.playing.connect(self.on_playback_started)
         self.speaker_worker.finished.connect(self.on_playback_finished)
         self.speaker_worker.start()
@@ -499,12 +560,20 @@ class VoicePanel(QWidget):
             self.worker.requestInterruption()
             self.refresh()
 
+    def cancel_cloud_speech(self):
+        self.pending_speech = ''
+        self.pending_sample = None
+        worker = self.speaker_worker
+        if worker and worker.uses_cloud and worker.isRunning():
+            worker.requestInterruption()
+
     def stop_voice(self):
         """Revoke microphone consent and request worker interruption."""
         self.consent.stop()
         self.discard_recognition = True
         self.stop_continuous()
         self.pending_speech = ''
+        self.pending_sample = None
         self.echo_guard.reset()
         self.cancel_listening()
         if self.speaker_worker is not None and self.speaker_worker.isRunning():

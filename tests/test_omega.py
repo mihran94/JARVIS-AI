@@ -39,6 +39,7 @@ def test_modes_return_to_same_window_and_keep_saved_preferences(tmp_path):
         ui.switch('Island')
     finally:
         window.close()
+        window.deleteLater()
         app.processEvents()
     restored = Window(tmp_path)
     try:
@@ -52,25 +53,29 @@ def test_modes_return_to_same_window_and_keep_saved_preferences(tmp_path):
         restored.close()
 
 
-def test_dock_links_keyboard_and_order(tmp_path):
+def test_dock_links_keyboard_and_order(tmp_path, monkeypatch):
     app, window, ui = launch(tmp_path)
+    diagnostics = Mock()
+    monkeypatch.setattr(window, 'open_network_diagnostics', diagnostics)
     try:
-        for destination in tuple(ui.dock.buttons):
-            destination.click()
-            section = DESTINATIONS[destination.name][0]
-            assert window.pages.currentIndex() == window.page_indices[section]
-            assert destination.property('active') is True
-        ui.dock.buttons[0].setFocus()
-        QTest.keyClick(ui.dock.buttons[0], Qt.Key.Key_Right)
-        assert ui.dock.buttons[1].hasFocus()
+        # The old application dock is retired from the interface: the
+        # PRIME rail is the navigation now, and it reaches the same
+        # pages. The dock is still there for the settings that remember
+        # its order, and it is not in the window.
+        for section, button in window.prime_shell.rail_buttons.items():
+            button.click()
+            app.processEvents()
+            if section == 'Cybersecurity':
+                diagnostics.assert_called_once_with()
+            else:
+                assert window.pages.currentIndex() == window.page_indices[section]
+        assert not ui.dock.isVisible()
         ui.order_items.setCurrentText('AI Chat')
         ui.move_dock(-1)
         assert ui.dock.buttons[0].name == 'AI Chat'
         assert window.store.get('omega:order')[0] == 'AI Chat'
         ui.set_auto_hide(True)
         assert ui.dock.isHidden()
-        ui.reveal.click()
-        assert ui.dock.isVisible()
         window.resize(720, 770)
         # Legacy pages are permanently redirected to PRIME, even in smoke.
         ui.open_page('Omega Home')
@@ -82,6 +87,7 @@ def test_dock_links_keyboard_and_order(tmp_path):
         assert window.pages.currentIndex() == window.page_indices['Settings & Safety']
     finally:
         window.close()
+        window.deleteLater()
 
 
 def test_live_activity_approval_and_emergency_stop(tmp_path, monkeypatch):
@@ -114,6 +120,7 @@ def test_live_activity_approval_and_emergency_stop(tmp_path, monkeypatch):
         assert ui.send.isEnabled()
     finally:
         window.close()
+        window.deleteLater()
 
 
 def test_quick_command_goes_through_existing_chat_handler(tmp_path, monkeypatch):
@@ -134,6 +141,7 @@ def test_quick_command_goes_through_existing_chat_handler(tmp_path, monkeypatch)
         dispatch.assert_called_once_with()
     finally:
         window.close()
+        window.deleteLater()
 
 
 def test_feeds_report_partial_and_missing_data_explicitly(tmp_path, monkeypatch):
@@ -160,6 +168,7 @@ def test_feeds_report_partial_and_missing_data_explicitly(tmp_path, monkeypatch)
         assert 'stopped' in ui.devices.text()
     finally:
         window.close()
+        window.deleteLater()
 
 
 def test_floating_mic_shows_permissions_and_returns_voice_draft_to_chat(tmp_path):
@@ -178,6 +187,7 @@ def test_floating_mic_shows_permissions_and_returns_voice_draft_to_chat(tmp_path
         assert window.worker is None
     finally:
         window.close()
+        window.deleteLater()
 
 
 def test_chat_theme_paints_pages_and_keeps_navigation_reachable(tmp_path):
@@ -192,8 +202,14 @@ def test_chat_theme_paints_pages_and_keeps_navigation_reachable(tmp_path):
         assert window.pages.currentIndex() == window.page_indices['JARVIS Chat']
         assert not window.omega.dock.isVisible()
         assert not window.omega.reveal.isVisible()
-        scroller = window.pages.widget(window.page_indices['JARVIS Chat'])
-        assert scroller.widget() is not None
+        # The chat is the PRIME chat now: the assistant, the conversation
+        # and the composer, in one composition.
+        from desktop.prime_ui import PrimeChat
+
+        chat = window.pages.widget(window.page_indices['JARVIS Chat'])
+        assert isinstance(chat, PrimeChat)
+        assert chat.conversation is not None
+        assert chat.composer is not None
         for theme, (background, _panel, _edge, ink, *_rest) in THEMES.items():
             window.omega.set_theme(theme)
             sheet = window.styleSheet()
@@ -210,6 +226,7 @@ def test_chat_theme_paints_pages_and_keeps_navigation_reachable(tmp_path):
         assert not hasattr(window.omega, 'dock_shortcut')
     finally:
         window.close()
+        window.deleteLater()
         app.processEvents()
 
 def test_old_dock_preferences_cannot_revive_the_retired_design(tmp_path):
@@ -228,6 +245,7 @@ def test_old_dock_preferences_cannot_revive_the_retired_design(tmp_path):
         assert not window.omega.dock.isVisible()
     finally:
         window.close()
+        window.deleteLater()
         app.processEvents()
 
 
@@ -244,6 +262,7 @@ def test_island_return_keeps_windows_taskbar_accessible(tmp_path):
         assert not window.omega.dock.isVisible()
     finally:
         window.close()
+        window.deleteLater()
         app.processEvents()
 
 
@@ -263,4 +282,5 @@ def test_failed_chat_remains_visible_after_reopen_without_storing_error_details(
         assert 'AI request failed' in window.transcript.toPlainText()
     finally:
         window.close()
+        window.deleteLater()
         app.processEvents()

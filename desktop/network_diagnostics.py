@@ -25,7 +25,7 @@ class NetworkDiagnostics(QDialog):
 
     def __init__(self, parent):
         super().__init__(parent)
-        self.setWindowTitle('Local network diagnostics')
+        self.setWindowTitle('JARVIS Cybersecurity · Local diagnostics')
         self.resize(620, 390)
         self.worker = None
 

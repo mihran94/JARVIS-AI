@@ -129,6 +129,7 @@ def test_desktop_update_approval(install,tmp_path,monkeypatch,approved):
     assert read_state(install)['active']==(digest if approved else 'base')
     assert bool(list((tmp_path/'data').glob('history-before-update-*.sqlite3')))==approved
     window.close()
+    window.deleteLater()
 
 
 def test_launcher_uses_retained_environment(install,tmp_path,monkeypatch):
@@ -137,11 +138,15 @@ def test_launcher_uses_retained_environment(install,tmp_path,monkeypatch):
     launch=importlib.util.module_from_spec(spec); spec.loader.exec_module(launch)
     path=archive(tmp_path); digest,_=inspect_zip(path);activate_zip(install,path,digest)
     monkeypatch.setattr(launch,'ROOT',install)
+    monkeypatch.setenv('JARVIS_BUILD_COMMIT', 'abc1234')
     captured=[]
     monkeypatch.setattr(launch.subprocess,'call',lambda args,**kw:captured.append((args,kw)) or 0)
-    assert launch.main()==0
+    assert launch.main(['--smoke-test'])==0
     assert Path(captured[0][0][1])==release_path(install,digest)/'main.py'
     assert captured[0][1]['env']['JARVIS_INSTALL_ROOT']==str(install)
+    assert captured[0][0][2:]==['--smoke-test']
+    assert captured[0][1]['env']['JARVIS_SOURCE_RELEASE']==digest
+    assert 'JARVIS_BUILD_COMMIT' not in captured[0][1]['env']
 
 
 def test_the_raw_member_name_is_checked(tmp_path):

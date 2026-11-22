@@ -40,5 +40,9 @@ def test_chat_and_phone_stay_readable_at_narrow_desktop_size(tmp_path):
         assert not window.bridge.listener.running
     finally:
         window.close()
+        # The window is destroyed, not just closed: a closed window keeps its
+        # widgets and its OpenGL resources alive, and the next test then
+        # renders far more slowly than it should.
+        window.deleteLater()
         app.setStyleSheet(previous_style)
         app.processEvents()

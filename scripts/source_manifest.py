@@ -22,10 +22,30 @@ import sys
 
 MANIFEST = os.path.join('docs', 'SOURCE_INTEGRITY.sha256')
 
-#: Directories that never belong to the source tree.
+# Generated at Windows installer build time; never committed as source.
+GENERATED_FILES = {
+    'installers/JarvisAI.ico',
+}
+
+#: Directories that never belong to the source tree, by name.
 SKIP_DIRS = {
-    '.git', '.github-cache', '.mypy_cache', '.pytest_cache', '.venv',
+    '.git', '.github-cache', '.gradle', '.kotlin', '.mypy_cache', '.pytest_cache', '.venv',
     '__pycache__', 'build', 'dist', 'node_modules', 'venv',
+}
+
+#: Directories that never belong to the source tree, by path from the root.
+SKIP_PATHS = {
+    # The screenshots that tools/screenshots.py takes are build output, so
+    # the manifest does not list them and taking them never breaks the
+    # integrity check.
+    'tools/shots',
+    # The Gradle wrapper is restored from its base64 sidecar, so the
+    # binary is never in the repository. It is skipped here as well, so
+    # that an owner who restored it can still run the integrity check.
+    'android/gradle/wrapper/gradle-wrapper.jar',
+    # The Android SDK path is written by the machine that builds, and it
+    # is never in the repository.
+    'android/local.properties',
 }
 
 HEADER = """# JARVIS AI source integrity manifest
@@ -60,11 +80,22 @@ def collect(root: str) -> list[str]:
     """Every source file in the tree, in a stable order."""
     found = []
     for directory, sub_directories, files in os.walk(root):
-        sub_directories[:] = sorted(d for d in sub_directories if d not in SKIP_DIRS)
+        relative_directory = os.path.relpath(directory, root).replace(os.sep, '/')
+        if relative_directory == '.':
+            relative_directory = ''
+        sub_directories[:] = sorted(
+            d for d in sub_directories
+            if d not in SKIP_DIRS
+            and (f'{relative_directory}/{d}' if relative_directory else d) not in SKIP_PATHS
+        )
         for name in sorted(files):
             path = os.path.join(directory, name)
             relative = os.path.relpath(path, root).replace(os.sep, '/')
             if relative in (MANIFEST.replace(os.sep, '/'), '.git'):
+                continue
+            if relative in SKIP_PATHS or relative in GENERATED_FILES:
+                # Machine-local data and generated installer icons are not
+                # source files; restoring/building them must not break checks.
                 continue
             found.append(relative)
     return sorted(found)
@@ -98,6 +129,29 @@ def difference(current: str, expected: str) -> list[str]:
             problems.append(f'{path} is in the tree but not in the manifest')
         elif old[path] != new[path]:
             problems.append(f'{path} has a different content')
+    # The header carries the number of files. A manifest whose header
+    # disagrees with its own list is not right either, and saying so is
+    # the difference between a failure the owner can act on and one they
+    # cannot.
+    if not problems:
+        counted = len(new)
+        for line in current.splitlines():
+            if line.startswith('# ') and line.endswith(' files'):
+                try:
+                    stated = int(line[2:-len(' files')])
+                except ValueError:
+                    stated = None
+                if stated is not None and stated != counted:
+                    problems.append(
+                        f'the header says {stated} files and the manifest lists {counted}')
+                break
+    if not problems and current != expected:
+        # The same files with the same contents, but the text is not what
+        # the script writes. A stray empty line or a header that was
+        # edited by hand lands here.
+        problems.append(
+            'the manifest lists the same files, but its text is not what the script '
+            'writes: run python scripts/source_manifest.py')
     return problems
 
 

@@ -63,6 +63,7 @@ def test_consent_consumed(tmp_path,monkeypatch):
     assert captured[0]['backup'].name=='MiniMax'
     assert not window.backup_consent.isChecked()
     window.close()
+    window.deleteLater()
 
 
 def test_probe_does_not_receive_backup(tmp_path,monkeypatch):
@@ -75,3 +76,4 @@ def test_probe_does_not_receive_backup(tmp_path,monkeypatch):
     assert window.worker.backup is None
     window.on_finished()
     window.close()
+    window.deleteLater()

@@ -38,6 +38,18 @@ def normalize(text: str) -> str:
     for char in without_marks:
         if char.isalpha() or char.isdigit() or char.isspace():
             cleaned.append(char)
+        elif unicodedata.category(char) in ('Mn', 'Mc'):
+            # A mark that is not in the list above was kept on purpose,
+            # because it is a letter of the word it follows: the Tamil
+            # vowel signs and the virama. It is not punctuation, so it
+            # must not become a space. "செய்ய" is one word, and splitting
+            # it into "ச ய ய" took the meaning out of every Tamil
+            # sentence that came out of the microphone.
+            #
+            # The category is used rather than `unicodedata.combining`,
+            # because a spacing vowel sign such as U+0BC6 carries no
+            # canonical combining class and would be missed by it.
+            cleaned.append(char)
         else:
             cleaned.append(' ')
     return ' '.join(''.join(cleaned).split())

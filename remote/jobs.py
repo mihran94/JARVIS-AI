@@ -7,12 +7,11 @@ The wire names and values are fixed by the Kotlin client in
   WORKFLOW, CUSTOM
 - states: QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELLED, REJECTED
 
-A job submitted over the bridge is never executed by the bridge. It is recorded
-as QUEUED and, when the request asked for approval, it stays QUEUED until the
-desktop owner approves it in the Qt interface. That keeps the existing
-per-action confirmation boundary in force for remote requests too.
+The bridge records submitted jobs as QUEUED. Only the desktop approval
+path can dispatch an approved action and record its verified result.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+import json
 import threading
 import time
 import uuid
@@ -34,6 +33,8 @@ JOB_STATES = (
     'CANCELLED',
     'REJECTED',
 )
+
+DISK_SPACE_ACTION = 'check_disk_space'
 
 #: States from which a job can no longer change.
 TERMINAL_STATES = ('SUCCEEDED', 'FAILED', 'CANCELLED', 'REJECTED')
@@ -57,7 +58,11 @@ class BridgeJob:
     logs: list[str] = field(default_factory=list)
     outputs: list[str] = field(default_factory=list)
     error: str | None = None
-    requires_approval: bool = False
+    requires_approval: bool = True
+    operation: str | None = None
+    peer_id: str | None = None
+    started_at: int | None = None
+    finished_at: int | None = None
 
     def to_json(self) -> dict:
         """The snake_case payload the Android client reads."""
@@ -73,6 +78,8 @@ class BridgeJob:
             'outputs': list(self.outputs),
             'error': self.error,
             'requires_approval': self.requires_approval,
+            'started_at': self.started_at,
+            'finished_at': self.finished_at,
         }
 
 
@@ -84,7 +91,8 @@ class JobStore:
         self._jobs: dict[str, BridgeJob] = {}
         self._lock = threading.RLock()
 
-    def submit(self, kind: str, title: str, payload: str, require_approval: bool) -> BridgeJob:
+    def submit(self, kind: str, title: str, payload: str, require_approval: bool,
+               *, peer_id: str | None = None) -> BridgeJob:
         """Record a submitted job. It is never started by the bridge."""
         if kind not in JOB_KINDS:
             raise JobError('Unknown job kind.')
@@ -94,6 +102,14 @@ class JobStore:
             raise JobError('The job payload must be a JSON string.')
         if type(require_approval) is not bool:
             raise JobError('Approval must be an explicit boolean.')
+        # Retain only the validated operation, never arbitrary phone text.
+        operation = None
+        if kind == 'CUSTOM' and len(payload) <= 256:
+            try:
+                if json.loads(payload) == {'action': DISK_SPACE_ACTION}:
+                    operation = DISK_SPACE_ACTION
+            except ValueError:
+                pass
         moment = int(self._now() * 1000)
         with self._lock:
             job = BridgeJob(
@@ -106,7 +122,8 @@ class JobStore:
                 logs=[],
                 outputs=[],
                 error=None,
-                requires_approval=require_approval,
+                operation=operation,
+                peer_id=peer_id,
             )
             self._jobs[job.id] = job
             return job
@@ -126,15 +143,45 @@ class JobStore:
             running = sum(1 for job in self._jobs.values() if job.state == 'RUNNING')
             return queued, running
 
-    def approve(self, job_id: str) -> BridgeJob:
-        """Owner approval moves a job out of the approval wait."""
+    def start(self, job_id: str) -> BridgeJob:
+        """Claim an approved job immediately before calling its executor."""
         with self._lock:
             job = self._jobs.get(job_id)
-            if job is None:
-                raise JobError('Unknown job.')
-            if job.state in TERMINAL_STATES:
-                raise JobError('That job has already finished.')
-            job = self._replace(job, state='RUNNING')
+            if job is None or job.state != 'QUEUED' or job.operation != DISK_SPACE_ACTION:
+                raise JobError('The job is no longer queued or has no supported action.')
+            job = self._replace(job, state='RUNNING', requires_approval=False,
+                                started_at=int(self._now() * 1000),
+                                logs=['Started disk capacity check.'])
+            self._jobs[job_id] = job
+            return job
+
+    def finish(self, job_id: str, *, result: str | None = None,
+               error: str | None = None) -> BridgeJob:
+        """Record verified output, preserving cancellation if it arrived during execution."""
+        if bool(result) == bool(error):
+            raise ValueError('Provide either a verified result or an error.')
+        with self._lock:
+            job = self._jobs[job_id]
+            if job.state == 'CANCELLED':
+                return job
+            if job.state != 'RUNNING':
+                raise JobError('Only a running job can finish.')
+            job = self._replace(
+                job, state='FAILED' if error else 'SUCCEEDED',
+                progress=0.0 if error else 1.0, error=error,
+                logs=[*job.logs, 'Verification failed.' if error else 'Disk capacity verified.'],
+                outputs=[result] if result else [],
+                finished_at=int(self._now() * 1000))
+            self._jobs[job_id] = job
+            return job
+
+    def reject(self, job_id: str, reason: str) -> BridgeJob:
+        with self._lock:
+            job = self._jobs[job_id]
+            if job.state != 'QUEUED':
+                raise JobError('Only a queued job can be rejected.')
+            job = self._replace(job, state='REJECTED', requires_approval=False,
+                                error=reason, finished_at=int(self._now() * 1000))
             self._jobs[job_id] = job
             return job
 
@@ -146,22 +193,10 @@ class JobStore:
                 return False
             if job.state in TERMINAL_STATES:
                 return False
-            self._jobs[job_id] = self._replace(job, state='CANCELLED')
+            self._jobs[job_id] = self._replace(
+                job, state='CANCELLED', requires_approval=False,
+                finished_at=int(self._now() * 1000))
             return True
 
     def _replace(self, job: BridgeJob, **changes) -> BridgeJob:
-        data = {
-            'id': job.id,
-            'kind': job.kind,
-            'title': job.title,
-            'state': job.state,
-            'progress': job.progress,
-            'created_at': job.created_at,
-            'updated_at': int(self._now() * 1000),
-            'logs': job.logs,
-            'outputs': job.outputs,
-            'error': job.error,
-            'requires_approval': job.requires_approval,
-        }
-        data.update(changes)
-        return BridgeJob(**data)
+        return replace(job, updated_at=int(self._now() * 1000), **changes)

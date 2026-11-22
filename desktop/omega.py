@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QProgressBar, QSizePolicy, QToolButton, QVBoxLayout, QWidget,
 )
 
+from desktop.global_hotkey import DEFAULT_SHORTCUT
 from desktop.omega_visuals import BACKGROUNDS, THEMES, Backdrop, Reactor, SignalMeter, dock_icon, theme_sheet
 from news.briefing import FEEDS, MAX_FEED_BYTES, parse_feed
 
@@ -251,12 +252,13 @@ class FloatingAssistant(QWidget):
         self.place_on_screen()
 
     def sync_shape(self):
-        stealth = self.controller.mode == 'Stealth'
-        self.handle.setVisible(not stealth or self.expanded)
-        self.toggle.setVisible(not stealth or self.expanded)
+        # The retired Stealth presentation is gone: the mode is validated
+        # against MODES on read and on switch, so only Omega and Island exist.
+        self.handle.setVisible(True)
+        self.toggle.setVisible(True)
         self.contents.setVisible(self.expanded)
         self.toggle.setText('Collapse' if self.expanded else 'Expand')
-        self.setFixedWidth(348 if self.expanded else (72 if stealth else 286))
+        self.setFixedWidth(348 if self.expanded else 286)
         self.layout().activate()
         self.setFixedHeight(self.sizeHint().height())
 
@@ -484,7 +486,6 @@ class Omega:
         self.auto_hide = bool(self.store.get('omega:auto_hide', False))
         # The old dashboard/dock is kept as a harmless internal fixture for
         # compatibility tests, never as an alternative production interface.
-        self._smoke = False
         raw_order = self.store.get('omega:order', [])
         self.order = list(dict.fromkeys(name for name in raw_order if isinstance(name, str)
                                         and name in DESTINATIONS)) if isinstance(raw_order, list) else []
@@ -496,17 +497,10 @@ class Omega:
         self.floating = FloatingAssistant(self)
         self.feeds = Feeds(self)
         self.dock = Dock(self)
-        self.reveal = QPushButton('Show dock')
+        self.dock.setParent(window)
+        self.reveal = QPushButton('Show dock', window)
         self.reveal.setAccessibleName('Show or hide application dock')
         self.reveal.clicked.connect(lambda: self.show_dock(not self.dock.isVisible()))
-        dock_row = QHBoxLayout()
-        dock_row.setContentsMargins(0, 0, 0, 0)
-        dock_row.addStretch(1)
-        dock_row.addWidget(self.dock, 8)
-        dock_row.addWidget(self.reveal)
-        dock_row.addStretch(1)
-        window.centralWidget().layout().addLayout(dock_row)
-        window.nav.hide()
         window.pages.currentChanged.connect(self.dock.update_active)
         window.statusBar().messageChanged.connect(self.on_notice)
         self.apply_theme()
@@ -618,9 +612,8 @@ class Omega:
         composer.addWidget(self.command, 1)
         self.send = button(composer, 'Send', lambda: self.submit(self.command), primary=True)
         outer.addWidget(composer_panel)
-        self.window.add_page('Omega Home', home, primary=False)
-        scroller = self.window.pages.widget(self.window.page_indices['Omega Home'])
-        scroller.setObjectName('omegaScroll')
+        home.setParent(self.window)
+        home.hide()
 
     def build_settings(self):
         page = QWidget()
@@ -688,22 +681,34 @@ class Omega:
         button(dock_controls, 'Toggle advanced dock',
                lambda: self.show_dock(not self.dock.isVisible()))
         form.addRow(dock_controls)
+        hotkey_row = QHBoxLayout()
+        self.hotkey_input = QLineEdit(str(self.store.get('hotkey:shortcut', DEFAULT_SHORTCUT)))
+        self.hotkey_input.setMaxLength(40)
+        self.hotkey_input.setPlaceholderText(DEFAULT_SHORTCUT)
+        self.hotkey_input.setToolTip(
+            'Press this key in any application to bring JARVIS up. It does not open the microphone.')
+        hotkey_row.addWidget(self.hotkey_input, 1)
+        button(hotkey_row, 'Apply', lambda: self.window.apply_hotkey(self.hotkey_input.text()))
+        form.addRow('Key that brings JARVIS up', hotkey_row)
+        self.hotkey_status = QLabel(getattr(self.window, 'hotkey_status', ''))
+        self.hotkey_status.setWordWrap(True)
+        form.addRow(self.hotkey_status)
         tools = QHBoxLayout()
         button(tools, 'AI providers', lambda: self.open_page('AI Providers'))
         button(tools, 'Voice settings', lambda: self.open_page('Voice / Hey Jarvis'))
         button(tools, 'Settings & safety', lambda: self.open_page('Settings & Safety'))
         form.addRow(tools)
-        self.window.add_page('Omega Settings', page, primary=False)
+        page.setParent(self.window)
+        page.hide()
 
     def start(self, *, smoke=False):
         # PRIME is the only production desktop interface. Island remains the
         # compact companion; older presentation preferences cannot revive the
         # retired OMEGA dashboard, dock or animated introduction.
-        self._smoke = bool(smoke)
         self.switch('Omega' if smoke else self.mode, persist=False)
         if self.mode == 'Omega':
             self.open_page('JARVIS Chat')
-        self.show_dock(not self.auto_hide if smoke else False)
+        self.show_dock(False)
         self.refresh_state()
         if not smoke and self.store.get('omega:greet', False):
             QTimer.singleShot(700, self.greet)
@@ -812,13 +817,9 @@ class Omega:
         self.store.set('omega:auto_hide', enabled)
         self.show_dock(not enabled)
 
-    def show_dock(self, visible):
-        # The retired dock may only be exercised by the isolated smoke-test
-        # harness; it is never presented by the real PRIME application.
-        visible = bool(visible) and self._smoke
-        self.dock.setVisible(visible)
-        self.reveal.setVisible(self._smoke and (self.auto_hide or not visible))
-        self.reveal.setText('Hide dock' if visible else 'Show dock')
+    def show_dock(self, _visible):
+        self.dock.hide()
+        self.reveal.hide()
 
     def move_dock(self, direction):
         index = self.order_items.currentIndex()

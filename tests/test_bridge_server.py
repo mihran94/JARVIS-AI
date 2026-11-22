@@ -150,3 +150,30 @@ def test_an_invalid_job_kind_is_refused():
 def test_an_invalid_json_body_is_refused():
     server = make_server()
     assert server.handle(signed_request(server, 'POST', '/api/jobs', 'not json')).status == 400
+
+
+def test_invalid_signature_does_not_consume_a_nonce():
+    server = make_server()
+    forged = signed_request(server, 'GET', '/api/status', secret='wrong-secret')
+    assert server.handle(forged).status == 403
+    assert server.handle(signed_request(server, 'GET', '/api/status')).status == 200
+
+
+def test_jobs_can_only_be_read_or_cancelled_by_the_requesting_phone():
+    server = make_server()
+    second_key = 'second-phone'
+    server.pairing.pair(key_id=second_key, label='Second phone', secret=SECRET)
+    body = json.dumps({'kind': 'CUSTOM', 'title': 'Disk check',
+                       'payload': '{"action":"check_disk_space"}', 'requireApproval': False})
+    job = server.handle(signed_request(server, 'POST', '/api/jobs', body)).payload
+    assert job['requires_approval'] is True
+    assert 'operation' not in job and 'peer_id' not in job
+
+    path = '/api/jobs/' + job['id']
+    jobs = server.handle(signed_request(server, 'GET', '/api/jobs', nonce='list', key_id=second_key))
+    assert jobs.payload == {'jobs': []}
+    request = signed_request(server, 'GET', path, nonce='read', key_id=second_key)
+    assert server.handle(request).status == 404
+    request = signed_request(server, 'POST', path + '/cancel', nonce='cancel', key_id=second_key)
+    assert server.handle(request).status == 404
+    assert server.jobs.get(job['id']).state == 'QUEUED'

@@ -24,6 +24,30 @@ def test_user_selected_text_files_are_snapshotted_and_never_send_absolute_paths(
     assert "Changed after" not in payload
 
 
+def test_windows_line_endings_stage_identically_and_never_touch_the_file(tmp_path):
+    """The Windows CRLF condition is reproduced on every platform.
+
+    The same file written on Windows arrives with CRLF endings and on Linux
+    with LF endings. Both must stage as the same text, and the bytes the
+    owner wrote must survive untouched.
+    """
+    crlf = tmp_path / "windows.md"
+    crlf.write_bytes(b"First line.\r\nSecond line.\r\n")
+    lf = tmp_path / "unix.md"
+    lf.write_bytes(b"First line.\nSecond line.\n")
+    staged_crlf = read_file(crlf)
+    staged_lf = read_file(lf)
+    assert staged_crlf.text == "First line.\nSecond line.\n"
+    assert staged_crlf.text == staged_lf.text
+    # The file on disk is unchanged; only the in-memory copy is normalised.
+    assert crlf.read_bytes() == b"First line.\r\nSecond line.\r\n"
+    assert lf.read_bytes() == b"First line.\nSecond line.\n"
+    # A lone carriage return is normalised as well.
+    old_mac = tmp_path / "old.txt"
+    old_mac.write_bytes(b"First line.\rSecond line.\r")
+    assert read_file(old_mac).text == "First line.\nSecond line.\n"
+
+
 def test_hidden_and_secret_files_are_refused(tmp_path):
     for name in (".env", "private.key", "secrets.json"):
         file = tmp_path / name
@@ -33,9 +57,10 @@ def test_hidden_and_secret_files_are_refused(tmp_path):
 
 
 def test_binary_pdf_and_too_large_files_are_rejected(tmp_path):
+    """A PDF that is not a PDF is refused with a sentence, not a shrug."""
     pdf = tmp_path / "invoice.pdf"
     pdf.write_bytes(b"%PDF-1.7")
-    with pytest.raises(AttachmentError, match="PDF is not yet supported"):
+    with pytest.raises(AttachmentError, match="PDF"):
         read_file(pdf)
     code = tmp_path / "main.py"
     code.write_bytes(b"\x00binary")
@@ -45,6 +70,25 @@ def test_binary_pdf_and_too_large_files_are_rejected(tmp_path):
     large.write_bytes(b"A" * 26000)
     with pytest.raises(AttachmentError, match="24 KiB"):
         read_file(large)
+
+
+def test_a_pdf_can_be_added_to_the_context_now(tmp_path):
+    """The PDF limit is gone: a real PDF is read, and read as text."""
+    from document_fixtures import make_pdf
+
+    path = make_pdf(tmp_path / "letter.pdf")
+    staged = read_file(path)
+    assert staged.name == "letter.pdf"
+    assert "Hello from the PDF" in staged.text
+
+
+def test_a_pdf_that_is_too_large_for_an_attachment_is_refused(tmp_path):
+    from document_fixtures import make_pdf
+
+    path = make_pdf(tmp_path / "big.pdf")
+    path.write_bytes(path.read_bytes() + b"A" * 26000)
+    with pytest.raises(AttachmentError, match="24 KiB"):
+        read_file(path)
 
 
 def test_folder_walk_skips_hidden_directories_symlinks_and_unsupported(tmp_path):

@@ -14,14 +14,16 @@ Nothing here grants a permission by itself:
   request.
 """
 import platform
+from pathlib import Path
+import shutil
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QRectF, Qt
+from PySide6.QtGui import QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
-    QLineEdit, QPlainTextEdit, QPushButton, QScrollArea, QLayout, QTabWidget, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget,
+    QLineEdit, QPlainTextEdit, QPushButton, QScrollArea, QLayout, QSizePolicy,
+    QTabWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from agents.gateway import Gateway
@@ -31,12 +33,14 @@ from desktop.bridge_pairing import (
 )
 from desktop.bridge_status import PlatformMetrics
 from providers.registry import specs
+from remote import certificate
+from remote.jobs import DISK_SPACE_ACTION
 from remote.listener import BridgeListener, ListenerConfig, ListenerError
 from remote.pairing import PairingStore
 from remote.protocol import KEY_ID
 from remote.secrets import VaultSecrets
 from remote.server import BridgeServer
-from security.policy import Action
+from security.policy import Action, Stopped
 
 #: The key id an iPhone uses. It is different from the Android one, so that
 #: revoking one phone does not affect the other.
@@ -88,11 +92,43 @@ class BridgePanel(QWidget):
         self.certificate.setPlaceholderText('Path to the PEM certificate')
         self.key = QLineEdit()
         self.key.setPlaceholderText('Path to the PEM private key')
+        self.certificate.textChanged.connect(self.refresh_fingerprint)
         self.plaintext = QCheckBox('Use HTTP behind my private TLS tunnel')
         listener_layout.addRow('Bind address', self.host)
         listener_layout.addRow('Port', self.port)
         listener_layout.addRow('TLS certificate', self.certificate)
         listener_layout.addRow('TLS private key', self.key)
+        self.create_certificate_button = QPushButton('Create a private certificate')
+        self.create_certificate_button.setToolTip(
+            'Make a self-signed certificate for this PC. The phone pins it by '
+            'fingerprint, so it does not need a certificate authority. The key '
+            'stays on this computer.')
+        self.create_certificate_button.clicked.connect(self.create_certificate)
+        # A long label on a button sets a wide minimum on the whole tab, and a
+        # tab that asks for more width than the window has asks to scroll
+        # sideways. The button keeps its natural width whenever there is room
+        # and gives some of it back when there is not.
+        self.create_certificate_button.setMinimumWidth(60)
+        self.create_certificate_button.setSizePolicy(
+            QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+        listener_layout.addRow('Certificate', self.create_certificate_button)
+        self.fingerprint_label = QLabel('')
+        self.fingerprint_label.setWordWrap(True)
+        self.fingerprint_label.setMinimumWidth(0)
+        self.fingerprint_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        listener_layout.addRow('Fingerprint', self.fingerprint_label)
+        self.peer_hosts = QLineEdit()
+        self.peer_hosts.setMinimumWidth(60)
+        self.peer_hosts.setSizePolicy(
+            QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+        self.peer_hosts.setPlaceholderText(
+            'Extra peer addresses, separated by commas')
+        self.peer_hosts.setToolTip(
+            'The addresses a phone may reach this PC from, for example the '
+            'address of your VPN or private tunnel. The loopback addresses '
+            'are always allowed.')
+        listener_layout.addRow('Allowed peer addresses', self.peer_hosts)
         listener_layout.addRow(self.plaintext)
         row = QHBoxLayout()
         self.start_button = QPushButton('Start listener')
@@ -235,21 +271,67 @@ class BridgePanel(QWidget):
 
     # ---------------------------------------------------------------- actions
 
+    def create_certificate(self):
+        """Make a self-signed certificate for the private listener.
+
+        The key is written with owner-only permissions and never leaves
+        this computer. The phone pins the certificate by its fingerprint,
+        so it does not have to be signed by a certificate authority.
+        """
+        def operation():
+            folder = self.store.path.parent / 'bridge'
+            cert_path = folder / 'bridge-cert.pem'
+            key_path = folder / 'bridge-key.pem'
+            try:
+                pin = certificate.ensure_certificate(str(cert_path), str(key_path))
+            except certificate.CertificateError as error:
+                raise ValueError(str(error)) from None
+            self.certificate.setText(str(cert_path))
+            self.key.setText(str(key_path))
+            self.refresh_fingerprint()
+            return ('A private certificate was created. Its SHA-256 fingerprint is '
+                    'shown next to the certificate, and it travels in the pairing '
+                    'code so the phone pins exactly this certificate.')
+        self.notify(operation)
+
+    def refresh_fingerprint(self):
+        """Show the fingerprint of the certificate the owner chose."""
+        if not hasattr(self, 'fingerprint_label'):
+            return
+        path = self.certificate.text().strip()
+        if not path:
+            self.fingerprint_label.setText('No certificate chosen yet.')
+            return
+        try:
+            self.fingerprint_label.setText(certificate.describe(path))
+        except (OSError, certificate.CertificateError) as error:
+            self.fingerprint_label.setText('The certificate could not be read: ' + str(error))
+
+    def allowed_peer_hosts(self):
+        """The extra peer addresses the owner allowed, as a tuple."""
+        raw = self.peer_hosts.text() if hasattr(self, 'peer_hosts') else ''
+        return tuple(part.strip() for part in raw.replace(';', ',').split(',')
+                     if part.strip())
+
     def start_listener(self):
         def operation():
             try:
                 port = int(self.port.text().strip() or '0')
             except ValueError:
                 raise ValueError('Enter a valid port number.') from None
+            peers = self.allowed_peer_hosts()
             config = ListenerConfig(
                 host=self.host.text().strip() or '127.0.0.1',
                 port=port,
                 tls_cert=self.certificate.text().strip(),
                 tls_key=self.key.text().strip(),
                 allow_plaintext=self.plaintext.isChecked(),
-                allowed_hosts=('127.0.0.1', '::1'),
+                allowed_hosts=('127.0.0.1', '::1') + peers,
             )
             self.listener._config = config
+            # The peer list lives on the bridge, so a request from an
+            # allowed VPN or tunnel peer is not refused.
+            self.bridge.set_allowed_hosts(peers)
             address = self.listener.start()
             self.refresh()
             return 'Bridge listener started on ' + address
@@ -264,7 +346,8 @@ class BridgePanel(QWidget):
 
     def pair_device(self):
         def operation():
-            pairing = self.pairing.pair(key_id=KEY_ID, label='phone')
+            pairing = self.pairing.pair(key_id=KEY_ID, label='phone',
+                                        expires_epoch_ms=self._pairing_deadline())
             self.secret_display.setPlainText(pairing.secret)
             self.refresh()
             return ('Phone paired. Copy the shared secret below into the phone. '
@@ -275,23 +358,33 @@ class BridgePanel(QWidget):
         """Pair an iPhone under its own key id and show its pairing code."""
         def operation():
             key_id = self.phone_key.text().strip() or IPHONE_KEY_ID
-            pairing = self.pairing.pair(key_id=key_id, label='iphone')
+            pairing = self.pairing.pair(key_id=key_id, label='iphone',
+                                        expires_epoch_ms=self._pairing_deadline())
             self.secret_display.setPlainText(pairing.secret)
             self.refresh()
             return ('iPhone paired as ' + key_id + '. Show the pairing code and '
                     'scan it with the phone.')
         self.notify(operation)
 
+    def _pairing_deadline(self) -> int:
+        """The moment a pairing code stops being usable, in milliseconds."""
+        return expires_at(lifetime_seconds=DEFAULT_LIFETIME_SECONDS) * 1000
+
     def show_pairing_code(self):
         """Build the pairing code and draw it as a QR code."""
         def operation():
             address = self.phone_address.text().strip()
             key_id = self.phone_key.text().strip() or IPHONE_KEY_ID
+            # Asking for the code again means the owner is about to put it
+            # on the phone, so the deadline moves with it, and the record
+            # and the code carry the same moment.
+            expires_ms = self.pairing.extend_deadline(key_id, self._pairing_deadline())
             secret = self.pairing.secret_for(key_id)
             if not secret:
                 raise ValueError('Pair this phone first, then show the pairing code.')
             payload = pairing_payload(address, key_id, secret,
-                                      expires_at(lifetime_seconds=DEFAULT_LIFETIME_SECONDS))
+                                      expires_ms // 1000,
+                                      fingerprint=self.certificate_fingerprint())
             self.code_text.setPlainText(payload)
             self._draw_qr(payload)
             if self.chat is not None:
@@ -299,9 +392,25 @@ class BridgePanel(QWidget):
                                     paid_consent=self.chat_paid.isChecked(),
                                     memory_sync=self.chat_memory.isChecked())
             return ('Pairing code ready. Scan it with the iPhone, or copy the '
-                    'text. The secret in it stops working in '
-                    f'{DEFAULT_LIFETIME_SECONDS // 60} minutes.')
+                    'text. If the phone has not paired with it in '
+                    f'{DEFAULT_LIFETIME_SECONDS // 60} minutes, the secret in it '
+                    'stops working.')
         self.notify(operation)
+
+    def certificate_fingerprint(self):
+        """The fingerprint of the chosen certificate, or '' when there is none.
+
+        A code without a fingerprint still pairs, but the phone then
+        trusts whatever certificate the bridge presents, so the owner is
+        told which case they are in.
+        """
+        path = self.certificate.text().strip()
+        if not path:
+            return ''
+        try:
+            return certificate.fingerprint_from_file(path)
+        except (OSError, certificate.CertificateError):
+            return ''
 
     def _draw_qr(self, payload):
         """Draw the pairing code as a picture."""
@@ -312,9 +421,20 @@ class BridgePanel(QWidget):
             self.code_qr.setText('The pairing code could not be drawn: ' + str(error))
             return
         renderer = QSvgRenderer(bytearray(svg.encode('utf-8')))
+        if not renderer.isValid():
+            self.code_qr.setText('The pairing code could not be drawn: '
+                                  'the picture was not understood.')
+            return
         picture = QPixmap(240, 240)
         picture.fill()
-        renderer.render(picture)
+        # Qt draws an SVG through a painter. Rendering straight into a
+        # pixmap was removed from PySide6, so the pairing code never
+        # reached the phone because the drawing raised instead.
+        painter = QPainter(picture)
+        try:
+            renderer.render(painter, QRectF(0, 0, 240, 240))
+        finally:
+            painter.end()
         self.code_qr.setPixmap(picture)
 
     def save_chat_settings(self):
@@ -347,20 +467,51 @@ class BridgePanel(QWidget):
             job = self._selected_job()
             if job.state in ('SUCCEEDED', 'FAILED', 'CANCELLED', 'REJECTED'):
                 raise ValueError('That job has already finished.')
-            action = Action('approve_bridge_job', job.id,
-                            job.title + ' / ' + job.kind)
-            result = self.gateway.run(action, self.confirm,
-                                      lambda: self.bridge.jobs.approve(job.id))
-            self.refresh()
-            return 'Job approved: ' + str(result.state)
+            if job.operation != DISK_SPACE_ACTION:
+                if not self.confirm(Action('Reject unsupported phone task', job.id)):
+                    return
+                self.bridge.jobs.reject(job.id, 'No supported desktop action was requested.')
+                self.refresh()
+                return 'Unsupported phone task rejected.'
+            action = Action('Read and share profile drive capacity with the requesting phone', job.id)
+            try:
+                return self.gateway.run(action, self.confirm,
+                                        lambda: self._execute_disk_check(job))
+            finally:
+                self.refresh()
         self.notify(operation)
+
+    def _execute_disk_check(self, job):
+        jobs = self.bridge.jobs
+        job_id = job.id
+        if job.peer_id is not None and not any(
+                device.peer_id == job.peer_id and not device.revoked
+                for device in self.pairing.devices()):
+            jobs.reject(job_id, 'The requesting phone is no longer paired.')
+            raise RuntimeError('The requesting phone is no longer paired.')
+        jobs.start(job_id)
+        try:
+            # Read the drive containing the desktop account's home directory.
+            usage = shutil.disk_usage(Path.home().anchor)
+            if usage.total <= 0 or not 0 <= usage.free <= usage.total:
+                raise ValueError('Invalid disk capacity.')
+        except (OSError, ValueError):
+            error = 'Could not verify disk capacity.'
+            if jobs.finish(job_id, error=error).state == 'CANCELLED':
+                raise Stopped('Phone task cancelled.') from None
+            raise RuntimeError(error) from None
+        gib = 1024 ** 3
+        result = f'{usage.free / gib:.2f} GiB free of {usage.total / gib:.2f} GiB.'
+        if jobs.finish(job_id, result=result).state == 'CANCELLED':
+            raise Stopped('Phone task cancelled.') from None
+        return result
 
     def reject_job(self):
         def operation():
             job = self._selected_job()
             if not self.confirm(Action('reject_bridge_job', job.id, job.title)):
                 return
-            self.bridge.jobs.cancel(job.id)
+            self.bridge.jobs.reject(job.id, 'The desktop owner rejected this task.')
             self.refresh()
             return 'Job rejected.'
         self.notify(operation)
@@ -389,6 +540,7 @@ class BridgePanel(QWidget):
         running = self.listener.running
         self.start_button.setEnabled(not running)
         self.stop_button.setEnabled(running)
+        self.refresh_fingerprint()
         if running:
             self.listener_status.setText('Listening on ' + self.listener.address)
         else:

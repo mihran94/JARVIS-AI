@@ -10,7 +10,7 @@
 
 import { BridgeClient, BridgeError } from './js/bridge.js';
 import { ChatTranscript, renderTranscript } from './js/chat.js';
-import { Outbox } from './js/offline.js';
+import { KINDS, Outbox, createIndexedDbStore } from './js/offline.js';
 import { parsePairingPayload } from './js/pairing.js';
 import { decodeQrFromFile } from './js/qr.js';
 import {
@@ -20,6 +20,15 @@ import {
 
 const $ = (id) => document.getElementById(id);
 
+/**
+ * How often the queued work is tried while the page is open.
+ *
+ * iOS Safari has no Background Sync, so the queue is only ever sent while the
+ * app is in front. This is the slow heartbeat that covers the case where the
+ * `online` event never came.
+ */
+const FLUSH_INTERVAL_MS = 30000;
+
 const state = {
   client: null,
   transcript: new ChatTranscript(),
@@ -27,6 +36,7 @@ const state = {
   listening: null,
   speakAnswers: false,
   timer: null,
+  flushTimer: null,
   lastError: '',
 };
 
@@ -80,6 +90,9 @@ async function connect() {
     const status = await state.client.status();
     setStatus('pairStatus', `Connected to ${status.hostname || 'the PC'}.`, 'ok');
     showStatus(status);
+    // The PC is there, so the work that was kept while it was not reachable
+    // can go out now.
+    await flushOutbox();
     await refreshAll();
   } catch (error) {
     setStatus('pairStatus', error.message, 'error');
@@ -189,8 +202,9 @@ async function sendMessage(text) {
   state.transcript.add('person', message);
   drawChat();
   setStatus('chatStatus', 'Thinking…');
+  const consent = $('consent').checked;
   try {
-    const answer = await state.client.chat(message, { consent: $('consent').checked });
+    const answer = await state.client.chat(message, { consent });
     state.transcript.add('jarvis', answer.text || '(no answer)');
     drawChat();
     setStatus('chatStatus', `Answered by ${answer.provider || 'the PC'}.`, 'ok');
@@ -199,8 +213,12 @@ async function sendMessage(text) {
         lang: chooseLanguage(answer.text || '', { current: chosenVoiceLanguage() }),
       });
     }
+    // The work is done, so a copy that waits in the queue must not be sent
+    // a second time.
+    await state.outbox.discard(KINDS.CHAT, { message, consent });
   } catch (error) {
-    handleFailure(error, 'chat');
+    const kept = await keepForLater(error, KINDS.CHAT, { message, consent });
+    handleFailure(error, 'chat', { kept });
     state.transcript.add('system', error.message);
     drawChat();
   }
@@ -265,6 +283,12 @@ function drawJobs(jobs) {
     const title = document.createElement('span');
     title.textContent = job.title || job.id;
     item.append(badge, title);
+    const details = job.error || (Array.isArray(job.outputs) ? job.outputs.join(' ') : '');
+    if (details) {
+      const result = document.createElement('p');
+      result.textContent = details;
+      item.append(result);
+    }
     const progress = document.createElement('div');
     progress.className = 'progress';
     const bar = document.createElement('span');
@@ -299,14 +323,19 @@ async function submitTask() {
   }
   const title = $('taskTitle').value.trim();
   const payload = $('taskPayload').value;
+  const task = { kind: 'CUSTOM', title, payload, requireApproval: true };
   try {
-    await state.client.submitJob({ kind: 'CUSTOM', title, payload, requireApproval: true });
+    await state.client.submitJob(task);
     $('taskTitle').value = '';
     $('taskPayload').value = '';
     setStatus('chatStatus', 'The task was sent. Approve it on the PC.', 'ok');
+    // The task is on the PC now, so a copy that waits in the queue must not
+    // be sent a second time.
+    await state.outbox.discard(KINDS.TASK, task);
     await refreshJobs();
   } catch (error) {
-    handleFailure(error, 'tasks');
+    const kept = await keepForLater(error, KINDS.TASK, task);
+    handleFailure(error, 'tasks', { kept });
   }
 }
 
@@ -362,7 +391,10 @@ async function remember() {
     $('memoryText').value = '';
     await refreshMemory();
   } catch (error) {
-    handleFailure(error, 'memory');
+    // A memory entry is not kept for later: the desktop stores every entry it
+    // receives, so sending it twice would write it twice. The page says that
+    // the entry was lost instead of pretending it is safe.
+    handleFailure(error, 'memory', { lost: true });
   }
 }
 
@@ -417,25 +449,194 @@ async function acknowledge(notificationId) {
   }
   try {
     await state.client.acknowledge(notificationId);
+    // The notification is seen, so a copy that waits in the queue must not be
+    // sent a second time.
+    await state.outbox.discard(KINDS.NOTIFICATION_ACK, { id: notificationId });
     await refreshNotifications();
   } catch (error) {
-    handleFailure(error, 'notifications');
+    // Marking a notification as seen twice changes nothing, so this one may
+    // safely wait in the queue.
+    const kept = await keepForLater(error, KINDS.NOTIFICATION_ACK, { id: notificationId });
+    handleFailure(error, 'notifications', { kept });
+  }
+}
+
+// ------------------------------------------------------------------- outbox
+
+/**
+ * Whether the failure means the PC could not be reached at all.
+ *
+ * A status of zero is the answer for a request that never left the phone: a
+ * dead bridge, a closed Wi-Fi or a VPN that is not up. An answer the PC gave
+ * is a real answer, and repeating the request would not change it.
+ */
+function isUnreachable(error) {
+  return error instanceof BridgeError && error.status === 0;
+}
+
+/**
+ * Do the work one queued descriptor stands for.
+ *
+ * The outbox holds plain data, so this is where a descriptor becomes a call.
+ * The page owns the mapping, the queue never holds a function.
+ */
+async function executeQueued(item) {
+  if (!state.client) {
+    throw new Error('The PC is not connected yet.');
+  }
+  if (item.kind === KINDS.CHAT) {
+    const answer = await state.client.chat(item.payload.message, {
+      consent: Boolean(item.payload.consent),
+    });
+    state.transcript.add('jarvis', answer.text || '(no answer)');
+    drawChat();
+    return answer;
+  }
+  if (item.kind === KINDS.TASK) {
+    await state.client.submitJob({
+      kind: item.payload.kind || 'CUSTOM',
+      title: item.payload.title,
+      payload: item.payload.payload || '',
+      requireApproval: item.payload.requireApproval !== false,
+    });
+    return null;
+  }
+  if (item.kind === KINDS.NOTIFICATION_ACK) {
+    await state.client.acknowledge(item.payload.id);
+    return null;
+  }
+  throw new Error(`The outbox does not know the kind "${item.kind}".`);
+}
+
+/**
+ * Keep the work when the PC could not be reached.
+ *
+ * Only work that may be repeated safely is kept: a chat message, a task for
+ * approval and the acknowledgement of a notification. A memory entry is not
+ * one of them, because the desktop would store it a second time.
+ */
+async function keepForLater(error, kind, payload) {
+  if (!isUnreachable(error)) {
+    return null;
+  }
+  const result = await state.outbox.push({ kind, payload });
+  showOutboxStatus();
+  return result;
+}
+
+/**
+ * Say how many items are waiting, and whether they can be saved.
+ *
+ * The line never promises a delivery in the background: iOS does not give a
+ * web app one.
+ */
+function showOutboxStatus() {
+  const element = $('outboxStatus');
+  if (!element) {
+    return;
+  }
+  const waiting = state.outbox.length;
+  if (!waiting) {
+    element.textContent = '';
+    element.className = 'status';
+    return;
+  }
+  if (state.outbox.storageError) {
+    element.textContent = `${waiting} item(s) are waiting on this phone, but they cannot be saved (${state.outbox.storageError}), so closing the app loses them.`;
+    element.className = 'status error';
+    return;
+  }
+  const dropped = state.outbox.dropped
+    ? ` ${state.outbox.dropped} item(s) were dropped because the queue was full.`
+    : '';
+  element.textContent = `${waiting} item(s) are waiting on this phone. They go out when this app is open and the PC answers.${dropped}`;
+  element.className = 'status';
+}
+
+/**
+ * Read the queue back from the phone.
+ *
+ * The work survives a reload, but the pairing secret does not: the queue can
+ * only be sent once the PC has been paired again and it answers.
+ */
+async function restoreOutbox() {
+  const store = createIndexedDbStore();
+  if (store) {
+    state.outbox.useStore(store);
+  } else {
+    // Without IndexedDB the work is only kept while the page stays open, and
+    // the page has to say so.
+    state.outbox.storageError = 'this browser has no IndexedDB';
+  }
+  const waiting = await state.outbox.restore();
+  showOutboxStatus();
+  if (waiting) {
+    say(`${waiting} item(s) are waiting on this phone. Pair with the PC and they are sent.`);
+  }
+  return waiting;
+}
+
+/**
+ * Send the queued work.
+ *
+ * This only happens while the app is open. iOS does not let a web app run in
+ * the background, so the queue is sent when the app starts, when the
+ * connection returns, when the app comes back to the front, and every few
+ * seconds while the page is in front.
+ */
+async function flushOutbox() {
+  if (!state.client || state.outbox.length === 0) {
+    showOutboxStatus();
+    return null;
+  }
+  const results = await state.outbox.flush(executeQueued);
+  showOutboxStatus();
+  if (results.sent) {
+    say(`${results.sent} item(s) sent to the PC.`);
+  }
+  return results;
+}
+
+function startFlushing() {
+  stopFlushing();
+  state.flushTimer = setInterval(() => {
+    flushOutbox();
+  }, FLUSH_INTERVAL_MS);
+}
+
+function stopFlushing() {
+  if (state.flushTimer) {
+    clearInterval(state.flushTimer);
+    state.flushTimer = null;
   }
 }
 
 // ------------------------------------------------------------------ failure
 
 /**
- * Show a failure and keep the work if the PC simply could not be reached.
+ * Show a failure and say what really happened to the work.
  *
- * A task that was asked for while the phone was out of reach is kept and
- * sent when the connection returns, so the person does not have to type it
- * again.
+ * Work that was kept is on this phone and goes out when the app is open and
+ * the PC answers. Work that was lost has to be asked for again, and work that
+ * was only a reading has to be tried again. The page never promises a
+ * delivery that cannot happen.
  */
-function handleFailure(error, area) {
+function handleFailure(error, area, { kept = null, lost = false } = {}) {
   const message = error instanceof Error ? error.message : String(error);
-  if (error instanceof BridgeError && error.status === 0) {
-    say('The PC could not be reached. Your work is kept and will be sent when the connection returns.');
+  if (isUnreachable(error)) {
+    if (kept && kept.duplicate && kept.sent) {
+      say('The PC could not be reached. That work was sent a moment ago, so it was not queued again.');
+    } else if (kept && kept.duplicate) {
+      say('The PC could not be reached. That work is already waiting on this phone.');
+    } else if (kept && !kept.persisted) {
+      say('The PC could not be reached. Your work is kept in this page only: closing the app loses it.');
+    } else if (kept) {
+      say('The PC could not be reached. Your work is kept on this phone and goes out when this app is open and the PC answers.');
+    } else if (lost) {
+      say('The PC could not be reached. That entry was not saved, so write it again when the connection is back.');
+    } else {
+      say('The PC could not be reached.');
+    }
   } else {
     say(message);
   }
@@ -522,9 +723,16 @@ function installListeners() {
   });
   window.addEventListener('online', () => {
     say('');
-    state.outbox.flush().then(() => refreshAll());
+    flushOutbox().then(() => refreshAll());
   });
-  window.addEventListener('offline', () => say('This phone is offline. Your work is kept.'));
+  window.addEventListener('offline', () => say('This phone is offline. Anything you send now is kept on this phone and goes out when this app is open and the PC answers.'));
+  // iOS brings the app back to the front without an `online` event, so the
+  // queue is tried again whenever the page comes back into sight.
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      flushOutbox();
+    }
+  });
 }
 
 function registerServiceWorker() {
@@ -533,10 +741,16 @@ function registerServiceWorker() {
   }
 }
 
-function start() {
+async function start() {
   drawChat();
   installListeners();
   registerServiceWorker();
+  // The work that was kept before a reload is read back, the heartbeat that
+  // sends it while the app is open is started, and whatever can be sent now
+  // is sent now.
+  await restoreOutbox();
+  await flushOutbox();
+  startFlushing();
   if ($('autoRefresh').checked) {
     startWatching();
   }

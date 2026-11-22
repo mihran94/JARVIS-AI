@@ -88,7 +88,7 @@ def test_typing_waits_for_approval_and_foreground(window, monkeypatch):
     window.complete_desktop_task()
     assert typed == ['வணக்கம் then literal text']
     assert window.conversation_plan.active is None
-    assert 'content and saved files are not verified' in window.transcript.toPlainText()
+    assert 'saved content not verified' in window.transcript.toPlainText()
 
 
 def test_failed_launch_stops_remaining_steps(window, monkeypatch):
@@ -182,8 +182,8 @@ def test_successful_launch_plan_keeps_actual_results(window, monkeypatch):
     window.finish_chat_launch(True)
     assert launches == ['Notepad', 'Calculator']
     plan = next(t for t in window.store.tasks() if t['kind'] == 'conversation_plan')
-    assert plan['status'] == 'completed'
-    assert 'requests dispatched' in plan['detail']
+    assert plan['status'] == 'dispatched'
+    assert 'dispatched steps' in plan['detail']
     assert window.conversation_plan.active is None
 
 

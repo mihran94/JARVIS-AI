@@ -117,3 +117,63 @@ def test_deleting_chat_discards_queued_file_content(tmp_path, monkeypatch):
     finally:
         window.close()
         app.processEvents()
+
+
+def test_a_document_is_read_and_shown_without_being_sent(tmp_path, monkeypatch):
+    """Reading a document is local. Nothing is shared until it is asked for."""
+    from document_fixtures import make_pdf
+
+    app, window = make_window(tmp_path)
+    try:
+        path = make_pdf(tmp_path / "letter.pdf")
+        monkeypatch.setattr(
+            QFileDialog, "getOpenFileName",
+            lambda *_args, **_kwargs: (str(path), ""))
+        window.open_section("Files & Folders")
+        window.read_document_file()
+        assert "Hello from the PDF" in window.document_preview.toPlainText()
+        assert "Nothing was sent anywhere" in window.document_status.text()
+        # The document is not in the list of shared files, and consent is off.
+        assert window.attachment_list.count() == 0
+        assert not window.files_share_once.isChecked()
+    finally:
+        window.close()
+
+
+def test_two_documents_can_be_compared(tmp_path, monkeypatch):
+    from document_fixtures import make_pdf
+
+    app, window = make_window(tmp_path)
+    try:
+        first = make_pdf(tmp_path / "first.pdf", lines=('alpha', 'beta'))
+        second = make_pdf(tmp_path / "second.pdf", lines=('alpha', 'gamma'))
+        chosen = [str(first), str(second)]
+        monkeypatch.setattr(
+            QFileDialog, "getOpenFileName",
+            lambda *_args, **_kwargs: (chosen.pop(0), ""))
+        window.open_section("Files & Folders")
+        window.read_document_file()
+        window.compare_document_file()
+        preview = window.document_preview.toPlainText()
+        assert "differ" in preview
+        assert "beta" in preview
+        assert "gamma" in preview
+        assert "Nothing was sent anywhere" in window.document_status.text()
+    finally:
+        window.close()
+
+
+def test_a_document_that_cannot_be_read_says_why(tmp_path, monkeypatch):
+    app, window = make_window(tmp_path)
+    try:
+        broken = tmp_path / "broken.pdf"
+        broken.write_bytes(b"%PDF-1.7\nnot really a pdf")
+        monkeypatch.setattr(
+            QFileDialog, "getOpenFileName",
+            lambda *_args, **_kwargs: (str(broken), ""))
+        window.open_section("Files & Folders")
+        window.read_document_file()
+        assert window.document_preview.toPlainText() == ""
+        assert window.document_status.text()
+    finally:
+        window.close()

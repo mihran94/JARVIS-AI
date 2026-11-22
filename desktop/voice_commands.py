@@ -21,7 +21,7 @@ COMMANDS = {
 
 aliases = {name.casefold(): name for name in (*VIDEO_TOOLS, *EDITOR_EXECUTABLES)}
 aliases.update({'notepad': 'Notepad', 'calculator': 'Calculator'})
-aliases.update({'flow': 'Google Flow', 'davinci': 'DaVinci Resolve'})
+aliases.update({'flow': 'Google Flow', 'davinci': 'DaVinci Resolve', 'adobe photoshop': 'Photoshop'})
 for alias, name in aliases.items():
     COMMANDS.update({
         f'open {alias}': name,

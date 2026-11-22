@@ -1,6 +1,7 @@
 package com.jarvisblue.core.windows
 
 import com.jarvisblue.core.common.AppError
+import com.jarvisblue.core.common.CertificatePin
 import com.jarvisblue.core.common.Outcome
 import com.jarvisblue.core.common.runCatchingOutcomeSuspend
 import com.jarvisblue.core.model.BridgeJob
@@ -47,11 +48,29 @@ import javax.crypto.spec.SecretKeySpec
  * (Tailscale / WireGuard). No control port is published to the public internet.
  */
 class BridgeClient(
-    private val httpClient: OkHttpClient = defaultClient(),
+    /**
+     * Makes the client when it is first needed.
+     *
+     * The client is not made when the object is made, because the pinned
+     * certificate is read from the vault and the vault read is a suspend
+     * call. The client is then kept, so the vault is read once.
+     */
+    private val httpClientFactory: suspend () -> OkHttpClient = { defaultClient() },
     private val secretProvider: suspend () -> String?,
 ) {
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
+    @Volatile
+    private var httpClient: OkHttpClient? = null
+
+    /** The client, made on first use and kept afterwards. */
+    private suspend fun client(): OkHttpClient {
+        httpClient?.let { return it }
+        val made = httpClientFactory()
+        httpClient = made
+        return made
+    }
 
     suspend fun status(baseUrl: String): Outcome<PcStatus> = withContext(Dispatchers.IO) {
         runCatchingOutcomeSuspend {
@@ -100,6 +119,8 @@ class BridgeClient(
             ?: return null
         val secret = runCatching { kotlinx.coroutines.runBlocking { secretProvider() } }.getOrNull()
             ?: return null
+        val client = runCatching { kotlinx.coroutines.runBlocking { client() } }.getOrNull()
+            ?: return null
         val wsUrl = safeBase.replaceFirst("https://", "wss://") + "/ws"
         val timestamp = System.currentTimeMillis().toString()
         val nonce = nonce()
@@ -112,7 +133,7 @@ class BridgeClient(
             .header("X-Jarvis-Signature", sign("GET", "/ws", timestamp, "", secret, nonce))
             .build()
 
-        return httpClient.newWebSocket(request, object : WebSocketListener() {
+        return client.newWebSocket(request, object : WebSocketListener() {
             override fun onMessage(webSocket: WebSocket, text: String) = onEvent(text)
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) = onEvent(bytes.utf8())
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: okhttp3.Response?) =
@@ -154,8 +175,8 @@ class BridgeClient(
         return execute(request)
     }
 
-    private fun execute(request: Request): JsonObject {
-        httpClient.newCall(request).execute().use { response ->
+    private suspend fun execute(request: Request): JsonObject {
+        client().newCall(request).execute().use { response ->
             val payload = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
                 throw when (response.code) {
@@ -234,12 +255,24 @@ class BridgeClient(
         }
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
 
-        fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .writeTimeout(30, TimeUnit.SECONDS)
-            .pingInterval(30, TimeUnit.SECONDS)
-            .build()
+        fun defaultClient(fingerprint: String? = null): OkHttpClient {
+            val builder = OkHttpClient.Builder()
+                .connectTimeout(15, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS)
+                .writeTimeout(30, TimeUnit.SECONDS)
+                .pingInterval(30, TimeUnit.SECONDS)
+            if (fingerprint != null && CertificatePin.isFingerprint(fingerprint)) {
+                // The peer is the certificate that was pinned, not the name
+                // the owner typed. The trust manager accepts that one
+                // certificate and refuses every other.
+                builder.sslSocketFactory(
+                    CertificatePin.sslContextFor(fingerprint).socketFactory,
+                    CertificatePin.trustManagerFor(fingerprint),
+                )
+                builder.hostnameVerifier(CertificatePin.hostnameVerifier())
+            }
+            return builder.build()
+        }
 
         fun nonce(): String = java.util.UUID.randomUUID().toString()
 

@@ -1,11 +1,20 @@
 """Manual offline microphone transcription using an owner-installed Vosk model.
 
 No recording on startup, no automatic transmission, no wake word, no audio files.
+
+The microphone is opened only after `voice.consent.VoiceConsent` has granted
+permission, exactly like the Windows adapter in `voice/windows_stt.py` does.
+Without that permission the worker refuses to open the stream and says so in
+its `completed` message; it never opens a microphone on its own, and a session
+that is already running closes itself when the permission is taken back.
 """
 import json
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
+
+from voice.consent import VoiceConsent
+from voice.errors import VoiceError
 
 
 def normalize_transcript(parts, max_chars=4000):
@@ -25,14 +34,28 @@ def validate_model_path(path):
 
 
 class DictationWorker(QThread):
+    """One bounded push-to-talk session, on a microphone the owner allowed.
+
+    The permission is held in `VoiceConsent`, the single place where the
+    microphone permission of this project lives. The worker checks it before
+    it opens the stream, checks it again after the model has been loaded, and
+    stops when the owner takes the permission back during the session.
+    """
+
     recognized = Signal(str)
     completed = Signal(str)
 
-    def __init__(self, model_path, parent=None):
+    def __init__(self, model_path, parent=None, consent=None):
         super().__init__(parent)
         self.model_path = validate_model_path(model_path)
+        self.consent = consent if consent is not None else VoiceConsent()
 
     def run(self):
+        try:
+            self.consent.require_listening()
+        except VoiceError as error:
+            self.completed.emit('Dictation refused: ' + str(error))
+            return
         try:
             import sounddevice as sd
             from vosk import Model, KaldiRecognizer
@@ -43,6 +66,13 @@ class DictationWorker(QThread):
             if self.isInterruptionRequested():
                 self.completed.emit('Dictation cancelled during model load')
                 return
+            # The permission is checked again here: loading the model takes a
+            # while, and the owner may close the microphone in the meantime.
+            try:
+                self.consent.require_listening()
+            except VoiceError as error:
+                self.completed.emit('Dictation refused: ' + str(error))
+                return
             recognizer = KaldiRecognizer(model, 16000)
             pieces = []
             overflow_seen = False
@@ -52,6 +82,9 @@ class DictationWorker(QThread):
                 for _ in range(60):
                     if self.isInterruptionRequested():
                         self.completed.emit("Dictation cancelled")
+                        return
+                    if not self.consent.listening:
+                        self.completed.emit("Dictation stopped: the microphone was closed.")
                         return
                     audio, overflow = microphone.read(4000)
                     overflow_seen = overflow_seen or bool(overflow)

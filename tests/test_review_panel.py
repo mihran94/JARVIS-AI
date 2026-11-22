@@ -166,6 +166,7 @@ def test_closing_the_window_keeps_jarvis_in_the_tray_when_it_is_asked(installati
     win.show()
     app.processEvents()
     win.close()
+    win.deleteLater()
     app.processEvents()
     # The window went away, but JARVIS is still running in the tray.
     assert win.isVisible() is False
@@ -179,6 +180,7 @@ def test_closing_the_window_ends_jarvis_when_the_tray_is_not_asked_for(installat
     win.show()
     app.processEvents()
     win.close()
+    win.deleteLater()
     app.processEvents()
     assert win.isVisible() is False
 

@@ -179,21 +179,25 @@ class BridgeServer:
         if method == 'GET' and path == '/api/status':
             return self._status()
         if method == 'GET' and path == '/api/jobs':
-            return {'jobs': [job.to_json() for job in self._jobs.list()]}
+            return {'jobs': [job.to_json() for job in self._jobs.list()
+                             if job.peer_id == device.peer_id]}
         if method == 'GET' and path.startswith('/api/jobs/') and not path.endswith('/cancel'):
             job_id = path[len('/api/jobs/'):]
             if not job_id or '/' in job_id:
                 raise BridgeHandlerError(404, 'The Windows bridge does not expose that endpoint')
             job = self._jobs.get(job_id)
-            if job is None:
+            if job is None or job.peer_id != device.peer_id:
                 raise BridgeHandlerError(404, 'Unknown job.')
             return job.to_json()
         if method == 'POST' and path == '/api/jobs':
-            return self._submit(request)
+            return self._submit(request, device.peer_id)
         if method == 'POST' and path.startswith('/api/jobs/') and path.endswith('/cancel'):
             job_id = path[len('/api/jobs/'):-len('/cancel')]
             if not job_id or '/' in job_id:
                 raise BridgeHandlerError(404, 'The Windows bridge does not expose that endpoint')
+            job = self._jobs.get(job_id)
+            if job is None or job.peer_id != device.peer_id:
+                raise BridgeHandlerError(404, 'Unknown job.')
             return {'ok': self._jobs.cancel(job_id)}
         if method == 'POST' and path == '/api/chat':
             return self._chat_answer(request)
@@ -299,7 +303,7 @@ class BridgeServer:
         if not allowed:
             raise BridgeHandlerError(403, 'The Windows desktop has not allowed memory synchronisation.')
 
-    def _submit(self, request: BridgeRequest) -> dict:
+    def _submit(self, request: BridgeRequest, peer_id: str) -> dict:
         try:
             body = json.loads(request.body or '{}')
         except (ValueError, TypeError):
@@ -315,12 +319,31 @@ class BridgeServer:
         if type(approval) is not bool:
             raise BridgeHandlerError(400, 'The Windows bridge received an invalid approval flag.')
         try:
-            job = self._jobs.submit(kind, title, payload, approval)
+            job = self._jobs.submit(kind, title, payload, approval, peer_id=peer_id)
         except JobError as error:
             raise BridgeHandlerError(400, str(error)) from None
         return job.to_json()
 
     # ------------------------------------------------------------- authenticity
+
+    def set_allowed_hosts(self, hosts) -> None:
+        """The peer addresses that may talk to the bridge.
+
+        The loopback addresses are always allowed. The owner adds the
+        address of a VPN or a private tunnel, so the phone can reach the
+        desktop without the listener being published to the internet.
+
+        The addresses are the peer addresses the request came from, not
+        the addresses the owner types as the phone's address: a phone
+        behind a tunnel arrives from the tunnel's own address.
+        """
+        allowed = {host.strip() for host in hosts if host and host.strip()}
+        allowed.update(DEFAULT_ALLOWED_HOSTS)
+        self._allowed_hosts = tuple(sorted(allowed))
+
+    def allowed_hosts(self) -> tuple:
+        """The peer addresses that may talk to the bridge."""
+        return tuple(self._allowed_hosts)
 
     def _check_source(self, request: BridgeRequest) -> None:
         """Reject a request that did not arrive over an allowed interface."""
@@ -344,9 +367,14 @@ class BridgeServer:
         try:
             check_timestamp(timestamp, now=self._now(),
                             max_skew_seconds=self._clock_skew_seconds)
-            self._replay.check(nonce)
             verify(request.method, request.path, timestamp, request.body, secret, nonce, signature)
+            self._replay.check(nonce)
         except ProtocolError:
             raise BridgeHandlerError(403, AUTH_MESSAGE) from None
+        # The device has proved itself: it made a signed request with the
+        # secret it was given. From here it is trusted until the owner
+        # revokes it, so the deadline for using the pairing code stops
+        # applying to it.
+        self._pairing.confirm(key_id)
         self._pairing.touch(key_id)
         return device

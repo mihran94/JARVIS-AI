@@ -129,6 +129,7 @@ def test_the_task_is_recorded_in_the_task_history(tmp_path, monkeypatch, project
         assert win.history.rowCount() >= 1
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_the_history_row_is_written_while_the_task_runs(tmp_path, monkeypatch, project):
@@ -142,6 +143,7 @@ def test_the_history_row_is_written_while_the_task_runs(tmp_path, monkeypatch, p
         assert rows and rows[0]['status'] == 'running'
     finally:
         win.close()
+        win.deleteLater()
 
 
 # ── 7. a failed test is visible in the final result ────────────────────────
@@ -151,12 +153,16 @@ def test_a_failed_test_is_visible_in_the_final_result(tmp_path, monkeypatch, pro
     try:
         row = run_a_task(win, app, monkeypatch, project, test_status='failed')
         transcript = win.transcript.toPlainText()
-        assert 'Tests: failed' in transcript, transcript[-400:]
+        # The report is now written in the language the owner asked for, so
+        # both wordings are accepted here.
+        assert ('Tests: failed' in transcript
+                or 'பரிட்சை முடிவு: failed' in transcript), transcript[-400:]
         assert row is not None
         assert row['status'] == 'failed'
         assert 'tests=failed' in row['detail']
     finally:
         win.close()
+        win.deleteLater()
 
 
 # ── 8. an active task is not overwritten by a new request ─────────────────
@@ -178,6 +184,7 @@ def test_a_new_request_does_not_overwrite_a_running_task(tmp_path, monkeypatch, 
         assert 'already running' in win.transcript.toPlainText()
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_a_pending_approval_is_not_overwritten_by_a_new_request(tmp_path, monkeypatch, project):
@@ -193,6 +200,7 @@ def test_a_pending_approval_is_not_overwritten_by_a_new_request(tmp_path, monkey
         assert win.coding_pending is pending, 'the pending approval was lost'
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_a_new_chat_does_not_orphan_a_running_task(tmp_path, monkeypatch, project):
@@ -206,6 +214,7 @@ def test_a_new_chat_does_not_orphan_a_running_task(tmp_path, monkeypatch, projec
         assert win.session == session, 'the conversation changed under a running task'
     finally:
         win.close()
+        win.deleteLater()
 
 
 # ── 9. Stop cancels the job, and Resume does not restart it ───────────────
@@ -238,6 +247,7 @@ def test_stop_cancels_the_task_and_resume_does_not_restart_it(tmp_path, monkeypa
         assert win.coding_worker is None
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_the_approval_state_is_cleared_when_the_task_ends(tmp_path, monkeypatch, project):
@@ -251,6 +261,7 @@ def test_the_approval_state_is_cleared_when_the_task_ends(tmp_path, monkeypatch,
         assert win.coding_pending is None
     finally:
         win.close()
+        win.deleteLater()
 
 
 # ── 10. Omega survives ─────────────────────────────────────────────────────
@@ -259,13 +270,15 @@ def test_the_omega_modes_are_still_there(tmp_path, monkeypatch):
     win, app = window(tmp_path, monkeypatch)
     try:
         from desktop.omega import MODES
-        assert MODES == ('Omega', 'Island', 'Stealth')
+        # The retired Stealth presentation is not a production mode any more.
+        assert MODES == ('Omega', 'Island')
         win.enable_omega(smoke=True)
         app.processEvents()
         assert win.omega is not None
         assert win.omega.mode in MODES
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_omega_still_shows_the_coding_work(tmp_path, monkeypatch, project):
@@ -296,6 +309,7 @@ def test_omega_still_shows_the_coding_work(tmp_path, monkeypatch, project):
         app.processEvents()
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_omega_still_receives_the_stop(tmp_path, monkeypatch):
@@ -312,6 +326,7 @@ def test_omega_still_receives_the_stop(tmp_path, monkeypatch):
         assert win.policy.stopped is False
     finally:
         win.close()
+        win.deleteLater()
 
 
 # ── the software launchers and the coding editors stay separate ────────────
@@ -345,6 +360,7 @@ def test_vs_code_still_opens_the_saved_project(tmp_path, monkeypatch, project):
         assert opened == [('VS Code', str(project))]
     finally:
         win.close()
+        win.deleteLater()
 
 
 def test_a_configured_coding_editor_opens_the_saved_project(tmp_path, monkeypatch, project):
@@ -367,3 +383,4 @@ def test_a_configured_coding_editor_opens_the_saved_project(tmp_path, monkeypatc
         assert opened[0][2]['command'] == '/usr/bin/true'
     finally:
         win.close()
+        win.deleteLater()

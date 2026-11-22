@@ -35,6 +35,7 @@ jobs:
       - name: Write the release manifest
         shell: bash
         run: |
+          git rev-parse HEAD > dist/JarvisAI/JARVIS-AI-REVISION.txt
           python scripts/release_manifest.py dist/JarvisAI dist/JarvisAI-RELEASE.txt --version 0.3.0 --revision "$(git rev-parse HEAD)" --channel beta
       - name: Upload the build
         uses: actions/upload-artifact@v4

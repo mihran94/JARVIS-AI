@@ -4,9 +4,11 @@ from desktop.app import Window
 from providers.chat import PROVIDERS
 
 @pytest.mark.parametrize('provider',list(PROVIDERS))
-def test_key_only_save(tmp_path, provider):
+def test_key_only_save(tmp_path, provider, monkeypatch):
     app=QApplication.instance() or QApplication([])
     window=Window(tmp_path)
+    checks = []
+    monkeypatch.setattr(window, 'check_model_availability', lambda: checks.append(provider))
     saved={}
     class Vault:
         def put(self,name,key): saved[name]=key
@@ -16,11 +18,13 @@ def test_key_only_save(tmp_path, provider):
     assert window.provider_advanced_panel.isHidden()
     window.secret.setText('fake-key')
     window.save_provider()
+    assert checks == [provider]
     assert saved=={provider:'fake-key'}
     assert window.store.get('model:'+provider)==PROVIDERS[provider].default_model
     assert window.chat_provider.currentText()==provider
     assert window.secret.text()=='' and window.worker is None
     window.close()
+    window.deleteLater()
 
 
 def test_custom_model_preserved_and_reset(tmp_path):
@@ -34,3 +38,4 @@ def test_custom_model_preserved_and_reset(tmp_path):
     window.reset_provider_model()
     assert window.model.text()==PROVIDERS['OpenAI'].default_model
     window.close()
+    window.deleteLater()

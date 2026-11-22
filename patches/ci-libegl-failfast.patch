@@ -1,16 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: c <a@b>
+Date: Thu, 12 Nov 2026 00:14:47 +0000
+Subject: [PATCH] ci: give the Linux runner the Qt runtime libraries
+
+WHAT THIS IS
+    The Linux runner of GitHub Actions has no `libEGL.so.1`, so the
+    whole desktop test suite stops with an ImportError the moment
+    PySide6 is imported. The repository installs that library from its
+    own content (`scripts/qt_runtime.py`, called by `conftest.py`), and
+    this patch is the explicit, workflow level line of defence.
+
+WHY IT IS A PATCH AND NOT THE WORKFLOW FILE
+    The GitHub App that pushes this repository has no `workflows`
+    permission, so it cannot write `.github/workflows/`. This change
+    therefore travels as a patch, and the owner applies it once.
+
+    This patch used to add the `fail-fast` setting as well, with the
+    very same lines that `patches/github-actions-green.patch` adds, so
+    the two could not both be applied. The `fail-fast` setting lives in
+    `github-actions-green.patch` alone, and this file carries only the
+    runtime libraries, which is what its name says.
+
+---
+ .github/workflows/tests.yml | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/.github/workflows/tests.yml b/.github/workflows/tests.yml
+index 3862b81..7c32599 100644
 --- a/.github/workflows/tests.yml
 +++ b/.github/workflows/tests.yml
-@@ -5,6 +5,9 @@
- jobs:
-   test:
-     strategy:
-+      # Report both operating systems even when one fails, so a Linux only
-+      # problem never hides the Windows result.
-+      fail-fast: false
-       matrix:
-         os: [ubuntu-latest, windows-latest]
-     runs-on: ${{ matrix.os }}
-@@ -15,5 +18,11 @@
+@@ -15,5 +15,11 @@ jobs:
        - uses: actions/setup-python@v5
          with:
            python-version: '3.12'
