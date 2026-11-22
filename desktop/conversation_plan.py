@@ -25,6 +25,10 @@ from desktop.task_plan import StepState, TaskPlan
 from desktop.voice_commands import parse_voice_command
 
 MAX_STEPS = 6
+STEP_SEPARATOR = re.compile(
+    r'(?:\s*,\s*|\s+)(?:and\s+then|then|apram|appuram|பிறகு|அப்புறம்|puis|ensuite)\s+',
+    re.IGNORECASE,
+)
 
 #: Where the state of a plan is kept, so it survives a restart.
 PLAN_KEY = 'task_plan:'
@@ -53,11 +57,11 @@ def parse_plan(text):
     if explicit:
         raw = raw[3:].strip()
     head, colon, payload = raw.partition(':')
-    clauses = re.split(r'\s+(?:and\s+then|then|apram|பிறகு|அப்புறம்)\s+', head, flags=re.IGNORECASE)
+    clauses = STEP_SEPARATOR.split(head)
     if not explicit and len(clauses) < 2:
         return None
     # Questions and negations with a conjunction stay conversation.
-    if not explicit and parse_voice_command(clauses[0]) is None:
+    if not explicit and ('?' in head or parse_voice_command(clauses[0]) is None):
         return None
     if not 1 <= len(clauses) <= MAX_STEPS:
         raise ValueError(f'Use 1–{MAX_STEPS} supported steps. Nothing was started.')

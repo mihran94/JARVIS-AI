@@ -47,6 +47,8 @@ HELP = (
     "JARVIS commands (no extra dashboard needed):\n"
     "/help — list commands\n"
     "/do open Calculator then open Notepad and type: Your text — review steps in chat\n"
+    "Tamil: கால்குலேட்டர் திற பிறகு நோட்பேட் திறந்து எழுது: உங்கள் உரை\n"
+    "French: ouvre la calculatrice puis ouvre le bloc-notes et écris: Votre texte\n"
     "/cancel — cancel remaining conversation-plan steps\n"
     "/island — open the floating Dynamic Island\n"
     "/settings — configure keys, microphone, saved projects and permissions\n"
