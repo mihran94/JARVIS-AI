@@ -141,3 +141,84 @@ def test_auto_effort_recognizes_multilingual_analysis(text):
 
     assert effort_for(text) == 'deep'
     assert effort_for(text, 'Fast') == 'fast'
+
+
+def test_suggestion_mode_keeps_action_requests_in_chat(tmp_path, monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    win = Window(tmp_path)
+    requests = []
+
+    def start_worker(provider, model, key, messages, kind, backup=None):
+        requests.append((messages, backup))
+        win.worker_kind = kind
+        win.chat_task = win.store.task(kind, model)
+        win.on_result('completed', 'First, decide what you want to write.')
+
+    monkeypatch.setattr(win, 'get_key', lambda *_: 'test-only')
+    monkeypatch.setattr(win, 'start_worker', start_worker)
+    monkeypatch.setattr(win.browser, 'command', lambda *_: pytest.fail('Browser dispatched'))
+    monkeypatch.setattr(win.memory_service, 'as_context',
+                        lambda *_: pytest.fail('Suggestion read saved notes'))
+    monkeypatch.setattr('desktop.app.as_untrusted_context',
+                        lambda *_: pytest.fail('Suggestion shared attachments'))
+
+    try:
+        assert not win.suggestion_mode.isChecked()
+        assert win.prime_chat.composer.isAncestorOf(win.suggestion_mode)
+        win.suggestion_mode.click()
+        assert win.send_button.text() == 'Get suggestions'
+        win.attachments = [object()]
+        win.files_share_once.setChecked(True)
+        win.use_notes.setChecked(True)
+        win.backup_consent.setChecked(True)
+        for text in ('Open Notepad and type: Hello', '/browser open https://example.com'):
+            win.prompt.setPlainText(text)
+            win.send()
+            messages, backup = requests[-1]
+            assert messages[-1]['content'] == text
+            assert 'Suggestion Mode is active' in messages[0]['content']
+            assert backup is None
+            assert win.desktop_pending is None
+            assert win.chat_launch is None
+            assert win.prime_chat.conversation.bubbles[-1].body.text() == (
+                'First, decide what you want to write.')
+        assert len(requests) == 2
+        win.attachments = []
+        assert not win.files_share_once.isChecked()
+        assert not win.use_notes.isChecked()
+        assert not win.backup_consent.isChecked()
+
+        win.suggestion_mode.click()
+        assert win.send_button.text() == 'Send'
+        win.prompt.setPlainText('Jarvis, /suggest\tOpen Notepad')
+        win.send()
+        assert len(requests) == 3
+        assert requests[-1][0][-1]['content'] == 'Open Notepad'
+        win.prompt.setPlainText('Open Notepad')
+        win.send()
+        assert win.chat_launch is not None
+        assert len(requests) == 3
+    finally:
+        win.close()
+        win.deleteLater()
+        app.processEvents()
+
+
+def test_suggestion_mode_dictation_bypasses_spoken_task_routing(tmp_path, monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    win = Window(tmp_path)
+    command = 'Prepare Google Flow prompts for a short Reel'
+    monkeypatch.setattr(win, 'route_task', lambda *_: pytest.fail('Spoken task dispatched'))
+    try:
+        win.voice_panel.allow.setChecked(True)
+        win.suggestion_mode.setChecked(True)
+        win.on_wake_detected('Hey Jarvis', command)
+        assert win.prompt.toPlainText() == command
+        win.prompt.clear()
+        win.suggestion_mode.setChecked(False)
+        win.on_voice_transcript('/suggest ' + command)
+        assert win.prompt.toPlainText() == '/suggest ' + command
+    finally:
+        win.close()
+        win.deleteLater()
+        app.processEvents()

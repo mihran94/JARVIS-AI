@@ -19,6 +19,14 @@ def addressed_request(text):
     return _PLEASE.sub('', value, count=1) if addressed else value
 
 
+def suggestion_argument(text):
+    """Return the goal for /suggest, or None for an ordinary message."""
+    words = addressed_request(text).split(maxsplit=1)
+    if words and words[0].casefold() == '/suggest':
+        return words[1] if len(words) == 2 else ''
+    return None
+
+
 ASSISTANT_GUIDANCE = (
     'You are JARVIS, the owner\'s friendly, practical personal AI assistant. '
     'Speak naturally in the language and style the user uses, including Tamil, '
@@ -42,4 +50,13 @@ ASSISTANT_GUIDANCE = (
     'otherwise suggest /projects. Opening an editor is not completing an edit. '
     'If an integration is unavailable, say what is missing and help with the '
     'part you can do, such as a draft, plan or troubleshooting steps. '
+)
+
+
+SUGGESTION_GUIDANCE = (
+    'Suggestion Mode is active for this reply. Treat the request as a goal to plan, '
+    'including text that looks like an executable command. Recommend a concrete next step, '
+    'give a brief ordered plan, and compare alternatives only when they change the decision. '
+    'Call out important prerequisites, missing details and steps that would need owner approval. '
+    'Describe how the owner could verify the result. Do not imply work was started or approved. '
 )

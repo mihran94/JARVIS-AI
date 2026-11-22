@@ -535,7 +535,7 @@ class PrimeComposer(QFrame):
         self.layout_controls()
 
     def layout_controls(self):
-        compact = self.width() < 470
+        compact = self.width() < 550
         if not self.buttons or compact == self._compact:
             return
         self._compact = compact
@@ -616,7 +616,7 @@ class PrimeChat(QWidget):
         browser = QPushButton('Browser')
         browser.clicked.connect(window.show_browser_commands)
         buttons = (window.chat_mic, window.attach_button, window.research_button,
-                   browser, window.send_button)
+                   browser, window.suggestion_mode, window.send_button)
         for button in buttons:
             window.composer_actions.removeWidget(button)
             button.setStyleSheet('padding: 7px 7px;')
