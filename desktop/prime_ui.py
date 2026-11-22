@@ -43,7 +43,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QBrush, QColor, QFontMetrics, QLinearGradient, QPainter, QPainterPath,
-    QPen, QRadialGradient,
+    QPen, QPixmap, QRadialGradient,
 )
 from PySide6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy,
@@ -447,6 +447,42 @@ class PrimeConversation(QScrollArea):
             bar.setValue(position)
 
 
+class GuardianHologram(PrimeOrb):
+    """The owner's portrait on the main conversation welcome screen."""
+
+    def __init__(self, palette):
+        super().__init__(palette)
+        from desktop.guardian_portrait import PORTRAIT_JPEG
+
+        self.portrait = QPixmap()
+        self.portrait.loadFromData(PORTRAIT_JPEG, 'JPEG')
+        self.setAccessibleName('JARVIS cyan M exosuit hologram')
+
+    def paintEvent(self, event):
+        if self.portrait.isNull():
+            return super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHints(QPainter.RenderHint.Antialiasing |
+                               QPainter.RenderHint.SmoothPixmapTransform)
+        size = self.portrait.size().scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatio)
+        frame = QRectF((self.width() - size.width()) / 2, (self.height() - size.height()) / 2,
+                       size.width(), size.height()).adjusted(1, 1, -1, -1)
+        mask = QPainterPath()
+        mask.addRoundedRect(frame, 12, 12)
+        painter.setClipPath(mask)
+        painter.drawPixmap(frame, self.portrait, QRectF(self.portrait.rect()))
+        bright, _ = self._colours()
+        painter.setPen(QPen(_alpha(bright.name(), 35), 1))
+        for y in range(int(frame.top()), int(frame.bottom()), 4):
+            painter.drawLine(QPointF(frame.left(), y), QPointF(frame.right(), y))
+        if self._motion:
+            y = frame.top() + frame.height() * self._phase / (2 * math.pi)
+            painter.setPen(QPen(_alpha(bright.name(), 100), 2))
+            painter.drawLine(QPointF(frame.left(), y), QPointF(frame.right(), y))
+        painter.setPen(QPen(bright, 2))
+        painter.drawPath(mask)
+
+
 class PrimeAssistant(QWidget):
     """The assistant in the middle of an empty conversation.
 
@@ -463,9 +499,9 @@ class PrimeAssistant(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
         layout.addStretch(1)
-        self.orb = PrimeOrb(palette)
+        self.orb = GuardianHologram(palette)
         self.orb.set_motion(not window.store.get('omega:reduced', False))
-        self.orb.setFixedSize(176, 176)
+        self.orb.setFixedSize(176, 232)
         row = QHBoxLayout()
         row.addStretch(1)
         row.addWidget(self.orb, 0, Qt.AlignmentFlag.AlignCenter)
