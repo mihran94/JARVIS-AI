@@ -61,16 +61,27 @@ command.
 
 ## What the owner sees
 
-The Mission Control page paints the mission as it runs:
+Mission Control is the **Command Deck**: three columns around the
+mission.
 
-- one rail, one marker per step, coloured by kind — a thought, a call,
-  an approval, a result, a failure;
-- the newest step glows;
-- the counter says **Step 2 of 6** — the number of calls that ran. There
-  is no percentage and no estimate, because neither is known;
-- the result card carries the answer;
-- the evidence line names the tools that really ran, and says *no tool
-  ran* when none did.
+* **On the left, this computer.** The CPU and the memory as rings, the
+  last readings as a line, the GPU, the temperature and the disk, and
+  the count of the notes the owner keeps. Every number is a real
+  reading taken from the machine. A reading that cannot be taken is
+  drawn as unavailable — the rings never carry a made-up number.
+* **In the middle, the mission.** Its goal, its rail of steps, the
+  approval it is waiting for, and the answer it produced. The rail is
+  painted: one marker per step, coloured by kind, and the newest step
+  glows.
+* **On the right, the evidence.** The calls that really ran, what each
+  one returned, and the final answer. When nothing ran, it says *no
+  tool ran*.
+
+The counter says **Step N of 6** — the mission's Nth step of at most
+six. There is no percentage and no estimate, because neither is known,
+and the number means the same thing before and after the mission. The
+evidence line counts the tool results separately, so the two numbers
+never stand for the same thing.
 
 A tool that failed is not on the evidence line, and the mission never
 says that something happened that did not happen.
