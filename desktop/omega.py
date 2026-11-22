@@ -25,6 +25,7 @@ DESTINATIONS = {
     'PC Control': ('PC Control', '▣'),
     'Devices': ('Phone Remote', '◇'),
     'Memory': ('Memory', '◎'),
+    'Mission': ('Mission Control', '◈'),
     'Creative Studio': ('Video Editor', '▷'),
     'Automation': ('Step Workflows', '⇄'),
     'Security': ('Settings & Safety', '⬡'),

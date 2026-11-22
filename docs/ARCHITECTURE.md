@@ -1,7 +1,7 @@
 # JARVIS AI architecture — 0.3.0 foundation
 
 ## Runnable release boundary
-A native Qt desktop owns the approval UI. Background chat workers call fixed HTTPS provider endpoints. SQLite stores conversation and task history. Windows Credential Manager stores provider secrets; there is no plaintext fallback. A single action gateway mediates app launches and workspace writes. Model text has no execution privileges. No HTTP listener or remote control is enabled.
+A native Qt desktop owns the approval UI. Background chat workers call fixed HTTPS provider endpoints. SQLite stores conversation and task history. Windows Credential Manager stores provider secrets; there is no plaintext fallback. A single action gateway mediates app launches and workspace writes. Model text has no execution privileges: it may only choose a tool from a fixed catalogue, and every tool that changes state needs the owner's one-use approval. No HTTP listener or remote control is enabled.
 
 User → Qt UI → permission gateway → registered action → result → SQLite history.
 Chat: user → explicit Send → provider adapter → streamed text → conversation history.
@@ -55,3 +55,55 @@ Workflow definitions are authored by the person using the Qt interface, not by p
 A workflow runs synchronously in the owner-controlled UI; the step count is limited to 10. No scheduler, replay engine, operating-system process supervisor, UI automation scripting or autonomous planning has been added.
 
 The read-only inspector runs as a separate Python process with a strict timeout. It enumerates only top-level visible window titles and process IDs, never keystrokes, focus changes, screenshots or child controls. Windows titles can contain personal information. The inspector is Windows-only and has not yet been manually validated on an actual Windows desktop. The global Emergency Stop prevents new workflows and invalidates outstanding grants; it cannot undo an already launched application or forcibly terminate a running native process.
+
+## v0.4 mission runtime — supervised model-directed tool use
+
+A **mission** turns one owner goal into a short sequence of real actions.
+The model proposes one action at a time, JARVIS checks it, the tool runs
+it, and the real result goes back to the model as an observation. This is
+the first place where model text influences what JARVIS does, so the
+boundary is written down here in full.
+
+**The boundary.** Model text never becomes a command. The model answers
+with one JSON object, and the only thing JARVIS reads from it is a tool
+name from a fixed catalogue plus arguments checked against that tool's
+schema. The catalogue has no shell, no arbitrary file write and no open
+network client. It holds nine entries, and every one of them is a
+capability JARVIS already had: the clock, the system readings, an
+arithmetic evaluator, one public HTTPS page reader, two readers limited
+to the mission folder, the owner's memory, and the allowlisted
+application launcher.
+
+**Read-only is a property of the tool, not a promise.** A read-only tool
+can only report: it reads the clock, reads the real readings, reads one
+public page, reads a file inside the mission folder, or searches the
+memory. The two tools that change something — saving a memory and
+opening an application — are the two that ask the owner.
+
+**Approval.** A changing tool goes through the same `agents.gateway` and
+the same one-use `security.policy` grant as every other action in the
+application. The approval names the exact call, is consumed once, and is
+thrown away by an emergency stop. A tool that changes something never
+runs when there is no way to ask the owner.
+
+**Bounds.** At most six steps and three minutes per mission. An answer
+that cannot be read is refused, with the reason, and a second unusable
+answer ends the mission. A tool failure is handed back to the model as an
+observation and the mission continues, but a failure is never recorded
+as evidence.
+
+**Evidence.** `Mission.tools_used` is written only after a tool returned
+successfully. It is what the interface shows as the evidence line, and it
+is the only record of what really happened. The mission reports its own
+status honestly: a mission that used all six steps reports that it ran
+out of steps, and it does not claim the goal was reached.
+
+**Threading.** The mission runs in a worker thread. The owner's approval
+dialog belongs to the interface thread, so the worker hands the question
+over and waits. The Emergency Stop cancels a running mission, and closing
+the window waits for the mission to stop.
+
+**Not verified.** The loop, the refusals and the interface are covered by
+the suite. The mission has not yet been run against a live provider key
+on a physical Windows machine, and no owner has yet approved a changing
+tool through the real dialog.
