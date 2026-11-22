@@ -114,23 +114,11 @@ def target_is_foreground(app: str) -> bool:
     if app not in TARGETS:
         raise ValueError('Unsupported desktop typing target.')
     _require_windows()
-    user32 = ctypes.windll.user32
-    # Set explicit pointer-sized Win32 signatures; ctypes defaults to c_int
-    # and would truncate HWND on 64-bit Windows.
-    user32.GetForegroundWindow.argtypes = []
-    user32.GetForegroundWindow.restype = ctypes.c_void_p
-    user32.GetWindowThreadProcessId.argtypes = [
-        ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)]
-    user32.GetWindowThreadProcessId.restype = ctypes.c_uint32
-    handle = user32.GetForegroundWindow()
-    if not handle:
-        return False
-    pid = ctypes.c_uint32(0)
-    user32.GetWindowThreadProcessId(handle, ctypes.byref(pid))
-    if not pid.value:
+    pid = win_controls.foreground_process()
+    if pid is None:
         return False
     try:
-        return psutil.Process(pid.value).name().casefold() == TARGETS[app]
+        return psutil.Process(pid).name().casefold() == TARGETS[app]
     except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
         return False
 

@@ -76,8 +76,8 @@ from providers.models import check_model
 from providers.registry import provider_names
 from providers.router import ProviderRouter
 from providers.stream_fallback import StreamTarget, stream_with_fallback, FallbackBlocked
-from automation.windows import (APPS, EDITOR_EXECUTABLES, editor_executable, launch_app,
-                                launch_editor, open_path)
+from automation.windows import (APPS, EDITOR_EXECUTABLES, LaunchRequest, editor_executable, launch_app,
+                                launch_editor, launch_is_foreground, open_path)
 from automation.organise import (OrganiseError, organise, plan_organise, plan_text,
                                  result_text)
 from automation.desktop_tasks import VerifiedEdit, parse_desktop_task, target_is_foreground, type_into_target
@@ -325,6 +325,10 @@ class Window(QMainWindow):
         self.video_chat_brief = None
         self.chat_launch = None
         self.conversation_plan = ConversationPlan(self)
+        self.launch_verification = None
+        self.launch_timer = QTimer(self)
+        self.launch_timer.setInterval(180)
+        self.launch_timer.timeout.connect(self.check_chat_launch)
         self.desktop_pending = None
         self.desktop_task_timer = QTimer(self)
         self.desktop_task_timer.setInterval(180)
@@ -543,7 +547,8 @@ class Window(QMainWindow):
         if self.ai_visual_state in ('thinking', 'responding'):
             return self.ai_visual_state
         if (self.worker is not None or self.coding_worker is not None or self.test_worker is not None
-                or self.browser.task is not None or self.desktop_pending is not None):
+                or self.browser.task is not None or self.desktop_pending is not None
+                or self.launch_verification is not None):
             return 'working'
         return 'idle'
 
@@ -3026,7 +3031,8 @@ class Window(QMainWindow):
             self.notify(save)
 
     def queue_chat_launch(self, command, name):
-        if self.chat_launch is not None or self.desktop_pending is not None:
+        if (self.chat_launch is not None or self.desktop_pending is not None
+                or self.launch_verification is not None):
             return False
         self.open_section('JARVIS Chat')
         try:
@@ -3071,7 +3077,17 @@ class Window(QMainWindow):
             self.policy.check(ticket)
             if approved and name not in APPS and not self.plugin_enabled(name):
                 raise ValueError(f'{name} is disabled in Settings → Plugins.')
-            result = self.gateway.run(action, lambda _action: approved, operation)
+            task_id = self.store.task(action.kind, action.target)
+            result = self.gateway.run(action, lambda _action: approved, operation,
+                                      task_id=task_id, completion_status='dispatched')
+            if isinstance(result, LaunchRequest):
+                self.launch_verification = (name, result, ticket, task_id,
+                                            self.session, time.monotonic() + 7)
+                self.launch_timer.start()
+                self.statusBar().showMessage(f'Checking for the {name} window.', 7000)
+                self.refresh_history()
+                self.refresh_prime_state()
+                return
             success = True
         except (Denied, Stopped, ValueError, OSError, RuntimeError) as error:
             result = str(error)
@@ -3081,6 +3097,44 @@ class Window(QMainWindow):
         if self.desktop_pending is None:
             self.conversation_plan.result(success, str(result) if approved else 'declined')
 
+    def check_chat_launch(self):
+        if self.launch_verification is None:
+            return
+        name, request, ticket, task_id, session, deadline = self.launch_verification
+        try:
+            self.policy.check(ticket)
+            verified = launch_is_foreground(request)
+        except Stopped:
+            self.cancel_launch_verification()
+            return
+        except (OSError, RuntimeError):
+            verified = False
+        if not verified and time.monotonic() < deadline:
+            return
+        self.launch_timer.stop()
+        self.launch_verification = None
+        if verified:
+            detail = f'{name} opened. Windows confirmed its foreground process (PID {request.pid}).'
+        else:
+            detail = f'{request} Its window could not be verified.'
+        self.store.finish(task_id, 'verified' if verified else 'unverified', detail)
+        self.store.message(session, 'system', detail)
+        self.render_chat()
+        self.refresh_history()
+        self.refresh_prime_state()
+        self.conversation_plan.result(True, detail, verified=verified)
+
+    def cancel_launch_verification(self):
+        if self.launch_verification is None:
+            return False
+        _, _, _, task_id, _, _ = self.launch_verification
+        self.launch_timer.stop()
+        self.launch_verification = None
+        self.store.finish(task_id, 'cancelled', 'Window verification cancelled after launch dispatch.')
+        self.refresh_history()
+        self.refresh_prime_state()
+        return True
+
     # ── coding tasks ─────────────────────────────────────────────────────
 
 
@@ -3088,7 +3142,8 @@ class Window(QMainWindow):
 
     def queue_desktop_task(self, command, task):
         """Review exact text before doing anything to a Windows application."""
-        if self.chat_launch is not None or self.desktop_pending is not None:
+        if (self.chat_launch is not None or self.desktop_pending is not None
+                or self.launch_verification is not None):
             self.statusBar().showMessage('Finish the current desktop task first.', 10000)
             return False
         if self.omega is not None and self.omega.mode != 'Omega':
@@ -4786,6 +4841,7 @@ class Window(QMainWindow):
                 'A task is still running. Finish or decline it before starting a new chat.', 12000)
             return
         self.conversation_plan.cancel('New conversation; remaining steps cancelled.')
+        self.cancel_launch_verification()
         if self.chat_launch is not None:
             self.finish_chat_launch(False)
         self.session = uuid.uuid4().hex
@@ -4800,6 +4856,7 @@ class Window(QMainWindow):
             return
         if self.confirm(Action('delete_conversation', self.session)):
             self.conversation_plan.cancel('Conversation deleted.')
+            self.cancel_launch_verification()
             self.store.clear_messages(self.session)
             # Deleting the conversation must also revoke any previously
             # selected one-turn file sharing and discard local text snapshots.
@@ -4824,6 +4881,7 @@ class Window(QMainWindow):
                 self.prompt.clear()
                 return
             cancelled = self.conversation_plan.cancel()
+            cancelled = self.cancel_launch_verification() or cancelled
             if not cancelled and self.chat_launch is not None:
                 self.finish_chat_launch(False)
                 cancelled = True
@@ -4834,6 +4892,10 @@ class Window(QMainWindow):
             self.show_local_system_reply(text, 'Pending desktop requests cancelled. Already opened apps remain open.'
                                          if cancelled else 'No pending conversation plan. Use Emergency Stop to cancel other active work.')
             self.prompt.clear()
+            return
+        if self.launch_verification is not None:
+            self.statusBar().showMessage(
+                'Checking the application window. Wait or type /cancel.', 10000)
             return
         if self.conversation_plan.active:
             self.statusBar().showMessage('Approve the current step or type /cancel first.', 10000)
@@ -5149,6 +5211,7 @@ class Window(QMainWindow):
         if self.research_dialog:
             self.research_dialog.cancel()
         self.conversation_plan.cancel('Emergency Stop. Resume will not replay this plan.')
+        self.cancel_launch_verification()
         self.desktop_task_timer.stop()
         self.desktop_pending = None
         if self.test_worker is not None:
@@ -5302,6 +5365,7 @@ class Window(QMainWindow):
 
     def closeEvent(self, event):
         self.conversation_plan.cancel('Window closed; remaining steps cancelled.')
+        self.cancel_launch_verification()
         self.desktop_task_timer.stop()
         self.desktop_pending = None
         if not self.close_when_done and self.editor.document().isModified():
