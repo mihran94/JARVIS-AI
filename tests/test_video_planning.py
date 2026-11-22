@@ -144,3 +144,61 @@ def test_business_voice_drafts_without_external_account_access(tmp_path, monkeyp
         win.close()
         win.deleteLater()
         app.processEvents()
+
+
+@pytest.mark.parametrize("valid", [True, False])
+def test_editopro_reply_reviews_input_and_copies_only_english(tmp_path, monkeypatch, valid):
+    app = QApplication.instance() or QApplication([])
+    win = Window(tmp_path)
+    requests = []
+    brief = "Can you animate my lyrics? Please tell me the price."
+    summary = "வாடிக்கையாளருக்கு பாடல் வரிகள் animation வேண்டும்."
+    reply = "Hi! Please share the song length and a style reference so I can prepare a quote."
+
+    def complete(request):
+        requests.append(json.loads(request.content))
+        draft = {"english_reply": reply}
+        if valid:
+            draft["tamil_summary"] = summary
+        payload = json.dumps(draft)
+        chunk = {"choices": [{"delta": {"content": f"```json\n{payload}\n```"}}]}
+        return httpx.Response(200, text=f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n")
+
+    monkeypatch.setattr(win.vault, "get", lambda provider: "fake-gemini-key")
+    win.router = ProviderRouter(transport=httpx.MockTransport(complete))
+    clipboard = QApplication.clipboard()
+    before = clipboard.text()
+    try:
+        win.prompt.setPlainText("JARVIS, Editopro reply: " + brief)
+        win.send()
+        assert win.business_task.currentText() == "Editopro reply (Tamil + English)"
+        assert win.business_brief.toPlainText() == brief
+        assert win.worker is None
+        assert not requests
+
+        win.business_generate.click()
+        deadline = time.monotonic() + 5
+        while win.worker is not None and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(0.005)
+        assert win.worker is None
+        assert len(requests) == 1
+        assert requests[0]["messages"][-1]["content"] == brief
+        assert win.store.messages(win.session) == []
+        if valid:
+            assert summary in win.business_preview.toPlainText()
+            assert reply in win.business_preview.toPlainText()
+            assert win.business_copy.text() == "Copy English reply"
+            win.business_copy.click()
+            assert clipboard.text() == reply
+            win.business_brief.setPlainText("A different client")
+            assert not win.business_copy.isEnabled()
+        else:
+            assert not win.business_preview.toPlainText()
+            assert not win.business_copy.isEnabled()
+            assert "omitted" in win.business_status.text()
+    finally:
+        clipboard.setText(before)
+        win.close()
+        win.deleteLater()
+        app.processEvents()

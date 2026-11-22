@@ -65,6 +65,7 @@ HELP = (
     "/document — choose a local UTF-8 text or Markdown file to preview\n"
     "/files, /folders, /upload, /attach — select and preview local files/folders\n"
     "/code, /pc, /voice, /mobile, /memory, /providers — open the existing tool\n"
+    "Editopro reply: CLIENT MESSAGE — review a Tamil summary and English reply draft\n"
     "/review, /tasks, /workflows, /history, /video, /business — open other tools\n"
     "/new — start a fresh conversation. /home — return to Chat.\n"
     "Natural Tamil, Tanglish and English requests still work where supported.\n"
