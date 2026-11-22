@@ -48,6 +48,7 @@ KIND_COLOURS = {
 STATUS_WORDS = {
     'idle': 'Ready',
     'running': 'Working',
+    'approval': 'Approval needed',
     'completed': 'Complete',
     'failed': 'Failed',
     'cancelled': 'Cancelled',
@@ -57,6 +58,7 @@ STATUS_WORDS = {
 STATUS_COLOURS = {
     'idle': 'muted',
     'running': 'accent',
+    'approval': 'warn',
     'completed': 'good',
     'failed': 'danger',
     'cancelled': 'warn',
@@ -299,6 +301,10 @@ class MissionPanel(QWidget):
         self.status.setStyleSheet(f'color: {colour}; font-size: 11px; font-weight: 700; '
                                   f'letter-spacing: 1.6px; border: 1px solid {colour}; '
                                   'border-radius: 8px; padding: 4px 8px;')
+
+    def current_status(self) -> str:
+        """What the pill is showing, as a name."""
+        return self._status
 
     def append_event(self, event):
         """Put one step of a running mission on the rail."""

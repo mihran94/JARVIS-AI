@@ -75,7 +75,8 @@ class MissionController(QObject):
         """Start one mission with the goal the owner typed."""
         window = self.window
         if self.worker is not None and self.worker.isRunning():
-            self.panel.set_status('failed')
+            # The mission that is running keeps its own state; the console
+            # only says that this one was refused.
             self.panel.append_event(
                 MissionEvent('error', 'A mission is already running',
                              'Wait for it to finish, or cancel it first.'))
@@ -181,6 +182,9 @@ class MissionController(QObject):
             self._steps += 1
             self.panel.set_counter(self._steps, self.max_steps)
         if event.kind == 'approval':
+            # The mission is waiting for the owner, and the pill says so.
+            self.panel.set_status('approval')
+        elif event.kind in ('tool', 'result') and self.panel.current_status() == 'approval':
             self.panel.set_status('running')
 
     def on_result(self, mission):
