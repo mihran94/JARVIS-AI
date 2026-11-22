@@ -190,10 +190,10 @@ def test_suggestion_mode_keeps_action_requests_in_chat(tmp_path, monkeypatch):
 
         win.suggestion_mode.click()
         assert win.send_button.text() == 'Send'
-        win.prompt.setPlainText('Jarvis, /suggest\tOpen Notepad')
+        win.prompt.setPlainText('Jarvis, /suggest\tHow should I organize my notes?')
         win.send()
         assert len(requests) == 3
-        assert requests[-1][0][-1]['content'] == 'Open Notepad'
+        assert requests[-1][0][-1]['content'] == 'How should I organize my notes?'
         win.prompt.setPlainText('Open Notepad')
         win.send()
         assert win.chat_launch is not None
@@ -315,3 +315,35 @@ def test_suggested_notepad_uses_user_text_and_existing_approval(tmp_path, monkey
         win.close()
         win.deleteLater()
         app.processEvents()
+
+
+@pytest.mark.parametrize('utterance, app, payload', [
+    ('நோட்பேடை திறந்து எழுது நாளைக்கு promo video', 'Notepad', 'நாளைக்கு promo video'),
+    ('Notepad open panni ezhuthu நாளைக்கு promo video', 'Notepad', 'நாளைக்கு promo video'),
+    ('Calculator open pannu', 'Calculator', None),
+])
+def test_voice_desktop_action_is_editable_and_requires_approval(tmp_path, monkeypatch,
+                                                               utterance, app, payload):
+    qt = QApplication.instance() or QApplication([])
+    win = Window(tmp_path)
+    monkeypatch.setattr(win, 'start_worker', lambda *_a, **_kw: pytest.fail('Sent to AI'))
+    monkeypatch.setattr('desktop.app.launch_app', lambda *_: pytest.fail('Launched without approval'))
+    try:
+        win.voice_panel.allow.setChecked(True)
+        win.on_voice_transcript(utterance)
+        assert win.prompt.toPlainText() == '/suggest ' + utterance
+        assert not win.suggested_steps
+        assert win.chat_launch is None
+        win.send()
+        step, = win.suggested_steps
+        assert step.app == app
+        assert (step.typing.text if step.typing else None) == payload
+        assert win.chat_launch is None
+        win.review_suggested_plan()
+        assert win.chat_launch is not None
+        win.finish_chat_launch(False)
+        assert win.desktop_pending is None
+    finally:
+        win.close()
+        win.deleteLater()
+        qt.processEvents()

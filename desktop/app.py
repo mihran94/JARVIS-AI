@@ -721,6 +721,27 @@ class Window(QMainWindow):
             return
         self.voice_panel.listen('dialogue')
 
+    def draft_spoken_desktop_action(self, text):
+        """Require a visible, editable review for a spoken desktop command."""
+        if suggestion_argument(text) is not None:
+            return False
+        try:
+            typing = parse_desktop_task(text)
+        except ValueError:
+            return False
+        if typing is None and parse_voice_command(text) is None:
+            return False
+        self.open_section('JARVIS Chat')
+        if self.prompt.toPlainText().strip():
+            self.statusBar().showMessage(
+                'Finish or clear the current draft, then repeat the voice command.', 15000)
+            return True
+        self.prompt.setPlainText('/suggest ' + text)
+        self.prompt.setFocus()
+        self.statusBar().showMessage(
+            'Check or edit what JARVIS heard, then send it to preview the action.', 15000)
+        return True
+
     def on_wake_detected(self, transcript, command):
         if self.policy.stopped or not self.voice_panel.consent.listening:
             return
@@ -733,6 +754,8 @@ class Window(QMainWindow):
         text = (command or '').strip()[:4000]
         if text:
             self.show_hud_text('Heard: ' + text)
+        if self.draft_spoken_desktop_action(text):
+            return
         if (not self.suggestion_mode.isChecked() and suggestion_argument(text) is None
                 and (self.answer_spoken_system_command(text) or self.route_task(text))):
             return
@@ -761,6 +784,8 @@ class Window(QMainWindow):
         if self.omega is not None and self.omega.mode != 'Omega':
             self.omega.switch('Omega')
         self.show_hud_text('Heard: ' + text)
+        if self.draft_spoken_desktop_action(text):
+            return
         if (not self.suggestion_mode.isChecked() and suggestion_argument(text) is None
                 and (self.answer_spoken_system_command(text) or self.route_task(text))):
             return
@@ -5068,6 +5093,15 @@ class Window(QMainWindow):
                     'Review the exact text JARVIS would enter in Notepad:\n' + typing.text
                     + '\n\nTyping will not save a file.')
                 self.show_suggested_steps((Step(typing.app, typing),))
+                return
+            app = parse_voice_command(goal) if requested_goal is not None else None
+            if app:
+                self.prompt.clear()
+                self.use_notes.setChecked(False)
+                self.files_share_once.setChecked(False)
+                self.backup_consent.setChecked(False)
+                self.show_local_system_reply(goal, f'Review the proposed launch of {app}.')
+                self.show_suggested_steps((Step(app),))
                 return
             self.send_chat_reply(goal, suggestion=True)
             return

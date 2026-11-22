@@ -61,3 +61,10 @@ Record OS build, Python/dependency versions, provider/model (never key), exact p
 - Turn off Suggestion Mode. Send `/suggest Create a promotional Reel`, then send `Open Notepad`. Confirm the first message returns advice and the second returns to the normal app approval flow.
 
 - Send `/suggest Open Notepad and type: Hello`. Confirm the exact text is shown locally. Select **Review suggested steps**, then **Approve**. Confirm the text was entered in the verified Notepad window and no file was saved. Repeat with **Decline** and confirm no text was entered.
+
+
+### Tamil and Tanglish voice review
+
+- With a compatible speech recognizer and microphone permission enabled, say “Calculator open pannu” or “Notepad open panni ezhuthu நாளைக்கு promo video” using chat dictation. Repeat after “Hey Jarvis” with local hands-free enabled.
+- Check that the recognized command appears in the editable composer. Correct any recognition errors before sending. Sending should show a task preview, with no launch or typing until you choose **Review suggested steps** and **Approve**. Repeat with **Decline**.
+- Repeat while an unsent draft is in the composer. Confirm the current draft is preserved and read the status prompt before repeating the command.
