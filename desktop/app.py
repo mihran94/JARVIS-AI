@@ -454,7 +454,8 @@ class Window(QMainWindow):
         """The mission console: one goal, watched step by step."""
         from desktop.prime_ui import PrimePalette
 
-        panel = MissionPanel(PrimePalette(dark=self.prime_is_dark()))
+        panel = MissionPanel(PrimePalette(dark=self.prime_is_dark()),
+                             root=self.root, memory=self.memory_service)
         self.mission_panel = panel
         self.mission_controller = MissionController(self, panel)
         return panel
