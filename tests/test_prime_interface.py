@@ -38,11 +38,21 @@ def test_the_window_has_the_prime_composition(tmp_path):
         window.close()
 
 
-def test_the_old_chrome_is_gone(tmp_path):
-    app, window = make_window(tmp_path)
+def test_the_old_chrome_is_absent_at_construction_and_startup(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
     try:
-        for widget in window.legacy_chrome:
-            assert not widget.isVisible(), widget.text() if hasattr(widget, 'text') else widget
+        for _ in range(2):
+            window.show()
+            app.processEvents()
+            assert window.prime_shell.isVisible()
+            assert window.findChild(QLabel, 'brandTitle') is None
+            assert not {'Omega Home', 'Omega Settings'} & window.page_indices.keys()
+            assert window.pages.currentWidget() is window.prime_chat
+            if window.omega is None:
+                window.enable_omega(smoke=True)
+            assert window.omega.dock.isHidden()
+            assert window.omega.reveal.isHidden()
     finally:
         window.close()
 

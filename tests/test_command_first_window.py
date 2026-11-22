@@ -19,25 +19,24 @@ def make_window(tmp_path):
 def test_main_toolbar_is_chat_island_settings_and_safety(tmp_path):
     app, window = make_window(tmp_path)
     try:
-        assert window.island_button.isVisible()
-        assert window.settings_button.isVisible()
+        rail = window.prime_shell.rail_buttons
+        assert window.prime_shell.island_button.isVisible()
+        assert rail["Settings & Safety"].isVisible()
         assert not window.resume_button.isVisible()
-        assert any(button.text() == "EMERGENCY STOP" and button.isVisible()
+        assert any(button.text() == "Emergency stop" and button.isVisible()
                    for button in window.findChildren(QPushButton))
-        assert window.plugins_button.isHidden()
-        assert window.tools_button.isHidden()
         assert window.pages.currentIndex() == window.page_indices["JARVIS Chat"]
         assert not window.chat_provider.isVisible()
         window.enable_omega()
         app.processEvents()
         assert not window.omega.dock.isVisible()
         assert window.omega.reveal.isHidden()
-        window.open_island()
+        window.prime_shell.island_button.click()
         app.processEvents()
         assert window.omega.mode == "Island"
         assert window.omega.floating.isVisible()
         window.omega.switch("Omega")
-        window.settings_button.click()
+        rail["Settings & Safety"].click()
         app.processEvents()
         assert window.pages.currentIndex() == window.page_indices["Settings & Safety"]
         assert window.chat_provider.isVisible()

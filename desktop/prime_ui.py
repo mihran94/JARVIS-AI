@@ -773,6 +773,13 @@ class PrimeShell(QWidget):
             button.clicked.connect(lambda _checked=False, name=section: self.open_section(name))
             layout.addWidget(button)
             self.rail_buttons[section] = button
+        self.island_button = QPushButton('▱')
+        self.island_button.setToolTip('Island')
+        self.island_button.setAccessibleName('Island')
+        self.island_button.setFixedSize(58, 52)
+        self.island_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.island_button.clicked.connect(self.window_ref.open_island)
+        layout.addWidget(self.island_button)
         layout.addStretch(1)
         return rail
 

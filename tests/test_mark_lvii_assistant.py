@@ -33,17 +33,14 @@ def test_mark_lvii_chat_first_but_existing_pages_remain(tmp_path):
         win.show()
         app.processEvents()
         assert win.pages.currentIndex() == win.page_indices['JARVIS Chat']
-        assert win.settings_button.text() == 'Settings'
-        assert win.island_button.text() == 'Island'
-        assert win.plugins_button.isHidden()
-        assert win.tools_button.isHidden()
-        assert win.chat_home_button.isHidden()
+        rail = win.prime_shell.rail_buttons
+        assert win.prime_shell.island_button.accessibleName() == 'Island'
         assert not win.chat_provider.isVisible()
-        win.settings_button.click()
+        rail['Settings & Safety'].click()
         app.processEvents()
         assert win.pages.currentIndex() == win.page_indices['Settings & Safety']
         assert win.plugins_group.isVisible()
-        win.chat_home_button.click()
+        rail['JARVIS Chat'].click()
         assert win.pages.currentIndex() == win.page_indices['JARVIS Chat']
         win.enable_omega(smoke=True)
         assert win.omega.theme == 'Quantum Dark'

@@ -358,54 +358,14 @@ class Window(QMainWindow):
         self.setCentralWidget(central)
         outer = QVBoxLayout(central)
         outer.setContentsMargins(24, 20, 24, 20)
-        header = QHBoxLayout()
-        header.setSpacing(12)
-        brand = QLabel('JARVIS AI')
-        brand.setObjectName('brandTitle')
-        header.addWidget(brand)
-        header.addStretch()
-        self.state = QLabel('● READY · MANUAL APPROVAL')
-        self.state.setObjectName('statusChip')
-        header.addWidget(self.state)
-        self.resume_button = QPushButton('Resume')
+        self.resume_button = QPushButton('Resume', self)
         self.resume_button.clicked.connect(self.resume)
         self.resume_button.setEnabled(False)
         self.resume_button.hide()
-        header.addWidget(self.resume_button)
-        stop = QPushButton('EMERGENCY STOP')
-        stop.setObjectName('stop')
-        stop.clicked.connect(self.stop)
-        header.addWidget(stop)
-        outer.addLayout(header)
-        # The old chrome is kept in one list, so the PRIME composition can
-        # take it away in one step instead of leaving pieces of it behind.
-        self.legacy_chrome = [brand, self.state, self.resume_button, stop]
-        navigation = QHBoxLayout()
-        self.chat_home_button = self.button(
-            navigation, 'Assistant', lambda: self.open_section('JARVIS Chat'))
-        self.chat_home_button.hide()
-        self.tools_button = QPushButton('Tools')
-        self.tools_button.setCheckable(True)
-        self.tools_button.hide()
-        navigation.addWidget(self.tools_button)
-        self.island_button = self.button(navigation, 'Island', self.open_island)
-        self.settings_button = self.button(
-            navigation, 'Settings', lambda: self.open_section('Settings & Safety'))
-        self.plugins_button = self.button(navigation, 'Plugins', self.open_plugins)
-        self.plugins_button.hide()  # The full plugin manager lives in Settings.
-        navigation.addStretch()
-        outer.addLayout(navigation)
-        self.legacy_chrome += [self.chat_home_button, self.tools_button, self.island_button,
-                               self.settings_button, self.plugins_button]
-        body = QHBoxLayout()
-        self.nav = QListWidget()
-        self.nav.setFixedWidth(174)
+        self.nav = QListWidget(self)
         self.nav.hide()
-        self.tools_button.toggled.connect(self.nav.setVisible)
         self.pages = QStackedWidget()
-        body.addWidget(self.nav)
-        body.addWidget(self.pages, 1)
-        outer.addLayout(body, 1)
+        outer.addWidget(self.pages, 1)
         # One main UI: specialized tools remain available under Settings.
         self.page_indices = {}
         self.add_page('JARVIS Chat', self.chat_page())
@@ -476,6 +436,7 @@ class Window(QMainWindow):
         self.maintenance_timer = QTimer(self)
         self.maintenance_timer.timeout.connect(self.check_maintenance)
         self.maintenance_timer.start(60_000)
+        self.enable_prime()
         QTimer.singleShot(0, self.check_maintenance)
 
     def enable_omega(self, *, smoke=False):
@@ -490,14 +451,7 @@ class Window(QMainWindow):
     # -- the PRIME composition -------------------------------------------
 
     def enable_prime(self):
-        """Put the PRIME interface in place of the old chrome.
-
-        The old header, the old navigation and the old chat page are
-        taken out of the window and the new composition takes their
-        place. Nothing is removed: the pages, the composer and the
-        controls are the ones the application already had, so every
-        feature keeps working and none of them is lost.
-        """
+        """Mount the Quantum HUD and move shared controls into it."""
         from desktop.prime_ui import (
             PrimeChat, PrimePalette, PrimeShell,
         )
@@ -511,29 +465,6 @@ class Window(QMainWindow):
 
         central = self.centralWidget()
         outer = central.layout()
-        # The old header and the old navigation row are taken out of the
-        # window's own layout. The widgets in them are hidden rather than
-        # deleted, so nothing that still points at them breaks.
-        for widget in getattr(self, 'legacy_chrome', []):
-            if widget is self.resume_button:
-                continue
-            widget.hide()
-            widget.setParent(None)
-        # The old application dock is retired: the PRIME rail is the
-        # navigation now. It is taken out of the window, not only hidden.
-        if self.omega is not None:
-            for widget in (self.omega.dock, self.omega.reveal):
-                widget.hide()
-                widget.setParent(None)
-        for index in reversed(range(outer.count())):
-            item = outer.itemAt(index)
-            widget = item.widget()
-            if widget is self.pages or widget is self.composer_bar:
-                continue
-            if widget is not None:
-                widget.setParent(None)
-            else:
-                outer.removeItem(item)
         outer.removeWidget(self.pages)
         outer.removeWidget(self.composer_bar)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -682,9 +613,8 @@ class Window(QMainWindow):
         self.omega.switch('Island')
 
     def update_assistant_navigation(self, _index=None):
-        """Keep the assistant central; reveal Back only on advanced pages."""
+        """Keep the composer with the conversation."""
         in_chat = self.pages.currentIndex() == self.page_indices['JARVIS Chat']
-        self.chat_home_button.setVisible(not in_chat)
         self.composer_bar.setVisible(in_chat)
 
     def open_plugins(self):
@@ -1162,7 +1092,7 @@ class Window(QMainWindow):
             return datetime.now().astimezone().strftime('%H:%M %Z')
         if intent == 'status':
             phone_status = 'Running' if self.bridge.listener.running else 'Stopped'
-            return f'{self.state.text()}\nPhone Remote: {phone_status}\n\n{self.system_summary}'
+            return f'{self.prime_shell.state_chip.text()}\nPhone Remote: {phone_status}\n\n{self.system_summary}'
         return None
 
     def tidy_command(self):
@@ -5244,7 +5174,6 @@ class Window(QMainWindow):
         self.workflows.cancel_pending()
         if self.worker:
             self.worker.requestInterruption()
-        self.state.setText('● STOPPED')
         self.resume_button.setEnabled(True)
         self.resume_button.show()
         self.send_button.setEnabled(False)
@@ -5264,7 +5193,6 @@ class Window(QMainWindow):
         self.set_ai_visual_state('idle' if self.worker is None else 'thinking')
         self.resume_button.setEnabled(False)
         self.resume_button.hide()
-        self.state.setText('● READY · MANUAL APPROVAL')
         if self.worker is None:
             for button in (self.send_button, self.new_chat_button, self.clear_button,
                        self.archive_button, self.probe_button, self.generate_button,

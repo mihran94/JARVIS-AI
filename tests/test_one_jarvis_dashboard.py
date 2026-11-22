@@ -20,9 +20,8 @@ def test_one_dashboard_has_orb_read_only_metrics_and_existing_pages(tmp_path):
         # The interface theme is the premium dark one, not the default Qt look.
         assert STYLE == PRIME_DARK
         assert isinstance(window.orb, BlueOrb)
-        # 17 internal pages: 9 in the navigation bar plus the command-only
-        # workspaces, including the Files & Folders document workspace.
-        assert window.pages.count() == 17
+        # Seven task workspaces are embedded in chat.
+        assert window.pages.count() == 10
         assert window.nav.count() == 9
         assert 'CPU' in window.system_metrics_label.text()
         assert window.nav.item(4).text() == 'Phone Remote'
