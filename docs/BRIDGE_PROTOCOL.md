@@ -183,9 +183,9 @@ short digest of the body. The body itself is never recorded, because a chat
 message and a memory entry are private content. The log is in memory and
 bounded.
 
-## The iPhone pairing code
+## The pairing code
 
-The desktop can show a pairing code that the iPhone scans:
+The desktop can show a pairing code that a phone scans or pastes:
 
 ```
 JARVIS-BRIDGE-v1

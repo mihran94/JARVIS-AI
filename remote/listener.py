@@ -81,6 +81,18 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     server_version = 'JARVIS-AI-bridge'
     protocol_version = 'HTTP/1.1'
 
+    def setup(self):
+        """Give the connection the timeout the owner configured.
+
+        Without it a slow client can hold a worker thread open for as long
+        as it likes, and the listener spawns a thread per connection.
+        """
+        super().setup()
+        config = getattr(self.server, 'config', None)
+        timeout = getattr(config, 'request_timeout_seconds', 0) or 0
+        if timeout:
+            self.connection.settimeout(timeout)
+
     def do_GET(self):  # noqa: N802 - the base class names these
         self._respond()
 

@@ -36,6 +36,8 @@ from desktop.attachments import (AttachmentError, as_untrusted_context,
 from desktop.studio_inbox import StudioInboxDialog
 from memory.memory_service import MemoryService
 from desktop.bridge_panel import BridgePanel
+from desktop.memory_page import MemoryPanel
+from desktop.research_dialog import open_research
 from desktop.camera_reader import open_camera_reader
 from desktop.update_dialog import ReleaseChecker, open_updates
 from desktop.voice_panel import VoicePanel
@@ -58,6 +60,8 @@ from desktop import prime_theme
 from desktop.omega_visuals import DEFAULT_THEME, THEMES as OMEGA_THEMES, theme_sheet
 from desktop.blue_orb import BlueOrb
 from desktop.omega import Omega
+from desktop.mission_panel import MissionPanel
+from desktop.mission_controller import MissionController
 from desktop.system_metrics import CpuSampler, snapshot, format_snapshot
 from desktop.network_diagnostics import NetworkDiagnostics
 from desktop.news_panel import NewsPanel
@@ -396,12 +400,15 @@ class Window(QMainWindow):
         self.voice_panel.utterance_detected.connect(self.on_voice_transcript)
         self.voice_panel.cycle_finished.connect(self.schedule_local_voice_rearm)
         self.voice_panel.speech_finished.connect(self.schedule_local_voice_rearm)
+        self.memory_service = MemoryService(self.root / 'history.sqlite3')
+        self.add_page('Memory', MemoryPanel(service=self.memory_service))
         self.add_page('Voice / Hey Jarvis', self.voice_panel)
         self.add_page('Phone Remote', self.bridge_page())
         self.add_page('Settings & Safety', self.permissions_page())
         self.add_page('Video Editor', self.video_page())
         self.add_page('Business', self.business_page())
         self.add_page('Memory', MemoryPanel(service=self.memory_service))
+        self.add_page('Mission Control', self.mission_page())
         self.add_page('Command Center', self.dashboard(), primary=False)
         self.voice_panel.activity_changed.connect(self.refresh_voice_hud)
         self.voice_panel.recognition_failed.connect(lambda: self.hands_free_voice.setChecked(False))
@@ -448,6 +455,16 @@ class Window(QMainWindow):
         self.maintenance_timer.start(60_000)
         self.enable_prime()
         QTimer.singleShot(0, self.check_maintenance)
+
+    def mission_page(self):
+        """The mission console: one goal, watched step by step."""
+        from desktop.prime_ui import PrimePalette
+
+        panel = MissionPanel(PrimePalette(dark=self.prime_is_dark()),
+                             root=self.root, memory=self.memory_service)
+        self.mission_panel = panel
+        self.mission_controller = MissionController(self, panel)
+        return panel
 
     def enable_omega(self, *, smoke=False):
         if self.omega is None:
@@ -554,6 +571,11 @@ class Window(QMainWindow):
         chat = getattr(self, 'prime_chat', None)
         if chat is not None:
             chat.refresh_theme()
+        panel = getattr(self, 'mission_panel', None)
+        if panel is not None:
+            panel.palette_.adopt(palette)
+            panel.timeline.palette_.adopt(palette)
+            panel.refresh_theme()
 
     def prime_state(self) -> str:
         """idle, listening, working or error, from the real state."""
@@ -1322,7 +1344,8 @@ class Window(QMainWindow):
         archives = QHBoxLayout()
         self.archives = QComboBox()
         archives.addWidget(self.archives, 1)
-        self.archive_button = self.button(archives, 'Open saved chat', self.open_chat)
+        self.archive_button = self.button(archives, 'Saved chats', self.open_chat)
+        self.archive_button.setToolTip('Open a conversation that was saved earlier.')
         settings_layout.addLayout(archives)
         self.refresh_archives()
         self.transcript = QPlainTextEdit()
@@ -1462,7 +1485,9 @@ class Window(QMainWindow):
         settings_layout.addLayout(settings_actions)
         self.clear_button = self.button(settings_actions, 'Delete chat', self.clear_chat)
         self.review_pc_action_button = self.button(
-            settings_actions, 'Review PC action', self.review_chat_pc_action)
+            settings_actions, 'Review action', self.review_chat_pc_action)
+        self.review_pc_action_button.setToolTip(
+            'See what the answer wants to do on this PC and approve it.')
         composer_actions = QHBoxLayout()
         self.composer_actions = composer_actions
         composer_layout.addLayout(composer_actions)
@@ -4524,6 +4549,16 @@ class Window(QMainWindow):
         if self.close_when_done and self.coding_worker is None and self.test_worker is None:
             self.close()
 
+    def mission_finished(self):
+        """The mission stopped, so the window may close if it was waiting."""
+        controller = getattr(self, 'mission_controller', None)
+        if controller is not None and controller.worker is not None:
+            controller.worker.deleteLater()
+            controller.worker = None
+        if (self.close_when_done and self.coding_worker is None and self.test_worker is None
+                and self.worker is None):
+            self.close()
+
     def open_coding_project(self):
         """Open the project folder in the editor the owner saved.
 
@@ -5454,6 +5489,9 @@ class Window(QMainWindow):
     def stop(self):
         self.policy.stop()
         self.browser.stop()
+        controller = getattr(self, 'mission_controller', None)
+        if controller is not None:
+            controller.cancel()
         if self.research_dialog:
             self.research_dialog.cancel()
         self.clear_desktop_result()
@@ -5631,11 +5669,14 @@ class Window(QMainWindow):
             self.background_controls.hide()
             event.ignore()
             return
+        controller = getattr(self, 'mission_controller', None)
+        mission_running = (controller is not None and controller.worker is not None
+                           and controller.worker.isRunning())
         if (self.worker is not None or self.coding_worker is not None
                 or self.browser.worker is not None
                 or (self.research_dialog and self.research_dialog.worker is not None)
                 or self.test_worker is not None or self.release_checker.source_worker is not None
-                or self.improvement_worker is not None):
+                or self.improvement_worker is not None or mission_running):
             # A coding task runs the Codex CLI and the test command in their
             # own processes. Closing the window must not leave them running
             # behind the owner's back, so the stop happens first and the

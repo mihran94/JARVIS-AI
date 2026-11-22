@@ -7,6 +7,7 @@ The code is a short text block:
     key=jarvis-iphone-v1
     secret=<the one time secret>
     expires=1764000000
+    fp=<the SHA-256 of the server certificate>
 
 The desktop draws it as a QR code and the phone reads it with the camera. The
 same text can be pasted, which is what a person does when the camera is not

@@ -225,6 +225,13 @@ except the local one, and a paid model is only used after your approval.
 - Time and system status requests can be answered directly on the PC. Other spoken requests open as drafts for review under the existing chat and approval rules. The separate **Hands-free Hey Jarvis** chat option can send general requests automatically to local Ollama.
 - **Stop voice**, revoking microphone access, or **Emergency Stop** ends the wake session. A recognition call already in progress releases the microphone when that call returns.
 
+## Memory and research
+
+- **Memory page.** The owner keeps short notes with a title, a text and a few tags. They live in the same local SQLite file as the conversation history, so one encrypted file holds everything. The notes never leave the machine.
+- **A word search, not a model.** The search is BM25 over the title, the text and the tags. There is no embedding model and no vector store: a model would have to be downloaded on every machine, and the owner would have to trust it with the text of every note.
+- **The notes reach the assistant only when they match.** When a question matches some notes, they go into the prompt as context. Nothing else is sent, and the provider is not asked to fetch anything.
+- **Research reads one page the owner names.** Only `https`, and a page that resolves to a private or loopback address is refused, so a link cannot reach the machines inside the owner's own network. The page size and the time are limited, and the provider never follows a link that is in the page.
+
 ## Mobile bridge
 
 - **The phone never holds a provider key.** The chat is answered by the PC. A local provider needs no permission, a paid provider needs the owner's consent *and* the consent on the request itself, and the emergency stop stops the bridge too.
