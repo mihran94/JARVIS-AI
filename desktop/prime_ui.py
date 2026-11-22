@@ -33,6 +33,9 @@ from __future__ import annotations
 
 import math
 import os
+from pathlib import Path
+import re
+import subprocess
 
 from PySide6.QtCore import (
     QEasingCurve, QPoint, QPointF, QPropertyAnimation, QRectF, QSize, Qt, QTimer, Signal,
@@ -46,33 +49,23 @@ from PySide6.QtWidgets import (
     QStackedWidget, QVBoxLayout, QWidget,
 )
 
-#: The build the owner sees in the corner. It changes when the interface
-#: changes, so a screenshot tells which build it was taken from.
-PRIME_BUILD = '1.0.0-prime.1'
-
-#: The commit the build was made from, when it is known.
 def build_commit() -> str:
-    """The short commit of the tree, when it can be found."""
-    for variable in ('JARVIS_BUILD_COMMIT',):
-        value = os.environ.get(variable, '').strip()
-        if value:
-            return value[:7]
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    head = os.path.join(root, '.git', 'HEAD')
-    try:
-        with open(head, encoding='utf-8') as handle:
-            content = handle.read().strip()
-    except OSError:
+    """Resolve the checkout revision, including detached HEAD and worktrees."""
+    provided = os.environ.get('JARVIS_BUILD_COMMIT', '').strip()
+    if re.fullmatch(r'[0-9a-f]{7,64}', provided):
+        return provided[:7]
+    root = Path(__file__).resolve().parents[1]
+    if not (root / '.git').exists():
         return ''
-    if content.startswith('ref: '):
-        content = content[5:].strip()
-        ref = os.path.join(root, '.git', content)
-        try:
-            with open(ref, encoding='utf-8') as handle:
-                content = handle.read().strip()
-        except OSError:
-            return ''
-    return content[:7] if len(content) >= 7 else ''
+    try:
+        result = subprocess.run(
+            ['git', 'rev-parse', '--verify', 'HEAD'], cwd=root, capture_output=True,
+            text=True, timeout=2, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ''
+    revision = result.stdout.strip()
+    return revision[:7] if result.returncode == 0 and re.fullmatch(r'[0-9a-f]{40}|[0-9a-f]{64}', revision) else ''
 
 
 def _alpha(color: str, alpha: int) -> QColor:
@@ -657,7 +650,14 @@ class PrimeShell(QWidget):
         layout.addWidget(brand)
 
         commit = build_commit()
-        build = QLabel(f'build {PRIME_BUILD}' + (f' · {commit}' if commit else ''))
+        release = os.environ.get('JARVIS_SOURCE_RELEASE', '').strip()
+        if commit:
+            label = f'Revision {commit}'
+        elif re.fullmatch(r'[0-9a-f]{64}', release):
+            label = f'Source update {release[:8]}'
+        else:
+            label = 'Revision unavailable'
+        build = QLabel(label)
         self.build_label = build
         build.setStyleSheet(f'color: {palette.muted.name()}; font-size: 11px;')
         layout.addWidget(build)
