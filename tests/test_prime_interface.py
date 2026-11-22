@@ -227,3 +227,63 @@ def test_the_rail_buttons_are_not_the_old_toolbar(tmp_path):
             assert button.text() not in ('Tools', 'Plugins')
     finally:
         window.close()
+
+
+def test_activity_panel_shows_live_state_and_persisted_action_result(tmp_path):
+    app, window = make_window(tmp_path)
+    try:
+        shell = window.prime_shell
+        shell.activity_button.click()
+        assert shell.activity.isVisibleTo(window)
+        assert shell.activity.empty.isVisibleTo(window)
+
+        ident = window.store.task('open_app', 'Awaiting approval')
+        window.refresh_history()
+        assert shell.activity.records.currentItem().text() == 'Open app\nPending'
+        assert 'Awaiting approval' in shell.activity.details.toPlainText()
+
+        window.store.finish(ident, 'dispatched', 'Started process. Window unverified.')
+        window.refresh_history()
+        assert shell.activity.records.currentItem().text() == 'Open app\nDispatched'
+        assert 'Window unverified.' in shell.activity.details.toPlainText()
+
+        window.stop()
+        assert shell.activity.state.text() == 'Stopped'
+        assert shell.state_chip.text() == 'STOPPED'
+        shell.open_task_history()
+        app.processEvents()
+        assert shell.activity.isHidden()
+        assert window.pages.currentIndex() == window.page_indices['Task History']
+    finally:
+        window.close()
+
+
+def test_saved_chat_is_loaded_as_plain_text_when_prime_starts(tmp_path):
+    from core.store import Store
+
+    store = Store(tmp_path / 'history.sqlite3')
+    store.set('session', 'saved')
+    store.message('saved', 'assistant', '<b>saved message</b>')
+    _app, window = make_window(tmp_path)
+    try:
+        chat = window.prime_chat
+        assert chat.states.currentWidget() is chat.conversation
+        first, = chat.conversation.bubbles
+        assert first.body.text() == '<b>saved message</b>'
+        assert first.body.textFormat().name == 'PlainText'
+        store.message('saved', 'user', 'New message')
+        window.render_chat()
+        assert chat.conversation.bubbles[0] is first
+        assert len(chat.conversation.bubbles) == 2
+    finally:
+        window.close()
+
+
+def test_packaged_revision_reads_the_installed_build(tmp_path, monkeypatch):
+    import desktop.prime_ui as ui
+
+    monkeypatch.setattr(ui.sys, 'frozen', True, raising=False)
+    monkeypatch.setattr(ui.sys, 'executable', str(tmp_path / 'JarvisAI.exe'))
+    monkeypatch.setenv('JARVIS_BUILD_COMMIT', 'abcdef0')
+    (tmp_path / 'JARVIS-AI-REVISION.txt').write_text('0123456789' * 4, encoding='ascii')
+    assert ui.build_commit() == '0123456'

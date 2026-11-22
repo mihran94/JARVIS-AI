@@ -38,7 +38,7 @@ index 4ba96db..fb4f9bc 100644
 +  # a pull request to main, so it was never built for the stack. It is
 +  # built for any pull request now.
    pull_request:
--    branches: [main]
+-    branches: [main, feature/azure-neural-voice]
 +    branches: ['**']
      paths:
        - 'desktop/**'

@@ -557,6 +557,8 @@ class Window(QMainWindow):
         self.prime_chat = chat
         chat.adopt_task_panels()
         shell.content.addWidget(self.pages)
+        shell.activity.set_rows(self.store.tasks())
+        self.render_chat()
 
         self.refresh_prime_state()
         return shell
@@ -3190,6 +3192,7 @@ class Window(QMainWindow):
         self.desktop_pending = dict(task=task, ticket=ticket, digest=digest,
                                     deadline=time.monotonic() + 7.0)
         self.desktop_task_timer.start()
+        self.refresh_prime_state()
         return (f'Desktop plan approved for {task.app}. Waiting for its '
                 'foreground window; text not entered yet.')
 
@@ -3226,6 +3229,8 @@ class Window(QMainWindow):
             self.desktop_pending = None
             self.show_local_system_reply('Desktop task failed', str(error))
             self.conversation_plan.result(False, str(error))
+        finally:
+            self.refresh_prime_state()
 
     def add_projects_settings(self, layout):
         """The saved-project settings, inside Settings & Plugins.
@@ -5269,6 +5274,9 @@ class Window(QMainWindow):
 
     def refresh_history(self):
         rows = self.store.tasks()
+        shell = getattr(self, 'prime_shell', None)
+        if shell is not None:
+            shell.activity.set_rows(rows)
         self.history.setRowCount(len(rows))
         for index, task in enumerate(rows):
             for column, key in enumerate(('created', 'kind', 'status', 'detail')):

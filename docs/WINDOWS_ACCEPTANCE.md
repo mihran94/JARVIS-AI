@@ -29,6 +29,7 @@ Record OS build, Python/dependency versions, provider/model (never key), exact p
 
 - Run the installer on a disposable Windows account, then open the installed assistant. The automation entry point is `installers/Test-WindowsInstaller.ps1`. It checks installation, startup, packaged speech imports, uninstallation and retention of the temporary profile.
 - Confirm the JARVIS AI title and the provider and model line. Try Emergency stop and Resume in the same window. Switch to Island mode and return to the main window.
+- Open Activity during an approved task. Check the current state, recorded outcome, and task history at 125% and 150% scaling. Check the Revision label against the release manifest.
 - Close and reopen the app. Confirm the current conversation and selected theme return. For the legacy default theme, confirm its existing palette appears as Quantum Dark.
 - Configure Photoshop in Settings and approve an Open Photoshop request in chat. Confirm the app launches. Record this as launch evidence only.
 

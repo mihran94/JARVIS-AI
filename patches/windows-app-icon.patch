@@ -11,13 +11,15 @@ index 4ba96db..94d7726 100644
        - name: Build standalone desktop folder
          run: |
            python -m pip install pyinstaller==6.12.0 pythonnet==3.2.1 pywin32==312
-@@ -61,7 +63,7 @@ jobs:
+@@ -61,9 +63,9 @@ jobs:
            if ($LASTEXITCODE -ne 0) { throw 'Build runner cannot load Microsoft System.Speech and SAPI' }
            # The adapters import these modules dynamically when the owner
            # enables voice, so PyInstaller cannot discover them automatically.
 -          python -m PyInstaller --noconfirm --clean --windowed --onedir --name JarvisAI --hidden-import keyring.backends.Windows --hidden-import clr --hidden-import win32com.client --hidden-import pythoncom --collect-all pythonnet --add-binary "build/System.Speech.dll;." main.py
 +          python -m PyInstaller --noconfirm --clean --windowed --onedir --name JarvisAI --icon installers/JarvisAI.ico --hidden-import keyring.backends.Windows --hidden-import clr --hidden-import win32com.client --hidden-import pythoncom --collect-all pythonnet --add-binary "build/System.Speech.dll;." main.py
            if (!(Test-Path 'dist/JarvisAI/JarvisAI.exe')) { throw 'Desktop EXE not generated' }
+           git rev-parse HEAD | Set-Content -Encoding ascii dist/JarvisAI/JARVIS-AI-REVISION.txt
+           if ($LASTEXITCODE -ne 0) { throw 'Source revision unavailable' }
        - name: Include Microsoft System.Speech MIT attribution
          shell: pwsh
 diff --git a/installers/JARVIS-AI.iss b/installers/JARVIS-AI.iss

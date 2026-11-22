@@ -10,6 +10,9 @@ REM Record what was built, with the SHA-256 of every file, so the folder can
 REM be verified later and the build can be traced back to its source.
 set "REVISION=unknown"
 for /f "delims=" %%r in ('git rev-parse HEAD 2^>nul') do set "REVISION=%%r"
+if not "%REVISION%"=="unknown" (
+    >dist\JarvisAI\JARVIS-AI-REVISION.txt echo %REVISION%
+)
 .venv\Scripts\python.exe scripts\release_manifest.py dist\JarvisAI dist\JarvisAI-RELEASE.txt --version 0.3.0 --revision %REVISION% --channel beta
 if errorlevel 1 exit /b 1
 

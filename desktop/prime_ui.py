@@ -36,6 +36,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 
 from PySide6.QtCore import (
     QEasingCurve, QPoint, QPointF, QPropertyAnimation, QRectF, QSize, Qt, QTimer, Signal,
@@ -45,12 +46,22 @@ from PySide6.QtGui import (
     QPen, QRadialGradient,
 )
 from PySide6.QtWidgets import (
-    QApplication, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy,
+    QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy,
     QStackedWidget, QVBoxLayout, QWidget,
 )
 
+from desktop.activity_panel import ActivityPanel, STATES
+
+
 def build_commit() -> str:
     """Resolve the checkout revision, including detached HEAD and worktrees."""
+    if getattr(sys, 'frozen', False):
+        try:
+            revision = Path(sys.executable).with_name('JARVIS-AI-REVISION.txt').read_text(
+                encoding='ascii').strip()
+        except (OSError, UnicodeError):
+            return ''
+        return revision[:7] if re.fullmatch(r'[0-9a-f]{40}|[0-9a-f]{64}', revision) else ''
     provided = os.environ.get('JARVIS_BUILD_COMMIT', '').strip()
     if re.fullmatch(r'[0-9a-f]{7,64}', provided):
         return provided[:7]
@@ -271,6 +282,7 @@ class PrimeBubble(QFrame):
             f' background: transparent; border: none; }}')
         layout.addWidget(who)
         body = QLabel(content)
+        body.setTextFormat(Qt.TextFormat.PlainText)
         body.setWordWrap(True)
         body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         body.setStyleSheet(f'color: {palette.ink.name()}; font-size: 13px;'
@@ -301,11 +313,9 @@ class PrimeBubble(QFrame):
         """The bubble is as wide as the words need and no wider."""
         metrics = QFontMetrics(self.body.font())
         width = metrics.horizontalAdvance(self.body.text()) + 34
-        lines = max(1, int(len(self.body.text()) / max(28, width / 7)) + 1)
         self.setFixedWidth(max(180, min(cap, width)))
         self.setMinimumHeight(0)
         self.updateGeometry()
-        del lines
 
     def set_content(self, content: str):
         self.body.setText(content)
@@ -351,24 +361,37 @@ class PrimeConversation(QScrollArea):
         return found
 
     def refresh_theme(self):
-        """The messages are drawn again, in the colours of the theme."""
-        self.render(self._messages)
+        for bubble in self.bubbles:
+            bubble.refresh_theme()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        for bubble in self.bubbles:
+            bubble.fit_to_text(self.bubble_width())
+
+    def bubble_width(self):
+        return min(self.MAX_WIDTH, self.viewport().width() - 8)
 
     def render(self, messages):
-        """Show the messages, oldest at the top, newest at the bottom."""
-        self._messages = list(messages)
-        for row in self._rows:
-            self._layout.removeItem(row)
-            for index in range(row.count()):
-                widget = row.itemAt(index).widget()
-                if widget is not None:
-                    widget.setParent(None)
-                    widget.deleteLater()
-        self._rows = []
-        for message in self._messages:
+        """Update the existing transcript and keep the reader's scroll position."""
+        messages = list(messages)
+        bar = self.verticalScrollBar()
+        position = bar.value()
+        append_only = messages[:len(self._messages)] == self._messages
+        follow_latest = position >= bar.maximum() - 8 or not append_only
+        if not append_only:
+            for row in self._rows:
+                self._layout.removeItem(row)
+                while row.count():
+                    widget = row.takeAt(0).widget()
+                    if widget is not None:
+                        widget.hide()
+                        widget.deleteLater()
+            self._rows.clear()
+        for message in messages[len(self._rows):]:
             bubble = PrimeBubble(message.get('role', 'jarvis'),
                                  message.get('content', ''), self.palette_)
-            bubble.fit_to_text(self.MAX_WIDTH)
+            bubble.fit_to_text(self.bubble_width())
             row = QHBoxLayout()
             row.setContentsMargins(0, 0, 0, 0)
             if bubble.you:
@@ -381,12 +404,12 @@ class PrimeConversation(QScrollArea):
                 row.addStretch(1)
             self._layout.insertLayout(self._layout.count() - 1, row)
             self._rows.append(row)
-        for _ in range(3):
-            application = QApplication.instance()
-            if application is not None:
-                application.processEvents()
-        bar = self.verticalScrollBar()
-        bar.setValue(bar.maximum())
+        self._messages = messages
+        self._layout.activate()
+        if follow_latest:
+            QTimer.singleShot(0, self, lambda: bar.setValue(bar.maximum()))
+        else:
+            bar.setValue(position)
 
 
 class PrimeAssistant(QWidget):
@@ -461,6 +484,30 @@ class PrimeComposer(QFrame):
         self.body = QVBoxLayout()
         self.body.setSpacing(10)
         layout.addLayout(self.body)
+        self.controls = QGridLayout()
+        self.controls.setSpacing(8)
+        self.buttons = ()
+        self._compact = None
+
+    def set_controls(self, *buttons):
+        self.buttons = buttons
+        self.body.addLayout(self.controls)
+        self.layout_controls()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.layout_controls()
+
+    def layout_controls(self):
+        compact = self.width() < 470
+        if not self.buttons or compact == self._compact:
+            return
+        self._compact = compact
+        for index, button in enumerate(self.buttons):
+            row, column = divmod(index, 3) if compact else (0, index)
+            self.controls.addWidget(button, row, column)
+        for column in range(len(self.buttons)):
+            self.controls.setColumnStretch(column, int(not compact or column < 3))
 
     def refresh_theme(self):
         palette = self.palette_
@@ -523,22 +570,21 @@ class PrimeChat(QWidget):
         way a message is sent, attached, dictated or researched changes.
         """
         window = self.window_ref
+        window.prompt.setMaximumHeight(96)
+        window.research_button.setText('Read page')
+        window.send_button.setText('Send')
         old_layout = window.composer_bar.layout()
         old_layout.removeWidget(window.prompt)
         self.composer.body.addWidget(window.prompt)
 
-        controls = QHBoxLayout()
-        controls.setSpacing(8)
-        for widget in (window.chat_mic, window.attach_button, window.research_button):
-            window.composer_actions.removeWidget(widget)
-            controls.addWidget(widget)
         browser = QPushButton('Browser')
         browser.clicked.connect(window.show_browser_commands)
-        controls.addWidget(browser)
-        window.composer_actions.removeWidget(window.send_button)
-        controls.addStretch(1)
-        controls.addWidget(window.send_button)
-        self.composer.body.addLayout(controls)
+        buttons = (window.chat_mic, window.attach_button, window.research_button,
+                   browser, window.send_button)
+        for button in buttons:
+            window.composer_actions.removeWidget(button)
+            button.setStyleSheet('padding: 7px 7px;')
+        self.composer.set_controls(*buttons)
 
         for card in (window.browser_output, getattr(window, 'chat_approval', None),
                      getattr(window, 'chat_task_card', None),
@@ -618,6 +664,11 @@ class PrimeShell(QWidget):
         self.content.setContentsMargins(0, 0, 0, 0)
         self.content.setSpacing(0)
         middle.addLayout(self.content, 1)
+        self.activity = ActivityPanel(palette, self.open_task_history)
+        self.activity.hide()
+        self.activity.closed.connect(lambda: self.activity_button.setChecked(False))
+        self.activity_button.toggled.connect(self.activity.setVisible)
+        middle.addWidget(self.activity)
         outer.addLayout(middle, 1)
 
     # -- the top bar ---------------------------------------------------
@@ -670,6 +721,10 @@ class PrimeShell(QWidget):
             f'{palette.good.green()}, {palette.good.blue()}, 90); border-radius: 11px;'
             f' padding: 4px 12px;')
         layout.addWidget(self.state_chip)
+        self.activity_button = QPushButton('Activity')
+        self.activity_button.setCheckable(True)
+        self.activity_button.setToolTip('Show recent actions and their status')
+        layout.addWidget(self.activity_button)
         layout.addWidget(self.window_ref.resume_button)
         self.stop_button = QPushButton('Emergency stop')
         self.stop_button.clicked.connect(self.window_ref.stop)
@@ -739,12 +794,17 @@ class PrimeShell(QWidget):
             f' letter-spacing: 2.6px;')
         self.build_label.setStyleSheet(f'color: {palette.muted.name()}; font-size: 11px;')
         self.set_state(self.mark.state)
+        self.activity.refresh_theme()
 
     def open_section(self, name: str):
         if name == 'Cybersecurity':
             self.window_ref.open_network_diagnostics()
         else:
             self.window_ref.open_section(name)
+
+    def open_task_history(self):
+        self.activity_button.setChecked(False)
+        self.window_ref.open_section('Task History')
 
     def mark_active(self, name: str):
         for section, button in self.rail_buttons.items():
@@ -753,24 +813,10 @@ class PrimeShell(QWidget):
     def set_state(self, state: str):
         """The state chip and the mark follow what JARVIS is doing."""
         palette = self.palette_
-        colour = {
-            'idle': palette.good,
-            'listening': palette.good,
-            'working': palette.accent,
-            'stopped': palette.danger,
-            'approval': palette.accent,
-            'speaking': palette.good,
-        }.get(state, palette.muted)
-        label = {
-            'idle': 'READY',
-            'listening': 'LISTENING',
-            'working': 'WORKING',
-            'stopped': 'STOPPED',
-            'approval': 'APPROVAL REQUIRED',
-            'speaking': 'SPEAKING',
-            'thinking': 'THINKING',
-            'responding': 'ANSWERING',
-        }.get(state, 'READY')
+        label, tone = STATES[state]
+        colour = getattr(palette, tone)
+        self.activity.set_state(state)
+        label = label.upper()
         self.state_chip.setText(label)
         self.state_chip.setStyleSheet(
             f'color: {colour.name()}; font-size: 11px; font-weight: 600;'
