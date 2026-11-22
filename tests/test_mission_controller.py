@@ -127,6 +127,25 @@ def test_a_refused_tool_does_not_run(window):
     assert 'did not allow' in labels
 
 
+def test_a_second_mission_does_not_disturb_the_first(window):
+    def slow(request):
+        time.sleep(0.2)
+        return httpx.Response(200, text=answer_stream(tool_call(
+            'evaluate_expression', {'expression': '1 + 1'})))
+
+    window.router = ProviderRouter(transport=httpx.MockTransport(slow))
+    window.mission_controller.start('Add one and one.')
+    assert wait_for(lambda: window.mission_panel.timeline.entries())
+    window.mission_controller.start('And another thing.')
+    labels = ' '.join(entry['label'] for entry in window.mission_panel.timeline.entries())
+    assert 'A mission is already running' in labels
+    # The running mission keeps its own state: the console does not say
+    # that a mission failed while one of them is still working.
+    assert window.mission_panel.status.text() == 'WORKING'
+    window.mission_controller.cancel()
+    assert wait_for(lambda: window.mission_panel.status.text() in ('CANCELLED', 'FAILED'))
+
+
 def test_a_mission_can_be_cancelled(window):
     def slow(request):
         # A provider that takes a moment, so the cancellation lands in

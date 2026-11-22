@@ -60,6 +60,15 @@ def test_a_running_mission_says_so(panel):
     assert panel.cancel_button.isEnabled() is True
 
 
+def test_the_pill_says_when_the_owner_is_being_asked(panel):
+    panel.set_running(True)
+    panel.set_status('approval')
+    assert panel.status.text() == 'APPROVAL NEEDED'
+    assert panel.current_status() == 'approval'
+    panel.set_status('running')
+    assert panel.status.text() == 'WORKING'
+
+
 def test_every_step_reaches_the_rail_in_order(panel):
     panel.append_event(event('goal', 'Mission started', 'Check the weather.'))
     panel.append_event(event('thought', 'JARVIS decided', 'I need the time first.'))
