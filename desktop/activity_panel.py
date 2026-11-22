@@ -22,6 +22,7 @@ STATUS_COLOURS = {
     'pending': 'warn', 'running': 'accent', 'completed': 'good',
     'accepted': 'good', 'verified': 'good', 'failed': 'danger', 'error': 'danger',
     'interrupted': 'warn', 'unverified': 'warn', 'dispatched': 'muted',
+    'declined': 'muted', 'cancelled': 'muted', 'denied': 'muted',
 }
 
 
@@ -55,6 +56,12 @@ class ActivityPanel(QFrame):
         self.state = QLabel()
         self.state.setAccessibleName('Current JARVIS activity')
         layout.addWidget(self.state)
+        self.live_detail = QLabel()
+        self.live_detail.setAccessibleName('Current action details')
+        self.live_detail.setTextFormat(Qt.TextFormat.PlainText)
+        self.live_detail.setWordWrap(True)
+        self.live_detail.hide()
+        layout.addWidget(self.live_detail)
         self.heading = QLabel('Recent actions')
         layout.addWidget(self.heading)
 
@@ -82,6 +89,10 @@ class ActivityPanel(QFrame):
         self._state = state
         self.style_state()
 
+    def set_live_detail(self, text):
+        self.live_detail.setText(text)
+        self.live_detail.setVisible(bool(text))
+
     def style_state(self):
         label, colour = STATES[self._state]
         accent = getattr(self.palette_, colour).name()
@@ -100,7 +111,7 @@ class ActivityPanel(QFrame):
             f'QListWidget::item:selected {{ background: {palette.accent_deep.name()}; '
             'color: white; }')
         self.title.setStyleSheet(f'color: {palette.ink.name()}; font-size: 19px; font-weight: 600;')
-        for label in (self.heading, self.empty):
+        for label in (self.heading, self.empty, self.live_detail):
             label.setStyleSheet(f'color: {palette.muted.name()};')
         self.style_state()
         for index, row in enumerate(self._rows):
@@ -136,6 +147,9 @@ class ActivityPanel(QFrame):
     def show_record(self, index):
         self.details.setVisible(index >= 0)
         row = self._rows[index] if index >= 0 else None
-        text = f"{row['created']} UTC\n\n{row['detail'] or 'No details recorded.'}" if row else ''
+        text = ''
+        if row:
+            text = (f"{caption(row['kind'])} · {caption(row['status'])}\n"
+                    f"{row['created']} UTC\n\n{row['detail'] or 'No details recorded.'}")
         if text != self.details.toPlainText():
             self.details.setPlainText(text)

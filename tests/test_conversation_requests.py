@@ -286,11 +286,20 @@ def test_suggested_notepad_uses_user_text_and_existing_approval(tmp_path, monkey
         win.review_suggested_plan()
         assert typed == []
         assert win.chat_launch is not None
+        activity = win.prime_shell.activity
+        assert activity.state.text() == 'Approval required'
+        assert 'Review the exact text' in activity.live_detail.text()
         win.finish_chat_launch(True)
+        assert 'Checking the foreground window' in activity.live_detail.text()
         assert typed == []
         win.complete_desktop_task()
         assert typed == [('Notepad', payload)]
         assert 'Text verified in the editor' in win.transcript.toPlainText()
+        row = next(row for row in win.store.tasks() if row['kind'] == 'desktop_type')
+        assert row['status'] == 'verified'
+        assert 'foreground confirmed' in row['detail']
+        assert 'JARVIS did not save a file.' in row['detail']
+        assert activity.live_detail.text() == ''
     finally:
         win.close()
         win.deleteLater()

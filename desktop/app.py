@@ -521,10 +521,25 @@ class Window(QMainWindow):
             return
         state = self.prime_state()
         shell.set_state(state)
+        shell.activity.set_live_detail(self.current_desktop_activity(state))
         shell.set_provider(self.brain_label.text())
         chat = getattr(self, 'prime_chat', None)
         if chat is not None:
             chat.set_state(state)
+
+    def current_desktop_activity(self, state):
+        if state == 'approval' and self.chat_launch is not None:
+            name, _, action, _ = self.chat_launch
+            if action.kind == 'desktop_plan_approval':
+                return f'{name} · Review the exact text in Chat before approving.'
+            return f'{name} · Approve or decline in Chat.'
+        if state == 'working' and self.desktop_pending is not None:
+            target = self.desktop_pending['task'].app
+            return f'{target} · Checking the foreground window before entering text.'
+        if state == 'working' and self.launch_verification is not None:
+            name = self.launch_verification[0]
+            return f'{name} · Checking whether Windows opened the requested window.'
+        return ''
 
     def refresh_prime_theme(self):
         """The PRIME surface follows the theme the owner chose."""
@@ -1298,11 +1313,16 @@ class Window(QMainWindow):
         layout.addWidget(self.transcript, 1)
         self.chat_approval = QWidget()
         self.chat_approval.setObjectName('approvalCard')
-        approval_row = QHBoxLayout(self.chat_approval)
-        approval_row.setContentsMargins(0, 0, 0, 0)
+        approval_layout = QVBoxLayout(self.chat_approval)
+        approval_title = QLabel('Approval required')
+        approval_title.setObjectName('approvalTitle')
+        approval_layout.addWidget(approval_title)
+        approval_row = QHBoxLayout()
+        approval_layout.addLayout(approval_row)
         self.chat_approval_label = QLabel()
         self.chat_approval_label.setTextFormat(Qt.TextFormat.PlainText)
         self.chat_approval_label.setWordWrap(True)
+        self.chat_approval_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         approval_row.addWidget(self.chat_approval_label, 1)
         self.chat_approve_button = self.button(
             approval_row, 'Approve', lambda: self.finish_chat_launch(True))
@@ -1356,6 +1376,7 @@ class Window(QMainWindow):
         layout.addWidget(self.plan_card)
         self.suggested_steps = ()
         self.suggestion_card = QWidget()
+        self.suggestion_card.setObjectName('taskCard')
         suggestion_layout = QVBoxLayout(self.suggestion_card)
         self.suggestion_preview = QLabel()
         self.suggestion_preview.setTextFormat(Qt.TextFormat.PlainText)
@@ -3239,13 +3260,19 @@ class Window(QMainWindow):
                 return
             self.desktop_task_timer.stop()
             self.desktop_pending = None
+            action = Action('desktop_type', f'{task.app}: {len(task.text)} characters',
+                            pending['digest'])
+            task_id = self.store.task(action.kind, action.target)
             result = self.gateway.run(
-                Action('desktop_type', f'{task.app}: {len(task.text)} characters',
-                       pending['digest']),
-                lambda _action: True,  # the exact text was approved in chat
-                lambda: type_into_target(task.app, task.text))
-            self.show_local_system_reply('Desktop task result', str(result))
-            self.conversation_plan.result(True, str(result), verified=isinstance(result, VerifiedEdit))
+                action, lambda _action: True,  # the exact text was approved in chat
+                lambda: type_into_target(task.app, task.text),
+                task_id=task_id, completion_status='dispatched')
+            verified = isinstance(result, VerifiedEdit)
+            status = 'verified' if verified else 'unverified'
+            detail = f'{task.app} foreground confirmed. {result} JARVIS did not save a file.'
+            self.store.finish(task_id, status, detail)
+            self.show_local_system_reply('Desktop task result', detail)
+            self.conversation_plan.result(True, detail, verified=verified)
         except (Denied, Stopped, RuntimeError, ValueError, OSError) as error:
             self.desktop_task_timer.stop()
             self.desktop_pending = None
