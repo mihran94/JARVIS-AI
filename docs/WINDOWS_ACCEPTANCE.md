@@ -39,6 +39,12 @@ Record OS build, Python/dependency versions, provider/model (never key), exact p
 - To restore data, exit JARVIS, move the current profile aside and restore the backed-up folder. Retain both copies until chat history, settings and task history are verified. The existing profile database is not encrypted by this procedure.
 - Use the rollback instructions in [UPDATES.md](UPDATES.md) for source-managed installations. Test installer upgrade and rollback in a disposable profile before using either with production data.
 
+## Local audio and wake phrase
+
+- Open **Settings & Safety → Audio devices and testing**. Check the detected input and output, change the Windows default audio device, then use **Refresh**.
+- Grant microphone permission in **Voice**, select **Test microphone** and speak. The level should respond for five seconds and stop. Select **Test speaker** and confirm you actually hear the tone. Test missing devices and **Stop test**.
+- Under **Voice**, enable **Keep listening for Hey Jarvis**, minimize the window, and say the configured wake phrase. Check that Chat is restored and the M pulses when reduced motion is off. Confirm Emergency Stop silences the test and disables listening.
+
 ## Optional Azure neural voice
 
 1. In **Settings and safety → AI providers → Azure Speech**, save the region and Speech resource key. The key is kept in Windows Credential Manager and the region is saved in JARVIS settings.
