@@ -4,8 +4,13 @@ from math import sin, tau
 from time import monotonic
 
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QTimer, Signal
-from PySide6.QtMultimedia import QAudio, QAudioFormat, QAudioSink, QAudioSource, QMediaDevices
 from PySide6.QtWidgets import QGridLayout, QGroupBox, QLabel, QProgressBar, QPushButton, QVBoxLayout
+
+try:
+    from PySide6.QtMultimedia import QAudio, QAudioFormat, QAudioSink, QAudioSource, QMediaDevices
+except ImportError:
+    # The desktop can run on systems without Qt's native multimedia libraries.
+    QAudio = QAudioFormat = QAudioSink = QAudioSource = QMediaDevices = None
 
 
 class AudioTest(QGroupBox):
@@ -48,6 +53,9 @@ class AudioTest(QGroupBox):
         voice.activity_changed.connect(self.check_permission)
 
     def refresh_devices(self):
+        if QMediaDevices is None:
+            self.devices.setText('Audio device detection is unavailable on this installation.')
+            return
         inputs, outputs = QMediaDevices.audioInputs(), QMediaDevices.audioOutputs()
         mic, speaker = QMediaDevices.defaultAudioInput(), QMediaDevices.defaultAudioOutput()
         self.devices.setText(
@@ -55,6 +63,9 @@ class AudioTest(QGroupBox):
             f'Speaker: {speaker.description() or "not detected"} ({len(outputs)} outputs)')
 
     def ready(self, mode):
+        if QMediaDevices is None:
+            self.status.setText('Audio testing is unavailable on this installation.')
+            return False
         if self.policy.stopped or self.voice.consent.stopped:
             self.status.setText('Resume JARVIS and Voice before testing audio.')
             return False

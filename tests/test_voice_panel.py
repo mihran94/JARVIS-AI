@@ -376,12 +376,19 @@ def test_settings_audio_test_requires_permission_and_discards_samples(tmp_path, 
     from array import array
     from types import SimpleNamespace
 
-    from PySide6.QtMultimedia import QAudio
     from desktop.app import Window
 
     app = QApplication.instance() or QApplication([])
     window = Window(tmp_path)
     panel = window.audio_test
+    monkeypatch.setattr('desktop.audio_test.QMediaDevices', None)
+    panel.refresh_devices()
+    panel.test_microphone()
+    assert 'unavailable' in panel.devices.text()
+    assert 'unavailable' in panel.status.text()
+    monkeypatch.setattr('desktop.audio_test.QMediaDevices', object())
+    monkeypatch.setattr('desktop.audio_test.QAudio',
+                        SimpleNamespace(Error=SimpleNamespace(NoError=0)))
     try:
         panel.test_microphone()
         assert 'Allow the microphone' in panel.status.text()
@@ -393,7 +400,7 @@ def test_settings_audio_test_requires_permission_and_discards_samples(tmp_path, 
         samples = array('h', [0, -8192, 16384]).tobytes()
         stopped = []
         panel.buffer = SimpleNamespace(readAll=lambda: samples)
-        panel.stream = SimpleNamespace(error=lambda: QAudio.Error.NoError,
+        panel.stream = SimpleNamespace(error=lambda: 0,
                                        stop=lambda: stopped.append(True),
                                        deleteLater=lambda: None)
         panel.poll()
@@ -412,23 +419,21 @@ def test_settings_audio_test_requires_permission_and_discards_samples(tmp_path, 
 def test_settings_speaker_test_plays_a_local_tone_and_releases_buffer(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
-    from PySide6.QtMultimedia import QAudio, QAudioFormat
     from desktop.app import Window
 
     app = QApplication.instance() or QApplication([])
     window = Window(tmp_path)
     panel = window.audio_test
-    fmt = QAudioFormat()
-    fmt.setSampleRate(8000)
-    fmt.setChannelCount(1)
-    fmt.setSampleFormat(QAudioFormat.SampleFormat.Int16)
+    fmt = SimpleNamespace(sampleRate=lambda: 8000, channelCount=lambda: 1)
     monkeypatch.setattr(panel, 'pcm_format', lambda _device: fmt)
-    monkeypatch.setattr('desktop.audio_test.QMediaDevices.defaultAudioOutput',
-                        lambda: SimpleNamespace(isNull=lambda: False))
+    monkeypatch.setattr('desktop.audio_test.QMediaDevices', SimpleNamespace(
+        defaultAudioOutput=lambda: SimpleNamespace(isNull=lambda: False)))
+    monkeypatch.setattr('desktop.audio_test.QAudio', SimpleNamespace(
+        Error=SimpleNamespace(NoError=0), State=SimpleNamespace(IdleState=1)))
     played = []
     monkeypatch.setattr('desktop.audio_test.QAudioSink', lambda *_: SimpleNamespace(
         start=lambda source: played.append(bytes(source.readAll())),
-        error=lambda: QAudio.Error.NoError, state=lambda: QAudio.State.IdleState,
+        error=lambda: 0, state=lambda: 1,
         stop=lambda: None, deleteLater=lambda: None))
     try:
         panel.test_speaker()
