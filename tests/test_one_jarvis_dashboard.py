@@ -24,8 +24,8 @@ def test_one_dashboard_has_orb_read_only_metrics_and_existing_pages(tmp_path):
         assert window.pages.count() == 11
         assert window.nav.count() == 10
         assert 'CPU' in window.system_metrics_label.text()
-        assert window.nav.item(5).text() == 'Phone Remote'
-        assert window.nav.item(4).text() == 'Voice / Hey Jarvis'
+        assert window.nav.item(4).text() == 'Phone Remote'
+        assert window.nav.item(3).text() == 'Voice / Hey Jarvis'
         assert window.orb._state == 'idle'
         window.set_ai_visual_state('thinking')
         assert window.orb._state == 'thinking'

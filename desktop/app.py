@@ -27,7 +27,6 @@ from developer_studio.inspection import inspect_project
 from core.assistant_capabilities import (conversation_context, summary as capability_summary,
                                        system_context as capability_context)
 from quantum_core.studio_project import STUDIO_URL, studio_update_prompt, validate_studio_url
-from desktop.memory_page import MemoryPanel
 from desktop import documents
 from desktop import local_commands
 from desktop.document_search import search_folder, search_result_text, summary_export
@@ -401,7 +400,6 @@ class Window(QMainWindow):
         self.voice_panel.cycle_finished.connect(self.schedule_local_voice_rearm)
         self.voice_panel.speech_finished.connect(self.schedule_local_voice_rearm)
         self.memory_service = MemoryService(self.root / 'history.sqlite3')
-        self.add_page('Memory', MemoryPanel(service=self.memory_service))
         self.add_page('Voice / Hey Jarvis', self.voice_panel)
         self.add_page('Phone Remote', self.bridge_page())
         self.add_page('Settings & Safety', self.permissions_page())
