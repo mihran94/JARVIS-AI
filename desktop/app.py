@@ -11,7 +11,7 @@ from PySide6.QtGui import QDesktopServices, QFont, QTextCursor, QKeySequence, QS
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSizePolicy,
     QPushButton, QListWidget, QStackedWidget, QPlainTextEdit, QLineEdit,
-    QComboBox, QMessageBox, QFormLayout, QTableWidget, QTableWidgetItem,
+    QComboBox, QMessageBox, QFormLayout, QGridLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QCheckBox, QDialog, QFileDialog, QScrollArea, QLayout,
     QProgressBar, QGroupBox, QSizePolicy, QInputDialog,
 )
@@ -1228,8 +1228,9 @@ class Window(QMainWindow):
         settings_layout.setContentsMargins(0, 0, 0, 0)
         settings_layout.addWidget(QLabel('AI provider'))
         settings_layout.addWidget(self.chat_provider)
-        self.auto_brain = QCheckBox('Route chat and analysis across configured Gemini, OpenAI and MiniMax accounts')
-        self.auto_brain.setToolTip('The chosen provider receives this conversation and any one-time attachments. '
+        self.auto_brain = QCheckBox('Automatically choose an AI provider')
+        self.auto_brain.setToolTip('Routes chat and analysis across configured Gemini, OpenAI and MiniMax. '
+                                   'The chosen provider receives this conversation and any one-time attachments. '
                                    'The local provider stays local. Provider billing limits still apply.')
         self.auto_brain.setChecked(bool(self.store.get('brain:auto', False)))
         self.auto_brain.toggled.connect(lambda value: self.store.set('brain:auto', value))
@@ -1700,20 +1701,32 @@ class Window(QMainWindow):
         return self.bridge
 
     def automation_page(self):
-        page, layout = self.page('Windows Automation',
-            'Open approved apps, open a file or folder you chose, tidy a folder you chose, '
-            'or read text from a connected camera. Every action that changes something '
-            'needs your approval first.')
+        page, layout = self.page('PC Control',
+            'Choose an action to review. JARVIS asks before launching apps or accessing files and devices.')
+        apps = QGroupBox('Applications')
+        app_layout = QFormLayout(apps)
+        app_row = QHBoxLayout()
         self.app_choice = QComboBox()
+        self.app_choice.setAccessibleName('Windows application')
         self.app_choice.addItems(APPS)
-        layout.addWidget(self.app_choice)
-        self.button(layout, 'Review and launch', self.launch)
-        self.button(layout, 'Open a file or folder…', self.open_chosen_path)
-        self.button(layout, 'Tidy a folder…', self.organise_chosen_folder)
-        self.button(layout, 'Review visible window titles (read only)', self.inspect_visible_windows)
-        self.button(layout, 'Watch & read connected camera',
-                    lambda: self.notify(lambda: open_camera_reader(self)))
-        layout.addStretch()
+        app_row.addWidget(self.app_choice, 1)
+        self.flexible_button(app_row, 'Review launch', self.launch)
+        app_layout.addRow(app_row)
+        layout.addWidget(apps)
+
+        files = QGroupBox('Files and folders')
+        file_layout = QHBoxLayout(files)
+        self.flexible_button(file_layout, 'Open file…', self.open_chosen_path)
+        self.flexible_button(file_layout, 'Open folder…', lambda: self.open_chosen_path(folder=True))
+        self.flexible_button(file_layout, 'Review tidy plan…', self.organise_chosen_folder)
+        layout.addWidget(files)
+
+        devices = QGroupBox('Windows and devices')
+        device_layout = QVBoxLayout(devices)
+        self.flexible_button(device_layout, 'Review visible windows', self.inspect_visible_windows)
+        self.flexible_button(device_layout, 'Open camera reader',
+                             lambda: self.notify(lambda: open_camera_reader(self)))
+        layout.addWidget(devices)
         # What the approval boundary has actually done, in the owner's words.
         safety_box = QGroupBox('Approval boundary')
         safety_layout = QVBoxLayout(safety_box)
@@ -1741,27 +1754,18 @@ class Window(QMainWindow):
                          + (f' ({decision.detail})' if decision.detail else ''))
         self.safety_details.setPlainText('\n'.join(lines))
 
-    def open_chosen_path(self):
-        """Open a file or folder the owner chose, after they approve it."""
-        path, _ = QFileDialog.getOpenFileName(
-            self, 'Choose a file to open', '', 'Anything (*.*)')
+    def open_chosen_path(self, *, folder=False):
+        """Open the selected file or folder through the approval gateway."""
+        if folder:
+            path = QFileDialog.getExistingDirectory(self, 'Choose a folder to open')
+        else:
+            path, _ = QFileDialog.getOpenFileName(
+                self, 'Choose a file to open', '', 'Anything (*.*)')
         if not path:
             return
-        target = Path(path)
-        if target.is_dir():
-            # A folder is opened with Explorer rather than with a program.
-            chosen = QFileDialog.getExistingDirectory(self, 'Choose a folder to open')
-            if not chosen:
-                return
-            target = Path(chosen)
-
-        def operation():
-            return open_path(str(target))
-
-        self.gateway.run(
-            Action('open_path', str(target)),
-            lambda action: self.confirm(action),
-            operation)
+        target = str(Path(path))
+        self.notify(lambda: self.gateway.run(Action('open_path', target), self.confirm,
+                                             lambda: open_path(target)))
         self.refresh_safety_report()
 
     def organise_chosen_folder(self):
@@ -2904,61 +2908,63 @@ class Window(QMainWindow):
         self.worker.start()
 
     def permissions_page(self):
-        page, layout = self.page('Settings and safety',
-            'Commands run JARVIS. Only Settings and Island appear in the main toolbar. '
-            'Every computer action needs your explicit approval.')
+        page, layout = self.page('Settings & Safety')
+        tools = QGroupBox('Settings shortcuts')
+        tool_layout = QGridLayout(tools)
+        for index, (label, name) in enumerate((
+            ('AI providers', 'AI Providers'),
+            ('Voice and microphone', 'Voice / Hey Jarvis'),
+            ('PC Control', 'PC Control'),
+            ('Phone Remote', 'Phone Remote'),
+            ('Files & Folders', 'Files & Folders'),
+            ('Task queue', 'Task Queue'),
+            ('Workflows', 'Step Workflows'),
+            ('Task history', 'Task History'),
+            ('System & usage', 'System & Usage'),
+            ('Review prepared changes', 'Review changes'),
+        )):
+            button = QPushButton(label)
+            button.clicked.connect(lambda _checked=False, name=name: self.open_section(name))
+            tool_layout.addWidget(button, index // 2, index % 2)
+        layout.addWidget(tools)
+
         assistant_group = QGroupBox('Chat, provider and voice preferences')
         assistant_layout = QVBoxLayout(assistant_group)
         assistant_layout.addWidget(self.chat_settings_panel)
         layout.addWidget(assistant_group)
-        command_help = QLabel(
-            'Use /help in the main command bar to see project, editor, '
-            'test and tool commands. Saved project folders are configured below.')
-        command_help.setWordWrap(True)
-        layout.addWidget(command_help)
-        self.button(layout, 'Files & Folders — select and preview',
-                    lambda: self.open_section('Files & Folders'))
-        appearance = QHBoxLayout()
-        appearance.addWidget(QLabel('Interface theme'))
+
+        preferences = QGroupBox('Appearance and startup')
+        preference_layout = QVBoxLayout(preferences)
+        appearance = QFormLayout()
         self.theme_choice = QComboBox()
         self.theme_choice.addItems(list(OMEGA_THEMES))
         self.theme_choice.setCurrentText(self.interface_theme)
         self.theme_choice.currentTextChanged.connect(self.on_theme_chosen)
-        appearance.addWidget(self.theme_choice)
-        appearance.addStretch()
-        layout.addLayout(appearance)
-        self.button(layout, 'Updates & rollback', lambda: open_updates(self))
-        self.button(layout, 'Review prepared changes', lambda: self.open_section('Review changes'))
-        background = QHBoxLayout()
-        self.keep_in_tray = QCheckBox('Keep JARVIS in the system tray when the window is closed')
+        appearance.addRow('Interface theme', self.theme_choice)
+        preference_layout.addLayout(appearance)
+        self.keep_in_tray = QCheckBox('Keep JARVIS running in the system tray')
         self.keep_in_tray.setChecked(bool(self.store.get('keep_running_in_tray', False)))
         self.keep_in_tray.toggled.connect(
             lambda enabled: self.store.set('keep_running_in_tray', bool(enabled)))
-        background.addWidget(self.keep_in_tray)
+        preference_layout.addWidget(self.keep_in_tray)
         self.start_at_signin = QCheckBox('Start JARVIS when Windows signs in')
         self.start_at_signin.setEnabled(startup_supported())
         self.start_at_signin.setChecked(start_at_signin_enabled())
         self.start_at_signin.toggled.connect(self.on_start_at_signin)
-        background.addWidget(self.start_at_signin)
-        layout.addLayout(background)
+        preference_layout.addWidget(self.start_at_signin)
+        self.tray_note = QLabel(self.tray_note_text())
+        self.tray_note.setWordWrap(True)
+        preference_layout.addWidget(self.tray_note)
+        layout.addWidget(preferences)
+
+        updates = QGroupBox('Updates and recovery')
+        update_layout = QVBoxLayout(updates)
+        self.flexible_button(update_layout, 'Updates & rollback', lambda: open_updates(self))
         self.auto_maintenance = QCheckBox('Automatically propose source update guide fixes')
         self.auto_maintenance.setChecked(bool(self.store.get('auto_maintenance', False)))
         self.auto_maintenance.toggled.connect(self.set_auto_maintenance)
-        layout.addWidget(self.auto_maintenance)
-        self.tray_note = QLabel(self.tray_note_text())
-        self.tray_note.setWordWrap(True)
-        layout.addWidget(self.tray_note)
-        advanced = QHBoxLayout()
-        for label, name in [
-            ('AI providers', 'AI Providers'),
-            ('Tasks', 'Task Queue'),
-            ('Workflows', 'Step Workflows'),
-            ('History', 'Task History'),
-            ('Usage', 'System & Usage'),
-        ]:
-            self.button(advanced, label,
-                        lambda checked=False, name=name: self.open_section(name))
-        layout.addLayout(advanced)
+        update_layout.addWidget(self.auto_maintenance)
+        layout.addWidget(updates)
         self.add_projects_settings(layout)
         plugins = QGroupBox('Plugins')
         self.plugins_group = plugins
@@ -2981,34 +2987,19 @@ class Window(QMainWindow):
                 row.addWidget(button)
             plugin_layout.addLayout(row)
         layout.addWidget(plugins)
-        text = QPlainTextEdit()
-        text.setReadOnly(True)
-        text.setPlainText(
-            'ACTIVE MODE: MANUAL\n\n'
-            'App launches, workflow steps, inspection and file saves require confirmation.\n'
-            'Send is explicit approval to transmit this chat to the chosen provider.\n'
-            'Model output and stored memory cannot grant permissions.\n'
-            'No arbitrary shell execution, remote listener or plugin auto-loading.\n\n'
-            'EMERGENCY STOP\n'
-            'Click the red button or press Ctrl+Alt+J while JARVIS has focus.\n'
-            'Blocks new actions, invalidates approvals and cancels accepting chat output.\n'
-            'An in-flight network read may take up to 30 seconds to return.\n'
-            'Already launched apps remain open. Already sent requests may be billed.\n'
-            'Resume never restarts cancelled work.\n\n'
-            'DATA\n'
-            'Keys: Windows Credential Manager. Chat/history/code: local plaintext files.\n'
-            'Deleting a conversation removes app records, not forensic disk remnants.\n\n'
-            'NOT YET AVAILABLE\n'
-            'Unrestricted desktop control, self-executing model commands, RAG,\n'
-            'isolated code execution and end-to-end physical device acceptance.\n\n'
-            'AVAILABLE NOW\n'
-            'Eight providers including Claude and the local Ollama model. A local model\n'
-            'never falls back to a paid endpoint and never leaves this computer.\n\n'
-            'CURRENT: Manual workflows and read-only window title inspection.\n'
-            'NEXT: Windows acceptance tests and live provider checks.\n'
-            'See docs/ARCHITECTURE.md and docs/WINDOWS_ACCEPTANCE.md.'
-        )
-        layout.addWidget(text)
+        safety = QGroupBox('Permissions and data')
+        safety_layout = QVBoxLayout(safety)
+        for note in (
+            'App launches, workflow steps, inspections and file changes require your approval. '
+            'Sending a chat message shares it with the selected provider.',
+            'Emergency Stop (Ctrl+Alt+J) cancels pending work and approvals. '
+            'Apps already opened stay open, and requests already sent may be billed.',
+            'Windows Credential Manager stores keys. Local history and code are stored as plaintext.',
+        ):
+            label = QLabel(note)
+            label.setWordWrap(True)
+            safety_layout.addWidget(label)
+        layout.addWidget(safety)
         return page
 
     def plugin_enabled(self, name):
