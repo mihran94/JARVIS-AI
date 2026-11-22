@@ -14,6 +14,8 @@ Nothing here grants a permission by itself:
   request.
 """
 import platform
+from pathlib import Path
+import shutil
 
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QPainter, QPixmap
@@ -32,12 +34,13 @@ from desktop.bridge_pairing import (
 from desktop.bridge_status import PlatformMetrics
 from providers.registry import specs
 from remote import certificate
+from remote.jobs import DISK_SPACE_ACTION
 from remote.listener import BridgeListener, ListenerConfig, ListenerError
 from remote.pairing import PairingStore
 from remote.protocol import KEY_ID
 from remote.secrets import VaultSecrets
 from remote.server import BridgeServer
-from security.policy import Action
+from security.policy import Action, Stopped
 
 #: The key id an iPhone uses. It is different from the Android one, so that
 #: revoking one phone does not affect the other.
@@ -464,20 +467,51 @@ class BridgePanel(QWidget):
             job = self._selected_job()
             if job.state in ('SUCCEEDED', 'FAILED', 'CANCELLED', 'REJECTED'):
                 raise ValueError('That job has already finished.')
-            action = Action('approve_bridge_job', job.id,
-                            job.title + ' / ' + job.kind)
-            result = self.gateway.run(action, self.confirm,
-                                      lambda: self.bridge.jobs.approve(job.id))
-            self.refresh()
-            return 'Job approved: ' + str(result.state)
+            if job.operation != DISK_SPACE_ACTION:
+                if not self.confirm(Action('Reject unsupported phone task', job.id)):
+                    return
+                self.bridge.jobs.reject(job.id, 'No supported desktop action was requested.')
+                self.refresh()
+                return 'Unsupported phone task rejected.'
+            action = Action('Read and share profile drive capacity with the requesting phone', job.id)
+            try:
+                return self.gateway.run(action, self.confirm,
+                                        lambda: self._execute_disk_check(job))
+            finally:
+                self.refresh()
         self.notify(operation)
+
+    def _execute_disk_check(self, job):
+        jobs = self.bridge.jobs
+        job_id = job.id
+        if job.peer_id is not None and not any(
+                device.peer_id == job.peer_id and not device.revoked
+                for device in self.pairing.devices()):
+            jobs.reject(job_id, 'The requesting phone is no longer paired.')
+            raise RuntimeError('The requesting phone is no longer paired.')
+        jobs.start(job_id)
+        try:
+            # Read the drive containing the desktop account's home directory.
+            usage = shutil.disk_usage(Path.home().anchor)
+            if usage.total <= 0 or not 0 <= usage.free <= usage.total:
+                raise ValueError('Invalid disk capacity.')
+        except (OSError, ValueError):
+            error = 'Could not verify disk capacity.'
+            if jobs.finish(job_id, error=error).state == 'CANCELLED':
+                raise Stopped('Phone task cancelled.') from None
+            raise RuntimeError(error) from None
+        gib = 1024 ** 3
+        result = f'{usage.free / gib:.2f} GiB free of {usage.total / gib:.2f} GiB.'
+        if jobs.finish(job_id, result=result).state == 'CANCELLED':
+            raise Stopped('Phone task cancelled.') from None
+        return result
 
     def reject_job(self):
         def operation():
             job = self._selected_job()
             if not self.confirm(Action('reject_bridge_job', job.id, job.title)):
                 return
-            self.bridge.jobs.cancel(job.id)
+            self.bridge.jobs.reject(job.id, 'The desktop owner rejected this task.')
             self.refresh()
             return 'Job rejected.'
         self.notify(operation)

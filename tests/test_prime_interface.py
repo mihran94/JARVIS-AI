@@ -14,7 +14,7 @@ import pytest
 from PySide6.QtWidgets import QApplication, QFrame, QLabel, QPushButton
 
 from desktop.app import Window
-from desktop.prime_ui import PRIME_BUILD, PrimeBubble, PrimeChat, PrimePalette, PrimeShell
+from desktop.prime_ui import PrimeBubble, PrimeChat, PrimePalette, PrimeShell
 
 
 def make_window(tmp_path):
@@ -63,13 +63,39 @@ def test_resume_stays_inside_the_assistant_and_provider_is_visible(tmp_path):
         window.close()
 
 
-def test_the_build_is_shown_so_the_owner_knows_which_build(tmp_path):
+def test_the_build_is_shown_so_the_owner_knows_which_build(tmp_path, monkeypatch):
+    monkeypatch.setenv('JARVIS_BUILD_COMMIT', 'abc123456')
     app, window = make_window(tmp_path)
     try:
         labels = [label.text() for label in window.prime_shell.findChildren(QLabel)]
-        assert any(PRIME_BUILD in text for text in labels), labels
+        assert 'Revision abc1234' in labels
     finally:
         window.close()
+
+
+def test_source_revision_resolves_in_a_git_worktree(tmp_path, monkeypatch):
+    import shutil
+    import subprocess
+
+    import desktop.prime_ui as ui
+
+    if shutil.which('git') is None:
+        pytest.skip('Git is required to verify checkout revision detection')
+    original = tmp_path / 'original'
+    original.mkdir()
+    worktree = tmp_path / 'worktree'
+    subprocess.run(['git', 'init', str(original)], check=True, capture_output=True)
+
+    def git(*args):
+        return subprocess.check_output(['git', '-C', str(original), *args], text=True).strip()
+
+    git('-c', 'user.name=Test', '-c', 'user.email=test@example.com',
+        'commit', '--allow-empty', '-m', 'Initial commit')
+    git('pack-refs', '--all')
+    git('worktree', 'add', '--detach', str(worktree), 'HEAD')
+    monkeypatch.delenv('JARVIS_BUILD_COMMIT', raising=False)
+    monkeypatch.setattr(ui, '__file__', str(worktree / 'desktop' / 'prime_ui.py'))
+    assert ui.build_commit() == git('rev-parse', 'HEAD')[:7]
 
 
 def test_the_rail_has_the_destinations(tmp_path):

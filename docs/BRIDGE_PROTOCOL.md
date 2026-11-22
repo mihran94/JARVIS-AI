@@ -113,16 +113,26 @@ The status object is snake case: `peer_id`, `state`, `hostname`, `platform`,
 `unknown`, `online`, `offline`, `degraded`, `pairing_required`.
 
 A job record is snake case too: `id`, `kind`, `title`, `state`, `progress`,
-`created_at`, `updated_at`, `logs`, `outputs`, `error`, `requires_approval`.
+`created_at`, `updated_at`, `started_at`, `finished_at`, `logs`, `outputs`,
+`error`, `requires_approval`. Timestamps are epoch milliseconds. Start and
+finish are null until those events occur.
 `kind` and `state` are upper case. The kinds are `PYTHON_PROJECT`,
 `AFTER_EFFECTS_RENDER`, `CODE_REVIEW`, `DOCUMENT_ACCESS`, `WORKFLOW`, `CUSTOM`.
 The states are `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED`,
 `REJECTED`.
 
-A submitted job is never executed by the bridge. It is recorded as `QUEUED`,
-and when the request asked for approval it stays `QUEUED` until the owner
-approves it in the desktop interface. That keeps the existing one-use,
-per-action confirmation boundary in force for remote requests as well.
+A submitted job stays `QUEUED` until the desktop owner acts. The one-use
+desktop approval applies even if a client sends `requireApproval: false`.
+Only the requesting phone can list, fetch, or cancel its jobs. The desktop
+owner can review all jobs. Job records are held in memory.
+
+To request a disk capacity check, send a `CUSTOM` job with the string
+`{"action":"check_disk_space"}` as its payload (the Action field on iPhone).
+In **Phone Remote → Job approvals**, select the job and approve sharing the
+capacity of the desktop account's profile drive. The execution records
+`RUNNING` before querying the operating system, then reports the verified
+capacity in `outputs` or the failure in `error`. A cancelled job suppresses
+later output. Other job kinds and custom payloads have no desktop executor.
 
 ## Chat
 

@@ -21,7 +21,7 @@ mkdir "%JARVIS_CHECK_HOME%" >nul 2>&1
 if not exist "%JARVIS_CHECK_HOME%" goto failed
 set "LOCALAPPDATA=%JARVIS_CHECK_HOME%"
 set "QT_QPA_PLATFORM=offscreen"
-"%PY%" main.py --smoke-test
+"%PY%" scripts\launch.py --smoke-test
 if errorlevel 1 goto failed
 echo.
 echo [3/3] Checking for local pytest installation...
