@@ -13,6 +13,25 @@ class GUIThreadInfo(ctypes.Structure):
     ] + [('rcCaret', wintypes.RECT)]
 
 
+def foreground_process():
+    """Get the native process ID of the visible foreground window."""
+    user32 = ctypes.windll.user32
+    user32.GetForegroundWindow.argtypes = []
+    user32.GetForegroundWindow.restype = ctypes.c_void_p
+    user32.IsWindowVisible.argtypes = [ctypes.c_void_p]
+    user32.IsWindowVisible.restype = ctypes.c_int
+    user32.GetWindowThreadProcessId.argtypes = [
+        ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)]
+    user32.GetWindowThreadProcessId.restype = ctypes.c_uint32
+    handle = user32.GetForegroundWindow()
+    if not handle or not user32.IsWindowVisible(handle):
+        return None
+    pid = ctypes.c_uint32()
+    if user32.GetWindowThreadProcessId(handle, ctypes.byref(pid)) and pid.value:
+        return pid.value
+    return None
+
+
 def focused_editor():
     user = ctypes.WinDLL('user32', use_last_error=True)
     user.GetForegroundWindow.restype = wintypes.HWND

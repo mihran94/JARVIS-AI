@@ -205,3 +205,64 @@ def test_the_page_shows_the_owner_what_the_boundary_has_done(tmp_path):
         window.close()
         window.deleteLater()
         app.processEvents()
+
+
+
+def test_settings_control_shortcut_opens_the_existing_chat_panel(tmp_path):
+    from PySide6.QtWidgets import QPushButton
+    from desktop.app import Window
+
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
+    try:
+        window.open_section('Settings & Safety')
+        settings = window.pages.currentWidget()
+        button = next(button for button in settings.findChildren(QPushButton)
+                      if button.text() == 'PC Control')
+        button.click()
+        assert window.pages.currentWidget() is window.prime_chat
+        assert window.prime_chat.task_area.currentIndex() == window.prime_chat.task_panels['PC Control']
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_open_file_and_folder_use_distinct_pickers_and_require_approval(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QPushButton
+    from desktop.app import Window
+
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
+    file_path = tmp_path / 'example.txt'
+    file_path.write_text('example', encoding='utf-8')
+    opened, approvals = [], []
+    monkeypatch.setattr('desktop.app.QFileDialog.getOpenFileName', lambda *_: (str(file_path), ''))
+    monkeypatch.setattr('desktop.app.QFileDialog.getExistingDirectory', lambda *_: str(tmp_path))
+    monkeypatch.setattr('desktop.app.QMessageBox.warning', lambda *_: None)
+    monkeypatch.setattr('desktop.app.open_path', lambda path: opened.append(path) or 'Opened')
+    window.confirm = lambda action: approvals.append(action) or action.target == str(tmp_path)
+    try:
+        window.open_section('PC Control')
+        panel = window.prime_chat.task_area.currentWidget()
+        buttons = {button.text(): button for button in panel.findChildren(QPushButton)}
+        buttons['Open file…'].click()
+        buttons['Open folder…'].click()
+        assert approvals == [Action('open_path', str(file_path)), Action('open_path', str(tmp_path))]
+        assert opened == [str(tmp_path)]
+        assert {row['status'] for row in window.store.tasks()} == {'denied', 'completed'}
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_camera_preview_stops_before_device_access_if_owner_declines():
+    from types import SimpleNamespace
+    from desktop.camera_reader import open_camera_reader
+
+    requested = []
+    window = SimpleNamespace(policy=Policy(),
+                             confirm=lambda action: requested.append(action) or False)
+    assert open_camera_reader(window) is None
+    assert requested == [Action('Start camera preview', 'Selected local camera')]

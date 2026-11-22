@@ -449,8 +449,9 @@ def test_the_video_editor_page_stays_readable_at_narrow_desktop_size(tmp_path, m
         app.processEvents()
         win.open_section('Video Editor')
         app.processEvents()
-        page = win.pages.currentWidget()
-        assert page.horizontalScrollBar().maximum() == 0
+        assert win.pages.currentWidget() is win.prime_chat
+        workspace = win.prime_chat.task_area.currentWidget()
+        assert workspace.horizontalScrollBar().maximum() == 0
     finally:
         win.close()
         win.deleteLater()

@@ -79,8 +79,9 @@ def test_the_chat_page_offers_the_research_window(tmp_path):
     app = QApplication.instance() or QApplication([])
     window = Window(tmp_path)
     try:
-        assert window.research_button.text() == 'Research a page'
-        dialog = window.open_research_window()
+        assert window.research_button.text() == 'Read page'
+        window.research_button.click()
+        dialog = window.research_dialog
         assert dialog is not None
         assert dialog.windowTitle() == 'JARVIS research'
         dialog.close()

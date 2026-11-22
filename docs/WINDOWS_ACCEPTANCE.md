@@ -7,7 +7,7 @@ Run on non-administrator Windows 10 and Windows 11 with Python 3.12 x64.
 3. Save a provider key. Restart the app. Verify it remains available; inspect Windows Credential Manager for JARVIS-AI-0.1. Confirm no API key is present in config/database/source. Remove the key and confirm it no longer works.
 4. For each authorized provider, configure a model available to your account, Send a small message, verify streamed answer and task status. Repeat with an invalid key and confirm sanitized error, then restore the valid key.
 5. During streaming click STOP. Confirm no further text is accepted, task ends cancelled, new actions are blocked. Resume and confirm old output does not reappear.
-6. Decline Notepad launch; confirm no new app. Approve it; confirm app window opens. Repeat Calculator. Missing apps must report failure, not success.
+6. From the chat, decline a Notepad launch and confirm no new window. Approve it and inspect Activity. The entry should show `Verified` only when the new foreground window belongs to the dispatched process. Repeat with Calculator. Windows can hand off to another process or reuse an open window. In those cases expect `Unverified`. Type `/cancel` during a pending check and confirm that it stops the check without closing an already opened app.
 7. Save a workspace Python file twice; check current file and prior-content backup. Try ../escape.py, C:/outside.py and a Windows junction outside the workspace; all must be blocked.
 8. Close with unsaved edits; decline discard and verify editor remains. Accept discard and verify exit. Close during streaming and verify safe exit after cancellation.
 9. Restart after a forced test crash with an in-progress task; confirm interrupted status.

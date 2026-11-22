@@ -13,9 +13,9 @@ def test_chat_and_phone_stay_readable_at_narrow_desktop_size(tmp_path):
         window.resize(680, 510)
         window.show()
         app.processEvents()
-        chat = window.pages.currentWidget()
+        chat = window.prime_chat.conversation
         assert chat.horizontalScrollBar().maximum() == 0
-        assert window.transcript.height() >= 150
+        assert window.prime_chat.states.height() >= 150
         assert window.send_button.isVisible()
         assert not window.backup_provider.isVisible()
         # Advanced chat controls are deliberately accessible from Settings,
@@ -23,6 +23,10 @@ def test_chat_and_phone_stay_readable_at_narrow_desktop_size(tmp_path):
         window.open_section("Settings & Safety")
         app.processEvents()
         assert window.backup_provider.isVisible()
+        assert window.pages.currentWidget().horizontalScrollBar().maximum() == 0
+        window.open_section("PC Control")
+        app.processEvents()
+        assert window.prime_chat.task_area.currentWidget().horizontalScrollBar().maximum() == 0
         window.open_section("JARVIS Chat")
         app.processEvents()
         assert not window.backup_provider.isVisible()

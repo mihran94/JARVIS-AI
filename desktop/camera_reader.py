@@ -7,14 +7,18 @@ from PySide6.QtWidgets import (
     QComboBox, QDialog, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QVBoxLayout,
 )
 
-from security.policy import Stopped
+from security.policy import Action, Stopped
 
 
 def open_camera_reader(window):
+    ticket = window.policy.ticket()
+    if not window.confirm(Action('Start camera preview', 'Selected local camera')):
+        return
+    window.policy.check(ticket)
+
     from PySide6.QtMultimedia import QCamera, QMediaCaptureSession, QMediaDevices
     from PySide6.QtMultimediaWidgets import QVideoWidget
 
-    ticket = window.policy.ticket()
     executable = which("tesseract")
     devices = QMediaDevices.videoInputs()
     if not devices:

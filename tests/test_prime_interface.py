@@ -174,10 +174,31 @@ def test_the_assistant_steps_aside_for_the_conversation(tmp_path):
     app, window = make_window(tmp_path)
     try:
         chat = window.prime_chat
+        mark = window.prime_shell.mark
         chat.render([])
         assert chat.states.currentIndex() == 0
+        assert chat.assistant.orb.isVisibleTo(window)
+        assert chat.assistant.orb._timer.isActive()
+        assert mark.isHidden()
+
         chat.render([{'role': 'user', 'content': 'hello'}])
         assert chat.states.currentIndex() == 1
+        assert mark.isVisibleTo(window)
+        assert not chat.assistant.orb._timer.isActive()
+
+        chat.render([])
+        window.open_section('PC Control')
+        assert mark.isVisibleTo(window)
+        assert not chat.assistant.orb.isVisibleTo(window)
+        window.open_section('Settings & Safety')
+        assert mark.isVisibleTo(window)
+
+        window.open_section('JARVIS Chat')
+        assert mark.isHidden()
+        assert chat.assistant.orb.isVisibleTo(window)
+        window.store.set('omega:reduced', True)
+        window.refresh_prime_state()
+        assert not chat.assistant.orb._timer.isActive()
     finally:
         window.close()
 

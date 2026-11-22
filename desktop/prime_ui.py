@@ -42,7 +42,7 @@ from PySide6.QtCore import (
     QEasingCurve, QPoint, QPointF, QPropertyAnimation, QRectF, QSize, Qt, QTimer, Signal,
 )
 from PySide6.QtGui import (
-    QBrush, QColor, QFont, QFontMetrics, QLinearGradient, QPainter, QPainterPath,
+    QBrush, QColor, QFontMetrics, QLinearGradient, QPainter, QPainterPath,
     QPen, QRadialGradient,
 )
 from PySide6.QtWidgets import (
@@ -170,13 +170,29 @@ class PrimeOrb(QWidget):
         self.palette_ = palette
         self.state = 'idle'
         self._phase = 0.0
-        self._target = 1.0
+        self._motion = True
         self.setMinimumSize(64, 64)
-        self.setAccessibleName('JARVIS')
+        self.setAccessibleName('JARVIS M hologram')
         self._timer = QTimer(self)
         self._timer.setInterval(33)
         self._timer.timeout.connect(self._tick)
-        self._timer.start()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._motion:
+            self._timer.start()
+
+    def hideEvent(self, event):
+        self._timer.stop()
+        super().hideEvent(event)
+
+    def set_motion(self, enabled):
+        self._motion = enabled
+        if enabled and self.isVisible():
+            if not self._timer.isActive():
+                self._timer.start()
+        else:
+            self._timer.stop()
 
     def set_state(self, state: str):
         """idle, listening, working or error."""
@@ -192,8 +208,8 @@ class PrimeOrb(QWidget):
         palette = self.palette_
         if self.state in ('listening', 'speaking'):
             return palette.good, palette.accent
-        if self.state == 'working':
-            return palette.accent, palette.accent_deep
+        if self.state == 'approval':
+            return palette.warn, palette.warn.darker(160)
         if self.state in ('error', 'stopped'):
             return palette.danger, palette.danger
         return palette.accent, palette.accent_deep
@@ -217,37 +233,42 @@ class PrimeOrb(QWidget):
         painter.setBrush(Qt.BrushStyle.NoBrush)
         ring = radius * 0.70
         rect = QRectF(centre.x() - ring, centre.y() - ring, ring * 2, ring * 2)
-        # Three arcs, each a third of the circle apart, each turning at
-        # its own speed. The circle is never broken open on one side.
+        # QPainter measures arc angles in sixteenths of a degree.
+        heading = math.degrees(self._phase)
         for index in range(3):
-            span = 78 + index * 18
-            offset = self._phase * (1 if index % 2 == 0 else -1) + index * 2.094
-            pen = QPen(_alpha(bright.name(), 215 if index == 0 else 120),
-                       max(1.4, side * 0.017))
+            offset = heading + index * 120
+            pen = QPen(_alpha(bright.name(), 215 - index * 34), max(1.2, side * 0.013))
             pen.setCapStyle(Qt.PenCapStyle.RoundCap)
             painter.setPen(pen)
-            painter.drawArc(rect, int(math.degrees(offset)) % 360, int(span))
-            painter.drawArc(rect, (int(math.degrees(offset)) + 180) % 360, int(span))
+            painter.drawArc(rect, round(offset * 16), 72 * 16)
 
-        breathing = 1.0 + 0.06 * math.sin(self._phase * 1.6)
-        core = radius * 0.30 * breathing
-        core_glow = QRadialGradient(centre, core)
-        core_glow.setColorAt(0.0, QColor(255, 255, 255, 235))
-        core_glow.setColorAt(0.35, _alpha(bright.name(), 220))
-        core_glow.setColorAt(1.0, _alpha(deep.name(), 60))
-        painter.setBrush(QBrush(core_glow))
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawEllipse(centre, core, core)
+        painter.setPen(QPen(_alpha(bright.name(), 72), max(1, side * 0.006)))
+        painter.drawEllipse(centre, radius * 0.81, radius * 0.81)
+        breathing = 1.0 + 0.04 * math.sin(self._phase)
+        size = radius * 0.94 * breathing
 
-        font = QFont(self.font())
-        font.setPointSizeF(max(6.5, side * 0.068))
-        font.setBold(True)
-        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, max(0.4, side * 0.004))
-        painter.setFont(font)
-        painter.setPen(QPen(QColor('#04121a')))
-        painter.drawText(QRectF(centre.x() - core * 1.6, centre.y() - core * 0.44,
-                                core * 3.2, core * 0.88),
-                         int(Qt.AlignmentFlag.AlignCenter), 'JARVIS')
+        painter.translate(centre)
+        painter.scale(size, size)
+        mark = QPainterPath()
+        mark.moveTo(-0.5, 0.38)
+        for x, y in ((-0.5, -0.38), (-0.30, -0.38), (0, -0.04),
+                     (0.30, -0.38), (0.5, -0.38), (0.5, 0.38),
+                     (0.31, 0.38), (0.31, -0.11), (0, 0.23),
+                     (-0.31, -0.11), (-0.31, 0.38)):
+            mark.lineTo(x, y)
+        mark.closeSubpath()
+
+        painter.fillPath(mark.translated(0.025, 0.065), deep.darker(180))
+        silver = QLinearGradient(0, -0.40, 0, 0.42)
+        silver.setColorAt(0, QColor('#f5fbff'))
+        silver.setColorAt(0.42, bright.lighter(135))
+        silver.setColorAt(0.49, deep)
+        silver.setColorAt(1, bright.lighter(150))
+        painter.setBrush(QBrush(silver))
+        edge = QPen(bright)
+        edge.setWidthF(0.025)
+        painter.setPen(edge)
+        painter.drawPath(mark)
 
 
 class PrimeBubble(QFrame):
@@ -429,6 +450,7 @@ class PrimeAssistant(QWidget):
         layout.setSpacing(12)
         layout.addStretch(1)
         self.orb = PrimeOrb(palette)
+        self.orb.set_motion(not window.store.get('omega:reduced', False))
         self.orb.setFixedSize(176, 176)
         row = QHBoxLayout()
         row.addStretch(1)
@@ -456,7 +478,7 @@ class PrimeAssistant(QWidget):
         self.orb.update()
 
     def set_busy(self, busy: bool):
-        """The conversation is empty or it is not."""
+        """Give an open chat tool the space used by the welcome view."""
         self.orb.setVisible(not busy)
         self.title.setVisible(not busy)
         self.hint.setVisible(not busy)
@@ -619,6 +641,8 @@ class PrimeChat(QWidget):
             self.task_area.setCurrentIndex(self.task_panels[name])
         self.task_area.setVisible(active)
         self.dismiss_task.setVisible(active)
+        self.assistant.set_busy(active)
+        self.window_ref.prime_shell.refresh_mark()
 
     def refresh_theme(self):
         self.assistant.refresh_theme()
@@ -634,8 +658,10 @@ class PrimeChat(QWidget):
         """
         self.conversation.render(messages)
         self.states.setCurrentIndex(0 if not messages else 1)
+        self.window_ref.prime_shell.refresh_mark()
 
     def set_state(self, state: str):
+        self.assistant.orb.set_motion(not self.window_ref.store.get('omega:reduced', False))
         self.assistant.set_state(state)
 
 
@@ -670,6 +696,15 @@ class PrimeShell(QWidget):
         self.activity_button.toggled.connect(self.activity.setVisible)
         middle.addWidget(self.activity)
         outer.addLayout(middle, 1)
+        window.pages.currentChanged.connect(self.refresh_mark)
+
+    def refresh_mark(self, _index=None):
+        chat = getattr(self.window_ref, 'prime_chat', None)
+        if chat is not None:
+            hero = (self.window_ref.pages.currentWidget() is chat
+                    and chat.states.currentWidget() is chat.assistant
+                    and chat.task_area.isHidden())
+            self.mark.setVisible(not hero)
 
     # -- the top bar ---------------------------------------------------
 
@@ -690,6 +725,11 @@ class PrimeShell(QWidget):
 
         mark = PrimeOrb(palette)
         mark.setFixedSize(30, 30)
+        mark.set_motion(False)
+        policy = mark.sizePolicy()
+        policy.setRetainSizeWhenHidden(True)
+        mark.setSizePolicy(policy)
+        mark.hide()
         layout.addWidget(mark)
         self.mark = mark
 
