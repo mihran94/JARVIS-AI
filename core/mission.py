@@ -291,6 +291,11 @@ class AgentRuntime:
             {'role': 'user', 'content': goal},
         ]
         deadline = time.monotonic() + self.budget_seconds
+        def checkpoint():
+            check()
+            if time.monotonic() > deadline:
+                raise MissionError('The mission reached its time limit.')
+
         errors = 0
 
         for step in range(1, self.max_steps + 1):
@@ -306,6 +311,9 @@ class AgentRuntime:
 
             try:
                 raw = self.planner(messages)
+                checkpoint()
+            except MissionError as error:
+                return self._fail(mission, 'Mission stopped', str(error))
             except Stopped:
                 return self._stop(mission, 'Mission cancelled',
                                   'The mission was cancelled before the next step.')
@@ -359,7 +367,7 @@ class AgentRuntime:
 
             try:
                 if tool.read_only:
-                    result = self._call(tool, arguments, check)
+                    result = self._call(tool, arguments, checkpoint)
                 else:
                     if confirm is None:
                         # A tool that changes something is never run without a
@@ -373,7 +381,9 @@ class AgentRuntime:
                                f'{tool.name}: {summary}', step)
                     result = self.gateway.run(
                         Action('mission_tool', summary), confirm,
-                        lambda: self._call(tool, arguments, check))
+                        lambda: self._call(tool, arguments, checkpoint))
+            except MissionError as error:
+                return self._fail(mission, 'Mission stopped', str(error))
             except Denied:
                 return self._fail(mission, 'The owner did not allow it',
                                   f'{tool.name} was not run.')
@@ -408,7 +418,7 @@ class AgentRuntime:
     def _call(self, tool, arguments, check):
         """Run one tool, with the emergency stop checked on both sides."""
         check()
-        result = tool.run(arguments)
+        result = tool.run(arguments, check) if tool.accepts_checkpoint else tool.run(arguments)
         check()
         return result
 
