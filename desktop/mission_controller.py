@@ -94,7 +94,10 @@ class MissionController(QObject):
                                                  str(error)))
             return
 
-        registry = build_registry(root=window.root, memory=window.memory_service)
+        from automation.windows import EDITOR_EXECUTABLES
+
+        editor_paths = {name: window.store.get('editor_path:' + name, '') for name in EDITOR_EXECUTABLES}
+        registry = build_registry(root=window.root, memory=window.memory_service, editor_paths=editor_paths)
         runtime = AgentRuntime(
             registry,
             window.gateway,

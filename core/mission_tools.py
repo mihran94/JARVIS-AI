@@ -271,13 +271,13 @@ def _research_fetch(arguments: dict) -> str:
     return head + text
 
 
-def _launch_app(arguments: dict) -> str:
+def _launch_app(arguments: dict, editors=None) -> str:
     """Launch an allowlisted app and verify its foreground process."""
-    from automation.windows import launch_app, launch_is_foreground
+    from automation.windows import launch_app, launch_editor, launch_is_foreground
 
     name = arguments['app']
     try:
-        request = launch_app(name)
+        request = launch_editor(name, editors[name]) if editors and name in editors else launch_app(name)
         # Windows may return from process creation before its window is ready.
         deadline = time.monotonic() + 1.0
         while True:
@@ -459,7 +459,7 @@ def _evaluate_expression(arguments: dict) -> str:
     return f'{expression} = {result}'
 
 
-def build_registry(*, root=None, memory=None) -> ToolRegistry:
+def build_registry(*, root=None, memory=None, editor_paths=None) -> ToolRegistry:
     """The standard catalogue of mission tools.
 
     `memory` is the owner's memory service. Without it, the two memory
@@ -507,15 +507,39 @@ def build_registry(*, root=None, memory=None) -> ToolRegistry:
         returns='The page title and its text.',
     ))
 
+    from automation.windows import APPS, EDITOR_EXECUTABLES, editor_executable, system_app_directory
+
+    editors = {}
+    for name in EDITOR_EXECUTABLES:
+        try:
+            editors[name] = editor_executable(name, (editor_paths or {}).get(name))
+        except (ValueError, OSError):
+            continue
+
+    def discover_apps(_arguments):
+        directory = system_app_directory()
+        available = [name for name, filename in APPS.items() if (directory / filename).is_file()]
+        available.extend(name for name, path in editors.items() if path.is_file())
+        return ', '.join(available) or 'No supported executables found.'
+
+    registry.register(Tool(
+        name='discover_apps',
+        description='Find supported Windows system apps and owner-configured creative editors.',
+        parameters={'type': 'object', 'properties': {}},
+        read_only=True,
+        run=discover_apps,
+        returns='Names of apps whose executable exists.',
+    ))
+
     registry.register(Tool(
         name='launch_app',
         description='Open an approved application on this PC.',
         parameters={'type': 'object', 'properties': {
-            'app': {'type': 'string', 'enum': ['Notepad', 'Calculator'],
+            'app': {'type': 'string', 'enum': list(APPS) + list(editors),
                     'description': 'The application to open.'}},
             'required': ['app']},
         read_only=False,
-        run=_launch_app,
+        run=lambda arguments: _launch_app(arguments, editors),
         returns='A verified Windows foreground process, or a verification error.',
     ))
 

@@ -44,7 +44,7 @@ def registry(root, memory):
 
 def test_the_catalogue_has_the_real_capabilities(registry):
     assert set(registry.names()) == {
-        'current_time', 'system_status', 'evaluate_expression', 'research_fetch',
+        'current_time', 'system_status', 'evaluate_expression', 'research_fetch', 'discover_apps',
         'launch_app', 'browser_draft', 'type_notepad', 'export_text', 'list_directory', 'read_text_file',
         'memory_search', 'memory_remember',
     }
@@ -52,7 +52,7 @@ def test_the_catalogue_has_the_real_capabilities(registry):
 
 def test_only_the_tools_that_change_something_need_approval(registry):
     assert set(registry.read_only_names()) == {
-        'current_time', 'system_status', 'evaluate_expression', 'research_fetch',
+        'current_time', 'system_status', 'evaluate_expression', 'research_fetch', 'discover_apps',
         'list_directory', 'read_text_file', 'memory_search',
     }
     assert registry.get('launch_app').read_only is False
@@ -303,3 +303,16 @@ def test_browser_draft_closes_session_when_cancelled(registry, monkeypatch):
         tool.run({'url': 'https://example.com', 'label': 'Draft', 'text': 'வணக்கம்'},
                  checkpoint)
     assert actions == ['open', 'closed']
+
+
+def test_discovery_only_exposes_existing_configured_editors(tmp_path, monkeypatch):
+    from automation import windows
+
+    photoshop = tmp_path / 'Photoshop.exe'
+    photoshop.touch()
+    (tmp_path / 'notepad.exe').touch()
+    monkeypatch.setattr(windows, 'system_app_directory', lambda: tmp_path)
+    registry = build_registry(editor_paths={'Photoshop': photoshop, 'CapCut': photoshop})
+    assert registry.get('discover_apps').run({}) == 'Notepad, Photoshop'
+    assert registry.get('launch_app').parameters['properties']['app']['enum'] == [
+        'Notepad', 'Calculator', 'Photoshop']
