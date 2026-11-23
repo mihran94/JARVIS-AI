@@ -45,7 +45,7 @@ def registry(root, memory):
 def test_the_catalogue_has_the_real_capabilities(registry):
     assert set(registry.names()) == {
         'current_time', 'system_status', 'evaluate_expression', 'research_fetch',
-        'launch_app', 'list_directory', 'read_text_file',
+        'launch_app', 'type_notepad', 'export_text', 'list_directory', 'read_text_file',
         'memory_search', 'memory_remember',
     }
 
@@ -256,3 +256,19 @@ def test_launch_requires_foreground_evidence(registry, monkeypatch, observed):
     else:
         with pytest.raises(ToolError, match='window could not be verified'):
             tool.run({'app': 'Notepad'})
+
+
+def test_export_writes_tamil_without_overwriting(registry, root):
+    tool = registry.get('export_text')
+    assert not tool.read_only
+    args = {'filename': 'jarvis-test.txt', 'text': 'வணக்கம்'}
+    assert 'verified' in tool.run(args)
+    assert (root / args['filename']).read_bytes() == args['text'].encode('utf-8')
+    with pytest.raises(ToolError, match='already exists'):
+        tool.run({**args, 'text': 'different'})
+    assert (root / args['filename']).read_text(encoding='utf-8') == args['text']
+
+
+def test_export_refuses_a_path_outside_mission_folder(registry):
+    with pytest.raises(ToolError, match='simple'):
+        registry.get('export_text').run({'filename': '../outside.txt', 'text': 'text'})
