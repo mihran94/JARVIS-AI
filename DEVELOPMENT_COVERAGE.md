@@ -44,7 +44,7 @@ scratch** to the specification in §9 and §10, rather than recovered. They are 
 |---|---|---|---|---|---|
 | One development copy, commits on a branch | `dev/jarvis-complete-implementation-20261123` from `c4d3533` | `git log` | 11 commits, history preserved | Done | PASS (history inspected) |
 | Push the branch, one draft PR against `main` | see §13 | GitHub | draft PR, `main` untouched | Done | PASS (SHA compared) |
-| Regression tests beside the code | `tests/test_windows_backup.py`, `test_history_backup_settings.py`, `test_mission_conversation.py`, `test_downloads.py`, `test_cybersecurity.py` | pytest | 5 new files | Done | PASS |
+| Regression tests beside the code | `tests/test_windows_backup.py`, `test_history_backup_settings.py`, `test_mission_conversation.py`, `test_downloads.py`, `test_cybersecurity.py`, `test_automation_uia.py` | pytest | 5 new files | Done | PASS |
 | Do not merge into `main` | no merge performed | — | `main` still at `c4d3533` | Done | PASS |
 | No trading features | none exist | — | — | Done | PASS (tree scan) |
 
@@ -123,12 +123,12 @@ scratch** to the specification in §9 and §10, rather than recovered. They are 
 | Preserve the owner-reported ability to open Notepad | `automation/windows.py` `launch_app()` | mission tool `launch_app` | Notepad opens | Done | PASS (unit) / NOT RUN (Windows) |
 | Installed-app discovery | PR #88: `automation/windows.py` `system_app_directory()`, `launch_editor()` | mission tool `launch_app` | — | Done | NOT RUN (Windows) |
 | Process/window identification | `automation/win_controls.py` `foreground_process()`, `automation/inspection.py` | — | — | Done | PASS (unit) / NOT RUN (Windows) |
-| UI Automation, accessible controls, menus, dialogs | **GAP** — there is no UI Automation adapter. `automation/win_controls.py` reads the focused edit control with `WM_GETTEXT`, which is enough to verify a typed result but cannot enumerate a menu or a dialog | — | — | **Not implemented** | — |
+| UI Automation, accessible controls, menus, dialogs | **NEW** `automation/uia.py` — reads the Windows accessibility tree through the .NET `UIAutomationClient` assembly and turns it into plain elements that can be found by the name the owner sees, by type or by automation id. `unexpected_dialogs()` finds a dialog that was not expected | mission tool `inspect_window` | the controls of a window are listed | Done (written) | PASS (the model and the dialog rule) / NOT RUN (the .NET binding, which needs Windows) |
 | Keyboard, mouse, scrolling, shortcuts | **PARTIAL** — `automation/desktop_tasks.py` sends Unicode keystrokes (`KEYEVENTF_UNICODE`) into a validated target. There is no mouse, no scrolling and no shortcut layer | `parse_desktop_task()` | — | Partial | PASS (unit) / NOT RUN (Windows) |
 | Approved screen observation | **GAP** — `computer_vision/` exists but the Windows screen-capture path for the assistant is not wired to a mission tool | — | — | **Not implemented** | — |
-| Switching between applications | **GAP** — no `SetForegroundWindow` path exists | — | — | **Not implemented** | — |
-| Validate the intended window and process before every focus-dependent input | `automation/desktop_tasks.py` re-reads the foreground editor and refuses when the focus moved | mission tool `type_notepad` | — | Done | PASS (unit) / NOT RUN (Windows) |
-| Stop safely if focus changes, the target is ambiguous or a dialog appears | `automation/win_controls.py` refuses a `#32770` dialog class and a focus that is not inside the foreground window | — | — | Done | PASS (unit) / NOT RUN (Windows) |
+| Switching between applications | `automation/input.py` `activate_window()` brings one forward, and refuses when the process has more than one visible window, because the target would be ambiguous | — | — | Done (written) | PASS (the refusal) / NOT RUN (Windows) |
+| Validate the intended window and process before every focus-dependent input | `automation/input.py` `validate_focus()` — the process in front is checked before every action, and the action stops when it moved. `automation/desktop_tasks.py` does the same for the editor it types into | `automation/input.py` | — | Done | PASS (unit) / NOT RUN (Windows) |
+| Stop safely if focus changes, the target is ambiguous or a dialog appears | `automation/input.py` raises `FocusLost`, `AmbiguousTarget` and `UnexpectedDialog`, and sends nothing. `automation/win_controls.py` refuses a `#32770` dialog class and a focus that is not inside the foreground window | — | — | Done | PASS (unit) / NOT RUN (Windows) |
 | Approved open, edit, save and export | PR #88: mission tool `export_text` writes and reads back; `save` of an open document is **not** implemented | mission tools | — | Partial | PASS (unit) / NOT RUN (Windows) |
 | Verify the result using application state or file contents | PR #88: `VerifiedEdit` (the editor's own contents) and `export_text` (the file read back) | — | — | Done | PASS |
 | A click, keystroke or launch is evidence only for that action | PR #88: `launch_app` says "Windows confirmed its foreground process"; `type_notepad` says the editor returned the expected text | — | — | Done | PASS |
@@ -244,7 +244,7 @@ scratch** to the specification in §9 and §10, rather than recovered. They are 
 
 | Requirement | Implementation | Observable result | Impl. | Verif. |
 |---|---|---|---|---|
-| Regression tests for meaningful changes | 5 new test files, **71 new tests**, plus the tests carried forward with PR #88. The whole suite in this revision: **1354 passed, 10 skipped, 0 failed** | — | Done | PASS |
+| Regression tests for meaningful changes | 6 new test files, **99 new tests**, plus the tests carried forward with PR #88. The whole suite in this revision: **1382 passed, 10 skipped, 0 failed** | — | Done | PASS |
 | Preserve the original 62 acceptance IDs | the acceptance source matrix is **not present** in this checkout, so the IDs could not be preserved verbatim. `docs/ACCEPTANCE_PROCEDURES.md` carries the **A–I** procedures from the instruction and names the existing test modules that cover each one | — | Partial | — |
 | Mark new unexecuted tests NOT RUN | every hardware row above says NOT RUN | — | Done | — |
 | Historical evidence recorded separately | the counts below are from this revision; the historical counts are in `docs/TEST_RESULTS.md` and the changelog | — | Done | — |
@@ -269,11 +269,11 @@ scratch** to the specification in §9 and §10, rather than recovered. They are 
 These are the things that are **not** implemented. They are listed so the report cannot be read as
 complete when it is not.
 
-1. **UI Automation adapter** — no enumeration of menus, dialogs or accessible controls.
-   `automation/win_controls.py` verifies a focused edit control only.
-2. **Mouse, scrolling, shortcut and window-switching layer** — keyboard input exists
-   (`automation/desktop_tasks.py`); the rest does not.
-3. **Approved screen observation** — `computer_vision/` exists but is not wired to a mission tool.
+1. **The .NET half of the UI Automation adapter and the Windows input calls** are written but
+   have never run, because there was no Windows machine. The parts that decide *what* is looked
+   for and *when* an action is refused are covered by the suite; the parts that talk to Windows are
+   not.
+2. **Approved screen observation** — `computer_vision/` exists but is not wired to a mission tool.
 4. **Calculator adapter** — the Calculator can be launched but its result cannot be read, so the
    Calculator→Notepad workflow cannot be completed.
 5. **Saving an open document** — the typed text is verified in the editor; the file is not saved

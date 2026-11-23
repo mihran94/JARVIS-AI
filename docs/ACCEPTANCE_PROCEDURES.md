@@ -71,6 +71,30 @@ Windows machine was available. **Saving the file from the editor is not implemen
 mission can write a text file directly (the `export_text` tool), but it cannot press Ctrl+S in
 Notepad for you.
 
+## A2. UI Automation: reading a window, and the wrong-window refusal
+
+**What it proves.** That JARVIS can read the controls of a window, and that it refuses to act on
+the wrong window.
+
+1. Open Notepad and leave it in front.
+2. In the composer, turn on **Work on this** and ask: `what buttons does the window in front have?`
+   Approve the read.
+3. The mission should answer with the controls the window published — the menu items, the edit
+   field, the buttons — and not with a guess.
+4. Now start a second action that needs the focus, and **click on another window** before it
+   runs.
+
+**A pass is:** the controls are the real ones, and the second action **stops** and says that the
+focus moved. Nothing is sent to the other window.
+
+**A fail is:** the controls are invented, or the action goes to the window that was in front when
+the mission started.
+
+**Status: NOT RUN.** The control model, the search, the dialog rule and the focus refusal are
+covered by `tests/test_automation_uia.py`. The .NET binding that reads the real tree, and the
+Windows input calls themselves, have never run: there was no Windows machine. `setup.cmd` installs
+`pythonnet`, which the adapter needs.
+
 ## B. Calculator to Notepad, multi-application
 
 **What it proves.** That JARVIS can work across two applications and that the value it carried

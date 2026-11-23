@@ -459,6 +459,36 @@ def _evaluate_expression(arguments: dict) -> str:
     return f'{expression} = {result}'
 
 
+
+def _inspect_window(arguments: dict) -> str:
+    """Read the controls of a window, without touching it."""
+    from automation.uia import UiaUnavailable, describe, read_tree
+
+    process_id = arguments.get('process_id', 0)
+    title = arguments.get('title', '')
+    try:
+        tree = read_tree(process_id=int(process_id or 0), title=str(title or ''))
+    except UiaUnavailable as error:
+        raise ToolError(str(error)) from None
+    except ValueError as error:
+        raise ToolError(str(error)) from None
+    except Exception as error:
+        raise ToolError(f'The window could not be read: {error}') from None
+    return describe(tree)[:8000]
+
+
+def _activate_window(arguments: dict) -> str:
+    """Bring an application forward, after the owner allows it."""
+    from automation.input import InputRefused, activate_window
+
+    try:
+        return activate_window(int(arguments['process_id']))
+    except InputRefused as error:
+        raise ToolError(str(error)) from None
+    except (KeyError, TypeError, ValueError):
+        raise ToolError('Give the process id of the application to bring forward.') from None
+
+
 def build_registry(*, root=None, memory=None, editor_paths=None) -> ToolRegistry:
     """The standard catalogue of mission tools.
 
@@ -529,6 +559,32 @@ def build_registry(*, root=None, memory=None, editor_paths=None) -> ToolRegistry
         read_only=True,
         run=discover_apps,
         returns='Names of apps whose executable exists.',
+    ))
+
+    registry.register(Tool(
+        name='inspect_window',
+        description='Read the controls of a window: its buttons, fields and menus.',
+        parameters={'type': 'object', 'properties': {
+            'process_id': {'type': 'integer',
+                           'description': 'The process whose window is read.'},
+            'title': {'type': 'string',
+                      'description': 'The window title, when it is known.'}},
+            'required': []},
+        read_only=True,
+        run=_inspect_window,
+        returns='The controls the window published.',
+    ))
+
+    registry.register(Tool(
+        name='activate_window',
+        description='Bring an application forward, so the owner can work in it.',
+        parameters={'type': 'object', 'properties': {
+            'process_id': {'type': 'integer',
+                           'description': 'The process whose window comes forward.'}},
+            'required': ['process_id']},
+        read_only=False,
+        run=_activate_window,
+        returns='What Windows did with the window.',
     ))
 
     registry.register(Tool(
