@@ -408,7 +408,7 @@ class AgentRuntime:
     def _call(self, tool, arguments, check):
         """Run one tool, with the emergency stop checked on both sides."""
         check()
-        result = tool.run(arguments)
+        result = tool.run(arguments, check) if tool.accepts_checkpoint else tool.run(arguments)
         check()
         return result
 
