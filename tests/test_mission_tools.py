@@ -239,3 +239,20 @@ def test_a_registry_without_memory_has_no_memory_tools(tmp_path):
     registry = build_registry(root=tmp_path)
     assert 'memory_search' not in registry.names()
     assert 'memory_remember' not in registry.names()
+
+
+@pytest.mark.parametrize('observed', [True, False])
+def test_launch_requires_foreground_evidence(registry, monkeypatch, observed):
+    from automation import windows
+
+    request = windows.LaunchRequest('Notepad', 123)
+    monkeypatch.setattr(windows, 'launch_app', lambda _: request)
+    monkeypatch.setattr(windows, 'launch_is_foreground', lambda result: result is request and observed)
+    ticks = iter([0.0, 1.0])
+    monkeypatch.setattr('core.mission_tools.time.monotonic', lambda: next(ticks))
+    tool = registry.get('launch_app')
+    if observed:
+        assert 'foreground process (PID 123)' in tool.run({'app': 'Notepad'})
+    else:
+        with pytest.raises(ToolError, match='window could not be verified'):
+            tool.run({'app': 'Notepad'})
