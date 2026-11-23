@@ -19,7 +19,8 @@ from dataclasses import replace
 
 from core.store import Store
 from core.conversation import (ASSISTANT_GUIDANCE, SUGGESTION_GUIDANCE,
-                               addressed_request, suggestion_argument)
+                               addressed_request, mission_argument,
+                               suggestion_argument)
 from desktop.conversation_plan import (ConversationPlan, Step, extract_suggested_plan,
                                        parse_plan as parse_conversation_plan)
 from desktop.browser_control import BrowserControl
@@ -1512,6 +1513,14 @@ class Window(QMainWindow):
             'This mode does not start task workflows.')
         self.suggestion_mode.toggled.connect(self.update_suggestion_mode)
         composer_actions.insertWidget(composer_actions.indexOf(self.send_button), self.suggestion_mode)
+        self.mission_mode = QPushButton('Work on this')
+        self.mission_mode.setCheckable(True)
+        self.mission_mode.setToolTip(
+            'Send this message as a mission. JARVIS plans it, picks a tool, asks '
+            'you before anything changes, and shows every step in Mission Control. '
+            'The answer comes back into this conversation.')
+        self.mission_mode.toggled.connect(self.update_mission_mode)
+        composer_actions.insertWidget(composer_actions.indexOf(self.send_button), self.mission_mode)
         return page
 
     def open_research_window(self):
@@ -4552,6 +4561,29 @@ class Window(QMainWindow):
         if self.close_when_done and self.coding_worker is None and self.test_worker is None:
             self.close()
 
+    def mission_answered(self, mission, failure=None):
+        """A mission that came from the conversation answers in it.
+
+        The answer is stored in the conversation so it survives a
+        restart, and the steps that produced it stay on the Mission
+        Control page. A mission that did not finish says so plainly and
+        does not pretend to have an answer.
+        """
+        if mission is None:
+            reply = ('The mission did not finish. '
+                     + (failure or 'See Mission Control for the steps that ran.'))
+        elif mission.status == 'completed' and mission.answer:
+            reply = mission.answer
+        else:
+            reply = ('The mission stopped: '
+                     + (mission.events[-1].detail if mission.events else 'no reason given')
+                     + '. The steps that ran are on the Mission Control page.')
+        self.store.message(self.session, 'assistant', reply)
+        self.render_chat()
+        self.show_hud_text(reply)
+        if self.read_replies.isChecked() and not self.policy.stopped:
+            self.voice_panel.speak_response(reply[:600])
+
     def mission_finished(self):
         """The mission stopped, so the window may close if it was waiting."""
         controller = getattr(self, 'mission_controller', None)
@@ -5088,6 +5120,31 @@ class Window(QMainWindow):
     def update_suggestion_mode(self, enabled):
         self.send_button.setText('Get suggestions' if enabled else 'Send')
 
+    def start_mission_from_chat(self, goal):
+        """Run a goal through the mission runtime, from the conversation.
+
+        The goal is kept in the conversation so the history shows what was
+        asked, and the answer comes back into the same conversation when
+        the mission finishes. The steps themselves are on the Mission
+        Control page, where the owner can watch them.
+        """
+        controller = getattr(self, 'mission_controller', None)
+        if controller is None:
+            self.show_local_system_reply(goal, 'The mission runtime is not available.')
+            return
+        self.store.message(self.session, 'user', goal)
+        self.render_chat()
+        controller.start(goal, from_chat=True)
+
+    def update_mission_mode(self, enabled):
+        """The composer says which of the two it will do."""
+        if enabled:
+            self.send_button.setText('Start the mission')
+        elif self.suggestion_mode.isChecked():
+            self.send_button.setText('Get suggestions')
+        else:
+            self.send_button.setText('Send')
+
     def send(self, *, allow_notes=True):
         if self.policy.stopped or self.worker is not None or not self.prompt.toPlainText().strip():
             return
@@ -5110,6 +5167,20 @@ class Window(QMainWindow):
             self.show_local_system_reply(text, 'Pending desktop requests cancelled. Already opened apps remain open.'
                                          if cancelled else 'No pending conversation plan. Use Emergency Stop to cancel other active work.')
             self.prompt.clear()
+            return
+        requested_mission = mission_argument(text)
+        if requested_mission is not None or self.mission_mode.isChecked():
+            goal = text if requested_mission is None else requested_mission
+            if not goal:
+                self.statusBar().showMessage(
+                    'Usage: /mission followed by the goal you want JARVIS to work on.',
+                    10000)
+                return
+            self.prompt.clear()
+            self.use_notes.setChecked(False)
+            self.files_share_once.setChecked(False)
+            self.backup_consent.setChecked(False)
+            self.start_mission_from_chat(goal)
             return
         requested_goal = suggestion_argument(text)
         if requested_goal is not None or self.suggestion_mode.isChecked():
