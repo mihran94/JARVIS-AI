@@ -44,15 +44,15 @@ def registry(root, memory):
 
 def test_the_catalogue_has_the_real_capabilities(registry):
     assert set(registry.names()) == {
-        'current_time', 'system_status', 'evaluate_expression', 'research_fetch',
-        'launch_app', 'list_directory', 'read_text_file',
+        'current_time', 'system_status', 'evaluate_expression', 'research_fetch', 'discover_apps',
+        'launch_app', 'browser_draft', 'type_notepad', 'export_text', 'list_directory', 'read_text_file',
         'memory_search', 'memory_remember',
     }
 
 
 def test_only_the_tools_that_change_something_need_approval(registry):
     assert set(registry.read_only_names()) == {
-        'current_time', 'system_status', 'evaluate_expression', 'research_fetch',
+        'current_time', 'system_status', 'evaluate_expression', 'research_fetch', 'discover_apps',
         'list_directory', 'read_text_file', 'memory_search',
     }
     assert registry.get('launch_app').read_only is False
@@ -239,3 +239,80 @@ def test_a_registry_without_memory_has_no_memory_tools(tmp_path):
     registry = build_registry(root=tmp_path)
     assert 'memory_search' not in registry.names()
     assert 'memory_remember' not in registry.names()
+
+
+@pytest.mark.parametrize('observed', [True, False])
+def test_launch_requires_foreground_evidence(registry, monkeypatch, observed):
+    from automation import windows
+
+    request = windows.LaunchRequest('Notepad', 123)
+    monkeypatch.setattr(windows, 'launch_app', lambda _: request)
+    monkeypatch.setattr(windows, 'launch_is_foreground', lambda result: result is request and observed)
+    ticks = iter([0.0, 1.0])
+    monkeypatch.setattr('core.mission_tools.time.monotonic', lambda: next(ticks))
+    tool = registry.get('launch_app')
+    if observed:
+        assert 'foreground process (PID 123)' in tool.run({'app': 'Notepad'})
+    else:
+        with pytest.raises(ToolError, match='window could not be verified'):
+            tool.run({'app': 'Notepad'})
+
+
+def test_export_writes_tamil_without_overwriting(registry, root):
+    tool = registry.get('export_text')
+    assert not tool.read_only
+    args = {'filename': 'jarvis-test.txt', 'text': 'வணக்கம்'}
+    assert 'verified' in tool.run(args)
+    assert (root / args['filename']).read_bytes() == args['text'].encode('utf-8')
+    with pytest.raises(ToolError, match='already exists'):
+        tool.run({**args, 'text': 'different'})
+    assert (root / args['filename']).read_text(encoding='utf-8') == args['text']
+
+
+def test_export_refuses_a_path_outside_mission_folder(registry):
+    with pytest.raises(ToolError, match='simple'):
+        registry.get('export_text').run({'filename': '../outside.txt', 'text': 'text'})
+
+
+def test_browser_draft_closes_session_when_cancelled(registry, monkeypatch):
+    from automation import browser
+    from security.policy import Stopped
+
+    actions = []
+
+    class Session:
+        def __init__(self, profile):
+            pass
+
+        async def perform(self, action, document, check):
+            check()
+            actions.append(action.verb)
+            return 'verified', 'Loaded', ('https://example.com', 1, 'digest')
+
+        async def close(self):
+            actions.append('closed')
+
+    def checkpoint():
+        if 'open' in actions:
+            raise Stopped('Cancelled by owner.')
+
+    monkeypatch.setattr(browser, 'BrowserSession', Session)
+    tool = registry.get('browser_draft')
+    assert not tool.read_only
+    with pytest.raises(Stopped):
+        tool.run({'url': 'https://example.com', 'label': 'Draft', 'text': 'வணக்கம்'},
+                 checkpoint)
+    assert actions == ['open', 'closed']
+
+
+def test_discovery_only_exposes_existing_configured_editors(tmp_path, monkeypatch):
+    from automation import windows
+
+    photoshop = tmp_path / 'Photoshop.exe'
+    photoshop.touch()
+    (tmp_path / 'notepad.exe').touch()
+    monkeypatch.setattr(windows, 'system_app_directory', lambda: tmp_path)
+    registry = build_registry(editor_paths={'Photoshop': photoshop, 'CapCut': photoshop})
+    assert registry.get('discover_apps').run({}) == 'Notepad, Photoshop'
+    assert registry.get('launch_app').parameters['properties']['app']['enum'] == [
+        'Notepad', 'Calculator', 'Photoshop']
