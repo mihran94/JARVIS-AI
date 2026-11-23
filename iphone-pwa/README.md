@@ -10,8 +10,8 @@ PC keeps the approval, and the phone asks.
 | --- | --- |
 | Pairing | Scan the pairing code the desktop shows, or paste it |
 | Status | Live state of the PC, with the CPU, memory and disk numbers |
-| Chat | Send a message, get the answer from the PC's provider, in Tamil or English |
-| Voice | Listen with the microphone, hear the answers |
+| Chat | Send a message, get the answer from the PC's provider, in Tamil, English or French |
+| Voice | Listen with the microphone, hear the answers, in Tamil, English or French |
 | Tasks | Send a task for the owner to approve, watch it, cancel it |
 | Memory | Read and write the memory the desktop allows to be synchronised |
 | Notifications | See what the desktop has waiting, mark it as seen |
@@ -21,6 +21,21 @@ The page never holds a provider key. It signs every request with the shared
 scheme in `remote/protocol.py` on the desktop and
 `core/windows/BridgeClient.kt` on the Android client, and the pinned vector
 is checked from both sides.
+
+## The certificate
+
+The desktop writes the SHA-256 fingerprint of its own certificate into the
+pairing code, in the `fp=` line. A browser cannot be told to trust one
+certificate, so the phone has to trust the certificate in the normal way:
+either the desktop uses a certificate from an authority the phone already
+trusts, or the phone installs that certificate by hand.
+
+The fingerprint is still worth checking by eye. When the desktop shows the
+pairing code, it also shows the fingerprint, so the two can be compared
+before the code is scanned.
+
+The Android client does not have that limitation: it pins the fingerprint and
+refuses any other certificate.
 
 ## Before serving it
 
@@ -52,7 +67,7 @@ authenticated control endpoint.
 
 On Windows:
 
-1. open the **Phone Remote** page,
+1. open the **Mobile Bridge** page,
 2. press **Pair this iPhone**,
 3. fill in the address the phone reaches the PC on, for example
    `https://pc.example.lan:8765`,

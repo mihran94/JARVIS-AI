@@ -307,6 +307,9 @@ class BridgePanel(QWidget):
         except (OSError, certificate.CertificateError) as error:
             self.fingerprint_label.setText('The certificate could not be read: ' + str(error))
 
+    def _allowed_peers(self):
+        return ('127.0.0.1', '::1') + self.allowed_peer_hosts()
+
     def allowed_peer_hosts(self):
         """The extra peer addresses the owner allowed, as a tuple."""
         raw = self.peer_hosts.text() if hasattr(self, 'peer_hosts') else ''
@@ -326,7 +329,7 @@ class BridgePanel(QWidget):
                 tls_cert=self.certificate.text().strip(),
                 tls_key=self.key.text().strip(),
                 allow_plaintext=self.plaintext.isChecked(),
-                allowed_hosts=('127.0.0.1', '::1') + peers,
+                allowed_hosts=self._allowed_peers(),
             )
             self.listener._config = config
             # The peer list lives on the bridge, so a request from an

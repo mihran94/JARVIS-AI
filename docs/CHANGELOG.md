@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — 22 November 2026
+- **JARVIS missions**: a supervised agent runtime. One owner goal becomes a short, visible sequence of real actions — the model proposes one action at a time, JARVIS checks it, the tool runs it, and the real result goes back to the model as an observation.
+- **Mission Control**, a new desktop page and dock entry, built as the Command Deck: the real readings of this computer on the left, the mission in the middle, the evidence and the answer on the right. The mission is painted as it runs — one rail, one marker per step, coloured by kind, with the newest step glowing. The counter says *Step 2 of 6* — the mission's step of at most six, and the same number before and after the mission. There is no percentage and no estimate, because neither is known.
+- Every reading on that page is real: the CPU and the memory are rings, the last readings are a line, and a reading that cannot be taken is drawn as unavailable rather than as a number. The saved-note count is the true count, not the size of one page.
+- **A fixed tool catalogue** (`core/mission_tools.py`): the clock, the real system readings, an arithmetic evaluator, one public HTTPS page reader, two readers limited to the mission folder, the owner's memory and the allowlisted application launcher. There is no shell tool, no arbitrary file write and no open network client.
+- **Every changing tool asks the owner.** Saving a memory and opening an application go through the existing one-use approval gateway and name the exact call. A read-only tool cannot change anything by construction. An emergency stop cancels a running mission, and a tool that changes something never runs when there is no way to ask.
+- **Bounded and honest**: at most six steps and three minutes. A tool result is the only evidence, a tool that failed is never counted as one, and a mission that ran out of steps says so instead of claiming the goal was reached.
+- Model text still has no execution privileges: it may only choose a tool from the catalogue, and prose is never parsed into a command.
+- The suite covers the loop, every refusal, the bounds and the interface. The mission has not yet been run against a live provider key on a physical Windows machine.
+
 ## Unreleased — 16 November 2026
 - The recommended model of every provider was refreshed against the live vendor documentation. OpenAI moves from the deprecated `gpt-4.1-mini` to `gpt-6-luna`, OpenRouter follows it to `openai/gpt-6-luna`, MiniMax moves from `MiniMax-M3` to `MiniMax-M3.1-Flash`, Claude moves from `claude-sonnet-4-5` to `claude-sonnet-5-5` and the local model moves from `llama3.2` to `qwen3:8b`. DeepSeek, Groq and Gemini keep the model they already had.
 - No request shape changed. The adapters still send text only, without tools, and every provider keeps its fixed endpoint, its own key and its own trust level. `gpt-6-luna` serves the Chat Completions endpoint that the desktop already uses.

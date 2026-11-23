@@ -9,6 +9,7 @@
 //     key=iphone-mihran-01
 //     secret=<one-time secret>
 //     expires=1764000000
+//     fp=<the SHA-256 of the server certificate>
 //
 // The secret is only ever held in memory. It is never written to storage and
 // it is never sent anywhere except to the bridge that the owner paired.
