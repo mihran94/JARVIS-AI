@@ -272,3 +272,34 @@ def test_export_writes_tamil_without_overwriting(registry, root):
 def test_export_refuses_a_path_outside_mission_folder(registry):
     with pytest.raises(ToolError, match='simple'):
         registry.get('export_text').run({'filename': '../outside.txt', 'text': 'text'})
+
+
+def test_browser_draft_closes_session_when_cancelled(registry, monkeypatch):
+    from automation import browser
+    from security.policy import Stopped
+
+    actions = []
+
+    class Session:
+        def __init__(self, profile):
+            pass
+
+        async def perform(self, action, document, check):
+            check()
+            actions.append(action.verb)
+            return 'verified', 'Loaded', ('https://example.com', 1, 'digest')
+
+        async def close(self):
+            actions.append('closed')
+
+    def checkpoint():
+        if 'open' in actions:
+            raise Stopped('Cancelled by owner.')
+
+    monkeypatch.setattr(browser, 'BrowserSession', Session)
+    tool = registry.get('browser_draft')
+    assert not tool.read_only
+    with pytest.raises(Stopped):
+        tool.run({'url': 'https://example.com', 'label': 'Draft', 'text': 'வணக்கம்'},
+                 checkpoint)
+    assert actions == ['open', 'closed']
