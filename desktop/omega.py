@@ -26,6 +26,7 @@ DESTINATIONS = {
     'Devices': ('Phone Remote', '◇'),
     'Memory': ('Memory', '◎'),
     'Mission': ('Mission Control', '◈'),
+    'Cybersecurity': ('Cybersecurity', '⬢'),
     'Creative Studio': ('Video Editor', '▷'),
     'Automation': ('Step Workflows', '⇄'),
     'Security': ('Settings & Safety', '⬡'),
