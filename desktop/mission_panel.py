@@ -37,9 +37,10 @@ from PySide6.QtCore import QRectF, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy,
-    QVBoxLayout, QWidget,
+    QVBoxLayout, QWidget, QComboBox,
 )
 
+from core.mission import BUDGET_SECONDS, MAX_STEPS
 from desktop.prime_theme import MONO_STACK
 from security.policy import Stopped
 
@@ -602,6 +603,13 @@ class MissionPanel(QWidget):
         self.goal.setAccessibleName('Mission goal')
         self.goal.returnPressed.connect(self.request_run)
         command.addWidget(self.goal, 1)
+        self.run_limit = QComboBox()
+        self.run_limit.setAccessibleName('Mission execution limits')
+        self.run_limit.addItem('6 steps · 3 min', (MAX_STEPS, BUDGET_SECONDS))
+        self.run_limit.addItem('12 steps · 6 min', (12, 360))
+        self.run_limit.addItem('24 steps · 12 min', (24, 720))
+        self.run_limit.setToolTip('Maximum planner steps and elapsed time for this mission')
+        command.addWidget(self.run_limit)
         self.run_button = QPushButton('Start mission')
         self.run_button.setAccessibleName('Start mission')
         self.run_button.clicked.connect(self.request_run)
@@ -634,6 +642,7 @@ class MissionPanel(QWidget):
         self.run_button.setEnabled(not running)
         self.cancel_button.setEnabled(running)
         self.goal.setEnabled(not running)
+        self.run_limit.setEnabled(not running)
         if running:
             self.set_status('running')
             self.timeline.clear()
