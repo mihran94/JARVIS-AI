@@ -45,7 +45,7 @@ def registry(root, memory):
 def test_the_catalogue_has_the_real_capabilities(registry):
     assert set(registry.names()) == {
         'current_time', 'system_status', 'evaluate_expression', 'research_fetch',
-        'launch_app', 'type_notepad', 'export_text', 'list_directory', 'read_text_file',
+        'launch_app', 'browser_draft', 'type_notepad', 'export_text', 'list_directory', 'read_text_file',
         'memory_search', 'memory_remember',
     }
 

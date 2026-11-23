@@ -28,11 +28,13 @@ THE TWO KINDS OF TOOL
 from __future__ import annotations
 
 import ast
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
 import operator
 import re
 from pathlib import Path
+from tempfile import TemporaryDirectory
 import time
 
 #: How many characters a file read may return.
@@ -71,6 +73,7 @@ class Tool:
     read_only: bool
     run: object
     returns: str = ''
+    accepts_checkpoint: bool = False
 
     def summary(self, arguments: dict) -> str:
         """One line that says what this call is about.
@@ -325,6 +328,36 @@ def _export_text(registry: ToolRegistry, arguments: dict) -> str:
     return f'Created and verified UTF-8 text file {target}.'
 
 
+def _browser_draft(arguments: dict, check) -> str:
+    """Populate one draft field in an isolated, approved browser session."""
+    from automation.browser import BrowserAction, BrowserSession, origin
+
+    url, label, text = (arguments[key] for key in ('url', 'label', 'text'))
+    if not 1 <= len(label) <= 200 or not 1 <= len(text) <= 4000:
+        raise ToolError('Use a field label up to 200 characters and draft text up to 4,000.')
+
+    async def fill(profile):
+        session = BrowserSession(profile)
+        try:
+            _, _, document = await session.perform(BrowserAction('open', url), None, check)
+            status, evidence, _ = await session.perform(
+                BrowserAction('fill', label, text), document, check)
+            if status != 'verified':
+                raise ToolError('The draft field could not be verified.')
+            return f'{evidence} The browser session closed after the draft check.'
+        finally:
+            await session.close()
+
+    from playwright.async_api import Error as PlaywrightError
+
+    try:
+        origin(url)
+        with TemporaryDirectory(prefix='jarvis-browser-draft-') as profile:
+            return asyncio.run(fill(profile))
+    except (ValueError, OSError, PlaywrightError) as error:
+        raise ToolError(f'Browser draft could not be verified ({type(error).__name__}).') from None
+
+
 def _make_file_tools(registry: ToolRegistry):
     """The tools that look at the mission folder."""
 
@@ -484,6 +517,18 @@ def build_registry(*, root=None, memory=None) -> ToolRegistry:
         read_only=False,
         run=_launch_app,
         returns='A verified Windows foreground process, or a verification error.',
+    ))
+
+    registry.register(Tool(
+        name='browser_draft',
+        description='Open an approved HTTPS page in a temporary session and verify one filled draft field.',
+        parameters={'type': 'object', 'properties': {
+            'url': {'type': 'string'}, 'label': {'type': 'string'},
+            'text': {'type': 'string'}}, 'required': ['url', 'label', 'text']},
+        read_only=False,
+        run=_browser_draft,
+        returns='Field readback confirmation. The session closes after verification.',
+        accepts_checkpoint=True,
     ))
 
     registry.register(Tool(
