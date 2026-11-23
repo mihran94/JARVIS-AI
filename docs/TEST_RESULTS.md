@@ -1,4 +1,36 @@
 # Verification report — integration branch work, 12 November 2026
+## This revision — 23 November 2026
+
+Base `c4d3533602e432bbe6c757e2c8c6d15554d143f5`, branch
+`dev/jarvis-complete-implementation-20261123`.
+
+**1354 passed, 10 skipped, 0 failed.**
+
+Run on Ubuntu with Python 3.11 and PySide6 6.8.3, with the display
+offscreen. The suite was run in eight chunks, because the machine this
+was written on has 3 GB of memory and the whole suite in one process was
+killed by the OOM killer. That is a limit of the machine, not of the
+code; every chunk is a separate process and every chunk passed.
+
+71 of those tests are new in this revision:
+
+| File | Tests |
+|---|---|
+| `tests/test_downloads.py` | 23 |
+| `tests/test_cybersecurity.py` | 19 |
+| `tests/test_windows_backup.py` | 14 |
+| `tests/test_history_backup_settings.py` | 8 |
+| `tests/test_mission_conversation.py` | 7 |
+
+The rest are the tests that were already there, plus the ones carried
+forward with PR #88.
+
+**Not run:** every check that needs Windows, an owner account, an Azure
+key, a paid provider key, a phone or a live browser session. The
+procedures are in `docs/ACCEPTANCE_PROCEDURES.md` and each one says
+NOT RUN.
+
+---
 
 Environment: Linux; Python 3.11.2; PySide6 6.8.3; httpx 0.28.1; keyring 25.6.0; pytest 8.3.5.
 The repository targets Python 3.12; the suite was executed on 3.11 here, so the
