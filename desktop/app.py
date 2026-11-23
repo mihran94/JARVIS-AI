@@ -36,6 +36,7 @@ from desktop.studio_inbox import StudioInboxDialog
 from memory.memory_service import MemoryService
 from desktop.bridge_panel import BridgePanel
 from desktop.memory_page import MemoryPanel
+from desktop.history_backup_settings import HistoryBackupPanel
 from desktop.camera_reader import open_camera_reader
 from desktop.update_dialog import ReleaseChecker, open_updates
 from desktop.voice_panel import VoicePanel
@@ -3096,6 +3097,12 @@ class Window(QMainWindow):
         self.auto_maintenance.toggled.connect(self.set_auto_maintenance)
         update_layout.addWidget(self.auto_maintenance)
         layout.addWidget(updates)
+        backup = QGroupBox('History backup and restore')
+        backup_layout = QVBoxLayout(backup)
+        self.history_backup_panel = HistoryBackupPanel(
+            history_path=self.root / 'history.sqlite3')
+        backup_layout.addWidget(self.history_backup_panel)
+        layout.addWidget(backup)
         self.add_projects_settings(layout)
         plugins = QGroupBox('Plugins')
         self.plugins_group = plugins
