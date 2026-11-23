@@ -38,6 +38,7 @@ from memory.memory_service import MemoryService
 from desktop.bridge_panel import BridgePanel
 from desktop.memory_page import MemoryPanel
 from desktop.history_backup_settings import HistoryBackupPanel
+from desktop.cybersecurity_panel import CybersecurityPanel
 from desktop.camera_reader import open_camera_reader
 from desktop.update_dialog import ReleaseChecker, open_updates
 from desktop.voice_panel import VoicePanel
@@ -407,6 +408,8 @@ class Window(QMainWindow):
         self.add_page('Business', self.business_page())
         self.add_page('Memory', MemoryPanel(service=self.memory_service))
         self.add_page('Mission Control', self.mission_page())
+        self.cybersecurity_panel = CybersecurityPanel(window=self)
+        self.add_page('Cybersecurity', self.cybersecurity_panel, primary=False)
         self.add_page('Command Center', self.dashboard(), primary=False)
         self.voice_panel.activity_changed.connect(self.refresh_voice_hud)
         self.voice_panel.recognition_failed.connect(lambda: self.hands_free_voice.setChecked(False))
