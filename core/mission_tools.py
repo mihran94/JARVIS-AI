@@ -9,7 +9,7 @@ WHAT THIS IS
 
 WHAT THIS IS NOT
     * It is not a general scripting surface. There is no "run this
-      command" tool and no "write this file" tool. A tool that is not in
+      command" tool. A tool that is not in
       this catalogue does not exist for the model.
     * A tool does not decide anything. It runs one real thing and reports
       what really happened. Whether the owner allowed it is decided by
@@ -31,6 +31,7 @@ import ast
 from dataclasses import dataclass, field
 from datetime import datetime
 import operator
+import re
 from pathlib import Path
 import time
 
@@ -287,6 +288,43 @@ def _launch_app(arguments: dict) -> str:
     raise ToolError(f'{request} Its window could not be verified. Check Windows before retrying.')
 
 
+def _type_notepad(arguments: dict) -> str:
+    from automation.desktop_tasks import VerifiedEdit, type_into_target
+
+    try:
+        result = type_into_target('Notepad', arguments['text'])
+    except (ValueError, OSError, RuntimeError) as error:
+        raise ToolError(str(error)) from None
+    if not isinstance(result, VerifiedEdit):
+        raise ToolError(f'{result} Inspect Notepad before retrying.')
+    return str(result)
+
+
+def _export_text(registry: ToolRegistry, arguments: dict) -> str:
+    name = arguments['filename']
+    text = arguments['text']
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,79}\.txt', name, re.IGNORECASE):
+        raise ToolError('Use a simple .txt filename with letters, digits, underscores or dashes.')
+    if Path(name).is_reserved():
+        raise ToolError('Choose a filename that is not reserved by Windows.')
+    if not 1 <= len(text) <= MAX_FILE_CHARACTERS:
+        raise ToolError(f'Export between 1 and {MAX_FILE_CHARACTERS} characters.')
+    target = registry.resolve_inside_root(name)
+    try:
+        payload = text.encode('utf-8')
+        with target.open('x+b') as output:
+            output.write(payload)
+            output.flush()
+            output.seek(0)
+            if output.read(len(payload) + 1) != payload:
+                raise OSError('File readback did not match.')
+    except FileExistsError:
+        raise ToolError('That filename already exists. Choose a new filename.') from None
+    except (OSError, UnicodeError) as error:
+        raise ToolError(f'Export failed: {error}') from None
+    return f'Created and verified UTF-8 text file {target}.'
+
+
 def _make_file_tools(registry: ToolRegistry):
     """The tools that look at the mission folder."""
 
@@ -447,6 +485,27 @@ def build_registry(*, root=None, memory=None) -> ToolRegistry:
         run=_launch_app,
         returns='A verified Windows foreground process, or a verification error.',
     ))
+
+    registry.register(Tool(
+        name='type_notepad',
+        description='Insert literal text into the focused Notepad editor and verify the edit.',
+        parameters={'type': 'object', 'properties': {'text': {'type': 'string'}},
+                    'required': ['text']},
+        read_only=False,
+        run=_type_notepad,
+        returns='Editor readback confirmation. Saving is a separate operation.',
+    ))
+    if registry.root is not None:
+        registry.register(Tool(
+            name='export_text',
+            description='Create a new UTF-8 text file inside the mission folder from supplied text.',
+            parameters={'type': 'object', 'properties': {
+                'filename': {'type': 'string'}, 'text': {'type': 'string'}},
+                'required': ['filename', 'text']},
+            read_only=False,
+            run=lambda arguments: _export_text(registry, arguments),
+            returns='The path and byte readback confirmation.',
+        ))
 
     list_directory, read_text_file = _make_file_tools(registry)
     registry.register(Tool(
