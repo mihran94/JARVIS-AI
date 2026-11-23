@@ -278,10 +278,9 @@ def test_a_stop_between_the_steps_keeps_the_evidence_that_was_gathered(registry,
     state = {'calls': 0}
 
     def stop_after_one():
-        # The check runs before the step, before the tool and after it, so
-        # the third call is the one that lets the tool finish.
+        # Check before planning, after planning, before dispatch and after the tool.
         state['calls'] += 1
-        if state['calls'] > 3:
+        if state['calls'] > 4:
             raise Stopped('Emergency stop.')
 
     planner = FakePlanner([tool_call('read_thing', {'name': 'x'}), final_answer('Done.')])
@@ -354,3 +353,24 @@ def test_arguments_that_are_not_an_object_are_refused():
     decision, problem = parse_decision('{"action": "tool", "tool": "read_thing", "arguments": "blue"}')
     assert decision is None
     assert 'not an object' in problem
+
+
+def test_expired_approval_cannot_dispatch(registry, gateway, monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr('core.mission.time.monotonic', lambda: clock[0])
+    name = next(name for name in registry.names() if not registry.get(name).read_only)
+    tool = registry.get(name)
+    called = []
+    monkeypatch.setattr(type(tool), 'summary', lambda self, args: self.name)
+
+    def approve(action):
+        clock[0] = 9999.0
+        called.append(action)
+        return True
+
+    args = {key: 'x' for key in tool.parameters.get('required', [])}
+    planner = FakePlanner([tool_call(name, args)])
+    mission = runtime_for(registry, gateway, planner).run('Work', confirm=approve)
+    assert called and mission.status == 'failed'
+    assert 'time limit' in mission.events[-1].detail
+    assert not mission.tools_used

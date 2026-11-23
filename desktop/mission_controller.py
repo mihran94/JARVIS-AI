@@ -98,11 +98,13 @@ class MissionController(QObject):
 
         editor_paths = {name: window.store.get('editor_path:' + name, '') for name in EDITOR_EXECUTABLES}
         registry = build_registry(root=window.root, memory=window.memory_service, editor_paths=editor_paths)
+        self.max_steps, budget_seconds = self.panel.run_limit.currentData()
         runtime = AgentRuntime(
             registry,
             window.gateway,
             self._planner(provider, model, ticket),
             max_steps=self.max_steps,
+            budget_seconds=budget_seconds,
             on_event=self.on_event,
             check=lambda: window.policy.check(ticket),
         )
