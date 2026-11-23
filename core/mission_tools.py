@@ -9,7 +9,7 @@ WHAT THIS IS
 
 WHAT THIS IS NOT
     * It is not a general scripting surface. There is no "run this
-      command" tool and no "write this file" tool. A tool that is not in
+      command" tool. A tool that is not in
       this catalogue does not exist for the model.
     * A tool does not decide anything. It runs one real thing and reports
       what really happened. Whether the owner allowed it is decided by
@@ -28,10 +28,14 @@ THE TWO KINDS OF TOOL
 from __future__ import annotations
 
 import ast
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
 import operator
+import re
 from pathlib import Path
+from tempfile import TemporaryDirectory
+import time
 
 #: How many characters a file read may return.
 MAX_FILE_CHARACTERS = 20_000
@@ -69,6 +73,7 @@ class Tool:
     read_only: bool
     run: object
     returns: str = ''
+    accepts_checkpoint: bool = False
 
     def summary(self, arguments: dict) -> str:
         """One line that says what this call is about.
@@ -266,18 +271,91 @@ def _research_fetch(arguments: dict) -> str:
     return head + text
 
 
-def _launch_app(arguments: dict) -> str:
-    """Open one allowlisted application."""
-    from automation.windows import launch_app
+def _launch_app(arguments: dict, editors=None) -> str:
+    """Launch an allowlisted app and verify its foreground process."""
+    from automation.windows import launch_app, launch_editor, launch_is_foreground
 
-    name = (arguments.get('app') or '').strip()
+    name = arguments['app']
     try:
-        request = launch_app(name)
-    except ValueError as error:
+        request = launch_editor(name, editors[name]) if editors and name in editors else launch_app(name)
+        # Windows may return from process creation before its window is ready.
+        deadline = time.monotonic() + 1.0
+        while True:
+            if launch_is_foreground(request):
+                return f'{name} opened. Windows confirmed its foreground process (PID {request.pid}).'
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.05)
+    except (ValueError, OSError, RuntimeError) as error:
         raise ToolError(str(error)) from None
-    except RuntimeError as error:
+    raise ToolError(f'{request} Its window could not be verified. Check Windows before retrying.')
+
+
+def _type_notepad(arguments: dict) -> str:
+    from automation.desktop_tasks import VerifiedEdit, type_into_target
+
+    try:
+        result = type_into_target('Notepad', arguments['text'])
+    except (ValueError, OSError, RuntimeError) as error:
         raise ToolError(str(error)) from None
-    return str(request)
+    if not isinstance(result, VerifiedEdit):
+        raise ToolError(f'{result} Inspect Notepad before retrying.')
+    return str(result)
+
+
+def _export_text(registry: ToolRegistry, arguments: dict) -> str:
+    name = arguments['filename']
+    text = arguments['text']
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,79}\.txt', name, re.IGNORECASE):
+        raise ToolError('Use a simple .txt filename with letters, digits, underscores or dashes.')
+    if Path(name).is_reserved():
+        raise ToolError('Choose a filename that is not reserved by Windows.')
+    if not 1 <= len(text) <= MAX_FILE_CHARACTERS:
+        raise ToolError(f'Export between 1 and {MAX_FILE_CHARACTERS} characters.')
+    target = registry.resolve_inside_root(name)
+    try:
+        payload = text.encode('utf-8')
+        with target.open('x+b') as output:
+            output.write(payload)
+            output.flush()
+            output.seek(0)
+            if output.read(len(payload) + 1) != payload:
+                raise OSError('File readback did not match.')
+    except FileExistsError:
+        raise ToolError('That filename already exists. Choose a new filename.') from None
+    except (OSError, UnicodeError) as error:
+        raise ToolError(f'Export failed: {error}') from None
+    return f'Created and verified UTF-8 text file {target}.'
+
+
+def _browser_draft(arguments: dict, check) -> str:
+    """Populate one draft field in an isolated, approved browser session."""
+    from automation.browser import BrowserAction, BrowserSession, origin
+
+    url, label, text = (arguments[key] for key in ('url', 'label', 'text'))
+    if not 1 <= len(label) <= 200 or not 1 <= len(text) <= 4000:
+        raise ToolError('Use a field label up to 200 characters and draft text up to 4,000.')
+
+    async def fill(profile):
+        session = BrowserSession(profile)
+        try:
+            _, _, document = await session.perform(BrowserAction('open', url), None, check)
+            status, evidence, _ = await session.perform(
+                BrowserAction('fill', label, text), document, check)
+            if status != 'verified':
+                raise ToolError('The draft field could not be verified.')
+            return f'{evidence} The browser session closed after the draft check.'
+        finally:
+            await session.close()
+
+    from playwright.async_api import Error as PlaywrightError
+
+    try:
+        origin(url)
+        with TemporaryDirectory(prefix='jarvis-browser-draft-') as profile:
+            return asyncio.run(fill(profile))
+    except (ValueError, OSError, PlaywrightError) as error:
+        raise ToolError(f'Browser draft could not be verified ({type(error).__name__}).') from None
 
 
 def _make_file_tools(registry: ToolRegistry):
@@ -381,7 +459,7 @@ def _evaluate_expression(arguments: dict) -> str:
     return f'{expression} = {result}'
 
 
-def build_registry(*, root=None, memory=None) -> ToolRegistry:
+def build_registry(*, root=None, memory=None, editor_paths=None) -> ToolRegistry:
     """The standard catalogue of mission tools.
 
     `memory` is the owner's memory service. Without it, the two memory
@@ -429,17 +507,74 @@ def build_registry(*, root=None, memory=None) -> ToolRegistry:
         returns='The page title and its text.',
     ))
 
+    from automation.windows import APPS, EDITOR_EXECUTABLES, editor_executable, system_app_directory
+
+    editors = {}
+    for name in EDITOR_EXECUTABLES:
+        try:
+            editors[name] = editor_executable(name, (editor_paths or {}).get(name))
+        except (ValueError, OSError):
+            continue
+
+    def discover_apps(_arguments):
+        directory = system_app_directory()
+        available = [name for name, filename in APPS.items() if (directory / filename).is_file()]
+        available.extend(name for name, path in editors.items() if path.is_file())
+        return ', '.join(available) or 'No supported executables found.'
+
+    registry.register(Tool(
+        name='discover_apps',
+        description='Find supported Windows system apps and owner-configured creative editors.',
+        parameters={'type': 'object', 'properties': {}},
+        read_only=True,
+        run=discover_apps,
+        returns='Names of apps whose executable exists.',
+    ))
+
     registry.register(Tool(
         name='launch_app',
         description='Open an approved application on this PC.',
         parameters={'type': 'object', 'properties': {
-            'app': {'type': 'string', 'enum': ['Notepad', 'Calculator'],
+            'app': {'type': 'string', 'enum': list(APPS) + list(editors),
                     'description': 'The application to open.'}},
             'required': ['app']},
         read_only=False,
-        run=_launch_app,
-        returns='What the launcher reported.',
+        run=lambda arguments: _launch_app(arguments, editors),
+        returns='A verified Windows foreground process, or a verification error.',
     ))
+
+    registry.register(Tool(
+        name='browser_draft',
+        description='Open an approved HTTPS page in a temporary session and verify one filled draft field.',
+        parameters={'type': 'object', 'properties': {
+            'url': {'type': 'string'}, 'label': {'type': 'string'},
+            'text': {'type': 'string'}}, 'required': ['url', 'label', 'text']},
+        read_only=False,
+        run=_browser_draft,
+        returns='Field readback confirmation. The session closes after verification.',
+        accepts_checkpoint=True,
+    ))
+
+    registry.register(Tool(
+        name='type_notepad',
+        description='Insert literal text into the focused Notepad editor and verify the edit.',
+        parameters={'type': 'object', 'properties': {'text': {'type': 'string'}},
+                    'required': ['text']},
+        read_only=False,
+        run=_type_notepad,
+        returns='Editor readback confirmation. Saving is a separate operation.',
+    ))
+    if registry.root is not None:
+        registry.register(Tool(
+            name='export_text',
+            description='Create a new UTF-8 text file inside the mission folder from supplied text.',
+            parameters={'type': 'object', 'properties': {
+                'filename': {'type': 'string'}, 'text': {'type': 'string'}},
+                'required': ['filename', 'text']},
+            read_only=False,
+            run=lambda arguments: _export_text(registry, arguments),
+            returns='The path and byte readback confirmation.',
+        ))
 
     list_directory, read_text_file = _make_file_tools(registry)
     registry.register(Tool(
