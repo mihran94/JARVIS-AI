@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import operator
 from pathlib import Path
+import time
 
 #: How many characters a file read may return.
 MAX_FILE_CHARACTERS = 20_000
@@ -267,17 +268,23 @@ def _research_fetch(arguments: dict) -> str:
 
 
 def _launch_app(arguments: dict) -> str:
-    """Open one allowlisted application."""
-    from automation.windows import launch_app
+    """Launch an allowlisted app and verify its foreground process."""
+    from automation.windows import launch_app, launch_is_foreground
 
-    name = (arguments.get('app') or '').strip()
+    name = arguments['app']
     try:
         request = launch_app(name)
-    except ValueError as error:
+        # Windows may return from process creation before its window is ready.
+        deadline = time.monotonic() + 1.0
+        while True:
+            if launch_is_foreground(request):
+                return f'{name} opened. Windows confirmed its foreground process (PID {request.pid}).'
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.05)
+    except (ValueError, OSError, RuntimeError) as error:
         raise ToolError(str(error)) from None
-    except RuntimeError as error:
-        raise ToolError(str(error)) from None
-    return str(request)
+    raise ToolError(f'{request} Its window could not be verified. Check Windows before retrying.')
 
 
 def _make_file_tools(registry: ToolRegistry):
@@ -438,7 +445,7 @@ def build_registry(*, root=None, memory=None) -> ToolRegistry:
             'required': ['app']},
         read_only=False,
         run=_launch_app,
-        returns='What the launcher reported.',
+        returns='A verified Windows foreground process, or a verification error.',
     ))
 
     list_directory, read_text_file = _make_file_tools(registry)
