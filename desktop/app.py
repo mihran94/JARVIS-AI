@@ -76,7 +76,8 @@ from desktop.video_export import AfterEffectsInputs, PreviewInputs, VideoExportW
 from video_studio.after_effects import after_effects_render
 from video_studio.after_effects_timeline import timeline_executable, timeline_script
 from video_studio.capcut import export_capcut
-from automation.capcut_export import new_mp4, save_open_capcut_export
+from automation.capcut_export import capcut_launcher, new_mp4, save_open_capcut_export
+from core.runtime_profile import RESTART_EXIT_CODE, restart_supported
 from video_studio.preview import media_tools, render_preview
 from security.policy import Action, Denied, Policy, Stopped
 from security.vault import Vault
@@ -863,6 +864,10 @@ class Window(QMainWindow):
 
     def route_video_brief(self, text):
         command = text.casefold().strip(' .!?')
+        if command in ('import and export with capcut', 'capcut-ல் வீடியோவை இறக்குமதி செய்து export செய்'):
+            self.open_section('Video Editor')
+            self.save_capcut_export(import_video=True)
+            return True
         if command in ('export current capcut project', 'save open capcut export'):
             self.open_section('Video Editor')
             self.save_capcut_export()
@@ -1062,6 +1067,10 @@ class Window(QMainWindow):
         self.system_summary = format_snapshot(data)
         self.system_metrics_label.setText(self.system_summary)
         self.dashboard_metrics.setText(self.system_summary)
+        self.settings_usage.setText(self.system_summary)
+        shell = getattr(self, 'prime_shell', None)
+        if shell is not None:
+            shell.update_usage(data)
         self.hud_clock.setText(datetime.now().strftime('%H:%M'))
         if self.omega is not None:
             self.omega.update_metrics(data)
@@ -2052,6 +2061,10 @@ class Window(QMainWindow):
         self.capcut_native_export_button = self.flexible_button(
             layout, 'Export current CapCut project', self.save_capcut_export)
         self.capcut_native_export_button.setEnabled(sys.platform == 'win32')
+        self.capcut_import_export_button = self.flexible_button(
+            layout, 'Import and export with CapCut',
+            lambda: self.save_capcut_export(import_video=True))
+        self.capcut_import_export_button.setEnabled(sys.platform == 'win32')
         self.davinci_button = self.flexible_button(
             layout, 'Export for DaVinci Resolve', lambda: self.assemble_video(editor='DaVinci Resolve'))
         self.davinci_button.setEnabled(False)
@@ -2198,24 +2211,34 @@ class Window(QMainWindow):
 
         self.notify(operation)
 
-    def save_capcut_export(self):
+    def save_capcut_export(self, *, import_video=False):
         if self.worker is not None or self.policy.stopped:
             return
 
         def operation():
             if sys.platform != 'win32' or not self.plugin_enabled('CapCut'):
                 raise ValueError('CapCut must be enabled in Settings → Plugins on Windows.')
+            source = executable = None
+            if import_video:
+                executable = capcut_launcher(self.store.get('editor_path:CapCut', ''))
+                source, _ = QFileDialog.getOpenFileName(
+                    self, 'Choose a local video for a new CapCut project', '',
+                    'Video (*.mp4 *.mov *.m4v *.mkv *.webm)')
+                if not source:
+                    return
+                source = Path(source).resolve(strict=True)
             path, _ = QFileDialog.getSaveFileName(
-                self, 'Save the current CapCut project as MP4',
+                self, 'Save the CapCut export as MP4',
                 '', 'MP4 (*.mp4)', options=QFileDialog.Option.DontConfirmOverwrite)
             if not path:
                 return
             output = new_mp4(path if Path(path).suffix else path + '.mp4')
             ticket = self.policy.ticket()
+            description = (f'Open {executable}, create a new local CapCut project, and import {source}.'
+                           if source else 'Export the current CapCut project.')
             action = Action(
                 'Save CapCut export',
-                f'{output}\n\nJARVIS will open Export in the current CapCut project '
-                'and save the video locally. Keep the project open.')
+                f'{output}\n\n{description}\nSave the video locally.')
 
             def start():
                 def export(check_cancelled):
@@ -2223,6 +2246,8 @@ class Window(QMainWindow):
                         check_cancelled()
                         self.policy.check(ticket)
 
+                    if source:
+                        return save_open_capcut_export(output, check, source=source, executable=executable)
                     return save_open_capcut_export(output, check)
 
                 self.start_video_export(output, 'Exporting the open CapCut project…', export)
@@ -3118,6 +3143,13 @@ class Window(QMainWindow):
 
     def permissions_page(self):
         page, layout = self.page('Settings & Safety')
+        settings_links = QHBoxLayout()
+        layout.addLayout(settings_links)
+        self.settings_usage = QLabel('Collecting PC usage…')
+        self.settings_usage.setWordWrap(True)
+        usage = QGroupBox('Live PC usage')
+        QVBoxLayout(usage).addWidget(self.settings_usage)
+        layout.addWidget(usage)
         tools = QGroupBox('Settings shortcuts')
         tool_layout = QGridLayout(tools)
         for index, (label, name) in enumerate((
@@ -3172,6 +3204,9 @@ class Window(QMainWindow):
         updates = QGroupBox('Updates and recovery')
         update_layout = QVBoxLayout(updates)
         self.flexible_button(update_layout, 'Updates & rollback', lambda: open_updates(self))
+        restart = self.flexible_button(update_layout, 'Restart JARVIS', self.request_restart)
+        restart.setEnabled(restart_supported())
+        restart.setToolTip('Close this window before starting the next JARVIS session.')
         self.auto_maintenance = QCheckBox('Automatically propose source update guide fixes')
         self.auto_maintenance.setChecked(bool(self.store.get('auto_maintenance', False)))
         self.auto_maintenance.toggled.connect(self.set_auto_maintenance)
@@ -3218,7 +3253,17 @@ class Window(QMainWindow):
             label.setWordWrap(True)
             safety_layout.addWidget(label)
         layout.addWidget(safety)
+        for name, section in (
+            ('Appearance', preferences), ('Updates', updates), ('Plugins', plugins), ('Safety', safety),
+        ):
+            self.flexible_button(settings_links, name,
+                                 lambda _checked=False, section=section: self.scroll_to_setting(section))
         return page
+
+    def scroll_to_setting(self, section):
+        scroller = self.pages.widget(self.page_indices['Settings & Safety'])
+        if isinstance(scroller, QScrollArea):
+            scroller.verticalScrollBar().setValue(section.mapTo(scroller.widget(), section.rect().topLeft()).y())
 
     def plugin_enabled(self, name):
         return bool(self.store.get('plugin:' + name, True))
@@ -5771,6 +5816,7 @@ class Window(QMainWindow):
         self.video_render_button.setEnabled(ready and self.video_plan is not None)
         self.capcut_button.setEnabled(ready and self.video_plan is not None)
         self.capcut_native_export_button.setEnabled(ready and sys.platform == 'win32')
+        self.capcut_import_export_button.setEnabled(ready and sys.platform == 'win32')
         self.davinci_button.setEnabled(ready and self.video_plan is not None)
         self.after_effects_button.setEnabled(ready)
         self.after_effects_timeline_button.setEnabled(ready and self.video_plan is not None)
@@ -5940,6 +5986,12 @@ class Window(QMainWindow):
         self.exit_requested = True
         self.close()
 
+    def request_restart(self):
+        if not restart_supported():
+            return
+        self.restart_requested = True
+        self.request_exit()
+
     def closeEvent(self, event):
         self.conversation_plan.cancel('Window closed; remaining steps cancelled.')
         self.audio_test.stop()
@@ -5949,6 +6001,7 @@ class Window(QMainWindow):
         if not self.close_when_done and self.editor.document().isModified():
             if not self.confirm(Action('discard_unsaved_editor_changes', self.filename.text())):
                 self.exit_requested = False
+                self.restart_requested = False
                 event.ignore()
                 return
         if (self.keep_running_in_tray() and not self.exit_requested
@@ -6058,4 +6111,5 @@ def main():
             else:
                 app.exit(10)
         QTimer.singleShot(1000, finish_smoke)
-    return app.exec()
+    result = app.exec()
+    return RESTART_EXIT_CODE if getattr(window, 'restart_requested', False) else result

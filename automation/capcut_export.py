@@ -1,6 +1,7 @@
 """Export the open CapCut Desktop project to an approved local MP4."""
 import ctypes
 from ctypes import wintypes
+import os
 from pathlib import Path, PureWindowsPath
 import sys
 import time
@@ -9,7 +10,8 @@ import psutil
 
 from automation import win_controls
 from automation.input import InputTarget, click_at, press_key, type_text
-from video_studio.verification import ffprobe_executable, verify_media
+from automation.windows import editor_executable, launch_editor
+from video_studio.verification import ffprobe_executable, probe, verify_media
 
 
 # CapCut Desktop 9.9 paints its own controls. Coordinates are relative to
@@ -25,6 +27,13 @@ _GA_ROOT = 2
 _GA_ROOTOWNER = 3
 _GW_ENABLEDPOPUP = 6
 _PICKER_ADDRESS_ID = 41477
+
+
+def capcut_launcher(configured):
+    if not configured:
+        local = os.environ.get('LOCALAPPDATA')
+        configured = Path(local) / 'CapCut' / 'Apps' / 'CapCut.exe' if local else None
+    return editor_executable('CapCut', configured)
 
 
 def new_mp4(path):
@@ -97,9 +106,11 @@ class _CapCutExportUI:
         self.get_pixel = gdi.GetPixel
         self.get_pixel.argtypes = [wintypes.HDC, ctypes.c_int, ctypes.c_int]
         self.get_pixel.restype = wintypes.DWORD
-        self.editor = self._find_editor()
-        self.pid = win_controls.window_process(self.editor)
-        self.target = InputTarget(self.pid, 'CapCut Export')
+
+    def _bind(self, hwnd):
+        self.editor = hwnd
+        self.pid = win_controls.window_process(hwnd)
+        self.target = InputTarget(self.pid, 'CapCut')
 
     def _title(self, hwnd):
         return self._window_text(self.user.GetWindowTextW, hwnd)
@@ -113,7 +124,7 @@ class _CapCutExportUI:
         get_text(hwnd, buffer, len(buffer))
         return buffer.value
 
-    def _find_editor(self):
+    def _windows(self):
         editors = []
 
         @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -129,9 +140,13 @@ class _CapCutExportUI:
             return True
 
         self.user.EnumWindows(collect, 0)
+        return editors
+
+    def bind_existing(self):
+        editors = self._windows()
         if len(editors) != 1:
             raise RuntimeError('Open one CapCut Desktop project window and try again.')
-        return editors[0]
+        self._bind(editors[0])
 
     def _wait(self, read, message, *, timeout=5):
         deadline = time.monotonic() + timeout
@@ -225,6 +240,9 @@ class _CapCutExportUI:
                 return self._form_point(form, coordinate, sync=sync)
             return None
 
+        self._click_point(locate, 'click Export controls')
+
+    def _click_point(self, locate, action):
         self.check()
         point = locate()
         if point is None or not self.user.SetCursorPos(*point):
@@ -235,7 +253,105 @@ class _CapCutExportUI:
             return (self.user.GetCursorPos(ctypes.byref(cursor))
                     and (cursor.x, cursor.y) == point and locate() == point)
 
-        click_at(*point, self.target, foreground=lambda: self._guard(cursor_on_target, 'click Export controls'))
+        click_at(*point, self.target, foreground=lambda: self._guard(cursor_on_target, action))
+
+    def _window_point(self, hwnd, coordinate, markers, *, minimum):
+        """Locate a control only when its neighboring layout markers agree."""
+        if not hwnd:
+            return None
+        rect = wintypes.RECT()
+        dpi = self.user.GetDpiForWindow(hwnd)
+        if not dpi or not self.user.GetWindowRect(hwnd, ctypes.byref(rect)):
+            return None
+        width = round((rect.right - rect.left) * 96 / dpi)
+        height = round((rect.bottom - rect.top) * 96 / dpi)
+        if width < minimum[0] or height < minimum[1]:
+            return None
+
+        def point(x, y):
+            return rect.left + round(x * dpi / 96), rect.top + round(y * dpi / 96)
+
+        dc = self.user.GetDC(None)
+        if not dc:
+            return None
+        try:
+            if not all(test(self.get_pixel(dc, *point(x, y))) for x, y, test in markers):
+                return None
+        finally:
+            self.user.ReleaseDC(None, dc)
+        target = point(*coordinate)
+        hit = self.user.WindowFromPoint(wintypes.POINT(*target))
+        return target if self.user.GetAncestor(hit, _GA_ROOT) == hwnd else None
+
+    def _home_button(self):
+        if self._foreground() != self.editor:
+            return None
+
+        def cyan(pixel):
+            red, green, blue = _rgb(pixel)
+            return red < 130 and green > 125 and blue > 145
+
+        return self._window_point(self.editor, (650, 110),
+                                  ((300, 62, cyan), (540, 104, cyan), (660, 164, cyan)),
+                                  minimum=(1000, 650))
+
+    def _empty_import(self):
+        return self._editor_ready() and self._window_point(
+            self.editor, (256, 165), ((253, 161, _teal),), minimum=(1150, 690))
+
+    def _add_video(self):
+        if not self._editor_ready():
+            return None
+        return self._window_point(self.editor, (243, 209),
+                                  ((185, 150, _teal),), minimum=(1150, 690))
+
+    def _import_picker(self):
+        hwnd = self._foreground()
+        if hwnd and self._class(hwnd) == '#32770' and self._title(hwnd) == 'Select a media resource':
+            return hwnd
+        return None
+
+    def _import_video(self, source):
+        self._key('ctrl+i', self._empty_import)
+        picker = self._wait(self._import_picker, 'CapCut did not open its media picker.')
+        fields = []
+
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def collect(hwnd, _):
+            if self._class(hwnd) == 'Edit' and self.user.GetDlgCtrlID(hwnd) == 1148:
+                fields.append(hwnd)
+            return True
+
+        self.user.EnumChildWindows(picker, collect, 0)
+        self.check()
+        if (self._import_picker() != picker or len(fields) != 1
+                or not win_controls.replace_contents(fields[0], str(source))):
+            raise RuntimeError('The import file field could not be verified.')
+        self._press_picker_button(picker, 'Open', self._import_picker)
+        self._wait(self._add_video, 'CapCut did not show the imported video card.')
+        self._click_point(self._add_video, 'add the imported video to the timeline')
+
+    def create_project(self, executable, source):
+        self.check()
+        launch_editor('CapCut', executable)
+        windows = self._wait(self._windows, 'CapCut did not open on this desktop.', timeout=40)
+        if len(windows) != 1:
+            raise RuntimeError('Leave only CapCut Home open before creating a new project.')
+        home, = windows
+        self._bind(home)
+        self.user.SetForegroundWindow(home)
+        self._wait(self._home_button, 'Return to CapCut Home to create a new local project.',
+                   timeout=20)
+        self._click_point(self._home_button, 'create a new CapCut project')
+
+        def project_window():
+            windows = self._windows()
+            return windows[0] if len(windows) == 1 and windows[0] != home else None
+
+        self._bind(self._wait(project_window, 'CapCut did not open a new project.', timeout=30))
+        self._wait(self._empty_import, 'CapCut’s empty Media panel could not be verified.',
+                   timeout=20)
+        self._import_video(source)
 
     def _folder_picker(self):
         hwnd = self._foreground()
@@ -275,15 +391,18 @@ class _CapCutExportUI:
         if not chosen or not Path(chosen).is_absolute() or Path(chosen).resolve() != folder:
             raise RuntimeError('CapCut did not navigate to the approved export folder.')
 
-        button = self.user.GetDlgItem(picker, 1)
-        self.check()
-        if (not picker_ready() or not button or not self.user.IsWindowVisible(button)
-                or not self.user.IsWindowEnabled(button) or self._class(button) != 'Button'
-                or win_controls.contents(button) != 'Select Folder'
-                or not win_controls.click_dialog_button(button)):
-            raise RuntimeError('JARVIS could not activate CapCut’s Select Folder button.')
+        self._press_picker_button(picker, 'Select Folder', self._folder_picker)
         if self._wait(self._current_form, 'CapCut did not return to Export settings.') != form:
             raise RuntimeError('CapCut switched to a different Export dialog.')
+
+    def _press_picker_button(self, picker, label, current_picker):
+        button = self.user.GetDlgItem(picker, 1)
+        self.check()
+        if (current_picker() != picker or not button or not self.user.IsWindowVisible(button)
+                or not self.user.IsWindowEnabled(button) or self._class(button) != 'Button'
+                or win_controls.contents(button) != label
+                or not win_controls.click_dialog_button(button)):
+            raise RuntimeError(f'JARVIS could not activate CapCut’s {label} button.')
 
     def export(self, output):
         self.check()
@@ -318,12 +437,19 @@ class _CapCutExportUI:
         self._click(form, _EXPORT_BUTTON, sync=_unchecked)
 
 
-def save_open_capcut_export(path, check_cancelled):
-    """Open CapCut Export, apply the approved destination, and verify its MP4."""
+def save_open_capcut_export(path, check_cancelled, *, source=None, executable=None):
+    """Export an open project or build a fresh one from a single approved clip."""
     if sys.platform != 'win32':
         raise RuntimeError('CapCut Desktop export is available on Windows only.')
     output = new_mp4(path)
     ffprobe_executable()
+    duration = None
+    if source is not None:
+        source = Path(source).resolve(strict=True)
+        info = probe(source)
+        if not info.has_video or info.duration <= 0:
+            raise ValueError('Choose a playable local source video.')
+        duration = info.duration
     user = _window_api()
     # The screen DC and cursor use physical pixels. Use the same coordinate
     # space for window geometry and hit testing regardless of process DPI mode.
@@ -331,7 +457,12 @@ def save_open_capcut_export(path, check_cancelled):
     if not previous:
         raise RuntimeError('JARVIS could not read the display scaling for CapCut.')
     try:
-        _CapCutExportUI(user, check_cancelled).export(output)
+        ui = _CapCutExportUI(user, check_cancelled)
+        if source is None:
+            ui.bind_existing()
+        else:
+            ui.create_project(executable, source)
+        ui.export(output)
     finally:
         user.SetThreadDpiAwarenessContext(previous)
 
@@ -343,9 +474,13 @@ def save_open_capcut_export(path, check_cancelled):
             raise RuntimeError('CapCut export verification requires a regular local file.')
         if output.is_file():
             size = output.stat().st_size
-            if size and size == last_size and verify_media(output).ok:
-                check_cancelled()
-                return output
+            if size and size == last_size:
+                verified = verify_media(output, expect_duration=duration)
+                if verified.ok:
+                    check_cancelled()
+                    return output
+                if verified.info.has_video:
+                    raise RuntimeError(verified.message)
             last_size = size
         time.sleep(0.5)
     raise RuntimeError(f'CapCut was asked to export, but no playable MP4 was verified at {output}. '

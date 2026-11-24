@@ -818,6 +818,10 @@ class PrimeShell(QWidget):
         layout.addWidget(build)
 
         layout.addStretch(1)
+        self.usage_button = QPushButton('CPU —  ·  RAM —')
+        self.usage_button.setToolTip('Open live PC usage')
+        self.usage_button.clicked.connect(lambda: self.open_section('System & Usage'))
+        layout.addWidget(self.usage_button)
         self.state_chip = QLabel('READY')
         self.state_chip.setStyleSheet(
             f'color: {palette.good.name()}; font-size: 11px; font-weight: 600;'
@@ -842,6 +846,14 @@ class PrimeShell(QWidget):
             f'{palette.danger.green()}, {palette.danger.blue()}, 48); }}')
         layout.addWidget(self.stop_button)
         return bar
+
+    def update_usage(self, data):
+        def percent(key):
+            value = data.get(key)
+            return f'{value:.0f}%' if value is not None else '—'
+
+        cpu, memory = percent('cpu_usage_percent'), percent('ram_usage_percent')
+        self.usage_button.setText(f'CPU {cpu}  ·  RAM {memory}')
 
     # -- the rail ------------------------------------------------------
 

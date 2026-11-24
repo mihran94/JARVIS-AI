@@ -3,6 +3,13 @@ import os
 from pathlib import Path
 import re
 
+RESTART_EXIT_CODE = 75
+
+
+def restart_supported():
+    """Only the launcher can replace a session after its process exits."""
+    return os.environ.get('JARVIS_RESTART_MANAGED') == '1'
+
 
 def development_profile():
     value = os.environ.get('JARVIS_DEVELOPMENT_PROFILE', '')

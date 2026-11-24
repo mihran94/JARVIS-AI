@@ -42,7 +42,7 @@ KEY_ALLOWLIST = {
     'left': 0x25, 'right': 0x27, 'home': 0x24, 'end': 0x23,
     'pageup': 0x21, 'pagedown': 0x22, 'ctrl+a': 0x41, 'ctrl+c': 0x43,
     'ctrl+v': 0x56, 'ctrl+x': 0x58, 'ctrl+s': 0x53, 'ctrl+z': 0x5A,
-    'ctrl+y': 0x59, 'ctrl+e': 0x45, 'alt+d': 0x44, 'alt+tab': 0x09,
+    'ctrl+y': 0x59, 'ctrl+e': 0x45, 'ctrl+i': 0x49, 'alt+d': 0x44, 'alt+tab': 0x09,
 }
 
 #: The modifiers that may be held with a key.

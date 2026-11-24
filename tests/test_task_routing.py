@@ -57,12 +57,13 @@ def test_capcut_chat_command_opens_the_same_export_review(tmp_path, monkeypatch)
     app = QApplication.instance() or QApplication([])
     window = Window(tmp_path)
     review = []
-    monkeypatch.setattr(window, 'save_capcut_export', lambda: review.append(True))
+    monkeypatch.setattr(window, 'save_capcut_export', lambda **options: review.append(options))
     try:
         assert window.route_task('Export current CapCut project')
         assert window.route_task('Save open CapCut export')
+        assert window.route_task('Import and export with CapCut')
         assert window.pages.currentIndex() == window.page_indices['Video Editor']
-        assert review == [True, True]
+        assert review == [{}, {}, {'import_video': True}]
         assert window.worker is None
     finally:
         window.close()

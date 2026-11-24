@@ -10,20 +10,16 @@ from tempfile import TemporaryDirectory
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from core.updates import read_state, release_path
+from core.runtime_profile import RESTART_EXIT_CODE
 
 
 def main(args=()):
     development = '--dev-data' in args
     args = [arg for arg in args if arg != '--dev-data']
     try:
-        selected = 'base' if development else read_state(ROOT)['active']
-        target = release_path(ROOT, selected)
-        if not (target / 'main.py').is_file():
-            raise ValueError('Selected release is missing main.py.')
-        env = dict(os.environ, JARVIS_INSTALL_ROOT=str(ROOT))
+        env = dict(os.environ, JARVIS_INSTALL_ROOT=str(ROOT), JARVIS_RESTART_MANAGED='1')
         env.pop('JARVIS_BUILD_COMMIT', None)
         env.pop('JARVIS_DEVELOPMENT_PROFILE', None)
-        env['JARVIS_SOURCE_RELEASE'] = selected
         smoke = '--smoke-test' in args
         temporary = TemporaryDirectory(prefix='jarvis-verify-') if smoke else nullcontext()
         with temporary as scratch:
@@ -33,8 +29,16 @@ def main(args=()):
                 profile_path = scratch or os.path.normcase(str(ROOT.resolve()))
                 env['JARVIS_DEVELOPMENT_PROFILE'] = hashlib.sha256(
                     os.fsencode(profile_path)).hexdigest()[:24]
-            return subprocess.call(
-                [sys.executable, str(target / 'main.py'), *args], cwd=target, env=env)
+            while True:
+                selected = 'base' if development else read_state(ROOT)['active']
+                target = release_path(ROOT, selected)
+                if not (target / 'main.py').is_file():
+                    raise ValueError('Selected release is missing main.py.')
+                env['JARVIS_SOURCE_RELEASE'] = selected
+                result = subprocess.call(
+                    [sys.executable, str(target / 'main.py'), *args], cwd=target, env=env)
+                if result != RESTART_EXIT_CODE or smoke:
+                    return result
     except (OSError, ValueError):
         print('Cannot start selected release. Run ROLLBACK_JARVIS.cmd or original main.py.')
         return 1
