@@ -44,7 +44,7 @@ scratch** to the specification in §9 and §10, rather than recovered. They are 
 |---|---|---|---|---|---|
 | One development copy, commits on a branch | `dev/jarvis-complete-implementation-20261123` from `c4d3533` | `git log` | 11 commits, history preserved | Done | PASS (history inspected) |
 | Push the branch, one draft PR against `main` | see §13 | GitHub | draft PR, `main` untouched | Done | PASS (SHA compared) |
-| Regression tests beside the code | `tests/test_windows_backup.py`, `test_history_backup_settings.py`, `test_mission_conversation.py`, `test_downloads.py`, `test_cybersecurity.py`, `test_automation_uia.py` | pytest | 5 new files | Done | PASS |
+| Regression tests beside the code | `tests/test_windows_backup.py`, `test_history_backup_settings.py`, `test_mission_conversation.py`, `test_downloads.py`, `test_cybersecurity.py`, `test_automation_uia.py`, `test_coding_workspace.py`, `test_coding_diagnostics.py`, `test_coding_tools.py`, `test_coding_repair.py`, `test_coding_mission.py`, `test_coding_mission_desktop.py` | pytest | 5 new files | Done | PASS |
 | Do not merge into `main` | no merge performed | — | `main` still at `c4d3533` | Done | PASS |
 | No trading features | none exist | — | — | Done | PASS (tree scan) |
 
@@ -250,7 +250,7 @@ scratch** to the specification in §9 and §10, rather than recovered. They are 
 
 | Requirement | Implementation | Observable result | Impl. | Verif. |
 |---|---|---|---|---|
-| Regression tests for meaningful changes | 6 new test files, **99 new tests**, plus the tests carried forward with PR #88. The whole suite in this revision: **1382 passed, 10 skipped, 0 failed** | — | Done | PASS |
+| Regression tests for meaningful changes | 11 new test files, **184 new tests**, plus the tests carried forward with PR #88. The whole suite in this revision: **1468 passed, 10 skipped, 0 failed** | — | Done | PASS |
 | Preserve the original 62 acceptance IDs | the acceptance source matrix is **not present** in this checkout, so the IDs could not be preserved verbatim. `docs/ACCEPTANCE_PROCEDURES.md` carries the **A–I** procedures from the instruction and names the existing test modules that cover each one | — | Partial | — |
 | Mark new unexecuted tests NOT RUN | every hardware row above says NOT RUN | — | Done | — |
 | Historical evidence recorded separately | the counts below are from this revision; the historical counts are in `docs/TEST_RESULTS.md` and the changelog | — | Done | — |
