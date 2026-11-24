@@ -21,23 +21,19 @@ missing — it means the *result* is unknown.
 ## Before you start
 
 ```cmd
-cd path\to\JARVIS-AI-development
-py -3.12 -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-dev.txt
-copy setup.cmd .venv\Scripts\python.exe 2>nul
+cd /d "path\to\JARVIS-AI-development"
+setup.cmd
+.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+DIAGNOSE_JARVIS.cmd --voice
+VERIFY_JARVIS.cmd
+START_JARVIS.cmd --dev-data
 ```
 
-`setup.cmd` prepares the runtime library the Qt binaries need on a fresh Windows machine.
-Then:
-
-```cmd
-START_JARVIS.cmd
-```
-
-The launcher checks the runtime, starts the application and keeps a log in
-`%LOCALAPPDATA%\JarvisAI`. `DIAGNOSE_JARVIS.cmd` reports what is missing without changing
-anything, and `VERIFY_JARVIS.cmd` runs the local checks. `ROLLBACK_JARVIS.cmd` restores the
-previous release.
+`setup.cmd` installs dependencies in this checkout's `.venv`. The optional development
+requirements add pytest. The development launcher uses a checkout-specific profile and
+Credential Manager service. See [Windows acceptance checklist](WINDOWS_ACCEPTANCE.md)
+for the current A–I order and safe local testing procedure. The detailed procedures below
+also cover optional workflows from earlier development rounds.
 
 **Required:** Windows 10 or 11, Python 3.12, one screen, and a provider key for at least one
 provider. **Optional:** a microphone, speakers, Azure Speech (Tamil, English, French), Edge or

@@ -1,5 +1,31 @@
 # JARVIS AI — development coverage
 
+## Windows CMD source acceptance · 24 November 2026
+
+This pass starts from GitHub `main` at
+`63f6a045c8020e3a51113b2d5b6fdff95a350b93` on
+`dev/windows-cmd-acceptance-20261124`. The sections below this update describe the
+earlier implementation merged through PR #90.
+
+| Capability | Current evidence | Remaining acceptance |
+| --- | --- | --- |
+| CMD setup and verification | **PASS** on Windows with Python 3.12.4 x64. Setup, diagnostics, offscreen startup and 13 Qt tests ran from CMD. Setup also accepts a matching Python on PATH when the launcher is unavailable. | Live HUD, Settings and display scaling. |
+| Development data isolation | **PASS** in regression tests for checkout-specific data and credential scopes, stable restart identity and disposal after a failed smoke run. | Start the development profile and confirm Settings on the owner's desktop. |
+| Codex-style coding, planning and local Windows automation | Existing application entry points and regression coverage below. | **NOT RUN** for live Notepad, Calculator, VS Code and an owner-approved coding project. |
+| Edge and browser automation | **PASS** in real headless Edge against a controlled document. Verified Tamil draft readback, synthetic file selection, receipt text and refusal after document or file changes. | **NOT RUN** through the live JARVIS UI or with Fiverr, Canva, Flow, Higgsfield, Creative Studio or social accounts. |
+| Creative applications | Existing adapters and local output verification. | **NOT RUN** on installed commercial software. |
+| Gemini, OpenAI, MiniMax, Tamil, Tanglish, English and French | Existing provider and language paths. | **NOT RUN** against owner credentials. |
+| Windows speech and Azure voice | **PASS** for native System.Speech and SAPI loading via `DIAGNOSE_JARVIS.cmd --voice`. | **NOT RUN** for physical input, wake phrase, playback or Azure voices. |
+| Emergency Stop, history, backups, OCR, research, media and source updates | Existing local paths and automated coverage below. | **NOT RUN** for live owner's PC scenarios and phone pairing. |
+| Separate cybersecurity interface | Existing local defensive diagnostics. | **NOT RUN** in the live desktop session. |
+| Windows support access | Windows app discovery responded. JARVIS was not open at the time of discovery. | Identify the development window after the owner starts it. |
+
+Use the [Windows acceptance checklist](docs/WINDOWS_ACCEPTANCE.md) for tests A–I,
+safe local evidence sharing, and update and rollback steps. This branch uses
+source-only checks in GitHub Actions.
+
+## Earlier implementation merged through PR #90
+
 **Base of this work:** `c4d3533602e432bbe6c757e2c8c6d15554d143f5` (`main`, the supplied baseline)
 **Branch:** `dev/jarvis-complete-implementation-20261123`
 **Scope of this document:** every requirement in the owner's master prompt and in the current

@@ -1,4 +1,5 @@
 """Offline installation checks. Never reads keys, chat history or environment values."""
+import argparse
 import importlib.metadata
 import json
 from pathlib import Path
@@ -55,8 +56,39 @@ def collect():
             'limitations': 'Offline installation check only. Does not verify API access, display rendering, stored credentials or Windows automation.'}
 
 
+def probe_voice():
+    """Check the native speech stack without recording or playback."""
+    messages = {
+        0: 'System.Speech and SAPI loaded. Microphone and playback require separate tests.',
+        21: 'Native Windows speech requires Windows.',
+        31: 'Could not initialize pythonnet. Run setup.cmd and check the Windows .NET Framework.',
+        32: 'Could not load System.Speech. Check the Windows .NET Framework installation.',
+        33: 'System.Speech loaded, but its speech recognition API is unavailable.',
+        34: 'Could not import pywin32. Run setup.cmd.',
+        35: 'Could not create SAPI.SpVoice. Check Windows speech components.',
+        36: 'The Windows speech runtime is incomplete.',
+    }
+    try:
+        result = subprocess.run(
+            [sys.executable, str(ROOT / 'main.py'), '--check-voice-runtime'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False, 'Could not complete the native voice runtime check within 20 seconds.'
+    code = result.returncode
+    return code == 0, messages.get(code, f'Voice runtime check failed (exit {code}).')
+
+
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--voice', action='store_true', help='also check native speech dependencies')
+    args = parser.parse_args()
     report = collect()
+    if args.voice:
+        ok, detail = probe_voice()
+        report['checks'].append(dict(name='Native voice runtime',
+                                     status='pass' if ok else 'fail', detail=detail))
+        report['ready'] = report['ready'] and ok
     print(json.dumps(report, indent=2))
     return 0 if report['ready'] else 1
 

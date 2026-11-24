@@ -5961,11 +5961,13 @@ def launch_arguments(argv):
 
 
 def main():
+    from core.runtime_profile import data_directory
+
     args, smoke = launch_arguments(sys.argv)
     if '--check-voice-runtime' in args[1:]:
         return voice_runtime_smoke_test()
     app = QApplication(args)
-    base = Path(os.environ.get('LOCALAPPDATA', str(Path.home() / '.local' / 'share'))) / 'JarvisAI'
+    base = data_directory()
     base.mkdir(parents=True, exist_ok=True)
     lock = QLockFile(str(base / 'application.lock'))
     lock.setStaleLockTime(0)
