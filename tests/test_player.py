@@ -22,6 +22,18 @@ from PySide6.QtWidgets import QApplication
 from desktop.player import MEDIA_SUFFIXES, QuantumPlayer, is_media, media_info
 from desktop.prime_ui import PrimePalette
 
+#: The media engine is optional, so the tests that need it are skipped
+#: where the sound libraries are not installed.
+try:
+    from desktop.player import media_engine
+
+    HAS_ENGINE = media_engine()[0] is not None
+except Exception:
+    HAS_ENGINE = False
+
+needs_engine = pytest.mark.skipif(not HAS_ENGINE,
+                                  reason='The media engine is not installed here.')
+
 
 @pytest.fixture(scope='module')
 def app():
@@ -52,6 +64,7 @@ def test_the_player_builds(player):
     assert player.status.text() == ''
 
 
+@needs_engine
 def test_a_file_that_is_not_there_is_reported(player, tmp_path):
     answer = player.open(tmp_path / 'nothing.wav')
     assert 'not there' in answer
@@ -59,6 +72,7 @@ def test_a_file_that_is_not_there_is_reported(player, tmp_path):
     assert player.play_button.isEnabled() is False
 
 
+@needs_engine
 def test_a_real_media_file_is_opened(player, tmp_path):
     path = make_wav(tmp_path / 'tone.wav')
     answer = player.open(path)
@@ -68,6 +82,7 @@ def test_a_real_media_file_is_opened(player, tmp_path):
     assert 'tone.wav' in player.details.text()
 
 
+@needs_engine
 def test_the_details_say_how_big_the_file_is(player, tmp_path):
     path = make_wav(tmp_path / 'tone.wav')
     player.open(path)
@@ -75,6 +90,7 @@ def test_the_details_say_how_big_the_file_is(player, tmp_path):
     assert f'{size:,} bytes' in player.details.text()
 
 
+@needs_engine
 def test_the_volume_is_applied(player):
     player.change_volume(35)
     assert player.audio.volume() == pytest.approx(0.35, abs=0.01)
@@ -88,6 +104,7 @@ def test_the_clock_reads_as_a_time(player):
     assert player._clock(3_600_000) == '60:00'
 
 
+@needs_engine
 def test_playing_and_stopping_change_the_button(player, tmp_path):
     player.open(make_wav(tmp_path / 'tone.wav'))
     player.toggle()
@@ -97,6 +114,7 @@ def test_playing_and_stopping_change_the_button(player, tmp_path):
     assert 'Stopped' in player.status.text()
 
 
+@needs_engine
 def test_full_screen_is_toggled(player, tmp_path):
     player.open(make_wav(tmp_path / 'tone.wav'))
     player.toggle_fullscreen()

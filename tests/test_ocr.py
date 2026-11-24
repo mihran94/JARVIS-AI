@@ -22,6 +22,18 @@ from core.ocr import (
     MISSING_ENGINE, OCR_LANGUAGES, OcrUnavailable, ocr_image_bytes, ocr_pdf,
     tesseract_executable,
 )
+
+#: The engine is optional, so the tests that need it are skipped where it
+#: is not installed. The tests that check the missing-engine message run
+#: everywhere.
+try:
+    tesseract_executable()
+    HAS_ENGINE = True
+except OcrUnavailable:
+    HAS_ENGINE = False
+
+needs_engine = pytest.mark.skipif(not HAS_ENGINE,
+                                  reason='Tesseract OCR is not installed here.')
 from desktop.documents import DocumentError, read_document
 
 
@@ -85,6 +97,7 @@ def test_a_missing_engine_is_reported_with_what_to_install(monkeypatch):
 
 # ── a picture ──────────────────────────────────────────────────────────────
 
+@needs_engine
 def test_the_writing_in_a_picture_is_read(tmp_path, app):
     picture = write_page(tmp_path / 'page.png')
     from core.ocr import ocr_image_file
@@ -94,6 +107,7 @@ def test_the_writing_in_a_picture_is_read(tmp_path, app):
     assert 'Friday' in text
 
 
+@needs_engine
 def test_a_language_that_does_not_exist_falls_back(tmp_path, app):
     picture = write_page(tmp_path / 'page.png')
     text = ocr_image_bytes(picture.read_bytes(), language='not-a-language')
@@ -102,6 +116,7 @@ def test_a_language_that_does_not_exist_falls_back(tmp_path, app):
 
 # ── a scanned PDF ──────────────────────────────────────────────────────────
 
+@needs_engine
 def test_a_scanned_pdf_is_read(scanned):
     result = ocr_pdf(scanned)
     assert result.pages_read == 1
@@ -109,6 +124,7 @@ def test_a_scanned_pdf_is_read(scanned):
     assert 'Friday' in result.text
 
 
+@needs_engine
 def test_the_reader_says_the_text_came_from_the_pictures(scanned):
     document = read_document(scanned)
     assert 'launch' in document.text.lower()
