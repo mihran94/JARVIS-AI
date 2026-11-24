@@ -489,6 +489,50 @@ def _activate_window(arguments: dict) -> str:
         raise ToolError('Give the process id of the application to bring forward.') from None
 
 
+
+def _read_calculator(arguments: dict) -> str:
+    """The value the Windows Calculator is showing."""
+    from automation.calculator import read_display
+
+    process_id = int(arguments.get('process_id', 0) or 0)
+    value = read_display(process_id)
+    if not value:
+        raise ToolError(
+            'The Calculator display could not be read. It may not be open, or it may be '
+            'showing something that is not a number.')
+    return value
+
+
+def _save_open_document(arguments: dict) -> str:
+    """Save the document that is open in the editor in front."""
+    from automation.editor import save_open_document
+    from automation.input import InputTarget
+
+    target = InputTarget(process_id=int(arguments.get('process_id', 0) or 0),
+                          title=str(arguments.get('title', '')))
+    path = arguments.get('path') or None
+    result = save_open_document(target, path=path)
+    if not result.saved:
+        raise ToolError(result.message or 'The document was not saved.')
+    return result.message
+
+
+
+def _observe_screen(arguments: dict) -> str:
+    """Take a picture of the screen and read the writing on it, locally."""
+    from core.screen import ScreenUnavailable, observe_screen
+
+    folder = arguments.get('folder') or ''
+    language = str(arguments.get('language', 'eng'))
+    try:
+        capture = observe_screen(folder or None, language=language)
+    except ScreenUnavailable as error:
+        raise ToolError(str(error)) from None
+    except Exception as error:
+        raise ToolError(f'The screen could not be observed. {error}') from None
+    return capture.message + ('\n' + capture.text if capture.text else '')
+
+
 def build_registry(*, root=None, memory=None, editor_paths=None) -> ToolRegistry:
     """The standard catalogue of mission tools.
 
@@ -586,6 +630,49 @@ def build_registry(*, root=None, memory=None, editor_paths=None) -> ToolRegistry
         run=_activate_window,
         returns='What Windows did with the window.',
     ))
+
+    def observe_the_screen(arguments):
+        # The picture goes into the application's own folder unless the
+        # model names another one.
+        arguments = dict(arguments)
+        if not arguments.get('folder') and registry.root is not None:
+            arguments['folder'] = str(Path(registry.root) / 'screen')
+        return _observe_screen(arguments)
+
+    registry.register(Tool(
+        name='observe_screen',
+        description='Take a picture of the screen and read the writing on it, on this computer.',
+        parameters={'type': 'object', 'properties': {
+            'folder': {'type': 'string',
+                        'description': 'Where the picture is saved.'},
+            'language': {'type': 'string',
+                         'description': 'The language of the writing, for example eng or tam.'}},
+            'required': []},
+        read_only=False, run=observe_the_screen,
+        returns='The writing that was on the screen.'))
+
+    registry.register(Tool(
+        name='read_calculator',
+        description='Read the value the Windows Calculator is showing.',
+        parameters={'type': 'object', 'properties': {
+            'process_id': {'type': 'integer',
+                           'description': 'The Calculator process, when it is known.'}},
+            'required': []},
+        read_only=True, run=_read_calculator,
+        returns='The number on the display.'))
+
+    registry.register(Tool(
+        name='save_open_document',
+        description='Save the document that is open in the editor in front.',
+        parameters={'type': 'object', 'properties': {
+            'process_id': {'type': 'integer',
+                           'description': 'The editor process, when it is known.'},
+            'title': {'type': 'string', 'description': 'The window title.'},
+            'path': {'type': 'string',
+                     'description': 'The file the editor has open, so it can be read back.'}},
+            'required': []},
+        read_only=False, run=_save_open_document,
+        returns='What the save did, and whether the file was read back.'))
 
     registry.register(Tool(
         name='launch_app',

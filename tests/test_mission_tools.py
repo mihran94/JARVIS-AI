@@ -45,7 +45,8 @@ def registry(root, memory):
 def test_the_catalogue_has_the_real_capabilities(registry):
     assert set(registry.names()) == {
         'current_time', 'system_status', 'evaluate_expression', 'research_fetch', 'discover_apps',
-        'inspect_window', 'activate_window',
+        'inspect_window', 'activate_window', 'observe_screen', 'read_calculator',
+        'save_open_document',
         'launch_app', 'browser_draft', 'type_notepad', 'export_text', 'list_directory', 'read_text_file',
         'memory_search', 'memory_remember',
     }
@@ -54,10 +55,12 @@ def test_the_catalogue_has_the_real_capabilities(registry):
 def test_only_the_tools_that_change_something_need_approval(registry):
     assert set(registry.read_only_names()) == {
         'current_time', 'system_status', 'evaluate_expression', 'research_fetch', 'discover_apps',
-        'inspect_window', 'list_directory', 'read_text_file', 'memory_search',
+        'inspect_window', 'read_calculator', 'list_directory', 'read_text_file', 'memory_search',
     }
     assert registry.get('launch_app').read_only is False
     assert registry.get('activate_window').read_only is False
+    assert registry.get('observe_screen').read_only is False
+    assert registry.get('save_open_document').read_only is False
     assert registry.get('memory_remember').read_only is False
 
 
