@@ -16,14 +16,14 @@ def test_primary_sections_and_one_main_window(tmp_path):
             "Voice / Hey Jarvis", "Phone Remote", "Settings & Safety", "Video Editor", "Business",
             "Memory", "Mission Control"
         ]
-        assert win.pages.count() == 12
+        assert win.pages.count() == 13
         # The full internal page order, including the command-only pages that
         # have no navigation slot of their own.
         assert list(win.page_indices) == [
             "JARVIS Chat", "Files & Folders", "PC Control", "Coding Assistant",
             "Voice / Hey Jarvis", "Phone Remote", "Settings & Safety",
             "Video Editor", "Business", "Memory", "Mission Control", "Cybersecurity",
-            "Command Center",
+            "Quantum Visual Player", "Command Center",
             "Task Queue", "Step Workflows", "Task History", "AI Providers",
             "System & Usage", "Review changes",
         ]

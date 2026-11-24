@@ -21,7 +21,7 @@ def test_one_dashboard_has_orb_read_only_metrics_and_existing_pages(tmp_path):
         assert STYLE == PRIME_DARK
         assert isinstance(window.orb, BlueOrb)
         # Seven task workspaces are embedded in chat.
-        assert window.pages.count() == 12
+        assert window.pages.count() == 13
         assert window.nav.count() == 10
         assert 'CPU' in window.system_metrics_label.text()
         assert window.nav.item(4).text() == 'Phone Remote'

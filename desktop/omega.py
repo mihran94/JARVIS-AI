@@ -27,6 +27,7 @@ DESTINATIONS = {
     'Memory': ('Memory', '◎'),
     'Mission': ('Mission Control', '◈'),
     'Cybersecurity': ('Cybersecurity', '⬢'),
+    'Player': ('Quantum Visual Player', '▶'),
     'Creative Studio': ('Video Editor', '▷'),
     'Automation': ('Step Workflows', '⇄'),
     'Security': ('Settings & Safety', '⬡'),
