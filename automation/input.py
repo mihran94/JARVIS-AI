@@ -38,7 +38,7 @@ KEY_ALLOWLIST = {
     'left': 0x25, 'right': 0x27, 'home': 0x24, 'end': 0x23,
     'pageup': 0x21, 'pagedown': 0x22, 'ctrl+a': 0x41, 'ctrl+c': 0x43,
     'ctrl+v': 0x56, 'ctrl+x': 0x58, 'ctrl+s': 0x53, 'ctrl+z': 0x5A,
-    'ctrl+y': 0x59, 'alt+tab': 0x09,
+    'ctrl+y': 0x59, 'ctrl+e': 0x45, 'alt+d': 0x44, 'alt+n': 0x4E, 'alt+tab': 0x09,
 }
 
 #: The modifiers that may be held with a key.
@@ -132,10 +132,12 @@ def _send_unicode(text: str):
         _fields_ = [('type', wintypes.DWORD), ('u', _U)]
 
     user32 = ctypes.WinDLL('user32', use_last_error=True)
-    for character in text:
+    encoded = text.encode('utf-16-le')
+    for index in range(0, len(encoded), 2):
+        unit = int.from_bytes(encoded[index:index + 2], 'little')
         for flags in (KEYEVENTF_UNICODE, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP):
             event = INPUT(type=INPUT_KEYBOARD)
-            event.ki = KEYBDINPUT(0, ord(character), flags, 0, None)
+            event.ki = KEYBDINPUT(0, unit, flags, 0, None)
             user32.SendInput(1, ctypes.byref(event), ctypes.sizeof(INPUT))
         time.sleep(0.001)
 

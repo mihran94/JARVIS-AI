@@ -863,7 +863,7 @@ class Window(QMainWindow):
 
     def route_video_brief(self, text):
         command = text.casefold().strip(' .!?')
-        if command == 'save open capcut export':
+        if command in ('export current capcut project', 'save open capcut export'):
             self.open_section('Video Editor')
             self.save_capcut_export()
             return True
@@ -2050,7 +2050,7 @@ class Window(QMainWindow):
             layout, 'Export for CapCut Desktop', lambda: self.assemble_video(editor='CapCut Desktop'))
         self.capcut_button.setEnabled(False)
         self.capcut_native_export_button = self.flexible_button(
-            layout, 'Save open CapCut export', self.save_capcut_export)
+            layout, 'Export current CapCut project', self.save_capcut_export)
         self.capcut_native_export_button.setEnabled(sys.platform == 'win32')
         self.davinci_button = self.flexible_button(
             layout, 'Export for DaVinci Resolve', lambda: self.assemble_video(editor='DaVinci Resolve'))
@@ -2206,7 +2206,7 @@ class Window(QMainWindow):
             if sys.platform != 'win32' or not self.plugin_enabled('CapCut'):
                 raise ValueError('CapCut must be enabled in Settings → Plugins on Windows.')
             path, _ = QFileDialog.getSaveFileName(
-                self, 'Match the new MP4 filename and folder in the open CapCut Export dialog',
+                self, 'Save the current CapCut project as MP4',
                 '', 'MP4 (*.mp4)', options=QFileDialog.Option.DontConfirmOverwrite)
             if not path:
                 return
@@ -2214,8 +2214,8 @@ class Window(QMainWindow):
             ticket = self.policy.ticket()
             action = Action(
                 'Save CapCut export',
-                f'{output}\n\nReview this path in CapCut with Video selected and space sync off. '
-                'After approving, switch back to the open CapCut Export dialog within 25 seconds.')
+                f'{output}\n\nJARVIS will open Export in the current CapCut project '
+                'and save the video locally. Keep the project open.')
 
             def start():
                 def export(check_cancelled):
@@ -2225,7 +2225,7 @@ class Window(QMainWindow):
 
                     return save_open_capcut_export(output, check)
 
-                self.start_video_export(output, 'Switch to the reviewed CapCut Export dialog…', export)
+                self.start_video_export(output, 'Exporting the open CapCut project…', export)
 
             self.gateway.run(action, self.confirm, start)
 

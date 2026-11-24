@@ -59,9 +59,10 @@ def test_capcut_chat_command_opens_the_same_export_review(tmp_path, monkeypatch)
     review = []
     monkeypatch.setattr(window, 'save_capcut_export', lambda: review.append(True))
     try:
+        assert window.route_task('Export current CapCut project')
         assert window.route_task('Save open CapCut export')
         assert window.pages.currentIndex() == window.page_indices['Video Editor']
-        assert review == [True]
+        assert review == [True, True]
         assert window.worker is None
     finally:
         window.close()
