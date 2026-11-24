@@ -65,6 +65,7 @@ def _window_api():
         'ShowWindow': ([wintypes.HWND, ctypes.c_int], wintypes.BOOL),
         'SetForegroundWindow': ([wintypes.HWND], wintypes.BOOL),
         'GetDlgCtrlID': ([wintypes.HWND], ctypes.c_int),
+        'GetDlgItem': ([wintypes.HWND, ctypes.c_int], wintypes.HWND),
     }
     for name, (args, result) in signatures.items():
         function = getattr(user, name)
@@ -274,17 +275,13 @@ class _CapCutExportUI:
         if not chosen or not Path(chosen).is_absolute() or Path(chosen).resolve() != folder:
             raise RuntimeError('CapCut did not navigate to the approved export folder.')
 
-        def select_focused():
-            if not picker_ready():
-                return False
-            focus = win_controls.focused_control(picker)
-            return bool(focus and self._class(focus) == 'Button'
-                        and self.user.GetDlgCtrlID(focus) == 1)
-
-        self._key('alt+n', picker_ready)
-        self._key('tab', picker_ready)
-        self._wait(select_focused, 'The Select Folder button could not be verified.')
-        self._key('space', select_focused)
+        button = self.user.GetDlgItem(picker, 1)
+        self.check()
+        if (not picker_ready() or not button or not self.user.IsWindowVisible(button)
+                or not self.user.IsWindowEnabled(button) or self._class(button) != 'Button'
+                or win_controls.contents(button) != 'Select Folder'
+                or not win_controls.click_dialog_button(button)):
+            raise RuntimeError('JARVIS could not activate CapCut’s Select Folder button.')
         if self._wait(self._current_form, 'CapCut did not return to Export settings.') != form:
             raise RuntimeError('CapCut switched to a different Export dialog.')
 

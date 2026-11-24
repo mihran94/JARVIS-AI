@@ -107,6 +107,11 @@ def replace_contents(hwnd, text):
     return bool(_message(hwnd, 0x000C, address=ctypes.addressof(buffer))) and contents(hwnd) == text
 
 
+def click_dialog_button(hwnd):
+    """Invoke a standard Windows button already verified by the caller."""
+    return _message(hwnd, 0x00F5) is not None  # BM_CLICK
+
+
 def expected_edit(hwnd, insertion):
     before = contents(hwnd)
     if before is None:
