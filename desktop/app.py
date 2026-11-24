@@ -76,6 +76,7 @@ from desktop.video_export import AfterEffectsInputs, PreviewInputs, VideoExportW
 from video_studio.after_effects import after_effects_render
 from video_studio.after_effects_timeline import timeline_executable, timeline_script
 from video_studio.capcut import export_capcut
+from automation.capcut_export import new_mp4, save_open_capcut_export
 from video_studio.preview import media_tools, render_preview
 from security.policy import Action, Denied, Policy, Stopped
 from security.vault import Vault
@@ -2044,6 +2045,9 @@ class Window(QMainWindow):
         self.capcut_button = self.flexible_button(
             layout, 'Export for CapCut Desktop', lambda: self.assemble_video(editor='CapCut Desktop'))
         self.capcut_button.setEnabled(False)
+        self.capcut_native_export_button = self.flexible_button(
+            layout, 'Save open CapCut export', self.save_capcut_export)
+        self.capcut_native_export_button.setEnabled(sys.platform == 'win32')
         self.davinci_button = self.flexible_button(
             layout, 'Export for DaVinci Resolve', lambda: self.assemble_video(editor='DaVinci Resolve'))
         self.davinci_button.setEnabled(False)
@@ -2187,6 +2191,39 @@ class Window(QMainWindow):
                 lambda: self.start_video_export(
                     output, label,
                     lambda check: exporter(plan, clips, output, check, narration=narration)))
+
+        self.notify(operation)
+
+    def save_capcut_export(self):
+        if self.worker is not None or self.policy.stopped:
+            return
+
+        def operation():
+            if sys.platform != 'win32' or not self.plugin_enabled('CapCut'):
+                raise ValueError('CapCut must be enabled in Settings → Plugins on Windows.')
+            path, _ = QFileDialog.getSaveFileName(
+                self, 'Match the new MP4 filename and folder in the open CapCut Export dialog',
+                '', 'MP4 (*.mp4)', options=QFileDialog.Option.DontConfirmOverwrite)
+            if not path:
+                return
+            output = new_mp4(path if Path(path).suffix else path + '.mp4')
+            ticket = self.policy.ticket()
+            action = Action(
+                'Save CapCut export',
+                f'{output}\n\nReview this path in CapCut with Video selected and space sync off. '
+                'After approving, switch back to the open CapCut Export dialog within 25 seconds.')
+
+            def start():
+                def export(check_cancelled):
+                    def check():
+                        check_cancelled()
+                        self.policy.check(ticket)
+
+                    return save_open_capcut_export(output, check)
+
+                self.start_video_export(output, 'Switch to the reviewed CapCut Export dialog…', export)
+
+            self.gateway.run(action, self.confirm, start)
 
         self.notify(operation)
 
@@ -5729,6 +5766,7 @@ class Window(QMainWindow):
             button.setEnabled(ready and self.video_plan is not None)
         self.video_render_button.setEnabled(ready and self.video_plan is not None)
         self.capcut_button.setEnabled(ready and self.video_plan is not None)
+        self.capcut_native_export_button.setEnabled(ready and sys.platform == 'win32')
         self.davinci_button.setEnabled(ready and self.video_plan is not None)
         self.after_effects_button.setEnabled(ready)
         self.after_effects_timeline_button.setEnabled(ready and self.video_plan is not None)
