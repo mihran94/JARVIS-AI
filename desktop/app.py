@@ -1854,7 +1854,8 @@ class Window(QMainWindow):
 
     def bridge_page(self):
         self.bridge = BridgePanel(self.policy, self.store, self.vault, self.confirm, self.notify,
-                                  router=self.router)
+                                  router=self.router,
+                                  history_path=self.root / 'history.sqlite3')
         return self.bridge
 
     def automation_page(self):
