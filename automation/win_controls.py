@@ -101,6 +101,12 @@ def contents(hwnd):
     return buffer.value
 
 
+def replace_contents(hwnd, text):
+    """Set and read back text in a native Windows edit control."""
+    buffer = ctypes.create_unicode_buffer(text)
+    return bool(_message(hwnd, 0x000C, address=ctypes.addressof(buffer))) and contents(hwnd) == text
+
+
 def expected_edit(hwnd, insertion):
     before = contents(hwnd)
     if before is None:

@@ -24,6 +24,7 @@ _SYNC_PIXEL = (362, 507)
 _GA_ROOT = 2
 _GA_ROOTOWNER = 3
 _GW_ENABLEDPOPUP = 6
+_PICKER_ADDRESS_ID = 41477
 
 
 def new_mp4(path):
@@ -205,17 +206,17 @@ class _CapCutExportUI:
             return form
         return None
 
-    def _guard(self, ready):
+    def _guard(self, ready, action):
         self.check()
         if not ready():
-            raise RuntimeError('CapCut focus or the expected control changed. Check the project and retry.')
+            raise RuntimeError(f'CapCut focus changed while trying to {action}. Check the project and retry.')
         return self.pid
 
     def _key(self, key, ready):
-        press_key(key, self.target, foreground=lambda: self._guard(ready))
+        press_key(key, self.target, foreground=lambda: self._guard(ready, f'press {key}'))
 
     def _type(self, text, ready):
-        type_text(text, self.target, foreground=lambda: self._guard(ready))
+        type_text(text, self.target, foreground=lambda: self._guard(ready, 'enter the filename'))
 
     def _click(self, form, coordinate, *, sync=None):
         def locate():
@@ -233,7 +234,7 @@ class _CapCutExportUI:
             return (self.user.GetCursorPos(ctypes.byref(cursor))
                     and (cursor.x, cursor.y) == point and locate() == point)
 
-        click_at(*point, self.target, foreground=lambda: self._guard(cursor_on_target))
+        click_at(*point, self.target, foreground=lambda: self._guard(cursor_on_target, 'click Export controls'))
 
     def _folder_picker(self):
         hwnd = self._foreground()
@@ -252,7 +253,8 @@ class _CapCutExportUI:
         def address_field():
             if picker_ready():
                 focus = win_controls.focused_control(picker)
-                if focus and self._class(focus).casefold() == 'edit':
+                if (focus and self._class(focus) == 'Edit'
+                        and self.user.GetDlgCtrlID(focus) == _PICKER_ADDRESS_ID):
                     return focus
             return None
 
@@ -262,9 +264,8 @@ class _CapCutExportUI:
         def address_ready():
             return address_field() == address
 
-        self._key('ctrl+a', address_ready)
-        self._type(str(folder), address_ready)
-        if win_controls.contents(address) != str(folder):
+        self._guard(address_ready, 'enter the folder path')
+        if not win_controls.replace_contents(address, str(folder)):
             raise RuntimeError('The export folder could not be entered in CapCut.')
         self._key('enter', address_ready)
         self._key('alt+d', picker_ready)
