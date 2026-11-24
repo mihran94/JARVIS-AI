@@ -20,9 +20,10 @@ earlier implementation merged through PR #90.
 | Separate cybersecurity interface | Existing local defensive diagnostics. | **NOT RUN** in the live desktop session. |
 | Windows support access | Windows app discovery responded. JARVIS was not open at the time of discovery. | Identify the development window after the owner starts it. |
 
-The Windows regression run exposed an application-wide Qt stylesheet update that
-stalled a long test session. The affected tests now use the window's own theme.
-All 23 tests in the affected desktop groups passed on Windows.
+The Windows regression run exposed application-wide Qt stylesheet updates that
+stalled long test sessions. The affected tests now use the window's own theme or a
+separate test widget. All 37 tests in the affected desktop and theme groups passed
+on Windows.
 
 Use the [Windows acceptance checklist](docs/WINDOWS_ACCEPTANCE.md) for tests A–I,
 safe local evidence sharing, and update and rollback steps. This branch uses
