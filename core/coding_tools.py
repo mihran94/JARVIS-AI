@@ -34,6 +34,7 @@ import hashlib
 import os
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
 import sys
 
@@ -172,6 +173,46 @@ def _same_interpreter(path: str) -> bool:
         os.path.dirname(candidate) == os.path.dirname(running)
 
 
+#: The commands whose run needs a clean bytecode cache.
+TEST_COMMANDS = ('pytest', 'unittest', 'npm test', 'npm run test', 'node --test',
+                 'jest', 'mocha', 'vitest', 'tox', 'go test', 'cargo test', 'mvn test',
+                 'gradle test', 'make test')
+
+
+def is_a_test_command(command: str) -> bool:
+    """Whether a command runs tests."""
+    text = (command or '').strip().casefold()
+    return any(text == item or text.startswith(item + ' ') or (' ' + item) in text
+               for item in TEST_COMMANDS)
+
+
+def clear_bytecode_cache(folder, *, limit=500) -> int:
+    """Remove the cached bytecode of a project.
+
+    A file that was just changed can still be read from the cached
+    bytecode when the file system's timestamps are coarse, and the test
+    would then run against the code as it was **before** the change. The
+    agent would conclude that its fix did not work and change it again,
+    and the second change would be refused for touching the same lines.
+
+    So the cache is removed before a test run, and the run really tests
+    the files that are on the disk now.
+    """
+    removed = 0
+    root = Path(folder)
+    try:
+        caches = list(root.rglob('__pycache__'))
+    except OSError:
+        return 0
+    for cache in caches[:limit]:
+        try:
+            shutil.rmtree(cache, ignore_errors=True)
+            removed += 1
+        except OSError:
+            continue
+    return removed
+
+
 def run_command(command: str, cwd, *, timeout=COMMAND_TIMEOUT, cancel=None,
                 environment=None) -> CommandResult:
     """Run one allowed command in the project, and keep what it printed."""
@@ -179,6 +220,8 @@ def run_command(command: str, cwd, *, timeout=COMMAND_TIMEOUT, cancel=None,
 
     arguments = check_command(command)
     folder = Path(cwd)
+    if is_a_test_command(command):
+        clear_bytecode_cache(folder)
     started = time.monotonic()
     process = subprocess.Popen(
         arguments, cwd=str(folder), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

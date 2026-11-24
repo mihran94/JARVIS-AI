@@ -250,7 +250,7 @@ scratch** to the specification in §9 and §10, rather than recovered. They are 
 
 | Requirement | Implementation | Observable result | Impl. | Verif. |
 |---|---|---|---|---|
-| Regression tests for meaningful changes | 11 new test files, **184 new tests**, plus the tests carried forward with PR #88. The whole suite in this revision: **1468 passed, 10 skipped, 0 failed** | — | Done | PASS |
+| Regression tests for meaningful changes | 11 new test files, **184 new tests**, plus the tests carried forward with PR #88. The whole suite in this revision: **1470 passed, 10 skipped, 0 failed** | — | Done | PASS |
 | Preserve the original 62 acceptance IDs | the acceptance source matrix is **not present** in this checkout, so the IDs could not be preserved verbatim. `docs/ACCEPTANCE_PROCEDURES.md` carries the **A–I** procedures from the instruction and names the existing test modules that cover each one | — | Partial | — |
 | Mark new unexecuted tests NOT RUN | every hardware row above says NOT RUN | — | Done | — |
 | Historical evidence recorded separately | the counts below are from this revision; the historical counts are in `docs/TEST_RESULTS.md` and the changelog | — | Done | — |

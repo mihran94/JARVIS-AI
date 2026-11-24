@@ -246,3 +246,41 @@ def test_the_tools_that_change_something_need_approval(registry):
 def test_every_tool_says_what_it_returns(registry):
     for name in registry.names():
         assert registry.get(name).returns
+
+
+# ── the stale bytecode ─────────────────────────────────────────────────────
+
+def test_a_test_run_clears_the_cached_bytecode(tmp_path):
+    """A file that was just changed must be tested as it is now.
+
+    The cache is removed before the run, because a coarse file time can
+    otherwise make Python read the old code from the cache and report a
+    failure that has already been fixed.
+    """
+    from core.coding_tools import clear_bytecode_cache, is_a_test_command
+
+    project = tmp_path / 'project'
+    package = project / 'app'
+    package.mkdir(parents=True)
+    (package / '__init__.py').write_text('VALUE = 1\n', encoding='utf-8')
+    cache = package / '__pycache__'
+    cache.mkdir()
+    (cache / 'stale.pyc').write_bytes(b'stale')
+
+    assert is_a_test_command('python -m pytest -q')
+    assert not is_a_test_command('python -V')
+    removed = clear_bytecode_cache(project)
+    assert removed == 1
+    assert not cache.exists()
+
+
+def test_the_cache_is_cleared_before_the_tests_run(tmp_path):
+    project = tmp_path / 'project'
+    project.mkdir()
+    cache = project / '__pycache__'
+    cache.mkdir()
+    (cache / 'stale.pyc').write_bytes(b'stale')
+    result = run_command(f'{sys.executable} -V', project)
+    assert result.passed
+    # A plain command does not clear it.
+    assert cache.exists()
