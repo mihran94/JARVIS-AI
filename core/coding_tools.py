@@ -89,6 +89,40 @@ class CommandResult:
         return (f'{self.command} — {state}\n\n{self.output}')
 
 
+def split_arguments(text: str, *, windows=None) -> list:
+    """The arguments of a command.
+
+    On Windows a backslash is a path separator and not an escape, so
+    `shlex` cannot be used there: it would eat the separators of
+    `C:\\Program Files\\Python\\python.exe` and leave a path that no
+    longer exists. The quoting rules are the same on both systems: a
+    double quote groups, and a space outside a group separates.
+    """
+    if windows is None:
+        windows = os.name == 'nt'
+    if not windows:
+        try:
+            return shlex.split(text)
+        except ValueError:
+            raise CommandRefused('That command could not be read.') from None
+    parts = []
+    current = ''
+    quoted = False
+    for character in text:
+        if character == '"':
+            quoted = not quoted
+            continue
+        if character.isspace() and not quoted:
+            if current:
+                parts.append(current)
+                current = ''
+            continue
+        current += character
+    if current:
+        parts.append(current)
+    return parts
+
+
 def check_command(command: str) -> list:
     """The arguments of a command, when it is one the agent may run."""
     if not isinstance(command, str) or not command.strip():
@@ -101,10 +135,9 @@ def check_command(command: str) -> list:
             raise CommandRefused(
                 'That command has a character that could run something else. '
                 'Only a plain command is allowed.')
-    try:
-        arguments = shlex.split(text)
-    except ValueError:
-        raise CommandRefused('That command could not be read.') from None
+    arguments = split_arguments(text)
+    if not arguments:
+        raise CommandRefused('That command could not be read.')
     if not arguments:
         raise CommandRefused('Give a command to run.')
     for allowed in ALLOWED_COMMANDS:

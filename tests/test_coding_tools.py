@@ -23,6 +23,7 @@ import pytest
 
 from core.coding_tools import (
     CommandRefused, build_coding_registry, check_command, run_command,
+    split_arguments,
 )
 from core.coding_workspace import CodingWorkspace
 
@@ -49,6 +50,23 @@ def registry(workspace):
 
 
 # ── the command list ───────────────────────────────────────────────────────
+
+def test_a_windows_path_keeps_its_separators():
+    # On Windows a backslash is a path separator and not an escape, so
+    # the interpreter path has to survive being split. This is the shape
+    # the GitHub Windows runner uses.
+    arguments = split_arguments(
+        r'C:\hostedtoolcache\windows\Python\3.12.10\x64\python.exe -m pytest -q',
+        windows=True)
+    assert arguments == [r'C:\hostedtoolcache\windows\Python\3.12.10\x64\python.exe',
+                         '-m', 'pytest', '-q']
+
+
+def test_a_quoted_path_stays_one_argument():
+    arguments = split_arguments('"C:\\Program Files\\Python\\python.exe" -m pytest',
+                                windows=True)
+    assert arguments[0] == r'C:\Program Files\Python\python.exe'
+
 
 def test_an_allowed_command_is_accepted():
     assert check_command('python -m pytest') == ['python', '-m', 'pytest']
