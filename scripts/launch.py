@@ -10,7 +10,8 @@ from tempfile import TemporaryDirectory
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from core.updates import read_state, release_path
-from core.runtime_profile import RESTART_EXIT_CODE
+# The child returns this status when it has fully closed for restart.
+RESTART_EXIT_CODE = 75
 
 
 def main(args=()):

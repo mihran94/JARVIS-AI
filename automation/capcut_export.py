@@ -398,9 +398,10 @@ class _CapCutExportUI:
     def _press_picker_button(self, picker, label, current_picker):
         button = self.user.GetDlgItem(picker, 1)
         self.check()
+        caption = win_controls.contents(button) if button else None
         if (current_picker() != picker or not button or not self.user.IsWindowVisible(button)
                 or not self.user.IsWindowEnabled(button) or self._class(button) != 'Button'
-                or win_controls.contents(button) != label
+                or caption not in (label, '&' + label)
                 or not win_controls.click_dialog_button(button)):
             raise RuntimeError(f'JARVIS could not activate CapCut’s {label} button.')
 
