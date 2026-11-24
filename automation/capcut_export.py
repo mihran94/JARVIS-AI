@@ -16,7 +16,7 @@ from video_studio.verification import ffprobe_executable, verify_media
 # settings form at 100% scale, using coordinates relative to the dialog.
 # The result/share screen has the same title and a teal button elsewhere.
 _FORM_SIZE = (720, 663)
-_EXPORT_POINT = (572, 635)
+_EXPORT_POINT = (590, 640)
 _VIDEO_CHECK = (365, 192)
 _SYNC_CHECK = (365, 507)
 
@@ -36,6 +36,12 @@ def new_mp4(path):
 
 def _window_api():
     user = ctypes.WinDLL('user32', use_last_error=True)
+    user.SetThreadDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+    user.SetThreadDpiAwarenessContext.restype = ctypes.c_void_p
+    user.GetDpiForWindow.argtypes = [wintypes.HWND]
+    user.GetDpiForWindow.restype = wintypes.UINT
+    user.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+    user.GetWindow.restype = wintypes.HWND
     user.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
     user.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
     user.GetDC.argtypes = [wintypes.HWND]
@@ -71,7 +77,15 @@ def _local_export_point(user, hwnd):
     rect = wintypes.RECT()
     if not title.value.startswith('Export-') or not user.GetWindowRect(hwnd, ctypes.byref(rect)):
         return None
-    if (rect.right - rect.left, rect.bottom - rect.top) != _FORM_SIZE:
+    dpi = user.GetDpiForWindow(hwnd)
+    if not dpi:
+        return None
+
+    def scaled(value):
+        return round(value * dpi / 96)
+
+    width, height = _FORM_SIZE
+    if (rect.right - rect.left, rect.bottom - rect.top) != (scaled(width), scaled(height)):
         return None
     gdi = ctypes.WinDLL('gdi32', use_last_error=True)
     gdi.GetPixel.argtypes = [wintypes.HDC, ctypes.c_int, ctypes.c_int]
@@ -79,30 +93,34 @@ def _local_export_point(user, hwnd):
     dc = user.GetDC(None)
     if not dc:
         return None
+
+    def screen_point(x, y):
+        return rect.left + scaled(x), rect.top + scaled(y)
+
     try:
         video_x, video_y = _VIDEO_CHECK
-        sync_x, sync_y = _SYNC_CHECK
-        button_x, button_y = _EXPORT_POINT
-        video = gdi.GetPixel(dc, rect.left + video_x - 3, rect.top + video_y)
-        sync = gdi.GetPixel(dc, rect.left + sync_x, rect.top + sync_y)
-        button = gdi.GetPixel(dc, rect.left + button_x, rect.top + button_y)
+        video = gdi.GetPixel(dc, *screen_point(video_x - 3, video_y))
+        sync = gdi.GetPixel(dc, *screen_point(*_SYNC_CHECK))
+        button = gdi.GetPixel(dc, *screen_point(*_EXPORT_POINT))
     finally:
         user.ReleaseDC(None, dc)
     if not (_teal(video) and _unchecked(sync) and _teal(button)):
         return None
-    point = (rect.left + button_x, rect.top + button_y)
+    point = screen_point(*_EXPORT_POINT)
     if user.GetAncestor(user.WindowFromPoint(wintypes.POINT(*point)), 2) != hwnd:
         return None
     return point
 
 
-def save_open_capcut_export(path, check_cancelled):
-    """Confirm one local Export click, then verify the resulting new MP4."""
-    if sys.platform != 'win32':
-        raise RuntimeError('CapCut Desktop export is available on Windows only.')
-    output = new_mp4(path)
-    ffprobe_executable()
-    user = _window_api()
+def _export_button(user, foreground):
+    # Qt's owned export dialog can be in front even when its editor has focus.
+    popup = user.GetWindow(foreground, 6)  # GW_ENABLEDPOPUP
+    if popup and popup != foreground and user.GetAncestor(popup, 3) == foreground:
+        return _local_export_point(user, popup)
+    return _local_export_point(user, foreground)
+
+
+def _request_export(user, output, check_cancelled):
     deadline = time.monotonic() + 25
     while time.monotonic() < deadline:
         check_cancelled()
@@ -113,21 +131,21 @@ def save_open_capcut_export(path, check_cancelled):
                 is_capcut = psutil.Process(pid).name().casefold() == 'capcut.exe'
             except (psutil.Error, OSError):
                 is_capcut = False
-            point = _local_export_point(user, hwnd) if is_capcut else None
+            point = _export_button(user, hwnd) if is_capcut else None
             if point is not None:
                 break
         time.sleep(0.1)
     else:
         raise RuntimeError('CapCut export settings could not be verified. Bring the open '
                            'Export dialog forward with Video checked and sync unchecked. '
-                           'This layout supports CapCut Desktop 9.9 at 100% scale.')
+                           'This layout supports CapCut Desktop 9.9.')
 
     def current_target():
         check_cancelled()
         new_mp4(output)
         if (win_controls.foreground_window() == hwnd
                 and win_controls.foreground_process() == pid
-                and _local_export_point(user, hwnd) == point):
+                and _export_button(user, hwnd) == point):
             return pid
         return None
 
@@ -141,6 +159,24 @@ def save_open_capcut_export(path, check_cancelled):
         return None
 
     click_at(*point, InputTarget(pid, 'CapCut Export'), foreground=target_under_cursor)
+
+
+def save_open_capcut_export(path, check_cancelled):
+    """Confirm one local Export click, then verify the resulting new MP4."""
+    if sys.platform != 'win32':
+        raise RuntimeError('CapCut Desktop export is available on Windows only.')
+    output = new_mp4(path)
+    ffprobe_executable()
+    user = _window_api()
+    # The screen DC and cursor use physical pixels. Match Win32 window and
+    # hit-test coordinates to them regardless of the calling process's DPI mode.
+    previous = user.SetThreadDpiAwarenessContext(ctypes.c_void_p(-4))
+    if not previous:
+        raise RuntimeError('JARVIS could not read the display scaling for CapCut.')
+    try:
+        _request_export(user, output, check_cancelled)
+    finally:
+        user.SetThreadDpiAwarenessContext(previous)
 
     deadline = time.monotonic() + 600
     last_size = 0

@@ -863,6 +863,10 @@ class Window(QMainWindow):
 
     def route_video_brief(self, text):
         command = text.casefold().strip(' .!?')
+        if command == 'save open capcut export':
+            self.open_section('Video Editor')
+            self.save_capcut_export()
+            return True
         if command == 'export for capcut':
             self.open_section('Video Editor')
             self.capcut_button.setFocus()
