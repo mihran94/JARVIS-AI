@@ -85,8 +85,14 @@ def test_a_pdf_that_is_not_a_pdf_is_refused_honestly(tmp_path):
         documents.read_document(path)
 
 
-def test_a_pdf_with_no_text_layer_says_it_has_pictures(tmp_path):
-    """A page that is a picture has no text, and this says so."""
+def test_a_pdf_with_no_text_layer_says_what_it_could_not_do(tmp_path):
+    """A page that is a picture has no text layer.
+
+    What happens then depends on the machine: where the recognition
+    engine is installed the picture is read, and where it is not the
+    owner is told what to install. Either way the document is never
+    reported as an empty page.
+    """
     from pypdf import PdfWriter
 
     path = tmp_path / 'picture.pdf'
@@ -94,8 +100,14 @@ def test_a_pdf_with_no_text_layer_says_it_has_pictures(tmp_path):
     writer.add_blank_page(width=200, height=200)
     with open(path, 'wb') as handle:
         writer.write(handle)
-    with pytest.raises(documents.DocumentError, match='no text layer'):
+    with pytest.raises(documents.DocumentError) as error:
         documents.read_document(path)
+    message = str(error.value)
+    # The owner is always told the document is pictures.
+    assert 'no text layer' in message
+    # Either the engine was missing and the owner is told what to
+    # install, or the engine read the picture and found no writing on it.
+    assert 'Tesseract' in message or 'no writing was recognised' in message
 
 
 def test_a_protected_pdf_is_refused_honestly(tmp_path):

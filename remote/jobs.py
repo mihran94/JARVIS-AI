@@ -35,6 +35,24 @@ JOB_STATES = (
 )
 
 DISK_SPACE_ACTION = 'check_disk_space'
+#: The phone asks the desktop to back up the history.
+HISTORY_BACKUP_ACTION = 'backup_history'
+#: The phone asks the desktop to restore a backup it named.
+HISTORY_RESTORE_ACTION = 'restore_history'
+#: The actions a phone may ask for.
+SUPPORTED_ACTIONS = (DISK_SPACE_ACTION, HISTORY_BACKUP_ACTION, HISTORY_RESTORE_ACTION)
+
+
+def operation_kind(operation) -> str:
+    """The action of an operation, without any argument it carries.
+
+    The restore names the backup it wants, and that name travels with
+    the operation rather than as free text, because a job record keeps
+    no phone text at all.
+    """
+    if not isinstance(operation, str):
+        return ''
+    return operation.split(':', 1)[0]
 
 #: States from which a job can no longer change.
 TERMINAL_STATES = ('SUCCEEDED', 'FAILED', 'CANCELLED', 'REJECTED')
@@ -106,10 +124,21 @@ class JobStore:
         operation = None
         if kind == 'CUSTOM' and len(payload) <= 256:
             try:
-                if json.loads(payload) == {'action': DISK_SPACE_ACTION}:
-                    operation = DISK_SPACE_ACTION
+                data = json.loads(payload)
             except ValueError:
-                pass
+                data = None
+            if isinstance(data, dict) and data.get('action') in SUPPORTED_ACTIONS:
+                operation = data['action']
+                if operation == HISTORY_RESTORE_ACTION:
+                    name = data.get('backup', '')
+                    # Only a plain file name is accepted, so a phone can
+                    # never point the restore at a path of its choosing.
+                    if (not isinstance(name, str) or not name
+                            or '/' in name or '\\' in name or '..' in name
+                            or not name.endswith('.jarvisbak')):
+                        operation = None
+                    else:
+                        operation = f'{HISTORY_RESTORE_ACTION}:{name}'
         moment = int(self._now() * 1000)
         with self._lock:
             job = BridgeJob(
@@ -147,11 +176,12 @@ class JobStore:
         """Claim an approved job immediately before calling its executor."""
         with self._lock:
             job = self._jobs.get(job_id)
-            if job is None or job.state != 'QUEUED' or job.operation != DISK_SPACE_ACTION:
+            if (job is None or job.state != 'QUEUED'
+                    or operation_kind(job.operation) not in SUPPORTED_ACTIONS):
                 raise JobError('The job is no longer queued or has no supported action.')
             job = self._replace(job, state='RUNNING', requires_approval=False,
                                 started_at=int(self._now() * 1000),
-                                logs=['Started disk capacity check.'])
+                                logs=[f'Started {job.operation}.'])
             self._jobs[job_id] = job
             return job
 

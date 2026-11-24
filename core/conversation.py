@@ -27,6 +27,19 @@ def suggestion_argument(text):
     return None
 
 
+def mission_argument(text):
+    """Return the goal for /mission, or None for an ordinary message.
+
+    The same rule as /suggest: the whole message is the goal, and it is
+    never taken out of a longer sentence. A mission is a goal the owner
+    asked for, so the words after the command are the goal.
+    """
+    words = addressed_request(text).split(maxsplit=1)
+    if words and words[0].casefold() in ('/mission', '/task', '/s'):
+        return words[1] if len(words) == 2 else ''
+    return None
+
+
 ASSISTANT_GUIDANCE = (
     'You are JARVIS, the owner\'s friendly, practical personal AI assistant. '
     'Speak naturally in the language and style the user uses, including Tamil, '

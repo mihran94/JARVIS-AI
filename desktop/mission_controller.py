@@ -65,14 +65,20 @@ class MissionController(QObject):
         self.max_steps = MAX_STEPS
         self._steps = 0
         self._key = ''
+        self._from_chat = False
         self.bridge = ApprovalBridge(window)
         panel.run_requested.connect(self.start)
         panel.cancel_requested.connect(self.cancel)
 
     # ------------------------------------------------------------------
 
-    def start(self, goal: str):
-        """Start one mission with the goal the owner typed."""
+    def start(self, goal: str, *, from_chat: bool = False):
+        """Start one mission with the goal the owner typed.
+
+        `from_chat` means the goal came from the conversation, so the
+        answer is written back into that conversation when the mission
+        finishes. The steps are on the Mission Control page either way.
+        """
         window = self.window
         if self.worker is not None and self.worker.isRunning():
             # The mission that is running keeps its own state; the console
@@ -94,12 +100,17 @@ class MissionController(QObject):
                                                  str(error)))
             return
 
-        registry = build_registry(root=window.root, memory=window.memory_service)
+        from automation.windows import EDITOR_EXECUTABLES
+
+        editor_paths = {name: window.store.get('editor_path:' + name, '') for name in EDITOR_EXECUTABLES}
+        registry = build_registry(root=window.root, memory=window.memory_service, editor_paths=editor_paths)
+        self.max_steps, budget_seconds = self.panel.run_limit.currentData()
         runtime = AgentRuntime(
             registry,
             window.gateway,
             self._planner(provider, model, ticket),
             max_steps=self.max_steps,
+            budget_seconds=budget_seconds,
             on_event=self.on_event,
             check=lambda: window.policy.check(ticket),
         )
@@ -109,6 +120,7 @@ class MissionController(QObject):
         worker.failed.connect(self.on_failed)
         self.worker = worker
         self._steps = 0
+        self._from_chat = from_chat
         self.panel.max_steps = self.max_steps
         self.panel.set_goal(goal)
         self.panel.set_running(True)
@@ -197,6 +209,9 @@ class MissionController(QObject):
         self._key = ''
         self.panel.set_running(False)
         self.panel.show_result(mission)
+        if self._from_chat:
+            self._from_chat = False
+            self.window.mission_answered(mission)
         self.window.mission_finished()
 
     def on_failed(self, message):
@@ -205,6 +220,9 @@ class MissionController(QObject):
         self.panel.set_running(False)
         self.panel.set_status('failed')
         self.panel.append_event(MissionEvent('error', 'Mission failed', message))
+        if self._from_chat:
+            self._from_chat = False
+            self.window.mission_answered(None, message)
         self.window.mission_finished()
 
 

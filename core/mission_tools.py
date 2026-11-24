@@ -9,7 +9,7 @@ WHAT THIS IS
 
 WHAT THIS IS NOT
     * It is not a general scripting surface. There is no "run this
-      command" tool and no "write this file" tool. A tool that is not in
+      command" tool. A tool that is not in
       this catalogue does not exist for the model.
     * A tool does not decide anything. It runs one real thing and reports
       what really happened. Whether the owner allowed it is decided by
@@ -28,10 +28,14 @@ THE TWO KINDS OF TOOL
 from __future__ import annotations
 
 import ast
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
 import operator
+import re
 from pathlib import Path
+from tempfile import TemporaryDirectory
+import time
 
 #: How many characters a file read may return.
 MAX_FILE_CHARACTERS = 20_000
@@ -69,6 +73,7 @@ class Tool:
     read_only: bool
     run: object
     returns: str = ''
+    accepts_checkpoint: bool = False
 
     def summary(self, arguments: dict) -> str:
         """One line that says what this call is about.
@@ -266,18 +271,91 @@ def _research_fetch(arguments: dict) -> str:
     return head + text
 
 
-def _launch_app(arguments: dict) -> str:
-    """Open one allowlisted application."""
-    from automation.windows import launch_app
+def _launch_app(arguments: dict, editors=None) -> str:
+    """Launch an allowlisted app and verify its foreground process."""
+    from automation.windows import launch_app, launch_editor, launch_is_foreground
 
-    name = (arguments.get('app') or '').strip()
+    name = arguments['app']
     try:
-        request = launch_app(name)
-    except ValueError as error:
+        request = launch_editor(name, editors[name]) if editors and name in editors else launch_app(name)
+        # Windows may return from process creation before its window is ready.
+        deadline = time.monotonic() + 1.0
+        while True:
+            if launch_is_foreground(request):
+                return f'{name} opened. Windows confirmed its foreground process (PID {request.pid}).'
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.05)
+    except (ValueError, OSError, RuntimeError) as error:
         raise ToolError(str(error)) from None
-    except RuntimeError as error:
+    raise ToolError(f'{request} Its window could not be verified. Check Windows before retrying.')
+
+
+def _type_notepad(arguments: dict) -> str:
+    from automation.desktop_tasks import VerifiedEdit, type_into_target
+
+    try:
+        result = type_into_target('Notepad', arguments['text'])
+    except (ValueError, OSError, RuntimeError) as error:
         raise ToolError(str(error)) from None
-    return str(request)
+    if not isinstance(result, VerifiedEdit):
+        raise ToolError(f'{result} Inspect Notepad before retrying.')
+    return str(result)
+
+
+def _export_text(registry: ToolRegistry, arguments: dict) -> str:
+    name = arguments['filename']
+    text = arguments['text']
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,79}\.txt', name, re.IGNORECASE):
+        raise ToolError('Use a simple .txt filename with letters, digits, underscores or dashes.')
+    if Path(name).is_reserved():
+        raise ToolError('Choose a filename that is not reserved by Windows.')
+    if not 1 <= len(text) <= MAX_FILE_CHARACTERS:
+        raise ToolError(f'Export between 1 and {MAX_FILE_CHARACTERS} characters.')
+    target = registry.resolve_inside_root(name)
+    try:
+        payload = text.encode('utf-8')
+        with target.open('x+b') as output:
+            output.write(payload)
+            output.flush()
+            output.seek(0)
+            if output.read(len(payload) + 1) != payload:
+                raise OSError('File readback did not match.')
+    except FileExistsError:
+        raise ToolError('That filename already exists. Choose a new filename.') from None
+    except (OSError, UnicodeError) as error:
+        raise ToolError(f'Export failed: {error}') from None
+    return f'Created and verified UTF-8 text file {target}.'
+
+
+def _browser_draft(arguments: dict, check) -> str:
+    """Populate one draft field in an isolated, approved browser session."""
+    from automation.browser import BrowserAction, BrowserSession, origin
+
+    url, label, text = (arguments[key] for key in ('url', 'label', 'text'))
+    if not 1 <= len(label) <= 200 or not 1 <= len(text) <= 4000:
+        raise ToolError('Use a field label up to 200 characters and draft text up to 4,000.')
+
+    async def fill(profile):
+        session = BrowserSession(profile)
+        try:
+            _, _, document = await session.perform(BrowserAction('open', url), None, check)
+            status, evidence, _ = await session.perform(
+                BrowserAction('fill', label, text), document, check)
+            if status != 'verified':
+                raise ToolError('The draft field could not be verified.')
+            return f'{evidence} The browser session closed after the draft check.'
+        finally:
+            await session.close()
+
+    from playwright.async_api import Error as PlaywrightError
+
+    try:
+        origin(url)
+        with TemporaryDirectory(prefix='jarvis-browser-draft-') as profile:
+            return asyncio.run(fill(profile))
+    except (ValueError, OSError, PlaywrightError) as error:
+        raise ToolError(f'Browser draft could not be verified ({type(error).__name__}).') from None
 
 
 def _make_file_tools(registry: ToolRegistry):
@@ -381,7 +459,179 @@ def _evaluate_expression(arguments: dict) -> str:
     return f'{expression} = {result}'
 
 
-def build_registry(*, root=None, memory=None) -> ToolRegistry:
+
+def _inspect_window(arguments: dict) -> str:
+    """Read the controls of a window, without touching it."""
+    from automation.uia import UiaUnavailable, describe, read_tree
+
+    process_id = arguments.get('process_id', 0)
+    title = arguments.get('title', '')
+    try:
+        tree = read_tree(process_id=int(process_id or 0), title=str(title or ''))
+    except UiaUnavailable as error:
+        raise ToolError(str(error)) from None
+    except ValueError as error:
+        raise ToolError(str(error)) from None
+    except Exception as error:
+        raise ToolError(f'The window could not be read: {error}') from None
+    return describe(tree)[:8000]
+
+
+def _activate_window(arguments: dict) -> str:
+    """Bring an application forward, after the owner allows it."""
+    from automation.input import InputRefused, activate_window
+
+    try:
+        return activate_window(int(arguments['process_id']))
+    except InputRefused as error:
+        raise ToolError(str(error)) from None
+    except (KeyError, TypeError, ValueError):
+        raise ToolError('Give the process id of the application to bring forward.') from None
+
+
+
+def _read_calculator(arguments: dict) -> str:
+    """The value the Windows Calculator is showing."""
+    from automation.calculator import read_display
+
+    process_id = int(arguments.get('process_id', 0) or 0)
+    value = read_display(process_id)
+    if not value:
+        raise ToolError(
+            'The Calculator display could not be read. It may not be open, or it may be '
+            'showing something that is not a number.')
+    return value
+
+
+def _save_open_document(arguments: dict) -> str:
+    """Save the document that is open in the editor in front."""
+    from automation.editor import save_open_document
+    from automation.input import InputTarget
+
+    target = InputTarget(process_id=int(arguments.get('process_id', 0) or 0),
+                          title=str(arguments.get('title', '')))
+    path = arguments.get('path') or None
+    result = save_open_document(target, path=path)
+    if not result.saved:
+        raise ToolError(result.message or 'The document was not saved.')
+    return result.message
+
+
+
+def _observe_screen(arguments: dict) -> str:
+    """Take a picture of the screen and read the writing on it, locally."""
+    from core.screen import ScreenUnavailable, observe_screen
+
+    folder = arguments.get('folder') or ''
+    language = str(arguments.get('language', 'eng'))
+    try:
+        capture = observe_screen(folder or None, language=language)
+    except ScreenUnavailable as error:
+        raise ToolError(str(error)) from None
+    except Exception as error:
+        raise ToolError(f'The screen could not be observed. {error}') from None
+    return capture.message + ('\n' + capture.text if capture.text else '')
+
+
+
+def _creative_failure(message: str) -> ToolError:
+    return ToolError(message)
+
+
+#: The creative applications the owner has configured, filled in when the
+#: catalogue is built.
+_CREATIVE_APPS = {}
+
+
+def _edit_image(arguments: dict) -> str:
+    """Make the edits in Photoshop, and check the file that came out."""
+    from video_studio.creative import CreativeError, run_photoshop
+
+    source = arguments.get('source', '')
+    output = arguments.get('output', '')
+    edits = arguments.get('edits') or []
+    if not output:
+        raise ToolError('Give the file to write.')
+    executable = arguments.get('executable') or _CREATIVE_APPS.get('Photoshop')
+    if not executable:
+        raise ToolError(
+            'Photoshop was not found. Choose its executable in Settings, or use the '
+            'Photoshop switch there.')
+    try:
+        result = run_photoshop(executable, edits, output, source=source or None)
+    except CreativeError as error:
+        raise ToolError(str(error)) from None
+    except OSError as error:
+        raise ToolError(f'Photoshop could not be started. {error}') from None
+    if not result.ok:
+        raise ToolError(result.message + (' ' + result.detail if result.detail else ''))
+    return result.message
+
+
+def _render_timeline(arguments: dict) -> str:
+    """Render a timeline in DaVinci Resolve, and check the file."""
+    from video_studio.creative import CreativeError, resolve_script, run_resolve
+
+    timeline = arguments.get('timeline', '')
+    output = arguments.get('output', '')
+    if not output:
+        raise ToolError('Give the file to write.')
+    try:
+        script = resolve_script(timeline, output, settings=arguments.get('settings'))
+        result = run_resolve(script, output)
+    except CreativeError as error:
+        raise ToolError(str(error)) from None
+    except OSError as error:
+        raise ToolError(f'Resolve could not be asked to render. {error}') from None
+    if not result.ok:
+        raise ToolError(result.message + (' ' + result.detail if result.detail else ''))
+    return result.message
+
+
+def _apply_effects_changes(arguments: dict) -> str:
+    """Apply the changes to a project in After Effects, and check it."""
+    from video_studio.creative import CreativeError, run_after_effects_script
+
+    project = arguments.get('project', '')
+    edits = arguments.get('edits') or []
+    if not project:
+        raise ToolError('Give the After Effects project.')
+    executable = arguments.get('executable') or _CREATIVE_APPS.get('After Effects')
+    if not executable:
+        raise ToolError(
+            'After Effects was not found. Choose its executable in Settings, or use the '
+            'After Effects switch there.')
+    try:
+        result = run_after_effects_script(executable, edits, project)
+    except CreativeError as error:
+        raise ToolError(str(error)) from None
+    except OSError as error:
+        raise ToolError(f'After Effects could not be started. {error}') from None
+    if not result.ok:
+        raise ToolError(result.message + (' ' + result.detail if result.detail else ''))
+    return result.message
+
+
+def _verify_media(arguments: dict) -> str:
+    """Check that a rendered file really is the media it should be."""
+    from video_studio.verification import MediaVerificationError, verify_media
+
+    path = arguments.get('path', '')
+    if not path:
+        raise ToolError('Give the file to check.')
+    try:
+        result = verify_media(path,
+                              expect_duration=arguments.get('expect_duration'),
+                              expect_video=arguments.get('expect_video', True),
+                              expect_audio=arguments.get('expect_audio'))
+    except MediaVerificationError as error:
+        raise ToolError(str(error)) from None
+    if not result.ok:
+        raise ToolError(result.message)
+    return result.message
+
+
+def build_registry(*, root=None, memory=None, editor_paths=None) -> ToolRegistry:
     """The standard catalogue of mission tools.
 
     `memory` is the owner's memory service. Without it, the two memory
@@ -429,17 +679,196 @@ def build_registry(*, root=None, memory=None) -> ToolRegistry:
         returns='The page title and its text.',
     ))
 
+    from automation.windows import APPS, EDITOR_EXECUTABLES, editor_executable, system_app_directory
+
+    editors = {}
+    for name in EDITOR_EXECUTABLES:
+        try:
+            editors[name] = editor_executable(name, (editor_paths or {}).get(name))
+        except (ValueError, OSError):
+            continue
+
+    #: The creative applications the owner has configured, by name.
+    _CREATIVE_APPS.update(editors)
+
+    def discover_apps(_arguments):
+        directory = system_app_directory()
+        available = [name for name, filename in APPS.items() if (directory / filename).is_file()]
+        available.extend(name for name, path in editors.items() if path.is_file())
+        return ', '.join(available) or 'No supported executables found.'
+
+    registry.register(Tool(
+        name='discover_apps',
+        description='Find supported Windows system apps and owner-configured creative editors.',
+        parameters={'type': 'object', 'properties': {}},
+        read_only=True,
+        run=discover_apps,
+        returns='Names of apps whose executable exists.',
+    ))
+
+    registry.register(Tool(
+        name='inspect_window',
+        description='Read the controls of a window: its buttons, fields and menus.',
+        parameters={'type': 'object', 'properties': {
+            'process_id': {'type': 'integer',
+                           'description': 'The process whose window is read.'},
+            'title': {'type': 'string',
+                      'description': 'The window title, when it is known.'}},
+            'required': []},
+        read_only=True,
+        run=_inspect_window,
+        returns='The controls the window published.',
+    ))
+
+    registry.register(Tool(
+        name='activate_window',
+        description='Bring an application forward, so the owner can work in it.',
+        parameters={'type': 'object', 'properties': {
+            'process_id': {'type': 'integer',
+                           'description': 'The process whose window comes forward.'}},
+            'required': ['process_id']},
+        read_only=False,
+        run=_activate_window,
+        returns='What Windows did with the window.',
+    ))
+
+    def observe_the_screen(arguments):
+        # The picture goes into the application's own folder unless the
+        # model names another one.
+        arguments = dict(arguments)
+        if not arguments.get('folder') and registry.root is not None:
+            arguments['folder'] = str(Path(registry.root) / 'screen')
+        return _observe_screen(arguments)
+
+    registry.register(Tool(
+        name='edit_image',
+        description='Make supported edits to an image in Photoshop, and check the result.',
+        parameters={'type': 'object', 'properties': {
+            'source': {'type': 'string', 'description': 'The image to edit.'},
+            'output': {'type': 'string', 'description': 'The file to write.'},
+            'edits': {'type': 'array',
+                      'description': 'The edits: resize, crop, rotate, levels, convert, save.'}},
+            'required': ['output', 'edits']},
+        read_only=False, run=_edit_image,
+        returns='What Photoshop did, and whether the file changed.'))
+
+    registry.register(Tool(
+        name='render_timeline',
+        description='Render a timeline in DaVinci Resolve, and check the file.',
+        parameters={'type': 'object', 'properties': {
+            'timeline': {'type': 'string', 'description': 'The timeline to render.'},
+            'output': {'type': 'string', 'description': 'The file to write.'},
+            'settings': {'type': 'object',
+                         'description': 'Width, height and frames for the render.'}},
+            'required': ['timeline', 'output']},
+        read_only=False, run=_render_timeline,
+        returns='What Resolve did, and whether the file was written.'))
+
+    registry.register(Tool(
+        name='apply_effects_changes',
+        description='Apply supported changes to an After Effects project.',
+        parameters={'type': 'object', 'properties': {
+            'project': {'type': 'string', 'description': 'The .aep project.'},
+            'edits': {'type': 'array',
+                       'description': 'The changes: rename, frame rate, add text.'}},
+            'required': ['project', 'edits']},
+        read_only=False, run=_apply_effects_changes,
+        returns='What After Effects did, and whether the project changed.'))
+
+    registry.register(Tool(
+        name='verify_media',
+        description='Check that a rendered file really is the media it should be.',
+        parameters={'type': 'object', 'properties': {
+            'path': {'type': 'string', 'description': 'The file to check.'},
+            'expect_duration': {'type': 'number',
+                                'description': 'The length it should have, in seconds.'},
+            'expect_video': {'type': 'boolean',
+                             'description': 'Whether it should have a picture.'},
+            'expect_audio': {'type': 'boolean',
+                             'description': 'Whether it should have a sound.'}},
+            'required': ['path']},
+        read_only=True, run=_verify_media,
+        returns='What is really inside the file.'))
+
+    registry.register(Tool(
+        name='observe_screen',
+        description='Take a picture of the screen and read the writing on it, on this computer.',
+        parameters={'type': 'object', 'properties': {
+            'folder': {'type': 'string',
+                        'description': 'Where the picture is saved.'},
+            'language': {'type': 'string',
+                         'description': 'The language of the writing, for example eng or tam.'}},
+            'required': []},
+        read_only=False, run=observe_the_screen,
+        returns='The writing that was on the screen.'))
+
+    registry.register(Tool(
+        name='read_calculator',
+        description='Read the value the Windows Calculator is showing.',
+        parameters={'type': 'object', 'properties': {
+            'process_id': {'type': 'integer',
+                           'description': 'The Calculator process, when it is known.'}},
+            'required': []},
+        read_only=True, run=_read_calculator,
+        returns='The number on the display.'))
+
+    registry.register(Tool(
+        name='save_open_document',
+        description='Save the document that is open in the editor in front.',
+        parameters={'type': 'object', 'properties': {
+            'process_id': {'type': 'integer',
+                           'description': 'The editor process, when it is known.'},
+            'title': {'type': 'string', 'description': 'The window title.'},
+            'path': {'type': 'string',
+                     'description': 'The file the editor has open, so it can be read back.'}},
+            'required': []},
+        read_only=False, run=_save_open_document,
+        returns='What the save did, and whether the file was read back.'))
+
     registry.register(Tool(
         name='launch_app',
         description='Open an approved application on this PC.',
         parameters={'type': 'object', 'properties': {
-            'app': {'type': 'string', 'enum': ['Notepad', 'Calculator'],
+            'app': {'type': 'string', 'enum': list(APPS) + list(editors),
                     'description': 'The application to open.'}},
             'required': ['app']},
         read_only=False,
-        run=_launch_app,
-        returns='What the launcher reported.',
+        run=lambda arguments: _launch_app(arguments, editors),
+        returns='A verified Windows foreground process, or a verification error.',
     ))
+
+    registry.register(Tool(
+        name='browser_draft',
+        description='Open an approved HTTPS page in a temporary session and verify one filled draft field.',
+        parameters={'type': 'object', 'properties': {
+            'url': {'type': 'string'}, 'label': {'type': 'string'},
+            'text': {'type': 'string'}}, 'required': ['url', 'label', 'text']},
+        read_only=False,
+        run=_browser_draft,
+        returns='Field readback confirmation. The session closes after verification.',
+        accepts_checkpoint=True,
+    ))
+
+    registry.register(Tool(
+        name='type_notepad',
+        description='Insert literal text into the focused Notepad editor and verify the edit.',
+        parameters={'type': 'object', 'properties': {'text': {'type': 'string'}},
+                    'required': ['text']},
+        read_only=False,
+        run=_type_notepad,
+        returns='Editor readback confirmation. Saving is a separate operation.',
+    ))
+    if registry.root is not None:
+        registry.register(Tool(
+            name='export_text',
+            description='Create a new UTF-8 text file inside the mission folder from supplied text.',
+            parameters={'type': 'object', 'properties': {
+                'filename': {'type': 'string'}, 'text': {'type': 'string'}},
+                'required': ['filename', 'text']},
+            read_only=False,
+            run=lambda arguments: _export_text(registry, arguments),
+            returns='The path and byte readback confirmation.',
+        ))
 
     list_directory, read_text_file = _make_file_tools(registry)
     registry.register(Tool(

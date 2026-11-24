@@ -19,7 +19,8 @@ from dataclasses import replace
 
 from core.store import Store
 from core.conversation import (ASSISTANT_GUIDANCE, SUGGESTION_GUIDANCE,
-                               addressed_request, suggestion_argument)
+                               addressed_request, mission_argument,
+                               suggestion_argument)
 from desktop.conversation_plan import (ConversationPlan, Step, extract_suggested_plan,
                                        parse_plan as parse_conversation_plan)
 from desktop.browser_control import BrowserControl
@@ -36,6 +37,9 @@ from desktop.studio_inbox import StudioInboxDialog
 from memory.memory_service import MemoryService
 from desktop.bridge_panel import BridgePanel
 from desktop.memory_page import MemoryPanel
+from desktop.history_backup_settings import HistoryBackupPanel
+from desktop.cybersecurity_panel import CybersecurityPanel
+from desktop.player import QuantumPlayer, is_media
 from desktop.camera_reader import open_camera_reader
 from desktop.update_dialog import ReleaseChecker, open_updates
 from desktop.voice_panel import VoicePanel
@@ -60,6 +64,7 @@ from desktop.blue_orb import BlueOrb
 from desktop.omega import Omega
 from desktop.mission_panel import MissionPanel
 from desktop.mission_controller import MissionController
+from desktop.coding_mission_worker import CodingMissionWorker
 from desktop.system_metrics import CpuSampler, snapshot, format_snapshot
 from desktop.network_diagnostics import NetworkDiagnostics
 from desktop.news_panel import NewsPanel
@@ -343,6 +348,7 @@ class Window(QMainWindow):
         self.desktop_task_timer.timeout.connect(self.complete_desktop_task)
         self.coding = None
         self.coding_worker = None
+        self.coding_mission_worker = None
         self.test_worker = None
         self.chat_task_id = None
         self.memory = ConversationMemory(self.store)
@@ -405,6 +411,10 @@ class Window(QMainWindow):
         self.add_page('Business', self.business_page())
         self.add_page('Memory', MemoryPanel(service=self.memory_service))
         self.add_page('Mission Control', self.mission_page())
+        self.cybersecurity_panel = CybersecurityPanel(window=self)
+        self.add_page('Cybersecurity', self.cybersecurity_panel, primary=False)
+        self.player_panel = QuantumPlayer(self.prime_palette_or_default())
+        self.add_page('Quantum Visual Player', self.player_panel, primary=False)
         self.add_page('Command Center', self.dashboard(), primary=False)
         self.voice_panel.activity_changed.connect(self.refresh_voice_hud)
         self.voice_panel.recognition_failed.connect(lambda: self.hands_free_voice.setChecked(False))
@@ -451,6 +461,13 @@ class Window(QMainWindow):
         self.maintenance_timer.start(60_000)
         self.enable_prime()
         QTimer.singleShot(0, self.check_maintenance)
+
+    def prime_palette_or_default(self):
+        """The PRIME palette, or the dark one when PRIME is not mounted yet."""
+        from desktop.prime_ui import PrimePalette
+
+        palette = getattr(self, 'prime_palette', None)
+        return palette if palette is not None else PrimePalette(dark=self.prime_is_dark())
 
     def mission_page(self):
         """The mission console: one goal, watched step by step."""
@@ -1511,6 +1528,14 @@ class Window(QMainWindow):
             'This mode does not start task workflows.')
         self.suggestion_mode.toggled.connect(self.update_suggestion_mode)
         composer_actions.insertWidget(composer_actions.indexOf(self.send_button), self.suggestion_mode)
+        self.mission_mode = QPushButton('Work on this')
+        self.mission_mode.setCheckable(True)
+        self.mission_mode.setToolTip(
+            'Send this message as a mission. JARVIS plans it, picks a tool, asks '
+            'you before anything changes, and shows every step in Mission Control. '
+            'The answer comes back into this conversation.')
+        self.mission_mode.toggled.connect(self.update_mission_mode)
+        composer_actions.insertWidget(composer_actions.indexOf(self.send_button), self.mission_mode)
         return page
 
     def open_research_window(self):
@@ -1577,6 +1602,7 @@ class Window(QMainWindow):
         layout.addWidget(self.attachment_list)
         actions = QHBoxLayout()
         self.button(actions, 'Preview selected', self.preview_attachment)
+        self.button(actions, 'Play in the player', self.play_selected_in_player)
         self.button(actions, 'Remove selected', self.remove_selected_attachment)
         self.button(actions, 'Clear all', self.clear_attachments)
         layout.addLayout(actions)
@@ -1799,6 +1825,19 @@ class Window(QMainWindow):
         self.button(layout, 'Close', dialog.accept)
         dialog.exec()
 
+    def play_selected_in_player(self):
+        """Play the file the owner selected in the Quantum Visual Player."""
+        if not self.attachments:
+            self.document_status.setText('Choose a file first.')
+            return
+        path = self.attachments[0]
+        if not is_media(path):
+            self.document_status.setText(
+                'That file is not a video or a sound file, so the player cannot open it.')
+            return
+        self.open_section('Quantum Visual Player')
+        self.player_panel.open(path)
+
     def remove_selected_attachment(self):
         index = self.attachment_list.currentRow()
         if 0 <= index < len(self.attachments):
@@ -1815,7 +1854,8 @@ class Window(QMainWindow):
 
     def bridge_page(self):
         self.bridge = BridgePanel(self.policy, self.store, self.vault, self.confirm, self.notify,
-                                  router=self.router)
+                                  router=self.router,
+                                  history_path=self.root / 'history.sqlite3')
         return self.bridge
 
     def automation_page(self):
@@ -3096,6 +3136,12 @@ class Window(QMainWindow):
         self.auto_maintenance.toggled.connect(self.set_auto_maintenance)
         update_layout.addWidget(self.auto_maintenance)
         layout.addWidget(updates)
+        backup = QGroupBox('History backup and restore')
+        backup_layout = QVBoxLayout(backup)
+        self.history_backup_panel = HistoryBackupPanel(
+            history_path=self.root / 'history.sqlite3')
+        backup_layout.addWidget(self.history_backup_panel)
+        layout.addWidget(backup)
         self.add_projects_settings(layout)
         plugins = QGroupBox('Plugins')
         self.plugins_group = plugins
@@ -4193,6 +4239,110 @@ class Window(QMainWindow):
                 return
         self.advance_coding_task()
 
+    def codex_is_available(self):
+        """Whether the Codex CLI is installed on this machine.
+
+        The question is asked of the same function the Codex task uses, so
+        the answer and the task always agree.
+        """
+        from developer_studio.codex_task import codex_executable
+
+        try:
+            codex_executable()
+        except ValueError:
+            return False
+        return True
+
+    def start_jarvis_coding_task(self, step):
+        """Do the coding work with JARVIS's own model and the coding tools.
+
+        This is the path taken when the Codex CLI is not installed. The
+        same approval boundary, the same evidence and the same repair
+        loop are used; only the worker is JARVIS itself.
+        """
+        from core.coding_mission import CodingMission
+
+        coding = self.coding
+        project = coding['project']
+        request = coding['request']
+        if self.worker is not None or self.coding_mission_worker is not None:
+            self.show_local_system_reply(coding['text'],
+                                         'Wait for the current request to finish.')
+            return
+        try:
+            provider = self.chat_provider.currentText()
+            model = self.selected_model(provider)
+            key = self.get_key(provider)
+            ticket = self.policy.ticket()
+        except Exception as error:
+            self.show_local_system_reply(coding['text'], str(error))
+            return
+
+        goal = request.change or project.name
+        router = self.router
+
+        def planner(messages):
+            def check():
+                self.policy.check(ticket)
+
+            return router.stream(router.spec(provider), model, key, messages, check,
+                                 lambda _chunk: None)
+
+        try:
+            mission = CodingMission(project.path, goal, planner=planner, gateway=self.gateway,
+                                    confirm=self.confirm,
+                                    test_command=project.test_command or 'python -m pytest')
+        except Exception as error:
+            self.show_local_system_reply(coding['text'],
+                                         f'The project could not be opened. {error}')
+            return
+        self.worker_kind = 'coding_mission'
+        self.coding_mission_worker = CodingMissionWorker(mission, self.policy, ticket, self)
+        self.coding_mission_worker.event.connect(self.on_mission_event)
+        self.coding_mission_worker.result.connect(self.on_coding_mission_result)
+        self.coding_mission_worker.failed.connect(self.on_coding_mission_failed)
+        step['state'] = 'running'
+        self.render_coding_card()
+        self.coding_mission_worker.start()
+
+    def on_mission_event(self, event):
+        """One step of a coding mission, shown in the console."""
+        panel = getattr(self, 'mission_panel', None)
+        if panel is not None:
+            panel.append_event(event)
+        self.store.message(self.session, 'system', '· ' + event.label)
+        self.render_chat()
+
+    def on_coding_mission_result(self, result):
+        """The coding mission finished."""
+        self.worker_kind = 'chat'
+        answer = result.summary or 'The coding mission finished.'
+        if result.status != 'verified':
+            answer = ('The coding mission did not reach a verified result. '
+                      + answer)
+        self.store.message(self.session, 'assistant', answer)
+        self.render_chat()
+        self.show_hud_text(answer)
+        coding = self.coding
+        if coding is not None:
+            coding['outcome'] = result
+            for item in coding['steps']:
+                if item['state'] == 'running':
+                    item['state'] = 'done' if result.status == 'verified' else 'failed'
+            self.render_coding_card()
+        self.record_coding_history(result)
+        worker = self.coding_mission_worker
+        self.coding_mission_worker = None
+        if worker is not None:
+            worker.deleteLater()
+
+    def on_coding_mission_failed(self, message):
+        """The coding mission could not run at all."""
+        self.worker_kind = 'chat'
+        self.coding_mission_worker = None
+        self.show_local_system_reply(self.coding['text'] if self.coding else '',
+                                     f'The coding mission could not run. {message}')
+
     def start_codex_task(self, step):
         """Start the Codex task in an isolated worktree."""
         coding = self.coding
@@ -4201,6 +4351,12 @@ class Window(QMainWindow):
         if self.worker is not None:
             self.show_local_system_reply(coding['text'],
                                          'Wait for the current request to finish.')
+            return
+        if not self.codex_is_available():
+            # The Codex CLI is not on this machine. JARVIS does the work
+            # itself, with its own model and the coding tools, rather
+            # than stopping and asking the owner to install something.
+            self.start_jarvis_coding_task(step)
             return
         # The change does NOT run the tests. An untrusted test command needs
         # its own approval, and a test command bundled inside the change
@@ -4274,7 +4430,11 @@ class Window(QMainWindow):
             self.store.finish(self.chat_task_id, 'running')
             return
         status = outcome.status
-        if outcome.test_status == 'failed':
+        if status == 'cancelled':
+            # The owner stopped it. The history says so, whatever the
+            # test run was doing.
+            status = 'cancelled'
+        elif outcome.test_status == 'failed':
             # The job was to make the change AND prove it. A failing test is a
             # failed task, and the history says so.
             status = 'failed'
@@ -4544,6 +4704,29 @@ class Window(QMainWindow):
         self.advance_coding_task()
         if self.close_when_done and self.coding_worker is None and self.test_worker is None:
             self.close()
+
+    def mission_answered(self, mission, failure=None):
+        """A mission that came from the conversation answers in it.
+
+        The answer is stored in the conversation so it survives a
+        restart, and the steps that produced it stay on the Mission
+        Control page. A mission that did not finish says so plainly and
+        does not pretend to have an answer.
+        """
+        if mission is None:
+            reply = ('The mission did not finish. '
+                     + (failure or 'See Mission Control for the steps that ran.'))
+        elif mission.status == 'completed' and mission.answer:
+            reply = mission.answer
+        else:
+            reply = ('The mission stopped: '
+                     + (mission.events[-1].detail if mission.events else 'no reason given')
+                     + '. The steps that ran are on the Mission Control page.')
+        self.store.message(self.session, 'assistant', reply)
+        self.render_chat()
+        self.show_hud_text(reply)
+        if self.read_replies.isChecked() and not self.policy.stopped:
+            self.voice_panel.speak_response(reply[:600])
 
     def mission_finished(self):
         """The mission stopped, so the window may close if it was waiting."""
@@ -5081,6 +5264,31 @@ class Window(QMainWindow):
     def update_suggestion_mode(self, enabled):
         self.send_button.setText('Get suggestions' if enabled else 'Send')
 
+    def start_mission_from_chat(self, goal):
+        """Run a goal through the mission runtime, from the conversation.
+
+        The goal is kept in the conversation so the history shows what was
+        asked, and the answer comes back into the same conversation when
+        the mission finishes. The steps themselves are on the Mission
+        Control page, where the owner can watch them.
+        """
+        controller = getattr(self, 'mission_controller', None)
+        if controller is None:
+            self.show_local_system_reply(goal, 'The mission runtime is not available.')
+            return
+        self.store.message(self.session, 'user', goal)
+        self.render_chat()
+        controller.start(goal, from_chat=True)
+
+    def update_mission_mode(self, enabled):
+        """The composer says which of the two it will do."""
+        if enabled:
+            self.send_button.setText('Start the mission')
+        elif self.suggestion_mode.isChecked():
+            self.send_button.setText('Get suggestions')
+        else:
+            self.send_button.setText('Send')
+
     def send(self, *, allow_notes=True):
         if self.policy.stopped or self.worker is not None or not self.prompt.toPlainText().strip():
             return
@@ -5103,6 +5311,20 @@ class Window(QMainWindow):
             self.show_local_system_reply(text, 'Pending desktop requests cancelled. Already opened apps remain open.'
                                          if cancelled else 'No pending conversation plan. Use Emergency Stop to cancel other active work.')
             self.prompt.clear()
+            return
+        requested_mission = mission_argument(text)
+        if requested_mission is not None or self.mission_mode.isChecked():
+            goal = text if requested_mission is None else requested_mission
+            if not goal:
+                self.statusBar().showMessage(
+                    'Usage: /mission followed by the goal you want JARVIS to work on.',
+                    10000)
+                return
+            self.prompt.clear()
+            self.use_notes.setChecked(False)
+            self.files_share_once.setChecked(False)
+            self.backup_consent.setChecked(False)
+            self.start_mission_from_chat(goal)
             return
         requested_goal = suggestion_argument(text)
         if requested_goal is not None or self.suggestion_mode.isChecked():
@@ -5485,6 +5707,8 @@ class Window(QMainWindow):
     def stop(self):
         self.policy.stop()
         self.browser.stop()
+        if self.coding_mission_worker is not None:
+            self.coding_mission_worker.cancel()
         controller = getattr(self, 'mission_controller', None)
         if controller is not None:
             controller.cancel()
