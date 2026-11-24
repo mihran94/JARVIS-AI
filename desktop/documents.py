@@ -215,10 +215,42 @@ def _pdf_text(path: Path, warnings: list) -> tuple:
             parts.append(text)
     body = '\n'.join(parts)
     if pages and not body.strip():
-        raise DocumentError(
-            'This PDF has no text layer: its pages are pictures. Reading pictures '
-            'of text is not supported yet, so there is nothing to read.')
+        # The pages are pictures. They can still be read, on this computer,
+        # when the recognition engine is installed.
+        body = _ocr_pdf_text(path, warnings)
     return body, pages
+
+
+def _ocr_pdf_text(path: Path, warnings: list) -> str:
+    """The text of a scanned PDF, read from its pictures on this computer.
+
+    When the recognition engine is not installed the owner is told what
+    to install. The page is not lost; it is only unreadable until the
+    engine is there, and saying "this document has no text" would be
+    a different and wrong thing to say.
+    """
+    from core.ocr import OcrUnavailable, ocr_pdf
+
+    try:
+        result = ocr_pdf(path)
+    except OcrUnavailable as error:
+        raise DocumentError(str(error)) from None
+    except Exception as error:
+        raise DocumentError(
+            f'This PDF has no text layer and its pages could not be read: {error}') from None
+    if result.truncated:
+        warnings.append(
+            f'This PDF has {result.pages_total} pages and the text of the first '
+            f'{result.pages_read} was read from the pictures.')
+    elif result.pages_read:
+        warnings.append(
+            'This PDF has no text layer. Its text was read from the pictures of '
+            'the pages, on this computer.')
+    if not result.text.strip():
+        raise DocumentError(
+            'This PDF has no text layer, and no writing was recognised in its '
+            'pages. The pages may be pictures without any writing on them.')
+    return result.text
 
 
 def read_document(path: str | Path, *, name: str = '') -> Document:
