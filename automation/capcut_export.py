@@ -59,6 +59,7 @@ def _window_api():
         'SetCursorPos': ([ctypes.c_int, ctypes.c_int], wintypes.BOOL),
         'GetCursorPos': ([ctypes.POINTER(wintypes.POINT)], wintypes.BOOL),
         'IsWindowVisible': ([wintypes.HWND], wintypes.BOOL),
+        'IsWindowEnabled': ([wintypes.HWND], wintypes.BOOL),
         'IsIconic': ([wintypes.HWND], wintypes.BOOL),
         'ShowWindow': ([wintypes.HWND, ctypes.c_int], wintypes.BOOL),
         'SetForegroundWindow': ([wintypes.HWND], wintypes.BOOL),
@@ -149,7 +150,8 @@ class _CapCutExportUI:
 
     def _popup(self):
         popup = self.user.GetWindow(self.editor, _GW_ENABLEDPOPUP)
-        if popup != self.editor and self.user.IsWindowVisible(popup):
+        if (popup and popup != self.editor and self.user.IsWindowVisible(popup)
+                and (self._title(popup).startswith('Export-') or self._class(popup) == '#32770')):
             return popup
         return None
 
@@ -188,7 +190,11 @@ class _CapCutExportUI:
         return target if self.user.GetAncestor(hit, _GA_ROOT) == hwnd else None
 
     def _editor_ready(self):
-        return self._foreground() == self.editor and self._popup() is None
+        foreground = self._foreground()
+        # The editor's own floating tutorials can have focus. Ctrl+E is
+        # application-wide, but a modal dialog must never receive it.
+        return (foreground and self._title(foreground) == 'CapCut'
+                and self.user.IsWindowEnabled(self.editor) and self._popup() is None)
 
     def _form_ready(self, form):
         return self._foreground() in (self.editor, form) and self._popup() in (None, form)
@@ -201,7 +207,9 @@ class _CapCutExportUI:
 
     def _guard(self, ready):
         self.check()
-        return self.pid if ready() else None
+        if not ready():
+            raise RuntimeError('CapCut focus or the expected control changed. Check the project and retry.')
+        return self.pid
 
     def _key(self, key, ready):
         press_key(key, self.target, foreground=lambda: self._guard(ready))
@@ -288,6 +296,8 @@ class _CapCutExportUI:
                    timeout=25)
         form = self._current_form()
         if form is None:
+            if not self._editor_ready():
+                raise RuntimeError('Return to the open CapCut timeline and close any blocking dialogs.')
             self._key('ctrl+e', self._editor_ready)
             form = self._wait(
                 self._current_form,
