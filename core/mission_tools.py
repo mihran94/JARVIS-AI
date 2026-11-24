@@ -533,6 +533,104 @@ def _observe_screen(arguments: dict) -> str:
     return capture.message + ('\n' + capture.text if capture.text else '')
 
 
+
+def _creative_failure(message: str) -> ToolError:
+    return ToolError(message)
+
+
+#: The creative applications the owner has configured, filled in when the
+#: catalogue is built.
+_CREATIVE_APPS = {}
+
+
+def _edit_image(arguments: dict) -> str:
+    """Make the edits in Photoshop, and check the file that came out."""
+    from video_studio.creative import CreativeError, run_photoshop
+
+    source = arguments.get('source', '')
+    output = arguments.get('output', '')
+    edits = arguments.get('edits') or []
+    if not output:
+        raise ToolError('Give the file to write.')
+    executable = arguments.get('executable') or _CREATIVE_APPS.get('Photoshop')
+    if not executable:
+        raise ToolError(
+            'Photoshop was not found. Choose its executable in Settings, or use the '
+            'Photoshop switch there.')
+    try:
+        result = run_photoshop(executable, edits, output, source=source or None)
+    except CreativeError as error:
+        raise ToolError(str(error)) from None
+    except OSError as error:
+        raise ToolError(f'Photoshop could not be started. {error}') from None
+    if not result.ok:
+        raise ToolError(result.message + (' ' + result.detail if result.detail else ''))
+    return result.message
+
+
+def _render_timeline(arguments: dict) -> str:
+    """Render a timeline in DaVinci Resolve, and check the file."""
+    from video_studio.creative import CreativeError, resolve_script, run_resolve
+
+    timeline = arguments.get('timeline', '')
+    output = arguments.get('output', '')
+    if not output:
+        raise ToolError('Give the file to write.')
+    try:
+        script = resolve_script(timeline, output, settings=arguments.get('settings'))
+        result = run_resolve(script, output)
+    except CreativeError as error:
+        raise ToolError(str(error)) from None
+    except OSError as error:
+        raise ToolError(f'Resolve could not be asked to render. {error}') from None
+    if not result.ok:
+        raise ToolError(result.message + (' ' + result.detail if result.detail else ''))
+    return result.message
+
+
+def _apply_effects_changes(arguments: dict) -> str:
+    """Apply the changes to a project in After Effects, and check it."""
+    from video_studio.creative import CreativeError, run_after_effects_script
+
+    project = arguments.get('project', '')
+    edits = arguments.get('edits') or []
+    if not project:
+        raise ToolError('Give the After Effects project.')
+    executable = arguments.get('executable') or _CREATIVE_APPS.get('After Effects')
+    if not executable:
+        raise ToolError(
+            'After Effects was not found. Choose its executable in Settings, or use the '
+            'After Effects switch there.')
+    try:
+        result = run_after_effects_script(executable, edits, project)
+    except CreativeError as error:
+        raise ToolError(str(error)) from None
+    except OSError as error:
+        raise ToolError(f'After Effects could not be started. {error}') from None
+    if not result.ok:
+        raise ToolError(result.message + (' ' + result.detail if result.detail else ''))
+    return result.message
+
+
+def _verify_media(arguments: dict) -> str:
+    """Check that a rendered file really is the media it should be."""
+    from video_studio.verification import MediaVerificationError, verify_media
+
+    path = arguments.get('path', '')
+    if not path:
+        raise ToolError('Give the file to check.')
+    try:
+        result = verify_media(path,
+                              expect_duration=arguments.get('expect_duration'),
+                              expect_video=arguments.get('expect_video', True),
+                              expect_audio=arguments.get('expect_audio'))
+    except MediaVerificationError as error:
+        raise ToolError(str(error)) from None
+    if not result.ok:
+        raise ToolError(result.message)
+    return result.message
+
+
 def build_registry(*, root=None, memory=None, editor_paths=None) -> ToolRegistry:
     """The standard catalogue of mission tools.
 
@@ -590,6 +688,9 @@ def build_registry(*, root=None, memory=None, editor_paths=None) -> ToolRegistry
         except (ValueError, OSError):
             continue
 
+    #: The creative applications the owner has configured, by name.
+    _CREATIVE_APPS.update(editors)
+
     def discover_apps(_arguments):
         directory = system_app_directory()
         available = [name for name, filename in APPS.items() if (directory / filename).is_file()]
@@ -638,6 +739,56 @@ def build_registry(*, root=None, memory=None, editor_paths=None) -> ToolRegistry
         if not arguments.get('folder') and registry.root is not None:
             arguments['folder'] = str(Path(registry.root) / 'screen')
         return _observe_screen(arguments)
+
+    registry.register(Tool(
+        name='edit_image',
+        description='Make supported edits to an image in Photoshop, and check the result.',
+        parameters={'type': 'object', 'properties': {
+            'source': {'type': 'string', 'description': 'The image to edit.'},
+            'output': {'type': 'string', 'description': 'The file to write.'},
+            'edits': {'type': 'array',
+                      'description': 'The edits: resize, crop, rotate, levels, convert, save.'}},
+            'required': ['output', 'edits']},
+        read_only=False, run=_edit_image,
+        returns='What Photoshop did, and whether the file changed.'))
+
+    registry.register(Tool(
+        name='render_timeline',
+        description='Render a timeline in DaVinci Resolve, and check the file.',
+        parameters={'type': 'object', 'properties': {
+            'timeline': {'type': 'string', 'description': 'The timeline to render.'},
+            'output': {'type': 'string', 'description': 'The file to write.'},
+            'settings': {'type': 'object',
+                         'description': 'Width, height and frames for the render.'}},
+            'required': ['timeline', 'output']},
+        read_only=False, run=_render_timeline,
+        returns='What Resolve did, and whether the file was written.'))
+
+    registry.register(Tool(
+        name='apply_effects_changes',
+        description='Apply supported changes to an After Effects project.',
+        parameters={'type': 'object', 'properties': {
+            'project': {'type': 'string', 'description': 'The .aep project.'},
+            'edits': {'type': 'array',
+                       'description': 'The changes: rename, frame rate, add text.'}},
+            'required': ['project', 'edits']},
+        read_only=False, run=_apply_effects_changes,
+        returns='What After Effects did, and whether the project changed.'))
+
+    registry.register(Tool(
+        name='verify_media',
+        description='Check that a rendered file really is the media it should be.',
+        parameters={'type': 'object', 'properties': {
+            'path': {'type': 'string', 'description': 'The file to check.'},
+            'expect_duration': {'type': 'number',
+                                'description': 'The length it should have, in seconds.'},
+            'expect_video': {'type': 'boolean',
+                             'description': 'Whether it should have a picture.'},
+            'expect_audio': {'type': 'boolean',
+                             'description': 'Whether it should have a sound.'}},
+            'required': ['path']},
+        read_only=True, run=_verify_media,
+        returns='What is really inside the file.'))
 
     registry.register(Tool(
         name='observe_screen',

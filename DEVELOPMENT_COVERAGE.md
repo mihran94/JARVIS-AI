@@ -231,6 +231,7 @@ scratch** to the specification in §9 and §10, rather than recovered. They are 
 | Secure pairing, certificate validation, device discovery or manual connection, revocation, logout, session expiry | `remote/pairing.py`, `remote/certificate.py`, `remote/replay.py`, `remote/loopback.py`, `PairingCode.kt` with the `fp=` fingerprint | — | — | Done | PASS (unit) / NOT RUN (phone) |
 | Remote approvals and real execution feedback | `remote/jobs.py`, `remote/notifications.py` | — | — | Done | PASS (unit) / NOT RUN (phone) |
 | The 15-minute Android timeout, enforced consistently | `AppLockController.sessionTimeoutMinutes` **defaults to 15**, with 5/15/60 offered in the Permissions screen | — | the app locks after 15 minutes of inactivity by default | Done | PASS (unit) / NOT RUN (device) |
+| **The companion may ask the PC to back up the history** | **NEW** `remote/jobs.py` accepts two phone actions — `backup_history` and `restore_history` — and `desktop/bridge_panel.py` carries them out after the owner approves on the PC. The backup is sealed with the Windows account's own key, and **the history itself is never sent over the bridge**: the phone is told the name, the size and the checksum of what was made. A restore may only name a plain backup file, and the database it replaces is kept | the PWA's Phone Remote page → *Back up the history on the PC* | the backup exists on the PC and the phone knows it | Done | PASS (the backup, the approval, the refusal and the restore) / NOT RUN (a real phone) |
 | PWA offline requests: durable, deduplicated, safely replayed | `iphone-pwa/js/offline.js` — IndexedDB-backed outbox, backoff, and an equal-request window | — | — | Done | PASS (JS suite) |
 | Otherwise clearly report that commands cannot be submitted while disconnected | `iphone-pwa/js/offline.js` keeps the work and says so | — | — | Done | PASS |
 
@@ -250,7 +251,7 @@ scratch** to the specification in §9 and §10, rather than recovered. They are 
 
 | Requirement | Implementation | Observable result | Impl. | Verif. |
 |---|---|---|---|---|
-| Regression tests for meaningful changes | 15 new test files, **222 new tests**, plus the tests carried forward with PR #88. The whole suite in this revision: **1511 passed, 10 skipped, 0 failed** | — | Done | PASS |
+| Regression tests for meaningful changes | 17 new test files, **249 new tests**, plus the tests carried forward with PR #88. The whole suite in this revision: **1538 passed, 10 skipped, 0 failed** | — | Done | PASS |
 | Preserve the original 62 acceptance IDs | the acceptance source matrix is **not present** in this checkout, so the IDs could not be preserved verbatim. `docs/ACCEPTANCE_PROCEDURES.md` carries the **A–I** procedures from the instruction and names the existing test modules that cover each one | — | Partial | — |
 | Mark new unexecuted tests NOT RUN | every hardware row above says NOT RUN | — | Done | — |
 | Historical evidence recorded separately | the counts below are from this revision; the historical counts are in `docs/TEST_RESULTS.md` and the changelog | — | Done | — |
@@ -284,8 +285,9 @@ complete when it is not.
    never done is look at a real screen with real writing on it.
 3. **Photoshop, DaVinci Resolve and After Effects editing adapters** — the launch switches exist;
    the edit-and-export adapters do not.
-4. **Android/iPhone history backup** — the desktop history backup does not extend to the
-   companions.
+4. **The phone side of the history backup has never run against a real phone.** The bridge
+   accepts the two actions, the PC really makes and really restores the backup, and the phone
+   page has the button, but no phone has asked for one.
 5. **Tesseract is an optional dependency.** The OCR works where it is installed and says exactly
    what to install where it is not, but the owner's machine has to have it.
 
