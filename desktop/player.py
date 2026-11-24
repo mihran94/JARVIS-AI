@@ -21,10 +21,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QTime, Qt, QUrl, Signal
-from PySide6.QtGui import QColor, QFont
-from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
-from PySide6.QtMultimediaWidgets import QVideoWidget
+from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtWidgets import (
     QFileDialog, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget,
 )
@@ -36,6 +33,23 @@ MEDIA_SUFFIXES = ('.mp4', '.mov', '.m4v', '.mkv', '.webm', '.avi', '.mp3', '.wav
 #: The file dialog filter.
 MEDIA_FILTER = ('Media files (*.mp4 *.mov *.m4v *.mkv *.webm *.avi *.mp3 *.wav *.m4a '
                  '*.flac *.ogg);;All files (*)')
+
+
+def media_engine():
+    """The media engine classes, or a sentence saying why there are none.
+
+    The engine is not imported until a player is actually made, because
+    the sound libraries it needs are not on every machine, and an
+    application that cannot start because it cannot play a sound is no
+    good at all.
+    """
+    try:
+        from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+        from PySide6.QtMultimediaWidgets import QVideoWidget
+    except ImportError as error:
+        return None, (f'The media engine is not available on this computer, so the '
+                      f'player cannot open a file. {error}')
+    return (QMediaPlayer, QAudioOutput, QVideoWidget), ''
 
 
 def is_media(path) -> bool:
@@ -68,19 +82,27 @@ class QuantumPlayer(QWidget):
         self.palette_ = palette
         self.path = None
         self._fullscreen = False
+        self.engine, self.engine_problem = media_engine()
 
-        self.video_widget = QVideoWidget(self)
-        self.player = QMediaPlayer(self)
-        self.audio = QAudioOutput(self)
-        self.audio.setVolume(0.7)
-        self.player.setAudioOutput(self.audio)
-        self.player.setVideoOutput(self.video_widget)
-
-        self.player.errorOccurred.connect(self.on_error)
-        self.player.hasVideoChanged.connect(self.on_has_video)
-        self.player.mediaStatusChanged.connect(self.on_status)
-        self.player.durationChanged.connect(self.on_duration)
-        self.player.positionChanged.connect(self.on_position)
+        if self.engine is not None:
+            player_class, audio_class, video_class = self.engine
+            self.player_class = player_class
+            self.video_widget = video_class(self)
+            self.player = player_class(self)
+            self.audio = audio_class(self)
+            self.audio.setVolume(0.7)
+            self.player.setAudioOutput(self.audio)
+            self.player.setVideoOutput(self.video_widget)
+            self.player.errorOccurred.connect(self.on_error)
+            self.player.hasVideoChanged.connect(self.on_has_video)
+            self.player.mediaStatusChanged.connect(self.on_status)
+            self.player.durationChanged.connect(self.on_duration)
+            self.player.positionChanged.connect(self.on_position)
+        else:
+            self.player_class = None
+            self.video_widget = None
+            self.player = None
+            self.audio = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 16, 18, 16)
@@ -95,12 +117,19 @@ class QuantumPlayer(QWidget):
         note.setWordWrap(True)
         layout.addWidget(note)
 
-        self.video_widget = QVideoWidget(self)
-        self.video_widget.setMinimumSize(480, 270)
-        self.video_widget.setAccessibleName('The picture')
-        self.video_widget.setStyleSheet(
-            'background: #05070c; border: 1px solid rgba(255,255,255,26); border-radius: 14px;')
-        layout.addWidget(self.video_widget, 1)
+        if self.video_widget is not None:
+            self.video_widget.setMinimumSize(480, 270)
+            self.video_widget.setAccessibleName('The picture')
+            self.video_widget.setStyleSheet(
+                'background: #05070c; border: 1px solid rgba(255,255,255,26); '
+                'border-radius: 14px;')
+            layout.addWidget(self.video_widget, 1)
+        else:
+            self.picture_note = QLabel(self.engine_problem)
+            self.picture_note.setWordWrap(True)
+            self.picture_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.picture_note.setStyleSheet('color: #ffcf6b; font-size: 13px;')
+            layout.addWidget(self.picture_note, 1)
 
         controls = QHBoxLayout()
         self.open_button = QPushButton('Open a file')
@@ -174,6 +203,9 @@ class QuantumPlayer(QWidget):
 
     def open(self, path) -> str:
         """Open a media file, and say what happened."""
+        if self.player is None:
+            self.status.setText(self.engine_problem)
+            return self.engine_problem
         source = Path(path)
         info = media_info(source)
         if not info['exists']:
@@ -203,7 +235,9 @@ class QuantumPlayer(QWidget):
 
     def toggle(self):
         """Play or pause."""
-        if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+        if self.player is None:
+            return self.engine_problem
+        if self.player.playbackState() == self.player_class.PlaybackState.PlayingState:
             self.player.pause()
             self.play_button.setText('Play')
             self.status.setText('Paused.')
@@ -215,6 +249,8 @@ class QuantumPlayer(QWidget):
 
     def stop(self):
         """Stop, and go back to the beginning."""
+        if self.player is None:
+            return self.engine_problem
         self.player.stop()
         self.player.setPosition(0)
         self.play_button.setText('Play')
@@ -227,10 +263,14 @@ class QuantumPlayer(QWidget):
 
     def change_volume(self, value):
         """Set the volume."""
+        if self.audio is None:
+            return
         self.audio.setVolume(max(0.0, min(1.0, value / 100)))
 
     def toggle_fullscreen(self):
         """Go full screen, or come back."""
+        if self.video_widget is None:
+            return self.engine_problem
         self._fullscreen = not self._fullscreen
         if self._fullscreen:
             self.video_widget.setFullScreen(True)
@@ -255,10 +295,12 @@ class QuantumPlayer(QWidget):
 
     def on_status(self, status):
         """The state of the file."""
-        if status == QMediaPlayer.MediaStatus.EndOfMedia:
+        if self.player_class is None:
+            return
+        if status == self.player_class.MediaStatus.EndOfMedia:
             self.play_button.setText('Play')
             self.status.setText('The file has finished.')
-        elif status == QMediaPlayer.MediaStatus.InvalidMedia:
+        elif status == self.player_class.MediaStatus.InvalidMedia:
             self.status.setText('This file could not be read as media.')
 
     def on_duration(self, milliseconds):
@@ -281,8 +323,10 @@ class QuantumPlayer(QWidget):
 
     def closeEvent(self, event):
         """Stop the playback before the window goes."""
-        self.player.stop()
+        if self.player is not None:
+            self.player.stop()
         super().closeEvent(event)
 
 
-__all__ = ['MEDIA_FILTER', 'MEDIA_SUFFIXES', 'QuantumPlayer', 'is_media', 'media_info']
+__all__ = ['MEDIA_FILTER', 'MEDIA_SUFFIXES', 'QuantumPlayer', 'is_media',
+           'media_engine', 'media_info']

@@ -213,7 +213,7 @@ scratch** to the specification in §9 and §10, rather than recovered. They are 
 | Safe URL and redirect validation, private-network restrictions, DNS handling | `check_url()`, `check_host()` | — | — | Done | PASS |
 | Bounded streaming, destination selection, safe file names, progress, cancellation, history | `download()`, `safe_name()`, `DownloadHistory` | — | — | Done | PASS |
 | Resume only when the server permits it | `supports_resume()` — a 206 allows it, a 200 restarts | — | — | Done | PASS |
-| **Quantum Visual Player** with real local media playback | **NEW** `desktop/player.py` — real playback with the media engine: play, pause, stop, a position bar, a volume control, full screen, the length of the file and its size. A file that is not there, a codec the engine does not know and a missing engine are all reported in words. It plays a file that is already on this computer and downloads nothing | the dock → *Player*, or the Files page → *Play in the player* | the file really plays | Done | PASS (a real sound file is opened) / NOT RUN (a video with sound on the owner's PC) |
+| **Quantum Visual Player** with real local media playback | **NEW** `desktop/player.py` — real playback with the media engine: play, pause, stop, a position bar, a volume control, full screen, the length of the file and its size. A file that is not there, a codec the engine does not know and a missing engine are all reported in words. The engine is only asked for when a player is made, so a computer without the sound libraries still starts JARVIS. It plays a file that is already on this computer and downloads nothing | the dock → *Player*, or the Files page → *Play in the player* | the file really plays | Done | PASS (a real sound file is opened) / NOT RUN (a video with sound on the owner's PC) |
 
 ## §10 Self-update, security and remote companions
 
@@ -250,7 +250,7 @@ scratch** to the specification in §9 and §10, rather than recovered. They are 
 
 | Requirement | Implementation | Observable result | Impl. | Verif. |
 |---|---|---|---|---|
-| Regression tests for meaningful changes | 15 new test files, **221 new tests**, plus the tests carried forward with PR #88. The whole suite in this revision: **1510 passed, 10 skipped, 0 failed** | — | Done | PASS |
+| Regression tests for meaningful changes | 15 new test files, **222 new tests**, plus the tests carried forward with PR #88. The whole suite in this revision: **1511 passed, 10 skipped, 0 failed** | — | Done | PASS |
 | Preserve the original 62 acceptance IDs | the acceptance source matrix is **not present** in this checkout, so the IDs could not be preserved verbatim. `docs/ACCEPTANCE_PROCEDURES.md` carries the **A–I** procedures from the instruction and names the existing test modules that cover each one | — | Partial | — |
 | Mark new unexecuted tests NOT RUN | every hardware row above says NOT RUN | — | Done | — |
 | Historical evidence recorded separately | the counts below are from this revision; the historical counts are in `docs/TEST_RESULTS.md` and the changelog | — | Done | — |

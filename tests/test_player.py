@@ -146,3 +146,42 @@ def test_the_files_page_only_sends_media_to_the_player(tmp_path):
         window.close()
         window.deleteLater()
         app.processEvents()
+
+
+# ── a computer without the media engine ────────────────────────────────────
+
+def test_the_application_still_starts_without_the_media_engine(monkeypatch, tmp_path):
+    """The sound libraries are not on every machine.
+
+    An application that cannot start because it cannot play a sound is
+    no good at all, so the engine is only asked for when a player is
+    actually made, and its absence is reported in words.
+    """
+    import builtins
+
+    real_import = builtins.__import__
+
+    def blocked(name, *args, **kwargs):
+        if name.startswith('PySide6.QtMultimedia'):
+            raise ImportError('libpulse.so.0: cannot open shared object file')
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', blocked)
+    import importlib
+
+    import desktop.app as desktop
+
+    importlib.reload(desktop)
+    app = QApplication.instance() or QApplication([])
+    window = desktop.Window(tmp_path)
+    try:
+        assert window.player_panel is not None
+        assert window.player_panel.player is None
+        assert 'media engine' in window.player_panel.engine_problem
+        assert 'media engine' in window.player_panel.open('/tmp/anything.wav')
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+    monkeypatch.setattr(builtins, '__import__', real_import)
+    importlib.reload(desktop)
