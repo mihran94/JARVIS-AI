@@ -5,20 +5,18 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 from PySide6.QtWidgets import QApplication
 
-from desktop.app import STYLE, Window
+from desktop.app import Window
 from desktop.blue_orb import BlueOrb
-from desktop.prime_theme import PRIME_DARK
+from desktop.omega_visuals import DEFAULT_THEME, theme_sheet
 from desktop.network_metrics import NetworkSampler, format_network
 from desktop.voice_commands import parse_voice_command
 
 
 def test_one_dashboard_has_orb_read_only_metrics_and_existing_pages(tmp_path):
     app = QApplication.instance() or QApplication([])
-    app.setStyleSheet(STYLE)
     window = Window(tmp_path)
     try:
-        # The interface theme is the premium dark one, not the default Qt look.
-        assert STYLE == PRIME_DARK
+        assert window.styleSheet() == theme_sheet(DEFAULT_THEME)
         assert isinstance(window.orb, BlueOrb)
         # Seven task workspaces are embedded in chat.
         assert window.pages.count() == 13

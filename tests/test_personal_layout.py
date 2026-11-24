@@ -1,13 +1,11 @@
 """Prevent the vertically compressed Chat and Phone Remote layouts."""
 from PySide6.QtWidgets import QApplication, QTabWidget
 
-from desktop.app import STYLE, Window
+from desktop.app import Window
 
 
 def test_chat_and_phone_stay_readable_at_narrow_desktop_size(tmp_path):
     app = QApplication.instance() or QApplication([])
-    previous_style = app.styleSheet()
-    app.setStyleSheet(STYLE)
     window = Window(tmp_path)
     try:
         window.resize(680, 510)
@@ -48,5 +46,4 @@ def test_chat_and_phone_stay_readable_at_narrow_desktop_size(tmp_path):
         # widgets and its OpenGL resources alive, and the next test then
         # renders far more slowly than it should.
         window.deleteLater()
-        app.setStyleSheet(previous_style)
         app.processEvents()
