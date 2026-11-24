@@ -63,6 +63,7 @@ from desktop.blue_orb import BlueOrb
 from desktop.omega import Omega
 from desktop.mission_panel import MissionPanel
 from desktop.mission_controller import MissionController
+from desktop.coding_mission_worker import CodingMissionWorker
 from desktop.system_metrics import CpuSampler, snapshot, format_snapshot
 from desktop.network_diagnostics import NetworkDiagnostics
 from desktop.news_panel import NewsPanel
@@ -346,6 +347,7 @@ class Window(QMainWindow):
         self.desktop_task_timer.timeout.connect(self.complete_desktop_task)
         self.coding = None
         self.coding_worker = None
+        self.coding_mission_worker = None
         self.test_worker = None
         self.chat_task_id = None
         self.memory = ConversationMemory(self.store)
@@ -4212,6 +4214,110 @@ class Window(QMainWindow):
                 return
         self.advance_coding_task()
 
+    def codex_is_available(self):
+        """Whether the Codex CLI is installed on this machine.
+
+        The question is asked of the same function the Codex task uses, so
+        the answer and the task always agree.
+        """
+        from developer_studio.codex_task import codex_executable
+
+        try:
+            codex_executable()
+        except ValueError:
+            return False
+        return True
+
+    def start_jarvis_coding_task(self, step):
+        """Do the coding work with JARVIS's own model and the coding tools.
+
+        This is the path taken when the Codex CLI is not installed. The
+        same approval boundary, the same evidence and the same repair
+        loop are used; only the worker is JARVIS itself.
+        """
+        from core.coding_mission import CodingMission
+
+        coding = self.coding
+        project = coding['project']
+        request = coding['request']
+        if self.worker is not None or self.coding_mission_worker is not None:
+            self.show_local_system_reply(coding['text'],
+                                         'Wait for the current request to finish.')
+            return
+        try:
+            provider = self.chat_provider.currentText()
+            model = self.selected_model(provider)
+            key = self.get_key(provider)
+            ticket = self.policy.ticket()
+        except Exception as error:
+            self.show_local_system_reply(coding['text'], str(error))
+            return
+
+        goal = request.change or project.name
+        router = self.router
+
+        def planner(messages):
+            def check():
+                self.policy.check(ticket)
+
+            return router.stream(router.spec(provider), model, key, messages, check,
+                                 lambda _chunk: None)
+
+        try:
+            mission = CodingMission(project.path, goal, planner=planner, gateway=self.gateway,
+                                    confirm=self.confirm,
+                                    test_command=project.test_command or 'python -m pytest')
+        except Exception as error:
+            self.show_local_system_reply(coding['text'],
+                                         f'The project could not be opened. {error}')
+            return
+        self.worker_kind = 'coding_mission'
+        self.coding_mission_worker = CodingMissionWorker(mission, self.policy, ticket, self)
+        self.coding_mission_worker.event.connect(self.on_mission_event)
+        self.coding_mission_worker.result.connect(self.on_coding_mission_result)
+        self.coding_mission_worker.failed.connect(self.on_coding_mission_failed)
+        step['state'] = 'running'
+        self.render_coding_card()
+        self.coding_mission_worker.start()
+
+    def on_mission_event(self, event):
+        """One step of a coding mission, shown in the console."""
+        panel = getattr(self, 'mission_panel', None)
+        if panel is not None:
+            panel.append_event(event)
+        self.store.message(self.session, 'system', '· ' + event.label)
+        self.render_chat()
+
+    def on_coding_mission_result(self, result):
+        """The coding mission finished."""
+        self.worker_kind = 'chat'
+        answer = result.summary or 'The coding mission finished.'
+        if result.status != 'verified':
+            answer = ('The coding mission did not reach a verified result. '
+                      + answer)
+        self.store.message(self.session, 'assistant', answer)
+        self.render_chat()
+        self.show_hud_text(answer)
+        coding = self.coding
+        if coding is not None:
+            coding['outcome'] = result
+            for item in coding['steps']:
+                if item['state'] == 'running':
+                    item['state'] = 'done' if result.status == 'verified' else 'failed'
+            self.render_coding_card()
+        self.record_coding_history(result)
+        worker = self.coding_mission_worker
+        self.coding_mission_worker = None
+        if worker is not None:
+            worker.deleteLater()
+
+    def on_coding_mission_failed(self, message):
+        """The coding mission could not run at all."""
+        self.worker_kind = 'chat'
+        self.coding_mission_worker = None
+        self.show_local_system_reply(self.coding['text'] if self.coding else '',
+                                     f'The coding mission could not run. {message}')
+
     def start_codex_task(self, step):
         """Start the Codex task in an isolated worktree."""
         coding = self.coding
@@ -4220,6 +4326,12 @@ class Window(QMainWindow):
         if self.worker is not None:
             self.show_local_system_reply(coding['text'],
                                          'Wait for the current request to finish.')
+            return
+        if not self.codex_is_available():
+            # The Codex CLI is not on this machine. JARVIS does the work
+            # itself, with its own model and the coding tools, rather
+            # than stopping and asking the owner to install something.
+            self.start_jarvis_coding_task(step)
             return
         # The change does NOT run the tests. An untrusted test command needs
         # its own approval, and a test command bundled inside the change
@@ -4293,7 +4405,11 @@ class Window(QMainWindow):
             self.store.finish(self.chat_task_id, 'running')
             return
         status = outcome.status
-        if outcome.test_status == 'failed':
+        if status == 'cancelled':
+            # The owner stopped it. The history says so, whatever the
+            # test run was doing.
+            status = 'cancelled'
+        elif outcome.test_status == 'failed':
             # The job was to make the change AND prove it. A failing test is a
             # failed task, and the history says so.
             status = 'failed'
@@ -5566,6 +5682,8 @@ class Window(QMainWindow):
     def stop(self):
         self.policy.stop()
         self.browser.stop()
+        if self.coding_mission_worker is not None:
+            self.coding_mission_worker.cancel()
         controller = getattr(self, 'mission_controller', None)
         if controller is not None:
             controller.cancel()
