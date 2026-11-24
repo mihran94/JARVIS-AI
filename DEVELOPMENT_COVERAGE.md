@@ -126,15 +126,15 @@ scratch** to the specification in §9 and §10, rather than recovered. They are 
 | Process/window identification | `automation/win_controls.py` `foreground_process()`, `automation/inspection.py` | — | — | Done | PASS (unit) / NOT RUN (Windows) |
 | UI Automation, accessible controls, menus, dialogs | **NEW** `automation/uia.py` — reads the Windows accessibility tree through the .NET `UIAutomationClient` assembly and turns it into plain elements that can be found by the name the owner sees, by type or by automation id. `unexpected_dialogs()` finds a dialog that was not expected | mission tool `inspect_window` | the controls of a window are listed | Done (written) | PASS (the model and the dialog rule) / NOT RUN (the .NET binding, which needs Windows) |
 | Keyboard, mouse, scrolling, shortcuts | **PARTIAL** — `automation/desktop_tasks.py` sends Unicode keystrokes (`KEYEVENTF_UNICODE`) into a validated target. There is no mouse, no scrolling and no shortcut layer | `parse_desktop_task()` | — | Partial | PASS (unit) / NOT RUN (Windows) |
-| Approved screen observation | **GAP** — `computer_vision/` exists but the Windows screen-capture path for the assistant is not wired to a mission tool | — | — | **Not implemented** | — |
+| Approved screen observation and safe input targeting | **NEW** `core/screen.py` — the screen is captured, the picture is saved where the owner asked, and the writing on it is read **on this computer**. It needs the owner's approval, because a screen is private, and nothing is sent anywhere by it | mission tool `observe_screen` | the writing that was on the screen | Done | PASS (the capture and the read) / NOT RUN (a real screen with real writing on it) |
 | Switching between applications | `automation/input.py` `activate_window()` brings one forward, and refuses when the process has more than one visible window, because the target would be ambiguous | — | — | Done (written) | PASS (the refusal) / NOT RUN (Windows) |
 | Validate the intended window and process before every focus-dependent input | `automation/input.py` `validate_focus()` — the process in front is checked before every action, and the action stops when it moved. `automation/desktop_tasks.py` does the same for the editor it types into | `automation/input.py` | — | Done | PASS (unit) / NOT RUN (Windows) |
 | Stop safely if focus changes, the target is ambiguous or a dialog appears | `automation/input.py` raises `FocusLost`, `AmbiguousTarget` and `UnexpectedDialog`, and sends nothing. `automation/win_controls.py` refuses a `#32770` dialog class and a focus that is not inside the foreground window | — | — | Done | PASS (unit) / NOT RUN (Windows) |
-| Approved open, edit, save and export | PR #88: mission tool `export_text` writes and reads back; `save` of an open document is **not** implemented | mission tools | — | Partial | PASS (unit) / NOT RUN (Windows) |
+| Approved open, edit, save and export | PR #88's mission tool `export_text` writes and reads back; **NEW** `automation/editor.py` saves the document that is open in the editor, checks the focus again, reports a **Save As** dialog instead of clicking through it, and reads the file back against what the editor shows | mission tools `export_text` and `save_open_document` | the file on the disk holds the text the editor showed | Done (written) | PASS (unit) / NOT RUN (Windows) |
 | Verify the result using application state or file contents | PR #88: `VerifiedEdit` (the editor's own contents) and `export_text` (the file read back) | — | — | Done | PASS |
 | A click, keystroke or launch is evidence only for that action | PR #88: `launch_app` says "Windows confirmed its foreground process"; `type_notepad` says the editor returned the expected text | — | — | Done | PASS |
-| Type a Tamil sentence in Notepad and verify the saved text | `automation/desktop_tasks.py` sends Unicode, `win_controls.py` reads it back; **saving the file is not implemented** | — | — | Partial | PASS (unit) / NOT RUN (Windows) |
-| Calculator result into Notepad | **GAP** — there is no Calculator adapter; `automation/windows.py` can launch Calculator but cannot read its result | — | — | **Not implemented** | — |
+| Type a Tamil sentence in Notepad and verify the saved text | `automation/desktop_tasks.py` sends the Unicode text, `win_controls.py` reads the editor back, and **NEW** `automation/editor.py` saves the file and verifies it against what the editor showed | mission tools `type_notepad` and `save_open_document` | the saved file holds the Tamil sentence exactly | Done (written) | PASS (unit) / NOT RUN (Windows) |
+| Calculator result into Notepad | **NEW** `automation/calculator.py` — the value on the Calculator's display is read out of the control tree, from the element the Calculator publishes. A display showing something that is not a number is not treated as a result. The value can then be typed into Notepad by the existing verified path | mission tool `read_calculator`, then `type_notepad` | the number the Calculator really shows | Done (written) | PASS (the reading rules) / NOT RUN (a real Calculator on Windows) |
 
 ## §6 Browser, website and business automation
 
@@ -207,13 +207,13 @@ scratch** to the specification in §9 and §10, rather than recovered. They are 
 | Preserve old data through safe migration | the restore checks the schema version before it replaces anything | — | — | Done | PASS |
 | Owner controls for history, memory, correction, deletion, backup, restore | `desktop/memory_page.py` (notes), `desktop/history_backup_settings.py` (history), `core/store.py` (history) | — | — | Done | PASS |
 | TXT, PDF and DOCX reading, search and summarization | `desktop/documents.py`, `desktop/document_search.py` | Files & Folders | — | Done | PASS |
-| Scanned-PDF OCR | **GAP** — `desktop/documents.py` says in its own words that it does not do OCR, and no OCR engine is integrated. A missing engine would also have to be reported visibly | — | — | **Not implemented** | — |
+| Scanned-PDF OCR | **NEW** `core/ocr.py` — the pages of a scanned PDF are rasterised with the PDF engine that is already in the Qt runtime, and the writing is recognised **on this computer** with Tesseract. `desktop/documents.py` now reads a picture of a page instead of calling it empty, and says that the text came from the pictures. A missing engine is reported with what to install | the Files & Folders page → *Read a document…* | the text of a scanned page | Done | PASS (a real scanned PDF is really read) |
 | Multi-source research with references tied to retrieved content | `research/research.py` `build_prompt()`, `research_dialog.py` | composer | — | Done | PASS |
 | **Web Download Center** | **NEW** `core/downloads.py` | `download()` | — | Done | PASS (23 tests) |
 | Safe URL and redirect validation, private-network restrictions, DNS handling | `check_url()`, `check_host()` | — | — | Done | PASS |
 | Bounded streaming, destination selection, safe file names, progress, cancellation, history | `download()`, `safe_name()`, `DownloadHistory` | — | — | Done | PASS |
 | Resume only when the server permits it | `supports_resume()` — a 206 allows it, a 200 restarts | — | — | Done | PASS |
-| **Quantum Visual Player** with real local media playback | **GAP** — there is no media player. `video_studio/preview.py` renders frames for a sheet; `desktop/omega.py` has the signal meter; none of them plays a file with play/pause, seek, volume, fullscreen and metadata | — | — | **Not implemented** | — |
+| **Quantum Visual Player** with real local media playback | **NEW** `desktop/player.py` — real playback with the media engine: play, pause, stop, a position bar, a volume control, full screen, the length of the file and its size. A file that is not there, a codec the engine does not know and a missing engine are all reported in words. It plays a file that is already on this computer and downloads nothing | the dock → *Player*, or the Files page → *Play in the player* | the file really plays | Done | PASS (a real sound file is opened) / NOT RUN (a video with sound on the owner's PC) |
 
 ## §10 Self-update, security and remote companions
 
@@ -250,7 +250,7 @@ scratch** to the specification in §9 and §10, rather than recovered. They are 
 
 | Requirement | Implementation | Observable result | Impl. | Verif. |
 |---|---|---|---|---|
-| Regression tests for meaningful changes | 11 new test files, **184 new tests**, plus the tests carried forward with PR #88. The whole suite in this revision: **1470 passed, 10 skipped, 0 failed** | — | Done | PASS |
+| Regression tests for meaningful changes | 15 new test files, **221 new tests**, plus the tests carried forward with PR #88. The whole suite in this revision: **1510 passed, 10 skipped, 0 failed** | — | Done | PASS |
 | Preserve the original 62 acceptance IDs | the acceptance source matrix is **not present** in this checkout, so the IDs could not be preserved verbatim. `docs/ACCEPTANCE_PROCEDURES.md` carries the **A–I** procedures from the instruction and names the existing test modules that cover each one | — | Partial | — |
 | Mark new unexecuted tests NOT RUN | every hardware row above says NOT RUN | — | Done | — |
 | Historical evidence recorded separately | the counts below are from this revision; the historical counts are in `docs/TEST_RESULTS.md` and the changelog | — | Done | — |
@@ -275,21 +275,19 @@ scratch** to the specification in §9 and §10, rather than recovered. They are 
 These are the things that are **not** implemented. They are listed so the report cannot be read as
 complete when it is not.
 
-1. **The .NET half of the UI Automation adapter and the Windows input calls** are written but
-   have never run, because there was no Windows machine. The parts that decide *what* is looked
-   for and *when* an action is refused are covered by the suite; the parts that talk to Windows are
-   not.
-2. **Approved screen observation** — `computer_vision/` exists but is not wired to a mission tool.
-4. **Calculator adapter** — the Calculator can be launched but its result cannot be read, so the
-   Calculator→Notepad workflow cannot be completed.
-5. **Saving an open document** — the typed text is verified in the editor; the file is not saved
-   from the editor.
-6. **Photoshop, DaVinci Resolve and After Effects editing adapters** — the launch switches exist;
+1. **The Windows half of the new code has never run.** The UI Automation reader, the validated
+   input layer, the Calculator adapter and the editor save are all written and their rules are
+   covered by tests, but the parts that talk to Windows are not: no real Calculator, no real
+   Notepad, no real Save As dialog and no real window tree have been used.
+2. **Approved screen observation is now a tool** — `core/screen.py` captures the screen, saves the
+   picture and reads the writing on it **on this computer**. It is not a gap any more; what it has
+   never done is look at a real screen with real writing on it.
+3. **Photoshop, DaVinci Resolve and After Effects editing adapters** — the launch switches exist;
    the edit-and-export adapters do not.
-7. **Scanned-PDF OCR** — no engine is integrated, and a missing engine would have to be reported
-   visibly to the owner.
-8. **Quantum Visual Player** — there is no media playback surface at all.
-9. **Android/iPhone history backup** — the desktop backup does not extend to the companions.
+4. **Android/iPhone history backup** — the desktop history backup does not extend to the
+   companions.
+5. **Tesseract is an optional dependency.** The OCR works where it is installed and says exactly
+   what to install where it is not, but the owner's machine has to have it.
 
 ## What is blocked on something outside the code
 

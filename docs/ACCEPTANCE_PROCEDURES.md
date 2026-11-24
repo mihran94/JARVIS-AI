@@ -109,6 +109,65 @@ across was the one the application actually produced.
 JARVIS can launch the Calculator, but it cannot read its result, so it cannot carry that value
 into Notepad. This is listed as a coding gap in `DEVELOPMENT_COVERAGE.md` §5.
 
+## B2. The Calculator's real value, carried into Notepad
+
+**What it proves.** That the number JARVIS carries across is the number the Calculator is really
+showing.
+
+1. Open the Calculator and work out something — `7 × 6` is enough.
+2. Leave the Calculator in front.
+3. In the chat, turn on **Work on this** and ask: *what is the calculator showing?* Approve the
+   read.
+4. The answer must be the number on the display — `42` — not a number the model made up.
+5. Ask for that value to be written into a new Notepad document, approve the action, and then
+   save the document with the save action.
+
+**A pass is:** the number read matches the display, the text that lands in the editor is that
+number, and the saved file holds it.
+
+**A fail is:** a value that the Calculator is not showing, or a file that does not hold what the
+editor showed.
+
+**Status: NOT RUN.** The reading rules, the focus checks and the file verification are covered by
+`tests/test_windows_automation.py`. The real Calculator, the real Notepad and the real Save As
+dialog have not been used.
+
+## A3. A scanned document is read on this computer
+
+**What it proves.** That a PDF whose pages are pictures is not reported as an empty document.
+
+1. Put a scanned PDF on the computer — a photograph of a page is enough.
+2. Open **Files & Folders** → *Read a document…* and choose it.
+3. The preview shows the writing, and the status says the text was read from the pictures.
+
+**A pass is:** the writing is in the preview, and the warning says it came from the pictures of
+the pages rather than from a text layer.
+
+**A fail is:** "this document has no readable text", or a claim that the text came from the
+text layer when there was none.
+
+**Status: NOT RUN.** A scanned PDF with no text layer is really read by the suite
+(`tests/test_ocr.py`), including the reading of the writing back. The engine is **Tesseract**, and
+it has to be installed on the computer: when it is not, the message says what to install.
+
+## E2. A downloaded file is played
+
+**What it proves.** That a file the Download Center wrote can be opened and played, and that the
+player reports what the file really is.
+
+1. Download a short video or sound file with the Download Center.
+2. Open it from **Files & Folders** → *Play in the player*, or from the dock → *Player*.
+3. Play it, drag the position, change the volume, and go full screen.
+
+**A pass is:** the file plays, the position bar follows it, and the details line names the file
+and its size.
+
+**A fail is:** the player says it cannot play a file it should, or it claims to be playing a file
+that is not there.
+
+**Status: NOT RUN.** A sound file made by the suite is really opened by the suite
+(`tests/test_player.py`). A video with sound, on the owner's PC, has not been played.
+
 ## C. Developer project fix, diff and actual test/build output
 
 **What it proves.** That a coding request produces a reviewable diff and a real test result.
