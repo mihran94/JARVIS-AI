@@ -571,15 +571,22 @@ class PrimeComposer(QFrame):
         self.layout_controls()
 
     def layout_controls(self):
-        compact = self.width() < 550
-        if not self.buttons or compact == self._compact:
+        if not self.buttons:
+            return
+        margins = self.layout().contentsMargins()
+        row_width = (sum(button.sizeHint().width() for button in self.buttons)
+                     + self.controls.spacing() * (len(self.buttons) - 1)
+                     + margins.left() + margins.right())
+        compact = self.width() < max(550, row_width)
+        if compact == self._compact:
             return
         self._compact = compact
+        columns = 4 if compact else len(self.buttons)
         for index, button in enumerate(self.buttons):
-            row, column = divmod(index, 3) if compact else (0, index)
+            row, column = divmod(index, columns)
             self.controls.addWidget(button, row, column)
         for column in range(len(self.buttons)):
-            self.controls.setColumnStretch(column, int(not compact or column < 3))
+            self.controls.setColumnStretch(column, int(column < columns))
 
     def refresh_theme(self):
         palette = self.palette_
@@ -652,7 +659,7 @@ class PrimeChat(QWidget):
         browser = QPushButton('Browser')
         browser.clicked.connect(window.show_browser_commands)
         buttons = (window.chat_mic, window.attach_button, window.research_button,
-                   browser, window.suggestion_mode, window.send_button)
+                   browser, window.suggestion_mode, window.mission_mode, window.send_button)
         for button in buttons:
             window.composer_actions.removeWidget(button)
             button.setStyleSheet('padding: 7px 7px;')
