@@ -176,3 +176,18 @@ def test_emergency_stop_cancels_pending_type_action(tmp_path, monkeypatch):
         window.close()
         window.deleteLater()
         app.processEvents()
+def test_capcut_shortcut_uses_one_native_keyboard_batch(monkeypatch):
+    from automation import input as windows_input
+
+    batches = []
+
+    def send(events):
+        batches.append(events)
+        return len(events)
+
+    monkeypatch.setattr(windows_input, 'send_input', send)
+    windows_input.press_key('ctrl+e', windows_input.InputTarget(1), foreground=lambda: 1)
+    assert len(batches) == 1
+    assert [(event.data.ki.wVk, event.data.ki.dwFlags) for event in batches[0]] == [
+        (0x11, 0), (0x45, 0), (0x45, 2), (0x11, 2),
+    ]

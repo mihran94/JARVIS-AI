@@ -14,12 +14,10 @@ import time
 
 import psutil
 from automation import win_controls
+from automation.input import _INPUT, _keyboard_event, send_input
 from core.conversation import addressed_request
 
 MAX_TEXT = 2000
-KEYEVENTF_KEYUP = 0x0002
-KEYEVENTF_UNICODE = 0x0004
-INPUT_KEYBOARD = 1
 VK_RETURN = 0x0D
 VK_TAB = 0x09
 
@@ -75,47 +73,6 @@ def parse_desktop_task(message: str) -> DesktopTask | None:
     return None
 
 
-class _KEYBDINPUT(ctypes.Structure):
-    _fields_ = (
-        ('wVk', ctypes.c_uint16),
-        ('wScan', ctypes.c_uint16),
-        ('dwFlags', ctypes.c_uint32),
-        ('time', ctypes.c_uint32),
-        ('dwExtraInfo', ctypes.c_size_t),
-    )
-
-
-class _MOUSEINPUT(ctypes.Structure):
-    _fields_ = (
-        ('dx', ctypes.c_int32),
-        ('dy', ctypes.c_int32),
-        ('mouseData', ctypes.c_uint32),
-        ('dwFlags', ctypes.c_uint32),
-        ('time', ctypes.c_uint32),
-        ('dwExtraInfo', ctypes.c_size_t),
-    )
-
-
-class _HARDWAREINPUT(ctypes.Structure):
-    _fields_ = (
-        ('uMsg', ctypes.c_uint32),
-        ('wParamL', ctypes.c_uint16),
-        ('wParamH', ctypes.c_uint16),
-    )
-
-
-class _INPUT_UNION(ctypes.Union):
-    _fields_ = (
-        ('ki', _KEYBDINPUT),
-        ('mi', _MOUSEINPUT),
-        ('hi', _HARDWAREINPUT),
-    )
-
-
-class _INPUT(ctypes.Structure):
-    _fields_ = (('type', ctypes.c_uint32), ('data', _INPUT_UNION))
-
-
 def _require_windows():
     if sys.platform != 'win32':
         raise RuntimeError('Desktop keyboard control is only available on Windows.')
@@ -133,13 +90,6 @@ def target_is_foreground(app: str) -> bool:
         return psutil.Process(pid).name().casefold() == TARGETS[app]
     except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
         return False
-
-
-def _keyboard_event(character: int, *, key_up: bool, unicode: bool):
-    flags = (KEYEVENTF_UNICODE if unicode else 0) | (KEYEVENTF_KEYUP if key_up else 0)
-    return _INPUT(INPUT_KEYBOARD, _INPUT_UNION(
-        ki=_KEYBDINPUT(0 if unicode else character, character if unicode else 0,
-                       flags, 0, 0)))
 
 
 def _events(text: str) -> list[_INPUT]:
@@ -183,15 +133,11 @@ def type_into_target(app: str, text: str) -> str:
     events = _events(text)
     if not target_is_foreground(app) or win_controls.focused_editor() != hwnd:
         raise RuntimeError('The target window changed. No text was sent.')
-    array_type = _INPUT * len(events)
-    array = array_type(*events)
-    user32.SendInput.argtypes = [ctypes.c_uint32, ctypes.POINTER(_INPUT), ctypes.c_int]
-    user32.SendInput.restype = ctypes.c_uint32
-    sent = user32.SendInput(len(array), array, ctypes.sizeof(_INPUT))
-    if sent != len(array):
+    sent = send_input(events)
+    if sent != len(events):
         if not sent:
             raise RuntimeError('Windows declined the keyboard input.')
-        return f'Windows accepted only {sent}/{len(array)} keyboard events. Review the editor before repeating.'
+        return f'Windows accepted only {sent}/{len(events)} keyboard events. Review the editor before repeating.'
     if expected is not None:
         deadline = time.monotonic() + 0.25
         while time.monotonic() < deadline and target_is_foreground(app) and win_controls.focused_editor() == hwnd:
