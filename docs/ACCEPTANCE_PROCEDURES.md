@@ -327,6 +327,32 @@ wrong-window check is covered by `tests/test_safe_computer_control.py`.
 
 ---
 
+## J. The phone asks the PC to back up the history
+
+**What it proves.** That the companion can ask for a backup, that the owner approves it on the
+PC, and that the history itself never travels over the bridge.
+
+1. Pair the phone as usual and open the Phone Remote page on the phone.
+2. Press **Back up the history on the PC**.
+3. On the PC, the task appears in **Phone Remote** and waits for approval.
+4. Approve it.
+5. On the PC, the task reports the name, the size and the checksum of the backup. The backup
+   is in the JARVIS data folder under `backups`.
+6. Ask the phone to restore that backup, approve it on the PC, and check that the history came
+   back.
+
+**A pass is:** the backup file is really on the PC, the phone was told its name and checksum,
+and **no conversation text crossed the bridge**. The database that the restore replaced is kept
+beside it.
+
+**A fail is:** the history itself was sent to the phone, or the restore happened without the
+owner approving it, or the database that was replaced was thrown away.
+
+**Status: NOT RUN.** The bridge accepts the two actions, the PC really makes and really restores
+the backup, a refused approval changes nothing, and a phone cannot point the restore at a path
+of its own choosing — all covered by `tests/test_bridge_history_backup.py`. No phone has asked
+for one.
+
 ## Also in this order of work
 
 | Item | Procedure | Status |

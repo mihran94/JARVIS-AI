@@ -13,6 +13,7 @@ import { ChatTranscript, renderTranscript } from './js/chat.js';
 import { KINDS, Outbox, createIndexedDbStore } from './js/offline.js';
 import { parsePairingPayload } from './js/pairing.js';
 import { decodeQrFromFile } from './js/qr.js';
+import { backupTask } from './js/history.js';
 import {
   chooseLanguage, defaultLanguage, recognitionSupported, speak, startListening,
   synthesisSupported,
@@ -332,6 +333,30 @@ async function submitTask() {
     // The task is on the PC now, so a copy that waits in the queue must not
     // be sent a second time.
     await state.outbox.discard(KINDS.TASK, task);
+    await refreshJobs();
+  } catch (error) {
+    const kept = await keepForLater(error, KINDS.TASK, task);
+    handleFailure(error, 'tasks', { kept });
+  }
+}
+
+/**
+ * Ask the PC to back up the conversation history.
+ *
+ * The history itself is never sent over the bridge. The PC makes the
+ * backup, keeps it, and the phone is told the name, the size and the
+ * checksum of what was made. The owner approves it on the PC.
+ */
+async function backupHistory() {
+  if (!state.client) {
+    setStatus('chatStatus', 'The PC cannot be reached right now.', 'warn');
+    return;
+  }
+  const task = backupTask();
+  try {
+    await state.client.submitJob(task);
+    await state.outbox.discard(KINDS.TASK, task);
+    setStatus('chatStatus', 'The backup was asked for. Approve it on the PC.', 'ok');
     await refreshJobs();
   } catch (error) {
     const kept = await keepForLater(error, KINDS.TASK, task);
@@ -700,6 +725,7 @@ function installListeners() {
   });
   $('submitTask').addEventListener('click', submitTask);
   $('refreshJobs').addEventListener('click', refreshJobs);
+  $('backupHistory').addEventListener('click', backupHistory);
   $('remember').addEventListener('click', remember);
   $('refreshMemory').addEventListener('click', refreshMemory);
   $('refreshNotifications').addEventListener('click', refreshNotifications);

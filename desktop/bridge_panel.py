@@ -14,7 +14,9 @@ Nothing here grants a permission by itself:
   request.
 """
 import platform
+from datetime import datetime
 from pathlib import Path
+import json
 import shutil
 
 from PySide6.QtCore import QRectF, Qt
@@ -34,7 +36,10 @@ from desktop.bridge_pairing import (
 from desktop.bridge_status import PlatformMetrics
 from providers.registry import specs
 from remote import certificate
-from remote.jobs import DISK_SPACE_ACTION
+from remote.jobs import (
+    DISK_SPACE_ACTION, HISTORY_BACKUP_ACTION, HISTORY_RESTORE_ACTION,
+    operation_kind,
+)
 from remote.listener import BridgeListener, ListenerConfig, ListenerError
 from remote.pairing import PairingStore
 from remote.protocol import KEY_ID
@@ -47,13 +52,35 @@ from security.policy import Action, Stopped
 IPHONE_KEY_ID = 'jarvis-iphone-v1'
 
 
+def _requested_backup(job) -> str:
+    """The backup the phone named, if it named one properly.
+
+    The name travels inside the validated operation, because a job
+    record keeps no phone text.
+    """
+    operation = getattr(job, 'operation', '') or ''
+    if operation_kind(operation) != HISTORY_RESTORE_ACTION:
+        return ''
+    name = operation.split(':', 1)[1] if ':' in operation else ''
+    if (not isinstance(name, str) or not name or '/' in name or '\\' in name
+            or '..' in name or not name.endswith('.jarvisbak')):
+        return ''
+    return name
+
+
 class BridgePanel(QWidget):
     """Owns the bridge listener, the paired devices and the remote jobs."""
 
     def __init__(self, policy, store, vault, confirm, notify, *, pairing=None, bridge=None,
-                 listener=None, router=None):
+                 listener=None, router=None, history_path=None, history_passphrase=''):
         super().__init__()
         self.policy, self.store = policy, store
+        #: The live history the phone may ask to be backed up.
+        self.history_path = Path(history_path) if history_path else None
+        #: The passphrase the backups are sealed with. When it is empty
+        #: the Windows account's own key is used, which is what happens
+        #: on the PC this bridge belongs to.
+        self.history_passphrase = history_passphrase or ''
         self.confirm, self.notify = confirm, notify
         self.gateway = Gateway(policy, store)
         self.pairing = pairing if pairing is not None else PairingStore(
@@ -470,6 +497,22 @@ class BridgePanel(QWidget):
             job = self._selected_job()
             if job.state in ('SUCCEEDED', 'FAILED', 'CANCELLED', 'REJECTED'):
                 raise ValueError('That job has already finished.')
+            if job.operation == HISTORY_BACKUP_ACTION:
+                action = Action('Back up the conversation history for the requesting phone',
+                                job.id)
+                try:
+                    return self.gateway.run(action, self.confirm,
+                                            lambda: self._execute_history_backup(job))
+                finally:
+                    self.refresh()
+            if operation_kind(job.operation) == HISTORY_RESTORE_ACTION:
+                action = Action('Restore a conversation history backup for the requesting phone',
+                                job.id)
+                try:
+                    return self.gateway.run(action, self.confirm,
+                                            lambda: self._execute_history_restore(job))
+                finally:
+                    self.refresh()
             if job.operation != DISK_SPACE_ACTION:
                 if not self.confirm(Action('Reject unsupported phone task', job.id)):
                     return
@@ -483,6 +526,95 @@ class BridgePanel(QWidget):
             finally:
                 self.refresh()
         self.notify(operation)
+
+    # ------------------------------------------------------------------
+    # the history, for the phone
+
+    def _backup_folder(self):
+        """Where the backups the phone asks for are kept."""
+        if self.history_path is None:
+            return None
+        return self.history_path.parent / 'backups'
+
+    def _execute_history_backup(self, job):
+        """Back up the history and tell the phone what was made.
+
+        The history itself is **not** sent. The phone is told the name,
+        the size and the checksum of the backup, so the owner knows on
+        the phone that the backup is there.
+        """
+        from memory.windows_backup import BackupError, create_backup
+
+        jobs = self.bridge.jobs
+        job_id = job.id
+        if job.peer_id is not None and not any(
+                device.peer_id == job.peer_id and not device.revoked
+                for device in self.pairing.devices()):
+            jobs.reject(job_id, 'The requesting phone is no longer paired.')
+            raise RuntimeError('The requesting phone is no longer paired.')
+        folder = self._backup_folder()
+        if folder is None or self.history_path is None or not self.history_path.is_file():
+            jobs.reject(job_id, 'This desktop has no history to back up.')
+            raise RuntimeError('This desktop has no history to back up.')
+        jobs.start(job_id)
+        folder.mkdir(parents=True, exist_ok=True)
+        target = folder / f'phone-history-{datetime.now().strftime("%Y%m%d-%H%M%S")}.jarvisbak'
+        try:
+            if self.history_passphrase:
+                result = create_backup(self.history_path, target,
+                                       passphrase=self.history_passphrase,
+                                       windows_key=False)
+            else:
+                result = create_backup(self.history_path, target, passphrase='',
+                                       windows_key=True)
+        except (BackupError, OSError) as error:
+            if jobs.finish(job_id, error=str(error)).state == 'CANCELLED':
+                raise Stopped('Phone task cancelled.') from None
+            raise RuntimeError(str(error)) from None
+        message = (f'Backup {result.path.name} · {result.bytes:,} bytes · '
+                   f'SHA-256 {result.sha256[:16]}…')
+        if jobs.finish(job_id, result=message).state == 'CANCELLED':
+            raise Stopped('Phone task cancelled.') from None
+        return message
+
+    def _execute_history_restore(self, job):
+        """Restore a backup the phone named, keeping the database it replaces."""
+        from memory.windows_backup import BackupError, restore_backup
+
+        jobs = self.bridge.jobs
+        job_id = job.id
+        if job.peer_id is not None and not any(
+                device.peer_id == job.peer_id and not device.revoked
+                for device in self.pairing.devices()):
+            jobs.reject(job_id, 'The requesting phone is no longer paired.')
+            raise RuntimeError('The requesting phone is no longer paired.')
+        folder = self._backup_folder()
+        if folder is None or self.history_path is None:
+            jobs.reject(job_id, 'This desktop has no history to restore.')
+            raise RuntimeError('This desktop has no history to restore.')
+        name = _requested_backup(job)
+        jobs.start(job_id)
+        if not name:
+            jobs.finish(job_id, error='The phone did not name a backup.')
+            raise RuntimeError('The phone did not name a backup.')
+        archive = folder / name
+        if not archive.is_file():
+            jobs.finish(job_id, error=f'The backup {name} is not there.')
+            raise RuntimeError(f'The backup {name} is not there.')
+        try:
+            result = restore_backup(archive, self.history_path,
+                                    passphrase=self.history_passphrase,
+                                    keep_previous=True, overwrite=True)
+        except (BackupError, OSError) as error:
+            if jobs.finish(job_id, error=str(error)).state == 'CANCELLED':
+                raise Stopped('Phone task cancelled.') from None
+            raise RuntimeError(str(error)) from None
+        message = result.message
+        if result.previous_copy is not None:
+            message += f' The previous database was kept at {result.previous_copy.name}.'
+        if jobs.finish(job_id, result=message).state == 'CANCELLED':
+            raise Stopped('Phone task cancelled.') from None
+        return message
 
     def _execute_disk_check(self, job):
         jobs = self.bridge.jobs

@@ -20,7 +20,7 @@ TIMEOUT_SECONDS = 600
 
 #: The number of JavaScript tests that have to run. A lower number means that
 #: a file was not found, and that must not pass unnoticed.
-EXPECTED_TESTS = 84
+EXPECTED_TESTS = 88
 
 
 def node_binary():
