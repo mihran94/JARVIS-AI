@@ -103,6 +103,7 @@ def test_a_pdf_with_no_text_layer_says_what_it_could_not_do(tmp_path):
     with pytest.raises(documents.DocumentError) as error:
         documents.read_document(path)
     message = str(error.value)
+    # The owner is always told the document is pictures.
     assert 'no text layer' in message
     # Either the engine was missing and the owner is told what to
     # install, or the engine read the picture and found no writing on it.

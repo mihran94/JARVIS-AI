@@ -234,7 +234,10 @@ def _ocr_pdf_text(path: Path, warnings: list) -> str:
     try:
         result = ocr_pdf(path)
     except OcrUnavailable as error:
-        raise DocumentError(str(error)) from None
+        # The owner is told both things: the document is pictures, and
+        # the engine that could read them is not installed.
+        raise DocumentError(
+            'This PDF has no text layer: its pages are pictures. ' + str(error)) from None
     except Exception as error:
         raise DocumentError(
             f'This PDF has no text layer and its pages could not be read: {error}') from None
