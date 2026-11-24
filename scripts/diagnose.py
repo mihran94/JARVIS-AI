@@ -73,8 +73,10 @@ def probe_voice():
             [sys.executable, str(ROOT / 'main.py'), '--check-voice-runtime'],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20, check=False,
         )
-    except (OSError, subprocess.TimeoutExpired):
-        return False, 'Could not complete the native voice runtime check within 20 seconds.'
+    except subprocess.TimeoutExpired:
+        return False, 'The native voice runtime check timed out after 20 seconds.'
+    except OSError:
+        return False, 'Could not start the native voice runtime check. Check .venv and setup.cmd.'
     code = result.returncode
     return code == 0, messages.get(code, f'Voice runtime check failed (exit {code}).')
 

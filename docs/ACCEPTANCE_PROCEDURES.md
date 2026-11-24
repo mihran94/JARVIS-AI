@@ -365,12 +365,14 @@ for one.
 ## Running the automated regression suite on the owner's PC
 
 ```cmd
-.venv\Scripts\python.exe -m pytest -q
+VERIFY_JARVIS.cmd --full
 ```
 
-The suite is the regression record for this revision. The counts are in
-`docs/TEST_RESULTS.md`; the historical counts from earlier cycles are kept there separately and
-are not evidence about this revision.
+Install pytest using `requirements-dev.txt` first. The certificate tests require
+`openssl.exe` on PATH. FFmpeg and ffprobe enable real media output tests, and Tesseract
+with the appropriate language data enables OCR. The focused `VERIFY_JARVIS.cmd`
+command checks startup without those optional tools. Current results are recorded in
+[development coverage](../DEVELOPMENT_COVERAGE.md) and the development pull request.
 
 ## Where a failure should be reported
 
@@ -378,7 +380,7 @@ A failure in any of these procedures should be reported with:
 
 1. the procedure letter (A–I) and the step number;
 2. the exact text JARVIS said, copied in full;
-3. the log from `%LOCALAPPDATA%\JarvisAI`;
+3. a reviewed excerpt of the relevant diagnostic output;
 4. what you expected and what happened instead.
 
 Do not paste a provider key, a pairing code or a private file into a report. The redactor in

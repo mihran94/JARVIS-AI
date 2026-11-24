@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from core.runtime_profile import data_directory
-from scripts import launch
+from scripts import launch, verify_windows
 from security.vault import Vault
 
 
@@ -26,7 +26,8 @@ def test_development_profile_uses_checkout_source_and_separate_vault(tmp_path, m
         return 19
 
     monkeypatch.setattr(launch.subprocess, 'call', run)
-    assert launch.main(['--dev-data']) == launch.main(['--dev-data']) == 19
+    assert launch.main(['--dev-data']) == 19
+    assert launch.main(['--dev-data']) == 19
     assert captured[0] == captured[1]
     assert data_directory() == default_data
     assert Vault().service == default_service
@@ -47,4 +48,27 @@ def test_smoke_storage_is_disposable_even_after_an_app_failure(tmp_path, monkeyp
 
     monkeypatch.setattr(launch.subprocess, 'call', run)
     assert launch.main(['--dev-data', '--smoke-test']) == 10
+    assert not observed[0].exists()
+
+
+def test_offline_verifier_does_not_inherit_live_test_switches(monkeypatch):
+    switches = ('JARVIS_AZURE_LIVE_AUDIO', 'JARVIS_BROWSER_ACCEPTANCE', 'GITHUB_ACTIONS')
+    for switch in switches:
+        monkeypatch.setenv(switch, '1')
+    monkeypatch.setenv('JARVIS_DEVELOPMENT_PROFILE', 'a' * 24)
+    monkeypatch.setattr(verify_windows.importlib.util, 'find_spec', lambda name: object())
+    observed = []
+
+    def run(args, *, cwd, env):
+        assert all(switch not in env for switch in switches)
+        if args[1:3] == ['-m', 'pytest']:
+            assert len(env['JARVIS_DEVELOPMENT_PROFILE']) == 24
+            assert env['JARVIS_DEVELOPMENT_PROFILE'] != 'a' * 24
+            assert args[-2:] == ['--basetemp', str(Path(env['TEMP']) / 'tests')]
+            observed.append(Path(env['TEMP']))
+        return 0
+
+    monkeypatch.setattr(verify_windows.subprocess, 'call', run)
+    assert verify_windows.run_checks(full=True) == 0
+    assert len(observed) == 1
     assert not observed[0].exists()

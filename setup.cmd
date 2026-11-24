@@ -27,7 +27,8 @@ if errorlevel 1 (
   echo Dependency installation failed. Check the pip error above and rerun setup.cmd.
   exit /b 1
 )
-echo Setup complete. Run START_JARVIS.cmd
+echo Setup complete.
+echo For isolated source testing, run START_JARVIS.cmd --dev-data
 exit /b 0
 
 :venv_failed
