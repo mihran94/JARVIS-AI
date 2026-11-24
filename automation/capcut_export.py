@@ -27,6 +27,7 @@ _GA_ROOT = 2
 _GA_ROOTOWNER = 3
 _GW_ENABLEDPOPUP = 6
 _PICKER_ADDRESS_ID = 41477
+_PROMOTION_SIZE = (356, 508)
 
 
 def capcut_launcher(configured):
@@ -129,7 +130,8 @@ class _CapCutExportUI:
 
         @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
         def collect(hwnd, _):
-            if (self.user.IsWindowVisible(hwnd) and self._title(hwnd) == 'CapCut'
+            size = self._geometry(hwnd) if self.user.IsWindowVisible(hwnd) else None
+            if (size and size[2] >= 1000 and self._title(hwnd) == 'CapCut'
                     and self.user.GetAncestor(hwnd, _GA_ROOTOWNER) == hwnd):
                 try:
                     process = psutil.Process(win_controls.window_process(hwnd) or -1)
@@ -255,8 +257,7 @@ class _CapCutExportUI:
 
         click_at(*point, self.target, foreground=lambda: self._guard(cursor_on_target, action))
 
-    def _window_point(self, hwnd, coordinate, markers, *, minimum):
-        """Locate a control only when its neighboring layout markers agree."""
+    def _geometry(self, hwnd):
         if not hwnd:
             return None
         rect = wintypes.RECT()
@@ -265,6 +266,14 @@ class _CapCutExportUI:
             return None
         width = round((rect.right - rect.left) * 96 / dpi)
         height = round((rect.bottom - rect.top) * 96 / dpi)
+        return rect, dpi, width, height
+
+    def _window_point(self, hwnd, coordinate, markers, *, minimum):
+        """Locate a control only when its neighboring layout markers agree."""
+        geometry = self._geometry(hwnd)
+        if not geometry:
+            return None
+        rect, dpi, width, height = geometry
         if width < minimum[0] or height < minimum[1]:
             return None
 
@@ -294,6 +303,27 @@ class _CapCutExportUI:
         return self._window_point(self.editor, (650, 110),
                                   ((300, 62, cyan), (540, 104, cyan), (660, 164, cyan)),
                                   minimum=(1000, 650))
+
+    def _promotion_close(self):
+        hwnd = win_controls.foreground_window()
+        if (not hwnd or win_controls.window_process(hwnd) != self.pid
+                or self._title(hwnd) != 'CapCut' or not self._class(hwnd).endswith('QWindowIcon')):
+            return None
+        geometry = self._geometry(hwnd)
+        if not geometry or geometry[2:] != _PROMOTION_SIZE:
+            return None
+
+        def purple(pixel):
+            red, green, blue = _rgb(pixel)
+            return 135 <= red <= 230 and 105 <= green <= 178 and blue >= 220
+
+        def light_blue(pixel):
+            red, green, blue = _rgb(pixel)
+            return 130 <= red <= 198 and green >= 210 and blue >= 230
+
+        return self._window_point(hwnd, (338, 17),
+                                  ((24, 55, purple), (37, 436, light_blue), (310, 436, purple)),
+                                  minimum=_PROMOTION_SIZE)
 
     def _empty_import(self):
         return self._editor_ready() and self._window_point(
@@ -412,22 +442,31 @@ class _CapCutExportUI:
                 or not win_controls.click_dialog_button(button)):
             raise RuntimeError(f'JARVIS could not activate CapCut’s {label} button.')
 
+    def _open_export(self):
+        deadline = time.monotonic() + 25
+        requested_at = 0
+        requests = 0
+        while time.monotonic() < deadline:
+            self.check()
+            form = self._current_form()
+            if form:
+                return form
+            if self._promotion_close():
+                self._click_point(self._promotion_close, 'close the CapCut promotion')
+                requested_at = 0
+            elif self._editor_ready() and requests < 3 and time.monotonic() - requested_at >= 1.5:
+                self._key('ctrl+e', self._editor_ready)
+                requested_at = time.monotonic()
+                requests += 1
+            time.sleep(0.15)
+        raise RuntimeError('CapCut did not open a supported Export form. Check the timeline and close any blocking dialogs.')
+
     def export(self, output):
         self.check()
         if self.user.IsIconic(self.editor):
             self.user.ShowWindow(self.editor, 9)  # SW_RESTORE
         self.user.SetForegroundWindow(self._popup() or self.editor)
-        self._wait(self._foreground, 'Bring the open CapCut project to the front and try again.',
-                   timeout=25)
-        form = self._current_form()
-        if form is None:
-            if not self._editor_ready():
-                raise RuntimeError('Return to the open CapCut timeline and close any blocking dialogs.')
-            self._key('ctrl+e', self._editor_ready)
-            form = self._wait(
-                self._current_form,
-                'CapCut did not open a supported Export form. Open a timeline with video in CapCut 9.9.',
-            )
+        form = self._open_export()
 
         self._choose_folder(form, output.parent)
         self._click(form, _NAME_FIELD)
