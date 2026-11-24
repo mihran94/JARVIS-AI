@@ -38,7 +38,13 @@ def project(tmp_path):
 
 
 def build(project, answers, *, confirm=None, test_command=None):
-    """A coding mission with a model that answers what the test says."""
+    """A coding mission with a model that answers what the test says.
+
+    The default test command is the interpreter reporting its version.
+    It succeeds, it costs nothing and it starts no pytest process, so
+    the tests that are not about the repair loop stay quick. The two
+    tests that are about it pass the project's own pytest command.
+    """
     policy = Policy()
     store = Store(project / 'history.sqlite3')
     gateway = Gateway(policy, store)
@@ -53,7 +59,7 @@ def build(project, answers, *, confirm=None, test_command=None):
     mission = CodingMission(
         project, 'fix the failing test', planner=planner, gateway=gateway,
         confirm=confirm if confirm is not None else (lambda action: True),
-        test_command=test_command or f'{sys.executable} -m pytest -q')
+        test_command=test_command or f'{sys.executable} -V')
     return mission
 
 
@@ -91,7 +97,7 @@ def test_a_mission_that_fixes_the_test_is_verified(project):
                     'thought': 'The value is wrong.'}),
         json.dumps({'action': 'answer', 'answer': 'I changed app.py.', 'thought': 'Done.'}),
     ]
-    mission = build(project, answers)
+    mission = build(project, answers, test_command=f'{sys.executable} -m pytest -q')
     result = mission.run()
     assert result.status == 'verified', result.summary
     assert [entry['tool'] for entry in result.mission.tools_used] == ['read_file', 'write_file']
@@ -105,7 +111,7 @@ def test_a_mission_that_leaves_the_test_failing_is_reported_as_failed(project):
                     'thought': 'A guess.'}),
         json.dumps({'action': 'answer', 'answer': 'I changed app.py.', 'thought': 'Done.'}),
     ]
-    mission = build(project, answers)
+    mission = build(project, answers, test_command=f'{sys.executable} -m pytest -q')
     result = mission.run()
     assert result.status in ('failed', 'blocked')
     assert result.summary
@@ -123,7 +129,7 @@ def test_the_repair_loop_fixes_a_test_the_mission_missed(project):
         json.dumps({'action': 'answer', 'answer': 'I looked.', 'thought': 'Done.'}),
         json.dumps({'action': 'write', 'path': 'app.py', 'content': 'VALUE = 2\n'}),
     ]
-    mission = build(project, answers)
+    mission = build(project, answers, test_command=f'{sys.executable} -m pytest -q')
     result = mission.run()
     assert result.status == 'verified', result.summary
     assert (project / 'app.py').read_text(encoding='utf-8') == 'VALUE = 2\n'
@@ -136,7 +142,8 @@ def test_a_refused_change_changes_nothing(project):
                     'arguments': {'path': 'app.py', 'content': 'VALUE = 9\n'},
                     'thought': 'A guess.'}),
     ]
-    mission = build(project, answers, confirm=lambda action: False)
+    mission = build(project, answers, confirm=lambda action: False,
+                    test_command=f'{sys.executable} -m pytest -q')
     result = mission.run()
     assert (project / 'app.py').read_text(encoding='utf-8') == before
     assert result.status in ('failed', 'blocked')

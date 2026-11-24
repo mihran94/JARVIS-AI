@@ -57,8 +57,10 @@ ALLOWED_COMMANDS = (
     'cargo build', 'cargo test', 'mvn test', 'gradle test', 'make', 'make test',
 )
 
-#: How long a command may run.
-COMMAND_TIMEOUT = 900
+#: How long a command may run. Five minutes is generous for a test run
+#: or a build, and it stops one stuck command from holding a worker for
+#: a quarter of an hour.
+COMMAND_TIMEOUT = 300
 
 #: The largest command output that is kept.
 MAX_OUTPUT_CHARACTERS = 40_000
