@@ -77,6 +77,7 @@ class QuantumPlayer(QWidget):
         self.player.setVideoOutput(self.video_widget)
 
         self.player.errorOccurred.connect(self.on_error)
+        self.player.hasVideoChanged.connect(self.on_has_video)
         self.player.mediaStatusChanged.connect(self.on_status)
         self.player.durationChanged.connect(self.on_duration)
         self.player.positionChanged.connect(self.on_position)
@@ -143,6 +144,12 @@ class QuantumPlayer(QWidget):
         volume_row.addStretch(1)
         layout.addLayout(volume_row)
 
+        self.picture_note = QLabel('')
+        self.picture_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.picture_note.setStyleSheet('color: #93a1b8; font-size: 13px;')
+        self.picture_note.setVisible(False)
+        layout.addWidget(self.picture_note)
+
         self.details = QLabel('No file is open.')
         self.details.setWordWrap(True)
         self.details.setAccessibleName('What the file is')
@@ -176,6 +183,8 @@ class QuantumPlayer(QWidget):
             self.fullscreen_button.setEnabled(False)
             return 'The file is not there.'
         self.path = str(source)
+        self.picture_note.setText('This file has no picture in it — it is a sound file.')
+        self.picture_note.setVisible(False)
         self.player.setSource(QUrl.fromLocalFile(str(source.resolve())))
         self.player.setPosition(0)
         self.position.setEnabled(True)
@@ -233,6 +242,10 @@ class QuantumPlayer(QWidget):
 
     # ------------------------------------------------------------------
     # what the engine says
+
+    def on_has_video(self, has_video):
+        """A sound file has no picture, and the area says so."""
+        self.picture_note.setVisible(not has_video and self.path is not None)
 
     def on_error(self, error, message=''):
         """The engine could not play the file. Say what it said."""
