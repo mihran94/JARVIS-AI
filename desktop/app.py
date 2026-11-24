@@ -39,6 +39,7 @@ from desktop.bridge_panel import BridgePanel
 from desktop.memory_page import MemoryPanel
 from desktop.history_backup_settings import HistoryBackupPanel
 from desktop.cybersecurity_panel import CybersecurityPanel
+from desktop.player import QuantumPlayer, is_media
 from desktop.camera_reader import open_camera_reader
 from desktop.update_dialog import ReleaseChecker, open_updates
 from desktop.voice_panel import VoicePanel
@@ -412,6 +413,8 @@ class Window(QMainWindow):
         self.add_page('Mission Control', self.mission_page())
         self.cybersecurity_panel = CybersecurityPanel(window=self)
         self.add_page('Cybersecurity', self.cybersecurity_panel, primary=False)
+        self.player_panel = QuantumPlayer(self.prime_palette_or_default())
+        self.add_page('Quantum Visual Player', self.player_panel, primary=False)
         self.add_page('Command Center', self.dashboard(), primary=False)
         self.voice_panel.activity_changed.connect(self.refresh_voice_hud)
         self.voice_panel.recognition_failed.connect(lambda: self.hands_free_voice.setChecked(False))
@@ -458,6 +461,13 @@ class Window(QMainWindow):
         self.maintenance_timer.start(60_000)
         self.enable_prime()
         QTimer.singleShot(0, self.check_maintenance)
+
+    def prime_palette_or_default(self):
+        """The PRIME palette, or the dark one when PRIME is not mounted yet."""
+        from desktop.prime_ui import PrimePalette
+
+        palette = getattr(self, 'prime_palette', None)
+        return palette if palette is not None else PrimePalette(dark=self.prime_is_dark())
 
     def mission_page(self):
         """The mission console: one goal, watched step by step."""
@@ -1592,6 +1602,7 @@ class Window(QMainWindow):
         layout.addWidget(self.attachment_list)
         actions = QHBoxLayout()
         self.button(actions, 'Preview selected', self.preview_attachment)
+        self.button(actions, 'Play in the player', self.play_selected_in_player)
         self.button(actions, 'Remove selected', self.remove_selected_attachment)
         self.button(actions, 'Clear all', self.clear_attachments)
         layout.addLayout(actions)
@@ -1813,6 +1824,19 @@ class Window(QMainWindow):
         layout.addWidget(preview)
         self.button(layout, 'Close', dialog.accept)
         dialog.exec()
+
+    def play_selected_in_player(self):
+        """Play the file the owner selected in the Quantum Visual Player."""
+        if not self.attachments:
+            self.document_status.setText('Choose a file first.')
+            return
+        path = self.attachments[0]
+        if not is_media(path):
+            self.document_status.setText(
+                'That file is not a video or a sound file, so the player cannot open it.')
+            return
+        self.open_section('Quantum Visual Player')
+        self.player_panel.open(path)
 
     def remove_selected_attachment(self):
         index = self.attachment_list.currentRow()
