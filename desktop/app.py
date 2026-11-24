@@ -3314,16 +3314,20 @@ class Window(QMainWindow):
         self.open_section('JARVIS Chat')
         ticket = self.policy.ticket()
         digest = sha256(task.text.encode('utf-8')).hexdigest()
-        step = 'open and type' if task.launch else 'type into active window'
+        calculator = task.app == 'Calculator'
+        step = 'open, clear and calculate' if calculator else (
+            'open and type' if task.launch else 'type into active window')
         action = Action('desktop_plan_approval', f'{task.app}: {step}, {len(task.text)} chars',
                         digest)
         self.chat_launch = (task.app, ticket, action,
                             lambda: self.schedule_desktop_task(task, ticket, digest))
         excerpt = task.text[:160] + ('…' if len(task.text) > 160 else '')
-        self.show_local_system_reply(command,
-            f'Review desktop task: {step} in {task.app}. '
-            'The full text to be inserted follows; approve only if correct:\n'
-            + task.text + '\nThe target window must be verified before typing.')
+        review = (f'Review desktop task: {step} in Calculator.\n{task.text}'
+                  if calculator else
+                  f'Review desktop task: {step} in {task.app}. '
+                  'The full text to be inserted follows; approve only if correct:\n'
+                  + task.text + '\nThe target window must be verified before typing.')
+        self.show_local_system_reply(command, review)
         self.chat_approval_label.setText(
             f'{step.title()} in {task.app}: {excerpt!r}\nSHA-256: {digest}')
         self.chat_approval.show()
@@ -3341,8 +3345,7 @@ class Window(QMainWindow):
                                     deadline=time.monotonic() + 7.0)
         self.desktop_task_timer.start()
         self.refresh_prime_state()
-        return (f'Desktop plan approved for {task.app}. Waiting for its '
-                'foreground window; text not entered yet.')
+        return f'Desktop plan approved for {task.app}. Waiting for its foreground window.'
 
     def show_desktop_result(self, detail, verified_text=None):
         self.desktop_export_text = verified_text
@@ -3414,12 +3417,31 @@ class Window(QMainWindow):
                     f'{task.app} did not come to the foreground. No text was sent.')
                 self.conversation_plan.result(False, 'Target window did not become foreground in time.')
                 return
-            if not target_is_foreground(task.app):
+            calculator = None
+            if task.app == 'Calculator':
+                from automation.calculator import calculate_in_window, foreground_calculator
+
+                calculator = foreground_calculator()
+                if calculator is None:
+                    return
+            elif not target_is_foreground(task.app):
                 return
             self.desktop_task_timer.stop()
             self.desktop_pending = None
-            action = Action('desktop_type', f'{task.app}: {len(task.text)} characters',
-                            pending['digest'])
+            if calculator is not None:
+                action = Action('desktop_calculate', f'Calculator: {task.text}', pending['digest'])
+                task_id = self.store.task(action.kind, action.target)
+                result = self.gateway.run(
+                    action, lambda _action: True,
+                    lambda: calculate_in_window(
+                        task.text, calculator, check=lambda: self.policy.check(pending['ticket'])),
+                    task_id=task_id, completion_status='verified')
+                detail = f'Calculator display verified: {task.text} = {result}'
+                self.show_desktop_result(detail)
+                self.show_local_system_reply('Calculator result', detail)
+                self.conversation_plan.result(True, detail, verified=True)
+                return
+            action = Action('desktop_type', f'{task.app}: {len(task.text)} characters', pending['digest'])
             task_id = self.store.task(action.kind, action.target)
             result = self.gateway.run(
                 action, lambda _action: True,  # the exact text was approved in chat
@@ -3437,7 +3459,8 @@ class Window(QMainWindow):
         except (Denied, Stopped, RuntimeError, ValueError, OSError) as error:
             self.desktop_task_timer.stop()
             self.desktop_pending = None
-            self.show_desktop_result(f'Typing failed. {error}')
+            label = 'Calculation failed' if task.app == 'Calculator' else 'Typing failed'
+            self.show_desktop_result(f'{label}. {error}')
             self.show_local_system_reply('Desktop task failed', str(error))
             self.conversation_plan.result(False, str(error))
         finally:
@@ -5342,9 +5365,11 @@ class Window(QMainWindow):
                 self.use_notes.setChecked(False)
                 self.files_share_once.setChecked(False)
                 self.backup_consent.setChecked(False)
-                self.show_local_system_reply(goal,
-                    'Review the exact text JARVIS would enter in Notepad:\n' + typing.text
-                    + '\n\nTyping will not save a file.')
+                review = ('Review the calculation JARVIS would enter in Calculator:\n' + typing.text
+                          if typing.app == 'Calculator' else
+                          'Review the exact text JARVIS would enter in Notepad:\n' + typing.text
+                          + '\n\nTyping will not save a file.')
+                self.show_local_system_reply(goal, review)
                 self.show_suggested_steps((Step(typing.app, typing),))
                 return
             app = parse_voice_command(goal) if requested_goal is not None else None
@@ -5409,7 +5434,11 @@ class Window(QMainWindow):
                 self.prompt.clear()
                 self.open_section('JARVIS Chat')
                 return
-            desktop_task = parse_desktop_task(text)
+            try:
+                desktop_task = parse_desktop_task(text)
+            except ValueError as error:
+                self.show_local_system_reply(text, str(error))
+                return
             if desktop_task is not None:
                 self.prompt.clear()
                 self.queue_desktop_task(text, desktop_task)

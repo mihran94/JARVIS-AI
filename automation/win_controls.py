@@ -13,19 +13,26 @@ class GUIThreadInfo(ctypes.Structure):
     ] + [('rcCaret', wintypes.RECT)]
 
 
-def foreground_process():
-    """Get the native process ID of the visible foreground window."""
+def foreground_window():
+    """Get the handle of the visible foreground window."""
     user32 = ctypes.windll.user32
     user32.GetForegroundWindow.argtypes = []
     user32.GetForegroundWindow.restype = ctypes.c_void_p
     user32.IsWindowVisible.argtypes = [ctypes.c_void_p]
     user32.IsWindowVisible.restype = ctypes.c_int
+    handle = user32.GetForegroundWindow()
+    return handle if handle and user32.IsWindowVisible(handle) else None
+
+
+def foreground_process():
+    """Get the native process ID of the visible foreground window."""
+    handle = foreground_window()
+    if not handle:
+        return None
+    user32 = ctypes.windll.user32
     user32.GetWindowThreadProcessId.argtypes = [
         ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)]
     user32.GetWindowThreadProcessId.restype = ctypes.c_uint32
-    handle = user32.GetForegroundWindow()
-    if not handle or not user32.IsWindowVisible(handle):
-        return None
     pid = ctypes.c_uint32()
     if user32.GetWindowThreadProcessId(handle, ctypes.byref(pid)) and pid.value:
         return pid.value

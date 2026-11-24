@@ -48,6 +48,13 @@ def parse_desktop_task(message: str) -> DesktopTask | None:
     if not isinstance(message, str):
         return None
     cleaned = addressed_request(message)
+    calculation = re.fullmatch(r'open\s+calculator\s+and\s+calculate\s*:\s*([\s\S]*)',
+                               cleaned, flags=re.IGNORECASE)
+    if calculation:
+        from automation.calculator import parse_expression
+
+        expression = ' '.join(parse_expression(calculation.group(1)))
+        return DesktopTask(app='Calculator', text=expression, launch=True)
     patterns = (
         (True, r'open\s+notepad\s+and\s+(?:type|write|enter)\s*:\s*([\s\S]+)'),
         (False, r'(?:type|write|enter)\s+in(?:to)?\s+notepad\s*:\s*([\s\S]+)'),

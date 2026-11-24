@@ -93,40 +93,19 @@ Windows input calls themselves, have never run: there was no Windows machine. `s
 
 ## B. Calculator to Notepad, multi-application
 
-**What it proves.** That JARVIS can work across two applications and that the value it carried
-across was the one the application actually produced.
+This is Test C in the [Windows acceptance checklist](WINDOWS_ACCEPTANCE.md).
+Use the normal chat composer with Suggestion Mode and Work on this off.
 
-1. Approve the Calculator launch.
-2. Read the Calculator's display and check it against the value the mission reports.
+1. Send `Open Calculator and calculate: 37 * 24`.
+2. Review the expression and approve opening, clearing and using Calculator. Leave Calculator
+   in front while JARVIS enters the calculation. The command supports two integers of up to
+   six digits with `+`, `-`, or `*`.
+3. Compare the value in JARVIS's verified result with the value on Calculator's display.
+4. Send `Open Notepad and type: 888` using the observed result. Approve the Notepad action.
+5. Read back the Notepad editor and compare its contents with Calculator.
 
-**A pass is:** the value in the mission's evidence is the value on the Calculator's display.
-
-**Status: NOT RUN, and the last step is not implemented.** There is **no Calculator adapter**:
-JARVIS can launch the Calculator, but it cannot read its result, so it cannot carry that value
-into Notepad. This is listed as a coding gap in `DEVELOPMENT_COVERAGE.md` §5.
-
-## B2. The Calculator's real value, carried into Notepad
-
-**What it proves.** That the number JARVIS carries across is the number the Calculator is really
-showing.
-
-1. Open the Calculator and work out something — `7 × 6` is enough.
-2. Leave the Calculator in front.
-3. In the chat, turn on **Work on this** and ask: *what is the calculator showing?* Approve the
-   read.
-4. The answer must be the number on the display — `42` — not a number the model made up.
-5. Ask for that value to be written into a new Notepad document, approve the action, and then
-   save the document with the save action.
-
-**A pass is:** the number read matches the display, the text that lands in the editor is that
-number, and the saved file holds it.
-
-**A fail is:** a value that the Calculator is not showing, or a file that does not hold what the
-editor showed.
-
-**Status: NOT RUN.** The reading rules, the focus checks and the file verification are covered by
-`tests/test_windows_automation.py`. The real Calculator, the real Notepad and the real Save As
-dialog have not been used.
+**Windows 10 live result: PASS.** Calculator showed `37 × 24 = 888`, JARVIS verified
+`888` from the display, and the Notepad editor contained exactly `888`.
 
 ## A3. A scanned document is read on this computer
 
