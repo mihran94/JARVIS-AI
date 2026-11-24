@@ -109,7 +109,10 @@ def replace_contents(hwnd, text):
 
 def click_dialog_button(hwnd):
     """Invoke a standard Windows button already verified by the caller."""
-    return _message(hwnd, 0x00F5) is not None  # BM_CLICK
+    post = ctypes.WinDLL('user32', use_last_error=True).PostMessageW
+    post.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    post.restype = wintypes.BOOL
+    return bool(post(hwnd, 0x00F5, 0, 0))  # BM_CLICK
 
 
 def expected_edit(hwnd, insertion):

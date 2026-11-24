@@ -302,8 +302,15 @@ class _CapCutExportUI:
     def _add_video(self):
         if not self._editor_ready():
             return None
+
+        def media_panel(pixel):
+            return 25 <= max(_rgb(pixel)) <= 46
+
+        # Open leaves the first card unselected on some builds. The right
+        # shoulder and the surrounding Media pane are clear of the thumbnail.
         return self._window_point(self.editor, (243, 209),
-                                  ((185, 150, _teal),), minimum=(1150, 690))
+                                  ((153, 101, _teal), (255, 185, _unchecked),
+                                   (269, 185, media_panel)), minimum=(1150, 690))
 
     def _import_picker(self):
         hwnd = self._foreground()
@@ -328,7 +335,7 @@ class _CapCutExportUI:
                 or not win_controls.replace_contents(fields[0], str(source))):
             raise RuntimeError('The import file field could not be verified.')
         self._press_picker_button(picker, 'Open', self._import_picker)
-        self._wait(self._add_video, 'CapCut did not show the imported video card.')
+        self._wait(self._add_video, 'CapCut did not show the imported video card.', timeout=15)
         self._click_point(self._add_video, 'add the imported video to the timeline')
 
     def create_project(self, executable, source):
