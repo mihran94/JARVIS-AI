@@ -129,6 +129,41 @@ instead of the command's own output.
 (`tests/test_code_generation.py`, `tests/test_code_repair.py`, `tests/test_mark_lvi_ports.py`).
 A live project and a real Codex or MiniMax key were not available.
 
+## C2. The coding agent: one sentence to a verified result
+
+**What it proves.** That one natural-language instruction drives the
+whole loop — read the project, find the failure, fix it, run the tests,
+and report what really happened.
+
+1. Save a project in **Settings** with its test command, for example
+   `python -m pytest -q` or `pytest -q`. Use a project with a failing
+   test.
+2. In the chat, type one sentence, in English, Tamil or Tanglish:
+   *"JARVIS, my project-a-la fix pannu, tests run panni result sollu."*
+3. Approve the change when JARVIS asks. That approval is for one exact
+   action, and it is used once.
+4. Watch **Mission Control**: the goal, the tool calls, the approval and
+   the result all appear there as they happen.
+5. Read the answer in the conversation.
+
+**A pass is:** the failing test is reported with the file and the line
+it failed on, the change is shown in the diff, the tests are really run
+again, and the answer says *the tests pass* only when a run really
+passed. If the tests still fail, the answer says so and names the
+failure.
+
+**A fail is:** the answer claims the tests pass without a run that
+passed, or the change was made without the approval, or a file outside
+the project was read or written.
+
+**Status: NOT RUN.** The loop, the boundary, the diagnosis and the
+repair are covered by `tests/test_coding_mission.py`,
+`tests/test_coding_repair.py` and `tests/test_coding_mission_desktop.py`,
+which use real files, a real failing test and a real test run. What has
+never happened is a real project, a real provider key and a real repair
+chosen by the model. The Codex CLI path is untouched and still preferred
+when the CLI is installed.
+
 ## D. After Effects project export and verified media
 
 **What it proves.** That an After Effects export is really produced and really inspected.
