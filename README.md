@@ -227,6 +227,19 @@ except the local one, and a paid model is only used after your approval.
 - Emergency stop and explicit resume; stale worker output remains cancelled after resume.
 - Conversation deletion from the UI. New chat preserves old conversations in SQLite; the latest 100 saved conversations can be reopened from Chat.
 
+### Work in an open Windows app
+
+Open the target app, turn on **Work on this** in JARVIS Chat, and describe the
+specific control or field you want to use. For example, ask JARVIS to open the
+Help menu in an editor. Mission Control shows the steps and asks for approval
+before listing window titles, bringing a window forward, pressing a button or
+changing a field.
+
+The feature uses Windows Accessibility to read labels, invoke supported
+controls, and verify supported text field edits. The app must publish those
+controls. Password fields and administrative Windows processes are excluded.
+The mission sends tool observations to its selected chat provider.
+
 ## New in v0.3.0
 
 - **Step Workflows:** enter 1–10 comma-separated actions from the fixed Notepad/Calculator allowlist. Each step shows a fresh, explicit approval prompt. Runs stop on denial, error or Emergency Stop; no automatic replay of failed/interrupted work.
