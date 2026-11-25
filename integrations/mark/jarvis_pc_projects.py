@@ -11,10 +11,10 @@ from core import confirm
 PLUGIN = {
     'name': 'jarvis_pc_projects',
     'description': (
-        'Use for an explicit owner request to use JARVIS PC tools or JARVIS saved projects, '
-        'including Tamil and Tanglish. Use this tool for “JARVIS project list kaattu” or '
-        '“JARVIS PC Calculator-la 17 times 23 calculate pannu.” It uses the JARVIS saved '
-        'project list and a Mark HUD approval for each operation other than listing. '
+        'Use for an explicit owner request to open, inspect or test a named JARVIS project, '
+        'open Notepad or Calculator, or insert exact text into Notepad. '
+        'Calculator arithmetic and saved-project lists are handled by the local speech '
+        'router after the complete request. Do not claim completion for those requests. '
         'Do not use it for mentioned apps without an instruction to act.'
     ),
     'parameters': {
@@ -22,14 +22,13 @@ PLUGIN = {
         'properties': {
             'operation': {
                 'type': 'STRING',
-                'enum': ['projects', 'project_status', 'project_open', 'project_inspect',
-                         'project_test', 'open_app', 'calculate', 'notepad'],
+                'enum': ['project_status', 'project_open', 'project_inspect',
+                         'project_test', 'open_app', 'notepad'],
             },
             'value': {
                 'type': 'STRING',
                 'description': ('Saved project name for project operations, Notepad or Calculator '
-                                'for open_app, two integers and one +, - or * for calculate, '
-                                'or only the exact text to insert for notepad. Omit for projects.'),
+                                'for open_app, or only the exact text to insert for notepad.'),
             },
         },
         'required': ['operation'],

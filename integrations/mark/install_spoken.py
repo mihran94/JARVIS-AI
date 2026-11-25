@@ -11,6 +11,12 @@ HOOK = (
     '                                from plugins._jarvis_spoken import dispatch_spoken\n'
     '                                self._keep_task(asyncio.create_task(dispatch_spoken(self, full_in)))'
 )
+TEXT_ANCHOR = '''            self.ui.write_log("SYS: I'm asleep — say 'Hey Jarvis' or tap WAKE NOW first.")
+            return'''
+TEXT_HOOK = '''        from plugins._jarvis_spoken import dispatch_spoken, parse_spoken
+        if parse_spoken(text):
+            asyncio.run_coroutine_threadsafe(dispatch_spoken(self, text, origin='text'), self._loop)
+            return'''
 
 
 def window_title(value):
@@ -28,6 +34,10 @@ def prepare(root):
         if first.count(ANCHOR) != 1:
             raise ValueError('This Mark version does not have the expected completed speech-turn hook.')
         first = first.replace(ANCHOR, ANCHOR + '\n' + HOOK, 1)
+    if TEXT_HOOK not in first:
+        if first.count(TEXT_ANCHOR) != 1:
+            raise ValueError('This Mark version does not have the expected text-command hook.')
+        first = first.replace(TEXT_ANCHOR, TEXT_ANCHOR + '\n' + TEXT_HOOK, 1)
     for value in ('_display', 'display'):
         original, changed = window_title(value)
         if changed in second:
