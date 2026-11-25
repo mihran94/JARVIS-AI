@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from core.runtime_profile import DATA_FOLDER, data_directory
 from scripts import launch, verify_windows
 from security.vault import Vault
@@ -72,3 +74,38 @@ def test_offline_verifier_does_not_inherit_live_test_switches(monkeypatch):
     assert verify_windows.run_checks(full=True) == 0
     assert len(observed) == 1
     assert not observed[0].exists()
+
+
+@pytest.mark.parametrize('exit_code', [0, 5])
+def test_phase1_entry_runs_source_startup_then_named_suite(monkeypatch, exit_code):
+    monkeypatch.setattr(verify_windows.importlib.util, 'find_spec', lambda name: object())
+    calls = []
+
+    def run(args, *, cwd, env):
+        calls.append(args[1:])
+        assert env['QT_QPA_PLATFORM'] == 'offscreen'
+        return exit_code if args[1:3] == ['-m', 'pytest'] else 0
+
+    monkeypatch.setattr(verify_windows.subprocess, 'call', run)
+    assert verify_windows.main(['--phase1']) == exit_code
+    assert calls[:2] == [
+        ['scripts/diagnose.py'],
+        ['scripts/launch.py', '--dev-data', '--smoke-test'],
+    ]
+    assert calls[2][:4] == ['-m', 'pytest', '-q', '--basetemp']
+    assert calls[2][5:] == [
+        'tests/test_mcore_hud.py',
+        'tests/test_settings_views.py',
+        'tests/test_command_first_window.py',
+        'tests/test_personal_layout.py',
+        'tests/test_conversation_plan.py',
+    ]
+
+
+def test_phase1_without_pytest_fails_without_claiming_success(monkeypatch, capsys):
+    monkeypatch.setattr(verify_windows.importlib.util, 'find_spec', lambda name: None)
+    monkeypatch.setattr(verify_windows.subprocess, 'call', lambda *args, **kwargs: 0)
+    assert verify_windows.main(['--phase1']) == 1
+    output = capsys.readouterr().out
+    assert 'requested source tests did not run' in output
+    assert 'Offline checks complete' not in output

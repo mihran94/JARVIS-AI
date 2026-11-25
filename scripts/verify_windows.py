@@ -9,9 +9,17 @@ from tempfile import TemporaryDirectory
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_TESTS = ('tests/test_omega.py', 'tests/test_mark_lvii_assistant.py')
+PHASE1_TESTS = (
+    'tests/test_mcore_hud.py',
+    'tests/test_settings_views.py',
+    'tests/test_command_first_window.py',
+    'tests/test_personal_layout.py',
+    'tests/test_conversation_plan.py',
+)
 
 
-def run_checks(full=False):
+def run_checks(full=False, *, phase1=False):
     env = dict(os.environ, QT_QPA_PLATFORM='offscreen')
     env.pop('JARVIS_AZURE_LIVE_AUDIO', None)
     env.pop('JARVIS_BROWSER_ACCEPTANCE', None)
@@ -26,26 +34,32 @@ def run_checks(full=False):
             return result
 
     if importlib.util.find_spec('pytest') is None:
+        if full or phase1:
+            print('FAIL: pytest is unavailable; the requested source tests did not run.')
+            return 1
         print('SKIP: pytest is unavailable. Install requirements-dev.txt to run the tests.')
-        return int(full)
+        return 0
 
     with TemporaryDirectory(prefix='jarvis-pytest-') as scratch:
         root = Path(scratch)
         # Pytest otherwise reuses a per-user temp directory from earlier runs.
         env.update(LOCALAPPDATA=str(root / 'app-data'), TEMP=scratch, TMP=scratch,
                    JARVIS_DEVELOPMENT_PROFILE=uuid4().hex[:24])
-        targets = [] if full else ['tests/test_omega.py', 'tests/test_mark_lvii_assistant.py']
+        targets = () if full else PHASE1_TESTS if phase1 else DEFAULT_TESTS
         return subprocess.call(
             [sys.executable, '-m', 'pytest', '-q', '--basetemp', str(root / 'tests'), *targets],
             cwd=ROOT, env=env)
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--full', action='store_true', help='run the whole source test suite')
-    args = parser.parse_args()
+    suites = parser.add_mutually_exclusive_group()
+    suites.add_argument('--full', action='store_true', help='run the whole source test suite')
+    suites.add_argument('--phase1', action='store_true',
+                        help='run M-CORE HUD, Settings, layout and approval source tests')
+    args = parser.parse_args(argv)
     try:
-        result = run_checks(full=args.full)
+        result = run_checks(full=args.full, phase1=args.phase1)
     except OSError:
         print('Could not run verification. Check .venv and Windows temporary-folder access.')
         return 1
