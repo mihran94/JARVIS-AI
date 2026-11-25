@@ -225,7 +225,6 @@ class VoicePanel(QWidget):
         self.live_voice_active = False
         self.speaker_worker = None
         self.muted = False
-        self.speaking = False
         self.pending_speech = ''
         self.pending_sample = None
         self.cloud_config = None
@@ -410,7 +409,19 @@ class VoicePanel(QWidget):
 
     @property
     def playback_busy(self):
+        """True while a reply is being read aloud."""
         return self.speaker_worker is not None and self.speaker_worker.isRunning()
+
+    @property
+    def speaking(self) -> bool:
+        """True while the reply is being read aloud.
+
+        The state is read from the worker itself, not from a message the
+        worker sent. A thread that is busy cannot always deliver its
+        message at once, and the interface must be able to say that the
+        assistant is speaking even when the message is still on its way.
+        """
+        return self.playback_busy
 
     @property
     def listening(self):
@@ -542,14 +553,12 @@ class VoicePanel(QWidget):
 
     def on_playback_started(self):
         if self.sender() is self.speaker_worker and not self.muted and not self.consent.stopped:
-            self.speaking = True
             self.echo_guard.record(self.spoken_text)
             self.refresh()
 
     def on_playback_finished(self):
         if self.sender() is not self.speaker_worker:
             return
-        self.speaking = False
         self.refresh()
         self.speech_finished.emit()
         if self.continuous:
