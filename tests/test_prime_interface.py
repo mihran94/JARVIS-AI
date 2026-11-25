@@ -56,6 +56,57 @@ def test_overview_uses_live_values_and_gives_task_details_room(tmp_path):
         window.close()
 
 
+def test_conversation_settings_change_the_chat_reply_and_survive_restart(tmp_path, monkeypatch):
+    app, window = make_window(tmp_path)
+    sent = []
+    monkeypatch.setattr(window, 'get_key', lambda _provider: 'test-key')
+    monkeypatch.setattr(window, 'start_worker',
+                        lambda _provider, _model, _key, messages, *_args, **_kwargs:
+                        sent.append(messages))
+    try:
+        window.open_section('Settings & Safety')
+        scroller = window.pages.currentWidget()
+        assert window.reply_language.isVisibleTo(window)
+        assert window.reply_language.currentData() == 'auto'
+        assert window.reply_tone.currentData() == 'friendly'
+        scroll = scroller.verticalScrollBar()
+        scroll.setValue(scroll.maximum())
+        assert scroll.value() > 0
+        window.open_section('Settings & Safety')
+        assert scroll.value() == 0
+
+        window.open_section('JARVIS Chat')
+        window.prompt.setPlainText('Namma ippo enna pesalam?')
+        window.send()
+        assert 'Latin script for Tanglish' in sent[-1][0]['content']
+        assert 'Talk like a helpful colleague' in sent[-1][0]['content']
+
+        window.open_section('Settings & Safety')
+        window.reply_language.setCurrentIndex(window.reply_language.findData('tanglish'))
+        window.reply_tone.setCurrentIndex(window.reply_tone.findData('direct'))
+        window.open_section('JARVIS Chat')
+        assert window.prime_chat.assistant.title.text() == 'Enna help venum?'
+        window.prompt.setPlainText('தமிழ்ல சொல்லுங்க. இன்று என்ன பேசலாம்?')
+        window.send()
+        assert 'Use conversational Tamil in Latin script by default' in sent[-1][0]['content']
+        assert 'Honor explicit requests about how to reply' in sent[-1][0]['content']
+        assert 'short, factual answers' in sent[-1][0]['content']
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+    app, window = make_window(tmp_path)
+    try:
+        assert window.reply_language.currentData() == 'tanglish'
+        assert window.reply_tone.currentData() == 'direct'
+        assert window.prime_chat.assistant.title.text() == 'Enna help venum?'
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
 def test_the_old_chrome_is_absent_at_construction_and_startup(tmp_path):
     app = QApplication.instance() or QApplication([])
     window = Window(tmp_path)

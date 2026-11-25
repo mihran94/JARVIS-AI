@@ -508,18 +508,29 @@ class PrimeAssistant(QWidget):
         row.addWidget(self.orb, 0, Qt.AlignmentFlag.AlignCenter)
         row.addStretch(1)
         layout.addLayout(row)
-        self.title = QLabel('How can I help?')
+        self.title = QLabel()
         self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.title.setStyleSheet(f'color: {palette.ink.name()}; font-size: 20px; font-weight: 600;')
         layout.addWidget(self.title)
         self.hint = QLabel('Ask in Tamil, Tanglish, English or French.')
         self.hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.hint.setWordWrap(True)
         self.hint.setStyleSheet(f'color: {palette.muted.name()}; font-size: 13px;')
         layout.addWidget(self.hint)
         layout.addStretch(1)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         for child in (self.title, self.hint):
             child.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        window.reply_language.currentIndexChanged.connect(self.refresh_greeting)
+        self.refresh_greeting()
+
+    def refresh_greeting(self):
+        language = self.window_ref.reply_language.currentData()
+        self.title.setText({
+            'ta': 'என்ன உதவி வேணும்?',
+            'tanglish': 'Enna help venum?',
+            'fr': 'Comment puis-je vous aider ?',
+        }.get(language, 'How can I help?'))
 
     def refresh_theme(self):
         palette = self.palette_

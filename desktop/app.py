@@ -18,8 +18,8 @@ from PySide6.QtWidgets import (
 from dataclasses import replace
 
 from core.store import Store
-from core.conversation import (ASSISTANT_GUIDANCE, SUGGESTION_GUIDANCE,
-                               addressed_request, mission_argument,
+from core.conversation import (REPLY_LANGUAGES, REPLY_TONES, SUGGESTION_GUIDANCE,
+                               addressed_request, assistant_guidance, mission_argument,
                                suggestion_argument)
 from desktop.conversation_plan import (ConversationPlan, Step, extract_suggested_plan,
                                        parse_plan as parse_conversation_plan)
@@ -104,7 +104,7 @@ from developer_studio.context import (
     ConversationMemory, TaskRecord, describe_task, task_is_resumable,
 )
 from developer_studio.intents import (
-    LANGUAGE_NAMES, CodingRequest, detect_reply_language, match_projects,
+    CodingRequest, detect_reply_language, match_projects,
     parse_coding_request, parse_follow_up, strip_language_marker, summary_labels,
 )
 from developer_studio.projects import (
@@ -665,6 +665,8 @@ class Window(QMainWindow):
         if shell is not None:
             shell.mark_active(name)
         if name == 'Settings & Safety':
+            scroller = self.pages.widget(index)
+            scroller.verticalScrollBar().setValue(0)
             # The saved-project table lives in Settings, so it is refreshed
             # whenever the owner comes back to it.
             self.refresh_projects_page()
@@ -3143,38 +3145,44 @@ class Window(QMainWindow):
 
     def permissions_page(self):
         page, layout = self.page('Settings & Safety')
-        settings_links = QHBoxLayout()
-        layout.addLayout(settings_links)
-        service_links = QHBoxLayout()
-        layout.addLayout(service_links)
+        conversation = QGroupBox('Conversation')
+        conversation_layout = QVBoxLayout(conversation)
+        reply_form = QFormLayout()
+        reply_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        reply_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
+        self.reply_language = QComboBox()
+        self.reply_tone = QComboBox()
+        for label, key, choices, box in (
+            ('Reply language', 'chat:reply_language', REPLY_LANGUAGES, self.reply_language),
+            ('Reply tone', 'chat:reply_tone', REPLY_TONES, self.reply_tone),
+        ):
+            box.setMinimumWidth(200)
+            for value, (title, _) in choices.items():
+                box.addItem(title, value)
+            box.setCurrentIndex(max(0, box.findData(self.store.get(key))))
+            box.currentIndexChanged.connect(
+                lambda _index, key=key, box=box: self.store.set(key, box.currentData()))
+            reply_form.addRow(label, box)
+        conversation_layout.addLayout(reply_form)
+        note = QLabel('Applies to AI chat replies. You can also ask JARVIS to switch languages in a message.')
+        note.setWordWrap(True)
+        conversation_layout.addWidget(note)
+        layout.addWidget(conversation)
+
+        connections = QGroupBox('Assistant services')
+        service_links = QHBoxLayout(connections)
         for label, section in (
-            ('AI providers', 'AI Providers'), ('Voice & audio', 'Voice / Hey Jarvis'),
+            ('AI providers', 'AI Providers'), ('Voice and audio', 'Voice / Hey Jarvis'),
             ('Memory', 'Memory'), ('Phone remote', 'Phone Remote'),
         ):
             self.flexible_button(service_links, label,
                                  lambda _checked=False, section=section: self.open_section(section))
-        self.settings_usage = QLabel('Collecting PC usage…')
-        self.settings_usage.setWordWrap(True)
-        usage = QGroupBox('Live PC usage')
-        QVBoxLayout(usage).addWidget(self.settings_usage)
-        layout.addWidget(usage)
-        tools = QGroupBox('Settings shortcuts')
-        tool_layout = QGridLayout(tools)
-        for index, (label, name) in enumerate((
-            ('PC Control', 'PC Control'),
-            ('Files & Folders', 'Files & Folders'),
-            ('Task queue', 'Task Queue'),
-            ('Workflows', 'Step Workflows'),
-            ('Task history', 'Task History'),
-            ('System & usage', 'System & Usage'),
-            ('Review prepared changes', 'Review changes'),
-        )):
-            button = QPushButton(label)
-            button.clicked.connect(lambda _checked=False, name=name: self.open_section(name))
-            tool_layout.addWidget(button, index // 2, index % 2)
-        layout.addWidget(tools)
+        layout.addWidget(connections)
+        configuration = QGroupBox('App settings')
+        settings_links = QHBoxLayout(configuration)
+        layout.addWidget(configuration)
 
-        assistant_group = QGroupBox('Chat, provider and voice preferences')
+        assistant_group = QGroupBox('AI chat options')
         assistant_layout = QVBoxLayout(assistant_group)
         assistant_layout.addWidget(self.chat_settings_panel)
         layout.addWidget(assistant_group)
@@ -3258,12 +3266,34 @@ class Window(QMainWindow):
             label.setWordWrap(True)
             safety_layout.addWidget(label)
         layout.addWidget(safety)
+        usage = QGroupBox('Live PC usage')
+        self.settings_usage = QLabel('Collecting PC usage…')
+        self.settings_usage.setWordWrap(True)
+        QVBoxLayout(usage).addWidget(self.settings_usage)
+        layout.addWidget(usage)
+        tools = QGroupBox('Workspace shortcuts')
+        tool_layout = QGridLayout(tools)
+        for index, (label, name) in enumerate((
+            ('PC Control', 'PC Control'),
+            ('Files & Folders', 'Files & Folders'),
+            ('Task queue', 'Task Queue'),
+            ('Workflows', 'Step Workflows'),
+            ('Task history', 'Task History'),
+            ('System & usage', 'System & Usage'),
+            ('Review prepared changes', 'Review changes'),
+        )):
+            button = QPushButton(label)
+            button.clicked.connect(lambda _checked=False, name=name: self.open_section(name))
+            tool_layout.addWidget(button, index // 2, index % 2)
+        layout.addWidget(tools)
         for name, section in (
-            ('Assistant preferences', assistant_group), ('Appearance', preferences),
+            ('Chat options', assistant_group), ('Appearance', preferences),
             ('Updates', updates), ('Plugins', plugins), ('Safety', safety),
+            ('PC usage', usage),
         ):
             self.flexible_button(settings_links, name,
-                                 lambda _checked=False, section=section: self.scroll_to_setting(section))
+                                 lambda _checked=False, section=section: self.scroll_to_setting(section),
+                                 minimum=80)
         return page
 
     def scroll_to_setting(self, section):
@@ -5622,18 +5652,13 @@ class Window(QMainWindow):
             self.render_chat()
             self.transcript.appendPlainText('\nJARVIS\n')
             self.prompt.clear()
-            language = detect_reply_language(text) or self.assistant_language
-            if language:
-                self.assistant_language = language
-                set_assistant_language(self.store, language)
-            guidance = ASSISTANT_GUIDANCE
+            guidance = assistant_guidance(self.reply_language.currentData(),
+                                          self.reply_tone.currentData())
             if suggestion:
                 guidance += SUGGESTION_GUIDANCE
             else:
                 guidance += capability_context(self) + conversation_context(self)
             system = {'role': 'system', 'content': guidance}
-            if language:
-                system['content'] += ' Answer in ' + LANGUAGE_NAMES.get(language, language) + '.'
             kind = 'suggestion' if suggestion else 'chat'
             self.start_worker(provider, model, key, [system] + messages, kind, backup=backup)
             if suggestion:
