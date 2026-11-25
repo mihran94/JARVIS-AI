@@ -6091,6 +6091,8 @@ def launch_arguments(argv):
 
 
 def main():
+    from hashlib import sha256
+    from PySide6.QtNetwork import QLocalServer, QLocalSocket
     from core.runtime_profile import data_directory
 
     args, smoke = launch_arguments(sys.argv)
@@ -6101,10 +6103,29 @@ def main():
     base.mkdir(parents=True, exist_ok=True)
     lock = QLockFile(str(base / 'application.lock'))
     lock.setStaleLockTime(0)
+    endpoint = 'jarvis-window-' + sha256(os.fsencode(os.path.normcase(str(base.resolve())))).hexdigest()
     if not lock.tryLock(100):
-        QMessageBox.warning(None, 'JARVIS AI', 'JARVIS is already running for this user.')
+        existing = QLocalSocket()
+        existing.connectToServer(endpoint)
+        if existing.waitForConnected(1200):
+            return 0
+        QMessageBox.warning(None, 'JARVIS AI',
+                            'JARVIS is already running for this profile. '
+                            'Use the tray icon or Ctrl+Alt+Space to show its window.')
         return 1
     window = Window(base)
+    activation = QLocalServer(app)
+    activation.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
+
+    def show_existing():
+        while activation.hasPendingConnections():
+            connection = activation.nextPendingConnection()
+            connection.disconnectFromServer()
+            connection.deleteLater()
+        window.summon_from_hotkey()
+
+    activation.newConnection.connect(show_existing)
+    activation.listen(endpoint)
     window.enable_omega(smoke=smoke)
     if smoke:
         # Offline native smoke test: no provider calls or remote listener.
