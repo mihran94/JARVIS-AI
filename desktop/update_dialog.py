@@ -7,6 +7,7 @@ import sys
 from PySide6.QtWidgets import QCheckBox, QDialog, QVBoxLayout, QLabel, QPushButton, QFileDialog, QPlainTextEdit
 from PySide6.QtCore import QObject, QThread, QTimer, Qt, QUrl, Signal
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
+from core.runtime_profile import development_profile, restart_supported
 from core.updates import (installation_root, inspect_zip, changed_files, read_state,
                           release_path, activate_zip, backup_history, rollback, UpdateError)
 from desktop.background import SourceCheckWorker
@@ -202,13 +203,15 @@ class ReleaseChecker(QObject):
 
 
 def open_updates(window):
+    restart = restart_supported() and not development_profile()
     dialog = QDialog(window)
     dialog.setWindowTitle('JARVIS updates & rollback')
     dialog.resize(760, 650)
     layout = QVBoxLayout(dialog)
     note = QLabel('Download the source ZIP from your trusted GitHub repository, then select it here. '
                   'ZIP hashes detect changes after review; they do NOT prove publisher identity. '
-                  'Close and restart JARVIS after applying. Original code is retained.')
+                  + ('JARVIS restarts after you approve an update.' if restart else
+                     'The approved update is selected for the next normal launch.'))
     note.setWordWrap(True)
     layout.addWidget(note)
     download = QLabel(
@@ -260,7 +263,8 @@ def open_updates(window):
     layout.addWidget(release_status)
     checker.status_changed.connect(release_status.setText)
     select = QPushButton('Select GitHub ZIP')
-    apply = QPushButton('Approve selected update for next startup')
+    apply = QPushButton('Approve update and restart JARVIS' if restart else
+                        'Approve selected update for next startup')
     apply.setEnabled(False)
     undo = QPushButton('Select previous code version (rollback)')
     for button in (select, apply, undo): layout.addWidget(button)
@@ -301,6 +305,9 @@ def open_updates(window):
             result = window.gateway.run(action, window.confirm, activate)
             report.appendPlainText('\n' + result)
             apply.setEnabled(False)
+            if restart:
+                dialog.accept()
+                QTimer.singleShot(0, window.request_restart)
         window.notify(operation)
 
     def restore():

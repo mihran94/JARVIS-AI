@@ -27,6 +27,8 @@ concurrency:
   cancel-in-progress: false
 jobs:
   windows-installer:
+    # Windows CMD acceptance branches use the desktop/core source test workflow.
+    if: github.event_name != 'pull_request' || !startsWith(github.head_ref, 'dev/windows-cmd-')
     runs-on: windows-latest
     timeout-minutes: 65
     env:

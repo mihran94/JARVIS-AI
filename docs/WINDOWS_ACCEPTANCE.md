@@ -1,6 +1,57 @@
 # Windows acceptance checklist
 
-Run on non-administrator Windows 10 and Windows 11 with Python 3.12 x64.
+Run as a regular user on Windows 10 or 11 with Git and Python 3.12 x64. Use a separate
+checkout and synthetic files, conversations and drafts for acceptance.
+
+```cmd
+setup.cmd
+.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+DIAGNOSE_JARVIS.cmd --voice
+VERIFY_JARVIS.cmd
+START_JARVIS.cmd --dev-data
+```
+
+The development flag runs this checkout and uses its own settings, history, workspace,
+browser profile and Credential Manager service. Its app data is under
+`%LOCALAPPDATA%\JarvisAI-Development`. The default launcher is for an existing source
+installation and uses its original profile and selected release.
+
+| Test | Record as PASS when |
+| --- | --- |
+| A · CMD, HUD and settings | The source launcher opens the M Signature HUD and Cyan Guardian, and Settings shows the expected revision and responds. |
+| B · Tamil Notepad | You approve the target and destination, the intended Notepad window contains the Tamil text, and the saved file reads back the same text. |
+| C · Calculator to Notepad | You observe Calculator's result and verify the same value in the approved Notepad window. |
+| D · Coding | A disposable project reproduces a test failure, a reviewed and approved edit fixes it, and a subsequent run passes with captured evidence. |
+| E · Browser | JARVIS inspects the approved page, fills a synthetic draft and verifies the resulting state. A controlled Edge document test is available before testing any account. |
+| F · Creative software | An installed, supported adapter produces a new file that can be opened or checked independently. Record application and output type. |
+| G · Voice | The microphone meter responds, the wake phrase opens the intended interface, and you hear the correct Tamil playback. |
+| H · Emergency Stop | Stop cancels the operation and prevents queued follow-up actions. |
+| I · History and updates | Synthetic history survives restart, an approved encrypted backup restores successfully, and the test checkout can switch to a reviewed revision and return to the previous revision. |
+
+For each item record PASS, FAIL, BLOCKED or NOT RUN, the revision, and the observed result.
+Use [detailed procedures](ACCEPTANCE_PROCEDURES.md) for the app controls and sample tasks.
+
+### Local support session
+
+Open the development checkout from CMD and keep JARVIS in the foreground. Share the
+revision, exact failing step and a reviewed excerpt of `DIAGNOSE_JARVIS.cmd --voice` or
+`VERIFY_JARVIS.cmd`. If Windows app controls are connected, allow inspection of the
+identified JARVIS window and use synthetic data before permitting other window actions.
+Share a screenshot only after checking its contents. Keep keys, pairing codes, private
+history and unrelated windows out of the report. Use JARVIS Emergency Stop to halt its
+work and end the computer-use session when the check is finished.
+
+### Checkout update and rollback
+
+Run `git status --short` and keep a reference to the current commit. Fetch the reviewed
+branch with `git fetch origin`, inspect the diff and switch only after closing JARVIS.
+Run setup and verification again, then start with `--dev-data`. To return to the previously
+verified commit in a clean checkout, close JARVIS, run `git switch --detach <previous-commit>`,
+and restart it using that revision's documented setup. Confirm the older revision supports
+development isolation before letting it open an existing profile. Test the app's staged
+update and `ROLLBACK_JARVIS.cmd` on a separate Windows user profile. See [source update details](UPDATES.md).
+
+## Additional checks
 
 1. Extract, run setup.cmd, launch START_JARVIS.cmd. Confirm the JARVIS AI conversation, its task panels and the separate diagnostics window render at 125% and 150% scale. Confirm a second assistant window does not appear at startup.
 2. Start a second instance; confirm it is rejected without corrupting history.
@@ -12,7 +63,6 @@ Run on non-administrator Windows 10 and Windows 11 with Python 3.12 x64.
 8. Close with unsaved edits; decline discard and verify editor remains. Accept discard and verify exit. Close during streaming and verify safe exit after cancellation.
 9. Restart after a forced test crash with an in-progress task; confirm interrupted status.
 10. Run scripts/test.cmd. Windows symlink tests may skip without developer mode; test junction confinement manually.
-11. Build with installers/build.cmd and repeat checks using the EXE on a clean test machine.
 
 Record OS build, Python/dependency versions, provider/model (never key), exact pass/fail and any crash. Do not call the build a validated release until these checks pass.
 
@@ -25,9 +75,8 @@ Record OS build, Python/dependency versions, provider/model (never key), exact p
 16. Reopen an older saved conversation and continue it. Delete it with confirmation and verify it disappears from the archive list.
 17. Check Ctrl+Alt+J while JARVIS has focus, plus the red stop button.
 
-## Installer lifecycle and HUD
+## HUD and restart behavior
 
-- Run the installer on a disposable Windows account, then open the installed assistant. The automation entry point is `installers/Test-WindowsInstaller.ps1`. It checks installation, startup, packaged speech imports, uninstallation and retention of the temporary profile.
 - Confirm the JARVIS AI title and the provider and model line. Try Emergency stop and Resume in the same window. Switch to Island mode and return to the main window.
 - Open Activity during an approved task. Check the current state, recorded outcome, and task history at 125% and 150% scaling. Check the Revision label against the release manifest.
 - Close and reopen the app. Confirm the current conversation and selected theme return. For the legacy default theme, confirm its existing palette appears as Quantum Dark.

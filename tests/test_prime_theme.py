@@ -1,9 +1,8 @@
 """The JARVIS PRIME interface theme.
 
 WHAT IS COVERED
-    * The theme is applied to the running application, not only in the tests.
-      It used to be defined and never applied, so the shipping JARVIS
-      rendered in the default light Qt theme.
+    * The stylesheet applies to a real Qt widget and the desktop restores
+      the theme the owner selected.
     * The dark theme is the default, and the owner can choose the light one.
     * The composer stays visible: it belongs to the window, not to the
       scrolling chat page.
@@ -14,7 +13,7 @@ import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 import pytest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 from core.store import Store
 from desktop import prime_theme
@@ -58,11 +57,12 @@ def test_the_translucent_surfaces_use_a_form_qt_honours():
         'a translucent surface is still written as rgba(), which Qt paints opaque')
 
 
-def test_the_theme_is_applied_to_the_running_application(app, tmp_path):
+def test_the_theme_is_applied_to_a_widget(app, tmp_path):
     store = Store(tmp_path / 'history.sqlite3')
-    applied = prime_theme.apply_theme(app, store)
+    widget = QWidget()
+    applied = prime_theme.apply_theme(widget, store)
     assert applied == 'Dark'
-    assert app.styleSheet() == prime_theme.PRIME_DARK
+    assert widget.styleSheet() == prime_theme.PRIME_DARK
 
 
 def test_the_composer_belongs_to_the_window_and_not_to_the_scrolling_page(tmp_path):

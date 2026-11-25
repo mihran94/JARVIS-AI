@@ -1,12 +1,11 @@
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 from PySide6.QtWidgets import QApplication
-from desktop.app import Window, STYLE, launch_arguments
+from desktop.app import Window, launch_arguments
 
 
 def test_desktop_navigation_stop_and_editor(tmp_path):
     app = QApplication.instance() or QApplication([])
-    app.setStyleSheet(STYLE)
     window = Window(tmp_path)
     window.show()
     app.processEvents()

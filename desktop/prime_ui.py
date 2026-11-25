@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import math
 import os
+from datetime import datetime
 from pathlib import Path
 import re
 import subprocess
@@ -43,11 +44,11 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QBrush, QColor, QFontMetrics, QLinearGradient, QPainter, QPainterPath,
-    QPen, QPixmap, QRadialGradient,
+    QPen, QRadialGradient,
 )
 from PySide6.QtWidgets import (
-    QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy,
-    QStackedWidget, QVBoxLayout, QWidget,
+    QFrame, QGridLayout, QHBoxLayout, QLabel, QMenu, QMessageBox, QProgressBar,
+    QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from desktop.activity_panel import ActivityPanel, STATES
@@ -92,15 +93,15 @@ class PrimePalette:
     def __init__(self, dark: bool = True):
         self.dark = dark
         if dark:
-            self.ground = QColor('#05070c')
-            self.ground_far = QColor('#0a1020')
-            self.glass = QColor(255, 255, 255, 20)
-            self.glass_edge = QColor(255, 255, 255, 34)
-            self.ink = QColor('#eef3fb')
-            self.muted = QColor('#93a1b8')
-            self.accent = QColor('#63e6ff')
-            self.accent_deep = QColor('#3a7bff')
-            self.good = QColor('#5df2b0')
+            self.ground = QColor('#00060a')
+            self.ground_far = QColor('#010d14')
+            self.glass = QColor(1, 15, 24, 220)
+            self.glass_edge = QColor('#0d3347')
+            self.ink = QColor('#e0f8ff')
+            self.muted = QColor('#85a8bb')
+            self.accent = QColor('#00d4ff')
+            self.accent_deep = QColor('#1a5c7a')
+            self.good = QColor('#00ff88')
             self.warn = QColor('#ffcf6b')
             self.danger = QColor('#ff6b81')
             self.bubble_you = QColor(96, 150, 255, 58)
@@ -385,6 +386,10 @@ class PrimeConversation(QScrollArea):
         self._messages = []
 
     @property
+    def has_messages(self):
+        return bool(self._messages)
+
+    @property
     def bubbles(self):
         """The messages that are on screen."""
         found = []
@@ -447,40 +452,46 @@ class PrimeConversation(QScrollArea):
             bar.setValue(position)
 
 
-class GuardianHologram(PrimeOrb):
-    """The owner's portrait on the main conversation welcome screen."""
+class ReactorHologram(PrimeOrb):
+    """Mark LVII's reactor driven by JARVIS's existing assistant states."""
 
     def __init__(self, palette):
         super().__init__(palette)
-        from desktop.guardian_portrait import PORTRAIT_JPEG
+        self.audio_level = 0.0
+        try:
+            from desktop.mark_reactor import Reactor3D
+        except ImportError:
+            self.reactor = None
+        else:
+            self.reactor = Reactor3D()
+            self.setAccessibleName('Mark LVII reactor')
 
-        self.portrait = QPixmap()
-        self.portrait.loadFromData(PORTRAIT_JPEG, 'JPEG')
-        self.setAccessibleName('JARVIS cyan M exosuit hologram')
+    def set_audio_level(self, level):
+        self.audio_level = max(0, min(100, level)) / 100
+        self.update()
+
+    def _tick(self):
+        if self.reactor is not None:
+            self.reactor.step(
+                self._timer.interval() / 1000,
+                self.state == 'speaking',
+                self.state in ('thinking', 'responding', 'working') or self._wake_timer.isActive(),
+                self.state in ('stopped', 'error'),
+            )
+        super()._tick()
 
     def paintEvent(self, event):
-        if self.portrait.isNull():
+        if self.reactor is None:
             return super().paintEvent(event)
         painter = QPainter(self)
-        painter.setRenderHints(QPainter.RenderHint.Antialiasing |
-                               QPainter.RenderHint.SmoothPixmapTransform)
-        size = self.portrait.size().scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatio)
-        frame = QRectF((self.width() - size.width()) / 2, (self.height() - size.height()) / 2,
-                       size.width(), size.height()).adjusted(1, 1, -1, -1)
-        mask = QPainterPath()
-        mask.addRoundedRect(frame, 12, 12)
-        painter.setClipPath(mask)
-        painter.drawPixmap(frame, self.portrait, QRectF(self.portrait.rect()))
-        bright, _ = self._colours()
-        painter.setPen(QPen(_alpha(bright.name(), 35), 1))
-        for y in range(int(frame.top()), int(frame.bottom()), 4):
-            painter.drawLine(QPointF(frame.left(), y), QPointF(frame.right(), y))
-        if self._motion:
-            y = frame.top() + frame.height() * self._phase / (2 * math.pi)
-            painter.setPen(QPen(_alpha(bright.name(), 100), 2))
-            painter.drawLine(QPointF(frame.left(), y), QPointF(frame.right(), y))
-        painter.setPen(QPen(bright, 2))
-        painter.drawPath(mask)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        bright, deep = self._colours()
+        extents = self.reactor.TOP + self.reactor.BOTTOM
+        radius = min(self.width() / 2.7, self.height() / extents)
+        cy = (self.height() - radius * extents) / 2 + self.reactor.TOP * radius
+        self.reactor.paint(painter, self.width() / 2, cy, radius, bright, deep,
+                           self.palette_.ink, self.audio_level,
+                           self.state in ('listening', 'speaking'), name='JARVIS')
 
 
 class PrimeAssistant(QWidget):
@@ -499,26 +510,38 @@ class PrimeAssistant(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
         layout.addStretch(1)
-        self.orb = GuardianHologram(palette)
+        self.orb = ReactorHologram(palette)
+        window.voice_panel.audio_level.connect(self.orb.set_audio_level)
         self.orb.set_motion(not window.store.get('omega:reduced', False))
-        self.orb.setFixedSize(176, 232)
+        self.orb.setFixedSize(300, 236)
         row = QHBoxLayout()
         row.addStretch(1)
         row.addWidget(self.orb, 0, Qt.AlignmentFlag.AlignCenter)
         row.addStretch(1)
         layout.addLayout(row)
-        self.title = QLabel('How can I help?')
+        self.title = QLabel()
         self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.title.setStyleSheet(f'color: {palette.ink.name()}; font-size: 20px; font-weight: 600;')
         layout.addWidget(self.title)
         self.hint = QLabel('Ask in Tamil, Tanglish, English or French.')
         self.hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.hint.setWordWrap(True)
         self.hint.setStyleSheet(f'color: {palette.muted.name()}; font-size: 13px;')
         layout.addWidget(self.hint)
         layout.addStretch(1)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         for child in (self.title, self.hint):
             child.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        window.reply_language.currentIndexChanged.connect(self.refresh_greeting)
+        self.refresh_greeting()
+
+    def refresh_greeting(self):
+        language = self.window_ref.reply_language.currentData()
+        self.title.setText({
+            'ta': 'என்ன உதவி வேணும்?',
+            'tanglish': 'Enna help venum?',
+            'fr': 'Comment puis-je vous aider ?',
+        }.get(language, 'How can I help?'))
 
     def refresh_theme(self):
         palette = self.palette_
@@ -559,7 +582,7 @@ class PrimeComposer(QFrame):
         self.controls = QGridLayout()
         self.controls.setSpacing(8)
         self.buttons = ()
-        self._compact = None
+        self._columns = None
 
     def set_controls(self, *buttons):
         self.buttons = buttons
@@ -571,15 +594,23 @@ class PrimeComposer(QFrame):
         self.layout_controls()
 
     def layout_controls(self):
-        compact = self.width() < 550
-        if not self.buttons or compact == self._compact:
+        if not self.buttons:
             return
-        self._compact = compact
+        margins = self.layout().contentsMargins()
+        row_width = (sum(button.sizeHint().width() for button in self.buttons)
+                     + self.controls.spacing() * (len(self.buttons) - 1)
+                     + margins.left() + margins.right())
+        columns = len(self.buttons)
+        if self.width() < max(550, row_width):
+            columns = 2 if self.width() < 410 else 4
+        if columns == self._columns:
+            return
+        self._columns = columns
         for index, button in enumerate(self.buttons):
-            row, column = divmod(index, 3) if compact else (0, index)
+            row, column = divmod(index, columns)
             self.controls.addWidget(button, row, column)
         for column in range(len(self.buttons)):
-            self.controls.setColumnStretch(column, int(not compact or column < 3))
+            self.controls.setColumnStretch(column, int(column < columns))
 
     def refresh_theme(self):
         palette = self.palette_
@@ -604,6 +635,8 @@ class PrimeChat(QWidget):
         self.window_ref = window
         self.palette_ = palette
         layout = QVBoxLayout(self)
+        self.chat_layout = layout
+        self.communications_docked = False
         layout.setContentsMargins(26, 14, 26, 12)
         layout.setSpacing(14)
 
@@ -651,8 +684,8 @@ class PrimeChat(QWidget):
 
         browser = QPushButton('Browser')
         browser.clicked.connect(window.show_browser_commands)
-        buttons = (window.chat_mic, window.attach_button, window.research_button,
-                   browser, window.suggestion_mode, window.send_button)
+        buttons = (window.live_voice_button, window.chat_mic, window.attach_button, window.research_button,
+                   browser, window.suggestion_mode, window.mission_mode, window.send_button)
         for button in buttons:
             window.composer_actions.removeWidget(button)
             button.setStyleSheet('padding: 7px 7px;')
@@ -694,11 +727,29 @@ class PrimeChat(QWidget):
         self.dismiss_task.setVisible(active)
         self.assistant.set_busy(active)
         self.window_ref.prime_shell.refresh_mark()
+        self.window_ref.prime_shell.layout_overview()
 
     def refresh_theme(self):
         self.assistant.refresh_theme()
         self.conversation.refresh_theme()
         self.composer.refresh_theme()
+
+    def dock_communications(self, dock, enabled):
+        if self.communications_docked == enabled:
+            return
+        self.communications_docked = enabled
+        if enabled:
+            self.states.removeWidget(self.conversation)
+            dock.addWidget(self.conversation, 1)
+            dock.addWidget(self.composer)
+            self.conversation.show()
+        else:
+            self.states.addWidget(self.conversation)
+            self.chat_layout.addWidget(self.composer)
+            self.states.setCurrentWidget(self.conversation if self.conversation.has_messages
+                                         else self.assistant)
+        self.composer.show()
+        self.window_ref.prime_shell.refresh_mark()
 
     def render(self, messages):
         """Show the messages and let the assistant step aside.
@@ -708,7 +759,8 @@ class PrimeChat(QWidget):
         the conversation takes the room.
         """
         self.conversation.render(messages)
-        self.states.setCurrentIndex(0 if not messages else 1)
+        if not self.communications_docked:
+            self.states.setCurrentIndex(0 if not messages else 1)
         self.window_ref.prime_shell.refresh_mark()
 
     def set_state(self, state: str):
@@ -728,26 +780,131 @@ class PrimeShell(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
         outer.addWidget(self.build_top_bar())
+        status = QHBoxLayout()
+        status.setContentsMargins(18, 4, 18, 6)
+        status.setSpacing(12)
         self.provider_label = QLabel()
         self.provider_label.setWordWrap(True)
-        self.provider_label.setContentsMargins(18, 0, 18, 6)
-        outer.addWidget(self.provider_label)
+        status.addWidget(self.provider_label, 1)
+        status.addWidget(self.build_label)
+        status.addWidget(self.usage_button)
+        outer.addLayout(status)
 
         middle = QHBoxLayout()
         middle.setContentsMargins(0, 0, 0, 0)
         middle.setSpacing(0)
         middle.addWidget(self.build_rail())
+        self.overview = self.build_overview()
+        self.overview.hide()
+        middle.addWidget(self.overview)
         self.content = QVBoxLayout()
         self.content.setContentsMargins(0, 0, 0, 0)
         self.content.setSpacing(0)
+        window.pages.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
         middle.addLayout(self.content, 1)
+        self.communications = self.build_communications()
+        self.communications.hide()
+        middle.addWidget(self.communications)
         self.activity = ActivityPanel(palette, self.open_task_history)
         self.activity.hide()
         self.activity.closed.connect(lambda: self.activity_button.setChecked(False))
         self.activity_button.toggled.connect(self.activity.setVisible)
+        self.activity_button.toggled.connect(self.layout_overview)
         middle.addWidget(self.activity)
         outer.addLayout(middle, 1)
         window.pages.currentChanged.connect(self.refresh_mark)
+        window.pages.currentChanged.connect(self.layout_overview)
+        self.style_side_panels()
+
+    def build_overview(self):
+        panel = QFrame()
+        panel.setObjectName('primeOverview')
+        panel.setFixedWidth(200)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(14, 20, 14, 14)
+        layout.setSpacing(9)
+        title = QLabel('SYSTEMS')
+        title.setAccessibleName('PC overview')
+        title.setObjectName('pageTitle')
+        layout.addWidget(title)
+        self.overview_usage = {}
+        for label, key in (('CPU', 'cpu_usage_percent'), ('Memory', 'ram_usage_percent'),
+                           ('GPU', 'gpu_usage_percent')):
+            row = QHBoxLayout()
+            row.addWidget(QLabel(label))
+            row.addStretch()
+            value = QLabel('Unavailable')
+            row.addWidget(value)
+            layout.addLayout(row)
+            bar = QProgressBar()
+            bar.setRange(0, 100)
+            bar.setTextVisible(False)
+            bar.setFixedHeight(6)
+            bar.setAccessibleName(label + ' utilization')
+            layout.addWidget(bar)
+            self.overview_usage[key] = (value, bar)
+        self.overview_details = QLabel()
+        self.overview_details.setWordWrap(True)
+        layout.addWidget(self.overview_details)
+        layout.addSpacing(8)
+        for label, callback in (
+            ('Task queue', lambda: self.open_section('Task Queue')),
+            ('Workflows', lambda: self.open_section('Step Workflows')),
+            ('News briefing', self.window_ref.open_news_briefing),
+        ):
+            button = QPushButton(label)
+            button.clicked.connect(callback)
+            layout.addWidget(button)
+        layout.addStretch()
+        return panel
+
+    def build_communications(self):
+        panel = QFrame()
+        panel.setObjectName('primeCommunications')
+        panel.setFixedWidth(320)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(10, 20, 10, 14)
+        layout.setSpacing(9)
+        title = QLabel('COMMUNICATIONS')
+        title.setObjectName('pageTitle')
+        layout.addWidget(title)
+        return panel
+
+    def layout_overview(self, _index=None):
+        chat = getattr(self.window_ref, 'prime_chat', None)
+        on_chat = (chat is not None and self.window_ref.pages.currentWidget() is chat
+                   and chat.task_area.isHidden())
+        activity_open = self.activity_button.isChecked()
+        activity_width = self.activity.width() if activity_open else 0
+        needed = (self.window_ref.pages.minimumSizeHint().width() + self.rail.width()
+                  + self.overview.width() + 32)
+        show_overview = on_chat and self.width() >= max(1120, needed + activity_width) and self.height() >= 560
+        self.overview.setVisible(show_overview)
+        dock_width = self.communications.width()
+        docked = (show_overview and not activity_open and self.width() >= 1280
+                  and self.width() >= self.rail.width() + self.overview.width() + dock_width + 560)
+        if chat is not None:
+            chat.dock_communications(self.communications.layout(), docked)
+        self.communications.setVisible(docked)
+
+    def style_side_panels(self):
+        palette = self.palette_
+        background = palette.ground.lighter(150) if palette.dark else palette.ground.darker(104)
+        edge = palette.glass_edge
+        self.overview.setStyleSheet(
+            f'QFrame#primeOverview {{ background: {background.name()};'
+            f' border-right: 1px solid rgba({edge.red()}, {edge.green()}, {edge.blue()}, 46); }}'
+            f'QFrame#primeOverview QProgressBar {{ background: {palette.ground.name()};'
+            ' border: none; border-radius: 3px; }'
+            f'QFrame#primeOverview QProgressBar::chunk {{ background: {palette.accent.name()};'
+            ' border-radius: 3px; }')
+        self.communications.setStyleSheet(
+            f'QFrame#primeCommunications {{ background: {background.name()};'
+            f' border-left: 1px solid rgba({edge.red()}, {edge.green()}, {edge.blue()}, 46); }}')
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.layout_overview()
 
     def pulse_wake(self):
         if self.window_ref.store.get('omega:reduced', False):
@@ -808,9 +965,11 @@ class PrimeShell(QWidget):
         build = QLabel(label)
         self.build_label = build
         build.setStyleSheet(f'color: {palette.muted.name()}; font-size: 11px;')
-        layout.addWidget(build)
 
         layout.addStretch(1)
+        self.usage_button = QPushButton('CPU —  ·  RAM —')
+        self.usage_button.setToolTip('Open live PC usage')
+        self.usage_button.clicked.connect(lambda: self.open_section('Command Center'))
         self.state_chip = QLabel('READY')
         self.state_chip.setStyleSheet(
             f'color: {palette.good.name()}; font-size: 11px; font-weight: 600;'
@@ -822,6 +981,35 @@ class PrimeShell(QWidget):
         self.activity_button.setCheckable(True)
         self.activity_button.setToolTip('Show recent actions and their status')
         layout.addWidget(self.activity_button)
+        self.setup_button = self.add_menu(layout, 'Setup', (
+            ('Conversation settings', lambda: self.open_section('Settings & Safety')),
+            ('Voice and audio', lambda: self.open_section('Voice / Hey Jarvis')),
+            ('Phone remote', lambda: self.open_section('Phone Remote')),
+            ('Memory', lambda: self.open_section('Memory')),
+            ('Plugins', self.window_ref.open_plugins),
+            ('AI providers', lambda: self.open_section('AI Providers')),
+            ('Mark LVII credits', self.show_mark_credits),
+        ))
+        self.controls_button = self.add_menu(layout, 'Controls', (
+            ('New chat', self.window_ref.new_chat_button.click),
+            ('Live Voice', self.window_ref.toggle_live_voice),
+            ('Interrupt Live Voice', self.window_ref.interrupt_live_voice),
+            ('Attach files', self.window_ref.attach_button.click),
+            ('Toggle full screen', self.window_ref.toggle_fullscreen),
+        ))
+        read_replies = self.controls_button.menu().addAction('Read replies aloud')
+        read_replies.setCheckable(True)
+        read_replies.setChecked(self.window_ref.read_replies.isChecked())
+        read_replies.toggled.connect(self.window_ref.read_replies.setChecked)
+        self.window_ref.read_replies.toggled.connect(read_replies.setChecked)
+        self.clock_label = QLabel()
+        self.clock_label.setToolTip('Local time')
+        layout.addWidget(self.clock_label)
+        self.clock_timer = QTimer(self)
+        self.clock_timer.setInterval(1000)
+        self.clock_timer.timeout.connect(self.update_clock)
+        self.update_clock()
+        self.clock_timer.start()
         layout.addWidget(self.window_ref.resume_button)
         self.stop_button = QPushButton('Emergency stop')
         self.stop_button.clicked.connect(self.window_ref.stop)
@@ -835,6 +1023,50 @@ class PrimeShell(QWidget):
             f'{palette.danger.green()}, {palette.danger.blue()}, 48); }}')
         layout.addWidget(self.stop_button)
         return bar
+
+    def add_menu(self, layout, title, entries):
+        button = QPushButton(title)
+        menu = QMenu(button)
+        for label, callback in entries:
+            menu.addAction(label).triggered.connect(callback)
+        button.setMenu(menu)
+        layout.addWidget(button)
+        return button
+
+    def show_mark_credits(self):
+        QMessageBox.information(
+            self.window_ref, 'Mark LVII credits',
+            '<p>3D reactor and HUD design adapted from '
+            '<a href="https://github.com/FatihMakes/Mark-LVII">Mark LVII by FatihMakes</a>. '
+            'Copyright © 2026 FatihMakes. '
+            '<a href="https://creativecommons.org/licenses/by-nc/4.0/">CC BY-NC 4.0</a>.</p>'
+            '<p>The reactor was ported to PySide6 and integrated with JARVIS AI.</p>',
+        )
+
+    def update_clock(self):
+        now = datetime.now()
+        self.clock_label.setText(now.strftime('%H:%M'))
+        self.clock_label.setAccessibleName(now.strftime('%A, %d %B, %H:%M'))
+
+    def update_usage(self, data):
+        def percent(key):
+            value = data.get(key)
+            return f'{value:.0f}%' if value is not None else '—'
+
+        cpu, memory = percent('cpu_usage_percent'), percent('ram_usage_percent')
+        self.usage_button.setText(f'CPU {cpu}  ·  RAM {memory}')
+        for key, (label, meter) in self.overview_usage.items():
+            value = data.get(key)
+            label.setText(percent(key) if value is not None else 'Unavailable')
+            meter.setVisible(value is not None)
+            if value is not None:
+                meter.setValue(round(value))
+        used, total = data.get('disk_used_gib'), data.get('disk_total_gib')
+        disk = f'Disk {used:.1f} / {total:.1f} GiB' if used is not None and total is not None else 'Disk unavailable'
+        network = data.get('network_status', 'Unavailable')
+        temperature = data.get('cpu_temperature_c')
+        thermal = f'CPU temperature {temperature:.0f} °C' if temperature is not None else 'CPU temperature unavailable'
+        self.overview_details.setText(f'{disk}\n{thermal}\n{network}')
 
     # -- the rail ------------------------------------------------------
 
@@ -853,27 +1085,29 @@ class PrimeShell(QWidget):
         layout.setContentsMargins(8, 16, 8, 16)
         layout.setSpacing(6)
         self.rail_buttons = {}
-        for symbol, title, section in (
-            ('◉', 'Chat', 'JARVIS Chat'),
-            ('◈', 'Files', 'Files & Folders'),
-            ('◐', 'Voice', 'Voice / Hey Jarvis'),
-            ('◇', 'Cybersecurity', 'Cybersecurity'),
-            ('◎', 'Memory', 'Memory'),
-            ('⚙', 'Settings', 'Settings & Safety'),
+        for label, title, section in (
+            ('Chat', 'Chat', 'JARVIS Chat'),
+            ('Files', 'Files', 'Files & Folders'),
+            ('Voice', 'Voice', 'Voice / Hey Jarvis'),
+            ('Security', 'Cybersecurity', 'Cybersecurity'),
+            ('Memory', 'Memory', 'Memory'),
+            ('Settings', 'Settings', 'Settings & Safety'),
         ):
-            button = QPushButton(symbol)
+            button = QPushButton(label)
             button.setToolTip(title)
             button.setAccessibleName(title)
             button.setCheckable(True)
-            button.setFixedSize(58, 52)
+            button.setFixedSize(68, 48)
+            button.setStyleSheet('padding: 4px 3px;')
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.clicked.connect(lambda _checked=False, name=section: self.open_section(name))
             layout.addWidget(button)
             self.rail_buttons[section] = button
-        self.island_button = QPushButton('▱')
+        self.island_button = QPushButton('Island')
         self.island_button.setToolTip('Island')
         self.island_button.setAccessibleName('Island')
-        self.island_button.setFixedSize(58, 52)
+        self.island_button.setFixedSize(68, 48)
+        self.island_button.setStyleSheet('padding: 4px 3px;')
         self.island_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.island_button.clicked.connect(self.window_ref.open_island)
         layout.addWidget(self.island_button)
@@ -899,6 +1133,7 @@ class PrimeShell(QWidget):
         self.build_label.setStyleSheet(f'color: {palette.muted.name()}; font-size: 11px;')
         self.set_state(self.mark.state)
         self.activity.refresh_theme()
+        self.style_side_panels()
 
     def open_section(self, name: str):
         if name == 'Cybersecurity':

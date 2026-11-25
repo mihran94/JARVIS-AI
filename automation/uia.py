@@ -181,9 +181,10 @@ def load_client():
     except ImportError:
         raise UiaUnavailable('pythonnet is needed for UI Automation. '
                               'Run setup.cmd on this computer.') from None
-    for assembly in ('UIAutomationClient', 'UIAutomationTypes'):
+    for assembly in ('UIAutomationTypes', 'UIAutomationClient'):
         try:
-            clr.AddReference(assembly)
+            clr.AddReference(
+                assembly + ', Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35')
         except Exception:
             raise UiaUnavailable('Windows UI Automation is not available here.') from None
     try:

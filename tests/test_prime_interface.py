@@ -38,6 +38,107 @@ def test_the_window_has_the_prime_composition(tmp_path):
         window.close()
 
 
+def test_overview_uses_live_values_and_gives_task_details_room(tmp_path):
+    app, window = make_window(tmp_path)
+    try:
+        shell = window.prime_shell
+        window.resize(1440, 740)
+        app.processEvents()
+        assert shell.overview.isVisibleTo(window)
+        shell.update_usage({'cpu_usage_percent': 18, 'ram_usage_percent': 52})
+        assert shell.usage_button.text() == 'CPU 18%  ·  RAM 52%'
+        assert shell.overview_usage['cpu_usage_percent'][1].value() == 18
+        assert shell.overview_usage['gpu_usage_percent'][1].isHidden()
+        shell.usage_button.click()
+        assert window.prime_chat.task_area.isVisibleTo(window)
+        assert shell.overview.isHidden()
+    finally:
+        window.close()
+
+
+def test_wide_chat_docks_communications_and_keeps_the_chat_reachable(tmp_path):
+    app, window = make_window(tmp_path)
+    try:
+        shell = window.prime_shell
+        window.resize(1360, 780)
+        app.processEvents()
+        assert shell.overview.isVisibleTo(window)
+        assert shell.communications.isVisibleTo(window)
+        assert shell.communications.isAncestorOf(window.prime_chat.conversation)
+        assert shell.communications.isAncestorOf(window.prompt)
+        assert window.send_button.isVisibleTo(window)
+        shell.activity_button.click()
+        assert shell.activity.isVisibleTo(window)
+        assert shell.communications.isHidden()
+        assert window.prime_chat.isAncestorOf(window.prompt)
+        shell.activity_button.click()
+        settings = next(action for action in shell.setup_button.menu().actions()
+                        if action.text() == 'Conversation settings')
+        settings.trigger()
+        assert window.pages.currentIndex() == window.page_indices['Settings & Safety']
+        assert window.reply_language.isVisibleTo(window)
+        window.open_section('JARVIS Chat')
+        window.resize(1050, 680)
+        app.processEvents()
+        assert shell.communications.isHidden()
+        assert window.send_button.isVisibleTo(window)
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_conversation_settings_change_the_chat_reply_and_survive_restart(tmp_path, monkeypatch):
+    app, window = make_window(tmp_path)
+    sent = []
+    monkeypatch.setattr(window, 'get_key', lambda _provider: 'test-key')
+    monkeypatch.setattr(window, 'start_worker',
+                        lambda _provider, _model, _key, messages, *_args, **_kwargs:
+                        sent.append(messages))
+    try:
+        window.open_section('Settings & Safety')
+        scroller = window.pages.currentWidget()
+        assert window.reply_language.isVisibleTo(window)
+        assert window.reply_language.currentData() == 'auto'
+        assert window.reply_tone.currentData() == 'friendly'
+        scroll = scroller.verticalScrollBar()
+        scroll.setValue(scroll.maximum())
+        assert scroll.value() > 0
+        window.open_section('Settings & Safety')
+        assert scroll.value() == 0
+
+        window.open_section('JARVIS Chat')
+        window.prompt.setPlainText('Namma ippo enna pesalam?')
+        window.send()
+        assert 'Latin script for Tanglish' in sent[-1][0]['content']
+        assert 'Talk like a helpful colleague' in sent[-1][0]['content']
+
+        window.open_section('Settings & Safety')
+        window.reply_language.setCurrentIndex(window.reply_language.findData('tanglish'))
+        window.reply_tone.setCurrentIndex(window.reply_tone.findData('direct'))
+        window.open_section('JARVIS Chat')
+        assert window.prime_chat.assistant.title.text() == 'Enna help venum?'
+        window.prompt.setPlainText('தமிழ்ல சொல்லுங்க. இன்று என்ன பேசலாம்?')
+        window.send()
+        assert 'Use conversational Tamil in Latin script by default' in sent[-1][0]['content']
+        assert 'Honor explicit requests about how to reply' in sent[-1][0]['content']
+        assert 'short, factual answers' in sent[-1][0]['content']
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+    app, window = make_window(tmp_path)
+    try:
+        assert window.reply_language.currentData() == 'tanglish'
+        assert window.reply_tone.currentData() == 'direct'
+        assert window.prime_chat.assistant.title.text() == 'Enna help venum?'
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
 def test_the_old_chrome_is_absent_at_construction_and_startup(tmp_path):
     app = QApplication.instance() or QApplication([])
     window = Window(tmp_path)
@@ -173,6 +274,8 @@ def test_the_conversation_shows_the_messages_as_a_column(tmp_path):
 def test_the_assistant_steps_aside_for_the_conversation(tmp_path):
     app, window = make_window(tmp_path)
     try:
+        window.resize(1050, 680)
+        app.processEvents()
         chat = window.prime_chat
         mark = window.prime_shell.mark
         chat.render([])
@@ -298,7 +401,7 @@ def test_saved_chat_is_loaded_as_plain_text_when_prime_starts(tmp_path):
     _app, window = make_window(tmp_path)
     try:
         chat = window.prime_chat
-        assert chat.states.currentWidget() is chat.conversation
+        assert chat.conversation.isVisibleTo(window)
         first, = chat.conversation.bubbles
         assert first.body.text() == '<b>saved message</b>'
         assert first.body.textFormat().name == 'PlainText'

@@ -45,6 +45,28 @@ def test_update_and_rollback_preserve_original(install,tmp_path):
     assert (release_path(install,digest)/'main.py').exists()
 
 
+def test_launcher_waits_for_old_session_before_loading_approved_revision(install, tmp_path, monkeypatch):
+    from core.runtime_profile import RESTART_EXIT_CODE
+    from scripts import launch
+
+    package = archive(tmp_path)
+    digest, _ = inspect_zip(package)
+    calls = []
+
+    def run_child(command, *, cwd, env):
+        calls.append((cwd, env['JARVIS_SOURCE_RELEASE'], env['JARVIS_RESTART_MANAGED']))
+        assert Path(command[1]) == cwd / 'main.py'
+        if len(calls) == 1:
+            activate_zip(install, package, digest)
+            return RESTART_EXIT_CODE
+        return 0
+
+    monkeypatch.setattr(launch, 'ROOT', install)
+    monkeypatch.setattr(launch.subprocess, 'call', run_child)
+    assert launch.main() == 0
+    assert calls == [(install, 'base', '1'), (release_path(install, digest), digest, '1')]
+
+
 def test_changed_zip_after_review(install,tmp_path):
     path=archive(tmp_path); digest,_=inspect_zip(path)
     archive(tmp_path,{'main.py':b'different code'})

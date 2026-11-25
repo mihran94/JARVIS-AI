@@ -21,23 +21,19 @@ missing — it means the *result* is unknown.
 ## Before you start
 
 ```cmd
-cd path\to\JARVIS-AI-development
-py -3.12 -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-dev.txt
-copy setup.cmd .venv\Scripts\python.exe 2>nul
+cd /d "path\to\JARVIS-AI-development"
+setup.cmd
+.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+DIAGNOSE_JARVIS.cmd --voice
+VERIFY_JARVIS.cmd
+START_JARVIS.cmd --dev-data
 ```
 
-`setup.cmd` prepares the runtime library the Qt binaries need on a fresh Windows machine.
-Then:
-
-```cmd
-START_JARVIS.cmd
-```
-
-The launcher checks the runtime, starts the application and keeps a log in
-`%LOCALAPPDATA%\JarvisAI`. `DIAGNOSE_JARVIS.cmd` reports what is missing without changing
-anything, and `VERIFY_JARVIS.cmd` runs the local checks. `ROLLBACK_JARVIS.cmd` restores the
-previous release.
+`setup.cmd` installs dependencies in this checkout's `.venv`. The optional development
+requirements add pytest. The development launcher uses a checkout-specific profile and
+Credential Manager service. See [Windows acceptance checklist](WINDOWS_ACCEPTANCE.md)
+for the current A–I order and safe local testing procedure. The detailed procedures below
+also cover optional workflows from earlier development rounds.
 
 **Required:** Windows 10 or 11, Python 3.12, one screen, and a provider key for at least one
 provider. **Optional:** a microphone, speakers, Azure Speech (Tamil, English, French), Edge or
@@ -97,40 +93,19 @@ Windows input calls themselves, have never run: there was no Windows machine. `s
 
 ## B. Calculator to Notepad, multi-application
 
-**What it proves.** That JARVIS can work across two applications and that the value it carried
-across was the one the application actually produced.
+This is Test C in the [Windows acceptance checklist](WINDOWS_ACCEPTANCE.md).
+Use the normal chat composer with Suggestion Mode and Work on this off.
 
-1. Approve the Calculator launch.
-2. Read the Calculator's display and check it against the value the mission reports.
+1. Send `Open Calculator and calculate: 37 * 24`.
+2. Review the expression and approve opening, clearing and using Calculator. Leave Calculator
+   in front while JARVIS enters the calculation. The command supports two integers of up to
+   six digits with `+`, `-`, or `*`.
+3. Compare the value in JARVIS's verified result with the value on Calculator's display.
+4. Send `Open Notepad and type: 888` using the observed result. Approve the Notepad action.
+5. Read back the Notepad editor and compare its contents with Calculator.
 
-**A pass is:** the value in the mission's evidence is the value on the Calculator's display.
-
-**Status: NOT RUN, and the last step is not implemented.** There is **no Calculator adapter**:
-JARVIS can launch the Calculator, but it cannot read its result, so it cannot carry that value
-into Notepad. This is listed as a coding gap in `DEVELOPMENT_COVERAGE.md` §5.
-
-## B2. The Calculator's real value, carried into Notepad
-
-**What it proves.** That the number JARVIS carries across is the number the Calculator is really
-showing.
-
-1. Open the Calculator and work out something — `7 × 6` is enough.
-2. Leave the Calculator in front.
-3. In the chat, turn on **Work on this** and ask: *what is the calculator showing?* Approve the
-   read.
-4. The answer must be the number on the display — `42` — not a number the model made up.
-5. Ask for that value to be written into a new Notepad document, approve the action, and then
-   save the document with the save action.
-
-**A pass is:** the number read matches the display, the text that lands in the editor is that
-number, and the saved file holds it.
-
-**A fail is:** a value that the Calculator is not showing, or a file that does not hold what the
-editor showed.
-
-**Status: NOT RUN.** The reading rules, the focus checks and the file verification are covered by
-`tests/test_windows_automation.py`. The real Calculator, the real Notepad and the real Save As
-dialog have not been used.
+**Windows 10 live result: PASS.** Calculator showed `37 × 24 = 888`, JARVIS verified
+`888` from the display, and the Notepad editor contained exactly `888`.
 
 ## A3. A scanned document is read on this computer
 
@@ -369,12 +344,14 @@ for one.
 ## Running the automated regression suite on the owner's PC
 
 ```cmd
-.venv\Scripts\python.exe -m pytest -q
+VERIFY_JARVIS.cmd --full
 ```
 
-The suite is the regression record for this revision. The counts are in
-`docs/TEST_RESULTS.md`; the historical counts from earlier cycles are kept there separately and
-are not evidence about this revision.
+Install pytest using `requirements-dev.txt` first. The certificate tests require
+`openssl.exe` on PATH. FFmpeg and ffprobe enable real media output tests, and Tesseract
+with the appropriate language data enables OCR. The focused `VERIFY_JARVIS.cmd`
+command checks startup without those optional tools. Current results are recorded in
+[development coverage](../DEVELOPMENT_COVERAGE.md) and the development pull request.
 
 ## Where a failure should be reported
 
@@ -382,7 +359,7 @@ A failure in any of these procedures should be reported with:
 
 1. the procedure letter (A–I) and the step number;
 2. the exact text JARVIS said, copied in full;
-3. the log from `%LOCALAPPDATA%\JarvisAI`;
+3. a reviewed excerpt of the relevant diagnostic output;
 4. what you expected and what happened instead.
 
 Do not paste a provider key, a pairing code or a private file into a report. The redactor in
