@@ -684,7 +684,7 @@ class PrimeChat(QWidget):
 
         browser = QPushButton('Browser')
         browser.clicked.connect(window.show_browser_commands)
-        buttons = (window.chat_mic, window.attach_button, window.research_button,
+        buttons = (window.live_voice_button, window.chat_mic, window.attach_button, window.research_button,
                    browser, window.suggestion_mode, window.mission_mode, window.send_button)
         for button in buttons:
             window.composer_actions.removeWidget(button)
@@ -992,6 +992,8 @@ class PrimeShell(QWidget):
         ))
         self.controls_button = self.add_menu(layout, 'Controls', (
             ('New chat', self.window_ref.new_chat_button.click),
+            ('Live Voice', self.window_ref.toggle_live_voice),
+            ('Interrupt Live Voice', self.window_ref.interrupt_live_voice),
             ('Attach files', self.window_ref.attach_button.click),
             ('Toggle full screen', self.window_ref.toggle_fullscreen),
         ))

@@ -395,6 +395,14 @@ class Window(QMainWindow):
         self.add_page('PC Control', self.automation_page())
         self.add_page('Coding Assistant', self.editor_page())
         self.voice_panel = VoicePanel()
+        self.live_voice = None
+        self.voice_panel.allow.toggled.connect(self.on_live_mic_consent)
+        live_voice_row = QHBoxLayout()
+        self.voice_panel.layout().insertLayout(1, live_voice_row)
+        self.live_voice_settings_button = self.button(live_voice_row, 'Live Voice', self.toggle_live_voice)
+        live_voice_note = QLabel('Speak and hear replies through Gemini Live.')
+        live_voice_note.setWordWrap(True)
+        live_voice_row.addWidget(live_voice_note, 1)
         # The speech language is remembered, so the owner does not choose it
         # again every time the application starts.
         saved_language = self.store.get('voice_language')
@@ -598,6 +606,8 @@ class Window(QMainWindow):
             return 'stopped'
         if self.chat_launch is not None or getattr(self, 'coding_pending', None):
             return 'approval'
+        if self.live_voice is not None and self.live_voice.active:
+            return 'thinking' if self.live_voice.state == 'connecting' else self.live_voice.state
         if self.voice_panel.speaking:
             return 'speaking'
         if self.voice_panel.listening:
@@ -696,6 +706,7 @@ class Window(QMainWindow):
             self.hands_free_voice.isChecked()
             and not self.policy.stopped
             and self.voice_panel.consent.listening
+            and not self.voice_panel.live_voice_active
             and self.chat_provider.currentText() == 'Ollama'
             and self.router.spec('Ollama').local
             and not self.backup_consent.isChecked()
@@ -708,6 +719,7 @@ class Window(QMainWindow):
             busy_voice = (self.voice_panel.worker is not None
                           and self.voice_panel.worker.isRunning())
             if (self.policy.stopped or not self.voice_panel.consent.listening
+                    or self.voice_panel.live_voice_active
                     or self.chat_provider.currentText() != 'Ollama'
                     or not self.router.spec('Ollama').local
                     or self.backup_consent.isChecked() or self.worker is not None
@@ -925,6 +937,74 @@ class Window(QMainWindow):
             self.voice_panel.cancel_listening()
         else:
             self.voice_panel.listen('once')
+
+    def on_live_mic_consent(self, allowed):
+        if not allowed and self.live_voice is not None:
+            self.live_voice.stop('Microphone permission was removed.')
+
+    def toggle_live_voice(self):
+        if self.live_voice is not None and self.live_voice.active:
+            self.live_voice.stop()
+            return
+        if self.policy.stopped:
+            return
+        if not self.voice_panel.consent.listening:
+            self.open_section('Voice / Hey Jarvis')
+            self.statusBar().showMessage('Allow the microphone, then choose Live Voice in Chat.', 15000)
+            return
+        if (self.worker is not None or self.voice_panel.audio_test_active
+                or self.voice_panel.playback_busy or self.voice_panel.pending_speech
+                or self.voice_panel.listening):
+            self.statusBar().showMessage('Finish the current chat or audio session first.', 10000)
+            return
+
+        def start():
+            key = self.get_key('Gemini')
+            if not self.confirm(Action(
+                'live_voice', 'Start Gemini Live voice chat. While on, audio from the microphone '
+                'is streamed to Google and may incur provider charges. Stop Live Voice closes '
+                'the microphone. The conversation is saved as chat text.',
+            )):
+                return
+            if self.policy.stopped or not self.voice_panel.consent.listening:
+                return
+            from desktop.live_voice import LiveVoice
+            if self.live_voice is None:
+                self.live_voice = LiveVoice(self)
+                self.live_voice.status.connect(lambda text: self.statusBar().showMessage(text, 20000))
+                self.live_voice.state_changed.connect(self.on_live_voice_state)
+                self.live_voice.turn_finished.connect(self.save_live_voice_turn)
+                self.live_voice.audio_level.connect(self.voice_panel.audio_level.emit)
+            self.hands_free_voice.setChecked(False)
+            self.voice_panel.stop_continuous()
+            self.open_section('JARVIS Chat')
+            guide = assistant_guidance(self.reply_language.currentData(), self.reply_tone.currentData())
+            self.live_voice.start(key, guide + ' You are in a spoken conversation. Hear Tamil and '
+                                  'Tanglish naturally and reply in the same conversational language. '
+                                  'Keep spoken replies brief and use at most one question.')
+        self.notify(start)
+
+    def on_live_voice_state(self, state):
+        self.voice_panel.live_voice_active = state != 'idle'
+        title = 'Stop Live Voice' if state != 'idle' else 'Live Voice'
+        self.live_voice_button.setText(title)
+        self.live_voice_settings_button.setText(title)
+        self.voice_panel.refresh()
+        self.refresh_prime_state()
+
+    def save_live_voice_turn(self, spoken, reply):
+        if self.policy.stopped or not (spoken or reply):
+            return
+        if spoken:
+            self.store.message(self.session, 'user', spoken)
+        if reply:
+            self.store.message(self.session, 'assistant', reply)
+        self.render_chat()
+        self.refresh_archives()
+
+    def interrupt_live_voice(self):
+        if self.live_voice is not None:
+            self.live_voice.interrupt()
 
     def page(self, title, note=''):
         page = QWidget()
@@ -1522,6 +1602,8 @@ class Window(QMainWindow):
         composer_layout.addLayout(composer_actions)
         self.chat_mic = self.button(composer_actions, 'Speak', self.listen_to_user)
         self.chat_mic.setObjectName('quiet')
+        self.live_voice_button = self.button(composer_actions, 'Live Voice', self.toggle_live_voice)
+        self.live_voice_button.setToolTip('Have a spoken conversation through Gemini Live.')
         self.attach_button = self.button(
             composer_actions, 'Attach', lambda: self.open_section('Files & Folders'))
         self.attach_button.setObjectName('quiet')
@@ -3023,6 +3105,8 @@ class Window(QMainWindow):
             return
         session = self.archives.currentData()
         if session:
+            if self.live_voice is not None:
+                self.live_voice.stop()
             self.clear_desktop_result()
             self.clear_suggested_plan()
             self.conversation_plan.cancel('Conversation changed; remaining steps cancelled.')
@@ -5358,6 +5442,8 @@ class Window(QMainWindow):
             self.statusBar().showMessage(
                 'A task is still running. Finish or decline it before starting a new chat.', 12000)
             return
+        if self.live_voice is not None:
+            self.live_voice.stop()
         self.clear_desktop_result()
         self.clear_suggested_plan()
         self.conversation_plan.cancel('New conversation; remaining steps cancelled.')
@@ -5436,6 +5522,9 @@ class Window(QMainWindow):
 
     def send(self, *, allow_notes=True):
         if self.policy.stopped or self.worker is not None or not self.prompt.toPlainText().strip():
+            return
+        if self.live_voice is not None and self.live_voice.active:
+            self.statusBar().showMessage('Stop Live Voice before sending a typed chat message.', 10000)
             return
         self.clear_suggested_plan()
         text = self.prompt.toPlainText().strip()
@@ -5854,6 +5943,8 @@ class Window(QMainWindow):
 
     def stop(self):
         self.policy.stop()
+        if self.live_voice is not None:
+            self.live_voice.stop()
         self.browser.stop()
         if self.coding_mission_worker is not None:
             self.coding_mission_worker.cancel()
@@ -6026,6 +6117,8 @@ class Window(QMainWindow):
         self.request_exit()
 
     def closeEvent(self, event):
+        if self.live_voice is not None:
+            self.live_voice.stop()
         self.conversation_plan.cancel('Window closed; remaining steps cancelled.')
         self.audio_test.stop()
         self.cancel_launch_verification()
