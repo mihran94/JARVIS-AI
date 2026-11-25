@@ -32,6 +32,13 @@ _ADDITION = {'+', 'plus', 'பிளஸ்'}
 _NUMBERS = {'பதினேழு': 17, 'pathinezhu': 17, 'seventeen': 17,
             'இருபத்திமூணு': 23, 'இருபத்துமூன்று': 23, 'irupathimoonu': 23,
             'twentythree': 23}
+_OPEN_NAMES = {'calculator': 'Calculator', 'கால்குலேட்டர்': 'Calculator',
+               'notepad': 'Notepad', 'நோட்பேட்': 'Notepad'}
+_OPEN_APP = re.compile(_PLUGIN + (
+    r'(?:open\s+(?P<front>calculator|notepad|கால்குலேட்டர்|நோட்பேட்)'
+    r'|(?P<back>calculator|notepad|கால்குலேட்டர்|நோட்பேட்)\s+'
+    r'(?:open\s+(?:pannu(?:nga)?|பண்ணு(?:ங்க)?)|திற(?:ங்க)?))'
+))
 
 
 def parse_spoken(text):
@@ -41,6 +48,9 @@ def parse_spoken(text):
     value, addressed = _ADDRESS.subn('', original)
     if _PROJECTS.fullmatch(value):
         return {'operation': 'projects'}
+    opened = _OPEN_APP.fullmatch(value)
+    if opened:
+        return {'operation': 'open_app', 'value': _OPEN_NAMES[opened.group('front') or opened.group('back')]}
     value = re.sub(r'இருபத்தி\s+மூணு|இருபத்து\s+மூன்று', 'இருபத்திமூணு', value)
     value = re.sub(r'twenty[ -]three', 'twentythree', value)
     match = _CALCULATE.fullmatch(value)
@@ -68,11 +78,13 @@ async def dispatch_spoken(mark, transcript, *, origin='voice'):
     result = await asyncio.to_thread(
         mark._plugin_registry.run, 'jarvis_pc_projects', arguments, mark.ui,
     )
-    mark.ui.write_log(f'SYS: JARVIS {origin} → ' + (
-        result if not result.startswith('[CONFIRMATION_PENDING]') else 'Review the Calculator approval on the HUD.'
-    ))
-    if result.startswith('[CONFIRMATION_PENDING]'):
-        spoken = 'கணக்கு சரியா இருக்கா பார்த்து, திரையில் Confirm அழுத்துங்க.'
+    pending = result.startswith('[CONFIRMATION_PENDING]')
+    approval = 'Review the Calculator approval on the HUD.' if arguments['operation'] == 'calculate' else (
+        'Review the application approval on the HUD.'
+    )
+    mark.ui.write_log(f'SYS: JARVIS {origin} → ' + (approval if pending else result))
+    if pending:
+        spoken = 'திரையில் காட்டிய வேலை சரியா இருக்கா பார்த்து, Confirm அழுத்துங்க.'
     else:
         spoken = result
     if not mark.ui.muted:

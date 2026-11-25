@@ -12,8 +12,8 @@ PLUGIN = {
     'name': 'jarvis_pc_projects',
     'description': (
         'Use for an explicit owner request to open, inspect or test a named JARVIS project, '
-        'open Notepad or Calculator, or insert exact text into Notepad. '
-        'Calculator arithmetic and saved-project lists are handled by the local speech '
+        'or insert exact text into Notepad. '
+        'Opening Calculator or Notepad, Calculator arithmetic and saved-project lists are handled by the local '
         'router after the complete request. Do not claim completion for those requests. '
         'Do not use it for mentioned apps without an instruction to act.'
     ),
@@ -23,12 +23,12 @@ PLUGIN = {
             'operation': {
                 'type': 'STRING',
                 'enum': ['project_status', 'project_open', 'project_inspect',
-                         'project_test', 'open_app', 'notepad'],
+                         'project_test', 'notepad'],
             },
             'value': {
                 'type': 'STRING',
-                'description': ('Saved project name for project operations, Notepad or Calculator '
-                                'for open_app, or only the exact text to insert for notepad.'),
+                'description': ('Saved project name for project operations, '
+                                'or only the exact text to insert for notepad.'),
             },
         },
         'required': ['operation'],

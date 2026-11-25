@@ -17,6 +17,12 @@ TEXT_HOOK = '''        from plugins._jarvis_spoken import dispatch_spoken, parse
         if parse_spoken(text):
             asyncio.run_coroutine_threadsafe(dispatch_spoken(self, text, origin='text'), self._loop)
             return'''
+PROMPT_ANCHOR = '        parts.append(sys_prompt)'
+PROMPT_HOOK = (
+    '        parts.append("JARVIS M routes complete Calculator arithmetic and saved project lists locally. '
+    'Never call a tool for these commands, open an app as a substitute, or state that the action '
+    'was done. Wait for the local JARVIS result and read it aloud when provided.")'
+)
 
 
 def window_title(value):
@@ -38,6 +44,10 @@ def prepare(root):
         if first.count(TEXT_ANCHOR) != 1:
             raise ValueError('This Mark version does not have the expected text-command hook.')
         first = first.replace(TEXT_ANCHOR, TEXT_ANCHOR + '\n' + TEXT_HOOK, 1)
+    if PROMPT_HOOK not in first:
+        if first.count(PROMPT_ANCHOR) != 1:
+            raise ValueError('This Mark version does not have the expected voice prompt hook.')
+        first = first.replace(PROMPT_ANCHOR, PROMPT_ANCHOR + '\n' + PROMPT_HOOK, 1)
     for value in ('_display', 'display'):
         original, changed = window_title(value)
         if changed in second:

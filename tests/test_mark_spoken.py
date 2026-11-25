@@ -18,6 +18,7 @@ from integrations.mark.jarvis_spoken import dispatch_spoken, parse_spoken
     ('quote calculator 17 times 23 to me', None),
     ('17 times 23', None),
     ('what is the calculator workflow?', None),
+    ('JARVIS M, Calculator open pannu', {'operation': 'open_app', 'value': 'Calculator'}),
 ])
 def test_complete_spoken_commands(text, expected):
     assert parse_spoken(text) == expected
