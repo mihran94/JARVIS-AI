@@ -759,10 +759,10 @@ def build_registry(*, root=None, memory=None, editor_paths=None) -> ToolRegistry
         except Exception:
             raise ToolError('Windows did not expose that control or the requested action.') from None
 
-    def use_app_control(args, checkpoint, *, text=None):
-        return app_call(app_control.use_control, pid=args['process_id'], title=args['title'],
-                        name=args['name'], automation_id=args.get('automation_id', ''), text=text,
-                        checkpoint=checkpoint)
+    def use_app_control(args, checkpoint, operation=app_control.use_control, **options):
+        return app_call(operation, pid=args['process_id'], title=args['title'],
+                        name=args['name'], automation_id=args.get('automation_id', ''),
+                        checkpoint=checkpoint, **options)
 
     registry.register(Tool(
         name='list_app_windows',
@@ -797,6 +797,36 @@ def build_registry(*, root=None, memory=None, editor_paths=None) -> ToolRegistry
             args, checkpoint, text=args['text']),
         accepts_checkpoint=True, full_approval_details=True,
         returns='Whether Windows verified the field contents.',
+    ))
+    registry.register(Tool(
+        name='mouse_click_app_control',
+        description='With owner approval, physically click an exact button, menu item or field from inspect_app_controls.',
+        parameters={'type': 'object', 'properties': control_arguments,
+                    'required': [*window_required, 'name']},
+        read_only=False, run=lambda args, check: use_app_control(args, check, app_control.mouse_click),
+        accepts_checkpoint=True, full_approval_details=True,
+        returns='Whether the mouse click was dispatched. Inspect again to verify the result.',
+    ))
+    registry.register(Tool(
+        name='type_app_text',
+        description='With owner approval, type literal text into the exact focused field. Focus it with mouse_click_app_control first if needed. Never enter secrets.',
+        parameters={'type': 'object', 'properties': {**control_arguments, 'text': {'type': 'string'}},
+                    'required': [*window_required, 'name', 'text']},
+        read_only=False, run=lambda args, check: use_app_control(
+            args, check, app_control.keyboard_input, text=args['text']),
+        accepts_checkpoint=True, full_approval_details=True,
+        returns='Whether Windows verified the inserted text.',
+    ))
+    registry.register(Tool(
+        name='press_app_navigation_key',
+        description='With owner approval, press one navigation key in the exact focused text field.',
+        parameters={'type': 'object', 'properties': {
+            **control_arguments, 'key': {'type': 'string', 'enum': list(app_control.NAVIGATION_KEYS)},
+        }, 'required': [*window_required, 'name', 'key']},
+        read_only=False, run=lambda args, check: use_app_control(
+            args, check, app_control.keyboard_input, key=args['key']),
+        accepts_checkpoint=True, full_approval_details=True,
+        returns='Whether Windows accepted the key.',
     ))
 
     def observe_the_screen(arguments):

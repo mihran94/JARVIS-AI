@@ -222,35 +222,19 @@ def press_key(name: str, target: InputTarget, *, foreground=None, dialogs=None) 
 
 
 def click_at(x: int, y: int, target: InputTarget, *, foreground=None, dialogs=None) -> str:
-    """Click a point inside the window, after checking the focus again."""
+    """Click at the already-positioned cursor after checking the caller's target."""
     if not isinstance(x, int) or not isinstance(y, int):
         raise InputRefused('The click needs a whole position.')
     if not (0 <= x <= 10000 and 0 <= y <= 10000):
         raise InputRefused('That click is outside the screen.')
     validate_focus(target, foreground=foreground, dialogs=dialogs)
-    _windows_only()
-    import ctypes
-    from ctypes import wintypes
-
-    MOUSEEVENTF_LEFTDOWN = 0x0002
-    MOUSEEVENTF_LEFTUP = 0x0004
-
-    class MOUSEINPUT(ctypes.Structure):
-        _fields_ = [('dx', wintypes.LONG), ('dy', wintypes.LONG),
-                    ('mouseData', wintypes.DWORD), ('dwFlags', wintypes.DWORD),
-                    ('time', wintypes.DWORD), ('dwExtraInfo', ctypes.POINTER(ctypes.c_ulong))]
-
-    class INPUT(ctypes.Structure):
-        class _U(ctypes.Union):
-            _fields_ = [('mi', MOUSEINPUT)]
-        _anonymous_ = ('u',)
-        _fields_ = [('type', wintypes.DWORD), ('u', _U)]
-
-    user32 = ctypes.WinDLL('user32', use_last_error=True)
-    for flags in (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP):
-        event = INPUT(type=0)
-        event.mi = MOUSEINPUT(x, y, 0, flags, 0, None)
-        user32.SendInput(1, ctypes.byref(event), ctypes.sizeof(INPUT))
+    down = _INPUT(0, _INPUT_UNION(mi=_MOUSEINPUT(0, 0, 0, 0x0002, 0, 0)))
+    up = _INPUT(0, _INPUT_UNION(mi=_MOUSEINPUT(0, 0, 0, 0x0004, 0, 0)))
+    sent = send_input([down, up])
+    if sent != 2:
+        if sent == 1:
+            send_input([up])
+        raise InputRefused('Windows did not accept the complete mouse click.')
     time.sleep(SETTLE_SECONDS)
     return f'The click was sent to {target.describe()} at {x}, {y}.'
 

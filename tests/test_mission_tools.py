@@ -47,6 +47,7 @@ def test_the_catalogue_has_the_real_capabilities(registry):
         'current_time', 'system_status', 'evaluate_expression', 'research_fetch', 'discover_apps',
         'inspect_window', 'activate_window', 'observe_screen', 'read_calculator',
         'list_app_windows', 'inspect_app_controls', 'click_app_control', 'set_app_field',
+        'mouse_click_app_control', 'type_app_text', 'press_app_navigation_key',
         'save_open_document', 'edit_image', 'render_timeline', 'apply_effects_changes',
         'verify_media',
         'launch_app', 'browser_draft', 'type_notepad', 'export_text', 'list_directory', 'read_text_file',
@@ -66,6 +67,9 @@ def test_only_the_tools_that_change_something_need_approval(registry):
     assert registry.get('list_app_windows').read_only is False
     assert registry.get('click_app_control').read_only is False
     assert registry.get('set_app_field').read_only is False
+    assert registry.get('mouse_click_app_control').read_only is False
+    assert registry.get('type_app_text').read_only is False
+    assert registry.get('press_app_navigation_key').read_only is False
     assert registry.get('observe_screen').read_only is False
     assert registry.get('edit_image').read_only is False
     assert registry.get('render_timeline').read_only is False
