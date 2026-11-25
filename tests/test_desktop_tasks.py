@@ -85,6 +85,7 @@ def test_windows_sendinput_structure_and_mock_dispatch(monkeypatch):
     import ctypes
     from types import SimpleNamespace
     import automation.desktop_tasks as desktop_tasks
+    import automation.input as input_backend
 
     expected = 40 if ctypes.sizeof(ctypes.c_void_p) == 8 else 28
     assert ctypes.sizeof(desktop_tasks._INPUT) == expected
@@ -105,6 +106,8 @@ def test_windows_sendinput_structure_and_mock_dispatch(monkeypatch):
             return 0
 
     api = FakeUser32()
+    # Run the real dispatch code against the fake Win32 API on either OS.
+    monkeypatch.setattr(input_backend, 'sys', SimpleNamespace(platform='win32'))
     monkeypatch.setattr(desktop_tasks.ctypes, 'windll',
                         SimpleNamespace(user32=api), raising=False)
     monkeypatch.setattr(desktop_tasks, 'target_is_foreground',
