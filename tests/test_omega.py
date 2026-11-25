@@ -67,6 +67,9 @@ def test_dock_links_keyboard_and_order(tmp_path, monkeypatch):
             app.processEvents()
             if section == 'Cybersecurity':
                 diagnostics.assert_called_once_with()
+            elif section == 'Projects':
+                assert window.pages.currentIndex() == window.page_indices['Settings & Safety']
+                assert button.isChecked()
             else:
                 assert window.pages.currentIndex() == window.page_indices[section]
         assert not ui.dock.isVisible()

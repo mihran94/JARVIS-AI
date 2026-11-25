@@ -32,6 +32,54 @@ def test_tamil_emoji_and_newline_make_complete_keyboard_pairs():
     assert all(events[i].data.ki.dwFlags & 0x0002 for i in range(1, 8, 2))
 
 
+def test_calculator_chat_command_requires_approval_and_foreground(tmp_path, monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
+    actions = []
+    target = object()
+    monkeypatch.setattr('desktop.app.launch_app', lambda name: actions.append(name))
+    monkeypatch.setattr('automation.calculator.foreground_calculator', lambda: None)
+
+    def calculate(expression, window_target, *, check):
+        check()
+        assert window_target is target
+        actions.append(expression)
+        return '888'
+
+    monkeypatch.setattr('automation.calculator.calculate_in_window', calculate)
+    monkeypatch.setattr(window, 'send_chat_reply', lambda *_args, **_kwargs: pytest.fail(
+        'The local calculation must stay on the PC'))
+    try:
+        command = 'Open Calculator and calculate: 37 × 24'
+        window.prompt.setPlainText(command)
+        window.send()
+        assert '37 * 24' in window.chat_approval_label.text()
+        assert actions == []
+        window.finish_chat_launch(False)
+        assert actions == []
+
+        window.prompt.setPlainText(command)
+        window.send()
+        window.finish_chat_launch(True)
+        window.complete_desktop_task()
+        assert actions == ['Calculator']
+        monkeypatch.setattr('automation.calculator.foreground_calculator', lambda: target)
+        window.complete_desktop_task()
+        assert actions == ['Calculator', '37 * 24']
+        assert window.desktop_result_label.text() == 'Calculator display verified: 37 * 24 = 888'
+        assert window.store.tasks()[0]['status'] == 'verified'
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.parametrize('expression', ['37 * 24 and open Notepad', '1 / 3', '1 * 1234567'])
+def test_calculator_rejects_inputs_outside_the_arithmetic_grammar(expression):
+    with pytest.raises(ValueError, match='two integers'):
+        parse_desktop_task('Open Calculator and calculate: ' + expression)
+
+
 def test_windows_sendinput_structure_and_mock_dispatch(monkeypatch):
     """The 32/64-bit INPUT struct must match Win32, even on Linux CI."""
     import ctypes
@@ -57,6 +105,7 @@ def test_windows_sendinput_structure_and_mock_dispatch(monkeypatch):
             return 0
 
     api = FakeUser32()
+    monkeypatch.setattr('automation.input.sys.platform', 'win32')
     monkeypatch.setattr(desktop_tasks.ctypes, 'windll',
                         SimpleNamespace(user32=api), raising=False)
     monkeypatch.setattr(desktop_tasks, 'target_is_foreground',
@@ -128,3 +177,18 @@ def test_emergency_stop_cancels_pending_type_action(tmp_path, monkeypatch):
         window.close()
         window.deleteLater()
         app.processEvents()
+def test_capcut_shortcut_uses_one_native_keyboard_batch(monkeypatch):
+    from automation import input as windows_input
+
+    batches = []
+
+    def send(events):
+        batches.append(events)
+        return len(events)
+
+    monkeypatch.setattr(windows_input, 'send_input', send)
+    windows_input.press_key('ctrl+e', windows_input.InputTarget(1), foreground=lambda: 1)
+    assert len(batches) == 1
+    assert [(event.data.ki.wVk, event.data.ki.dwFlags) for event in batches[0]] == [
+        (0x11, 0), (0x45, 0), (0x45, 2), (0x11, 2),
+    ]

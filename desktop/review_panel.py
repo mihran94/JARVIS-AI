@@ -25,13 +25,14 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtWidgets import (QCheckBox, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton,
                                QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from core.candidates import Candidate, reject_candidate, stage_candidate
 from core.coding_tasks import COMPLETED, REJECTED, load, set_state
 from core.development import Improvement, apply_improvement, reject_improvement
+from core.runtime_profile import development_profile, restart_supported
 from core.updates import UpdateError
 from security.policy import Action
 
@@ -178,7 +179,10 @@ class ReviewPanel(QWidget):
         if item is None or self.window.release_checker.source_worker is not None:
             return
         revision = item.short
-        action = Action('activate_prepared_revision', item.revision, item.digest)
+        restart = restart_supported() and not development_profile()
+        action = Action('activate_prepared_revision',
+                        f'{item.revision}\nRestart JARVIS after applying.' if restart else item.revision,
+                        item.digest)
 
         def operation():
             root, history = self.window.installation_root(), self.window.store.path
@@ -207,6 +211,8 @@ class ReviewPanel(QWidget):
         self.window.statusBar().showMessage(message, 15000)
         self.approved.emit(revision)
         self.refresh()
+        if restart:
+            QTimer.singleShot(0, self.window.request_restart)
 
     def reject(self):
         """Throw the prepared change away. The running version is untouched."""

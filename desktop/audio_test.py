@@ -69,7 +69,7 @@ class AudioTest(QGroupBox):
         if self.policy.stopped or self.voice.consent.stopped:
             self.status.setText('Resume JARVIS and Voice before testing audio.')
             return False
-        if self.mode or self.voice.playback_busy or self.voice.pending_speech or (
+        if self.mode or self.voice.live_voice_active or self.voice.playback_busy or self.voice.pending_speech or (
                 self.voice.worker is not None and self.voice.worker.isRunning()):
             self.status.setText('Stop the current voice session or audio test first.')
             return False

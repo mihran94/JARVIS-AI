@@ -13,31 +13,42 @@ class GUIThreadInfo(ctypes.Structure):
     ] + [('rcCaret', wintypes.RECT)]
 
 
-def foreground_process():
-    """Get the native process ID of the visible foreground window."""
+def foreground_window():
+    """Get the handle of the visible foreground window."""
     user32 = ctypes.windll.user32
     user32.GetForegroundWindow.argtypes = []
     user32.GetForegroundWindow.restype = ctypes.c_void_p
     user32.IsWindowVisible.argtypes = [ctypes.c_void_p]
     user32.IsWindowVisible.restype = ctypes.c_int
+    handle = user32.GetForegroundWindow()
+    return handle if handle and user32.IsWindowVisible(handle) else None
+
+
+def foreground_process():
+    """Get the native process ID of the visible foreground window."""
+    handle = foreground_window()
+    if not handle:
+        return None
+    return window_process(handle)
+
+
+def window_process(handle):
+    """Get the process that owns a native window."""
+    user32 = ctypes.windll.user32
     user32.GetWindowThreadProcessId.argtypes = [
         ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)]
     user32.GetWindowThreadProcessId.restype = ctypes.c_uint32
-    handle = user32.GetForegroundWindow()
-    if not handle or not user32.IsWindowVisible(handle):
-        return None
     pid = ctypes.c_uint32()
     if user32.GetWindowThreadProcessId(handle, ctypes.byref(pid)) and pid.value:
         return pid.value
     return None
 
 
-def focused_editor():
+def focused_control(foreground):
+    """Read the focused native control within the specified top-level window."""
     user = ctypes.WinDLL('user32', use_last_error=True)
-    user.GetForegroundWindow.restype = wintypes.HWND
     user.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
     user.GetWindowThreadProcessId.restype = wintypes.DWORD
-    foreground = user.GetForegroundWindow()
     if not foreground:
         return None
     thread = user.GetWindowThreadProcessId(foreground, None)
@@ -49,14 +60,23 @@ def focused_editor():
     user.GetAncestor.restype = wintypes.HWND
     if user.GetAncestor(info.focus, 2) != foreground:  # GA_ROOT
         return None
+    return info.focus
+
+
+def focused_editor():
+    foreground = foreground_window()
+    focus = focused_control(foreground)
+    if not focus:
+        return None
+    user = ctypes.WinDLL('user32', use_last_error=True)
     name = ctypes.create_unicode_buffer(96)
     user.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
-    if not user.GetClassNameW(info.focus, name, len(name)) or name.value.casefold() not in EDIT_CLASSES:
+    if not user.GetClassNameW(focus, name, len(name)) or name.value.casefold() not in EDIT_CLASSES:
         return None
     # Only the editor in the application window, never an Open/Save dialog.
     if not user.GetClassNameW(foreground, name, len(name)) or name.value == '#32770':
         return None
-    return info.focus
+    return focus
 
 
 def _message(hwnd, message, count=0, address=0):
@@ -79,6 +99,20 @@ def contents(hwnd):
     if copied != length:
         return None
     return buffer.value
+
+
+def replace_contents(hwnd, text):
+    """Set and read back text in a native Windows edit control."""
+    buffer = ctypes.create_unicode_buffer(text)
+    return bool(_message(hwnd, 0x000C, address=ctypes.addressof(buffer))) and contents(hwnd) == text
+
+
+def click_dialog_button(hwnd):
+    """Invoke a standard Windows button already verified by the caller."""
+    post = ctypes.WinDLL('user32', use_last_error=True).PostMessageW
+    post.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    post.restype = wintypes.BOOL
+    return bool(post(hwnd, 0x00F5, 0, 0))  # BM_CLICK
 
 
 def expected_edit(hwnd, insertion):

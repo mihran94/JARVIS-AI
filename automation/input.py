@@ -21,6 +21,7 @@ WHAT THIS IS NOT
 from __future__ import annotations
 
 from dataclasses import dataclass
+import ctypes
 import sys
 import time
 
@@ -29,6 +30,9 @@ MAX_TEXT = 2000
 
 #: How long a click or a key press waits for the window to settle.
 SETTLE_SECONDS = 0.05
+KEYEVENTF_KEYUP = 0x0002
+KEYEVENTF_UNICODE = 0x0004
+INPUT_KEYBOARD = 1
 
 #: The keys that may be pressed. A key that is not here cannot be
 #: pressed, so model text cannot ask for an arbitrary key.
@@ -38,7 +42,7 @@ KEY_ALLOWLIST = {
     'left': 0x25, 'right': 0x27, 'home': 0x24, 'end': 0x23,
     'pageup': 0x21, 'pagedown': 0x22, 'ctrl+a': 0x41, 'ctrl+c': 0x43,
     'ctrl+v': 0x56, 'ctrl+x': 0x58, 'ctrl+s': 0x53, 'ctrl+z': 0x5A,
-    'ctrl+y': 0x59, 'alt+tab': 0x09,
+    'ctrl+y': 0x59, 'ctrl+e': 0x45, 'ctrl+i': 0x49, 'alt+d': 0x44, 'alt+tab': 0x09,
 }
 
 #: The modifiers that may be held with a key.
@@ -110,71 +114,86 @@ def _windows_only():
         raise InputRefused('This action is available on Windows only.')
 
 
-def _send_unicode(text: str):
-    """Type text with the Unicode input path, so Tamil and French work."""
+class _KEYBDINPUT(ctypes.Structure):
+    _fields_ = (
+        ('wVk', ctypes.c_uint16),
+        ('wScan', ctypes.c_uint16),
+        ('dwFlags', ctypes.c_uint32),
+        ('time', ctypes.c_uint32),
+        ('dwExtraInfo', ctypes.c_size_t),
+    )
+
+
+class _MOUSEINPUT(ctypes.Structure):
+    _fields_ = (
+        ('dx', ctypes.c_int32),
+        ('dy', ctypes.c_int32),
+        ('mouseData', ctypes.c_uint32),
+        ('dwFlags', ctypes.c_uint32),
+        ('time', ctypes.c_uint32),
+        ('dwExtraInfo', ctypes.c_size_t),
+    )
+
+
+class _HARDWAREINPUT(ctypes.Structure):
+    _fields_ = (
+        ('uMsg', ctypes.c_uint32),
+        ('wParamL', ctypes.c_uint16),
+        ('wParamH', ctypes.c_uint16),
+    )
+
+
+class _INPUT_UNION(ctypes.Union):
+    _fields_ = (
+        ('ki', _KEYBDINPUT),
+        ('mi', _MOUSEINPUT),
+        ('hi', _HARDWAREINPUT),
+    )
+
+
+class _INPUT(ctypes.Structure):
+    _fields_ = (('type', ctypes.c_uint32), ('data', _INPUT_UNION))
+
+
+def _keyboard_event(character: int, *, key_up: bool, unicode: bool):
+    flags = (KEYEVENTF_UNICODE if unicode else 0) | (KEYEVENTF_KEYUP if key_up else 0)
+    return _INPUT(INPUT_KEYBOARD, _INPUT_UNION(
+        ki=_KEYBDINPUT(0 if unicode else character, character if unicode else 0,
+                       flags, 0, 0)))
+
+
+def send_input(events: list[_INPUT]) -> int:
+    """Dispatch a batch of native Windows input events."""
     _windows_only()
-    import ctypes
-    from ctypes import wintypes
+    api = ctypes.windll.user32.SendInput
+    api.argtypes = [ctypes.c_uint32, ctypes.POINTER(_INPUT), ctypes.c_int]
+    api.restype = ctypes.c_uint32
+    array = (_INPUT * len(events))(*events)
+    return api(len(array), array, ctypes.sizeof(_INPUT))
 
-    KEYEVENTF_KEYUP = 0x0002
-    KEYEVENTF_UNICODE = 0x0004
-    INPUT_KEYBOARD = 1
 
-    class KEYBDINPUT(ctypes.Structure):
-        _fields_ = [('wVk', wintypes.WORD), ('wScan', wintypes.WORD),
-                    ('dwFlags', wintypes.DWORD), ('time', wintypes.DWORD),
-                    ('dwExtraInfo', ctypes.POINTER(ctypes.c_ulong))]
+def _send_keyboard(events):
+    if send_input(events) != len(events):
+        raise InputRefused('Windows did not accept all keyboard input.')
 
-    class INPUT(ctypes.Structure):
-        class _U(ctypes.Union):
-            _fields_ = [('ki', KEYBDINPUT)]
-        _anonymous_ = ('u',)
-        _fields_ = [('type', wintypes.DWORD), ('u', _U)]
 
-    user32 = ctypes.WinDLL('user32', use_last_error=True)
-    for character in text:
-        for flags in (KEYEVENTF_UNICODE, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP):
-            event = INPUT(type=INPUT_KEYBOARD)
-            event.ki = KEYBDINPUT(0, ord(character), flags, 0, None)
-            user32.SendInput(1, ctypes.byref(event), ctypes.sizeof(INPUT))
-        time.sleep(0.001)
+def _send_unicode(text: str):
+    encoded = text.encode('utf-16-le')
+    events = []
+    for index in range(0, len(encoded), 2):
+        unit = int.from_bytes(encoded[index:index + 2], 'little')
+        events.extend((_keyboard_event(unit, key_up=False, unicode=True),
+                       _keyboard_event(unit, key_up=True, unicode=True)))
+    _send_keyboard(events)
 
 
 def _press_virtual(vk: int, ctrl: bool = False, alt: bool = False, shift: bool = False):
-    """Press one key with its modifiers."""
-    _windows_only()
-    import ctypes
-    from ctypes import wintypes
-
-    KEYEVENTF_KEYUP = 0x0002
-    INPUT_KEYBOARD = 1
-
-    class KEYBDINPUT(ctypes.Structure):
-        _fields_ = [('wVk', wintypes.WORD), ('wScan', wintypes.WORD),
-                    ('dwFlags', wintypes.DWORD), ('time', wintypes.DWORD),
-                    ('dwExtraInfo', ctypes.POINTER(ctypes.c_ulong))]
-
-    class INPUT(ctypes.Structure):
-        class _U(ctypes.Union):
-            _fields_ = [('ki', KEYBDINPUT)]
-        _anonymous_ = ('u',)
-        _fields_ = [('type', wintypes.DWORD), ('u', _U)]
-
-    user32 = ctypes.WinDLL('user32', use_last_error=True)
-
-    def send(key, up):
-        event = INPUT(type=INPUT_KEYBOARD)
-        event.ki = KEYBDINPUT(key, 0, KEYEVENTF_KEYUP if up else 0, 0, None)
-        user32.SendInput(1, ctypes.byref(event), ctypes.sizeof(INPUT))
-
-    for modifier, held in ((0x11, ctrl), (0x12, alt), (0x10, shift)):
-        if held:
-            send(modifier, False)
-    send(vk, False)
-    send(vk, True)
-    for modifier, held in ((0x10, shift), (0x12, alt), (0x11, ctrl)):
-        if held:
-            send(modifier, True)
+    """Press one key with its modifiers in one native input batch."""
+    modifiers = [key for key, held in ((0x11, ctrl), (0x12, alt), (0x10, shift)) if held]
+    events = [_keyboard_event(key, key_up=False, unicode=False) for key in (*modifiers, vk)]
+    events.extend(_keyboard_event(key, key_up=True, unicode=False)
+                  for key in (vk, *reversed(modifiers)))
+    _send_keyboard(events)
 
 
 def type_text(text: str, target: InputTarget, *, foreground=None, dialogs=None) -> str:

@@ -1,13 +1,38 @@
 """Prevent the vertically compressed Chat and Phone Remote layouts."""
 from PySide6.QtWidgets import QApplication, QTabWidget
 
-from desktop.app import STYLE, Window
+from desktop.app import Window
+
+
+def test_mission_button_stays_clickable_in_the_hud_composer(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
+    try:
+        window.resize(1180, 820)
+        window.show()
+        composer = window.prime_chat.composer
+        button = window.mission_mode
+
+        for width in (1180, 680, 1180):
+            window.resize(width, 820)
+            window.open_section('Settings & Safety')
+            app.processEvents()
+            assert not button.isVisible()
+            window.open_section('JARVIS Chat')
+            app.processEvents()
+
+            assert button.isVisible()
+            assert composer.controls.indexOf(button) >= 0
+            assert composer.rect().contains(button.geometry())
+            assert window.childAt(button.mapTo(window, button.rect().center())) is button
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
 
 
 def test_chat_and_phone_stay_readable_at_narrow_desktop_size(tmp_path):
     app = QApplication.instance() or QApplication([])
-    previous_style = app.styleSheet()
-    app.setStyleSheet(STYLE)
     window = Window(tmp_path)
     try:
         window.resize(680, 510)
@@ -48,5 +73,4 @@ def test_chat_and_phone_stay_readable_at_narrow_desktop_size(tmp_path):
         # widgets and its OpenGL resources alive, and the next test then
         # renders far more slowly than it should.
         window.deleteLater()
-        app.setStyleSheet(previous_style)
         app.processEvents()

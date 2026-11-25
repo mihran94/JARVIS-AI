@@ -11,6 +11,11 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
+      - name: Install Linux Qt audio runtime
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpulse0
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:

@@ -21,6 +21,9 @@ SPEECH_LANGUAGES = {
     'ta': 'ta-IN',
     'fr': 'fr-FR',
 }
+FRAMEWORK_SPEECH_ASSEMBLY = (
+    'System.Speech, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35'
+)
 
 
 def load_system_speech():
@@ -33,6 +36,12 @@ def load_system_speech():
     import clr
     try:
         clr.AddReference('System.Speech')
+        return
+    except Exception:
+        pass
+    # On Windows the .NET Framework GAC can require the full assembly identity.
+    try:
+        clr.AddReference(FRAMEWORK_SPEECH_ASSEMBLY)
         return
     except Exception:
         pass
@@ -69,6 +78,8 @@ class WindowsSpeechRecognizer:
             raise VoiceUnavailable(
                 'Install the optional pythonnet package to use Windows speech recognition.'
             ) from None
+        except VoiceUnavailable:
+            raise
         except Exception:
             raise VoiceUnavailable('Windows speech recognition could not be started.') from None
         self._consent = consent if consent is not None else VoiceConsent()

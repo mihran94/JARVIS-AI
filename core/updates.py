@@ -150,6 +150,11 @@ def backup_history(path):
 
 
 def check_compatibility(root, files):
+    marker = b"DATA_FOLDER = 'JarvisM'"
+    profile = root / 'core/runtime_profile.py'
+    if profile.is_file() and marker in profile.read_bytes():
+        if marker not in files.get('core/runtime_profile.py', b''):
+            raise UpdateError('This source archive is for another application. Choose a JARVIS M build.')
     if files['requirements.txt'].strip() != (root / 'requirements.txt').read_bytes().strip():
         raise UpdateError('Dependencies changed. Install this release separately with setup.cmd.')
     if files['core/store.py'] != (root / 'core/store.py').read_bytes():
