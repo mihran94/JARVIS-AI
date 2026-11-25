@@ -422,15 +422,45 @@ class _CapCutExportUI:
         if not win_controls.replace_contents(address, str(folder)):
             raise RuntimeError('The export folder could not be entered in CapCut.')
         self._key('enter', address_ready)
+        self._wait(lambda: picker_ready() and not address_field(),
+                   'CapCut did not finish navigating to the export folder.')
         self._key('alt+d', picker_ready)
         address = self._wait(address_field, 'The selected export folder could not be read.')
         chosen = win_controls.contents(address)
         if not chosen or not Path(chosen).is_absolute() or Path(chosen).resolve() != folder:
             raise RuntimeError('CapCut did not navigate to the approved export folder.')
 
+        self._key('escape', address_ready)
         self._press_picker_button(picker, 'Select Folder', self._folder_picker)
         if self._wait(self._current_form, 'CapCut did not return to Export settings.') != form:
             raise RuntimeError('CapCut switched to a different Export dialog.')
+        self._verify_export_folder(form, folder)
+
+    def _verify_export_folder(self, form, folder):
+        self._click(form, _FOLDER_BUTTON)
+        picker = self._wait(self._folder_picker, 'CapCut did not reopen the selected export folder.')
+
+        def ready():
+            return self._folder_picker() == picker
+
+        self._key('alt+d', ready)
+
+        def directory():
+            if ready():
+                focus = win_controls.focused_control(picker)
+                if focus and self.user.GetDlgCtrlID(focus) == _PICKER_ADDRESS_ID:
+                    return win_controls.contents(focus)
+            return None
+
+        selected = self._wait(directory, 'CapCut did not report its saved export folder.')
+        # Escape dismisses address editing, then the picker, without changing
+        # the directory. Verify what CapCut actually committed before export.
+        self._key('escape', ready)
+        if ready():
+            self._key('escape', ready)
+        self._wait(self._current_form, 'CapCut did not close the export folder picker.')
+        if not Path(selected).is_absolute() or Path(selected).resolve() != folder:
+            raise RuntimeError('CapCut kept a different export folder. No export was started.')
 
     def _press_picker_button(self, picker, label, current_picker):
         button = self.user.GetDlgItem(picker, 1)
