@@ -247,15 +247,12 @@ def test_hud_continuous_voice_waits_for_playback_before_listening_again(tmp_path
         return recognizer
 
     def wait_for(condition):
-        # The budget is generous on purpose. The states below arrive
-        # across a thread boundary, and a slow or loaded machine needs
-        # longer to deliver them than a quiet one does. The assertion is
-        # the same either way: the HUD must reach the state.
         for _ in range(300):
             app.processEvents()
             if condition():
-                return
+                return True
             QTest.qWait(10)
+        return False
         assert condition()
 
     def unexpected_provider(_):
@@ -275,7 +272,15 @@ def test_hud_continuous_voice_waits_for_playback_before_listening_again(tmp_path
         wait_for(lambda: window.hud_voice_status.text() == 'LISTENING')
         release_input.set()
         wait_for(playback_started.is_set)
-        wait_for(lambda: window.hud_voice_status.text() == 'SPEAKING')
+        reached = wait_for(lambda: window.hud_voice_status.text() == 'SPEAKING')
+        print('DIAG status=%r speaking=%r muted=%r stopped=%r worker=%r speaker=%r pending=%r busy=%r ai=%r' % (
+            window.hud_voice_status.text(), voice.speaking, voice.muted,
+            voice.consent.stopped,
+            voice.worker is not None and voice.worker.isRunning(),
+            getattr(voice, 'speaker_worker', None) is not None,
+            getattr(voice, 'pending_speech', ''), voice.playback_busy,
+            window.ai_visual_state))
+        assert reached
         assert window.hud_orb._state == 'speaking'
         assert window.hud_voice_reply.text() == replies[0]
         assert not voice.listening
