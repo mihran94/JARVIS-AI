@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import math
 import os
+from datetime import datetime
 from pathlib import Path
 import re
 import subprocess
@@ -46,7 +47,7 @@ from PySide6.QtGui import (
     QPen, QPixmap, QRadialGradient,
 )
 from PySide6.QtWidgets import (
-    QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy,
+    QFrame, QGridLayout, QHBoxLayout, QLabel, QProgressBar, QPushButton, QScrollArea, QSizePolicy,
     QStackedWidget, QVBoxLayout, QWidget,
 )
 
@@ -701,6 +702,7 @@ class PrimeChat(QWidget):
         self.dismiss_task.setVisible(active)
         self.assistant.set_busy(active)
         self.window_ref.prime_shell.refresh_mark()
+        self.window_ref.prime_shell.layout_overview()
 
     def refresh_theme(self):
         self.assistant.refresh_theme()
@@ -744,6 +746,9 @@ class PrimeShell(QWidget):
         middle.setContentsMargins(0, 0, 0, 0)
         middle.setSpacing(0)
         middle.addWidget(self.build_rail())
+        self.overview = self.build_overview()
+        self.overview.hide()
+        middle.addWidget(self.overview)
         self.content = QVBoxLayout()
         self.content.setContentsMargins(0, 0, 0, 0)
         self.content.setSpacing(0)
@@ -755,6 +760,70 @@ class PrimeShell(QWidget):
         middle.addWidget(self.activity)
         outer.addLayout(middle, 1)
         window.pages.currentChanged.connect(self.refresh_mark)
+        window.pages.currentChanged.connect(self.layout_overview)
+        self.style_overview()
+
+    def build_overview(self):
+        panel = QFrame()
+        panel.setObjectName('primeOverview')
+        panel.setFixedWidth(210)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(14, 20, 14, 14)
+        layout.setSpacing(9)
+        title = QLabel('PC overview')
+        title.setObjectName('pageTitle')
+        layout.addWidget(title)
+        self.overview_usage = {}
+        for label, key in (('CPU', 'cpu_usage_percent'), ('Memory', 'ram_usage_percent'),
+                           ('GPU', 'gpu_usage_percent')):
+            row = QHBoxLayout()
+            row.addWidget(QLabel(label))
+            row.addStretch()
+            value = QLabel('Unavailable')
+            row.addWidget(value)
+            layout.addLayout(row)
+            bar = QProgressBar()
+            bar.setRange(0, 100)
+            bar.setTextVisible(False)
+            bar.setFixedHeight(6)
+            bar.setAccessibleName(label + ' utilization')
+            layout.addWidget(bar)
+            self.overview_usage[key] = (value, bar)
+        self.overview_details = QLabel()
+        self.overview_details.setWordWrap(True)
+        layout.addWidget(self.overview_details)
+        layout.addSpacing(8)
+        for label, callback in (
+            ('Task queue', lambda: self.open_section('Task Queue')),
+            ('Workflows', lambda: self.open_section('Step Workflows')),
+            ('News briefing', self.window_ref.open_news_briefing),
+            ('Phone remote', lambda: self.open_section('Phone Remote')),
+        ):
+            button = QPushButton(label)
+            button.clicked.connect(callback)
+            layout.addWidget(button)
+        layout.addStretch()
+        return panel
+
+    def layout_overview(self, _index=None):
+        chat = getattr(self.window_ref, 'prime_chat', None)
+        on_chat = (chat is not None and self.window_ref.pages.currentWidget() is chat
+                   and chat.task_area.isHidden())
+        self.overview.setVisible(on_chat and self.width() >= 1120 and self.height() >= 560)
+
+    def style_overview(self):
+        palette = self.palette_
+        self.overview.setStyleSheet(
+            f'QFrame#primeOverview {{ background: {palette.glass.name()};'
+            f' border-right: 1px solid {palette.glass_edge.name()}; }}'
+            f'QFrame#primeOverview QProgressBar {{ background: {palette.ground.name()};'
+            ' border: none; border-radius: 3px; }'
+            f'QFrame#primeOverview QProgressBar::chunk {{ background: {palette.accent.name()};'
+            ' border-radius: 3px; }')
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.layout_overview()
 
     def pulse_wake(self):
         if self.window_ref.store.get('omega:reduced', False):
@@ -820,7 +889,7 @@ class PrimeShell(QWidget):
         layout.addStretch(1)
         self.usage_button = QPushButton('CPU —  ·  RAM —')
         self.usage_button.setToolTip('Open live PC usage')
-        self.usage_button.clicked.connect(lambda: self.open_section('System & Usage'))
+        self.usage_button.clicked.connect(lambda: self.open_section('Command Center'))
         layout.addWidget(self.usage_button)
         self.state_chip = QLabel('READY')
         self.state_chip.setStyleSheet(
@@ -833,6 +902,14 @@ class PrimeShell(QWidget):
         self.activity_button.setCheckable(True)
         self.activity_button.setToolTip('Show recent actions and their status')
         layout.addWidget(self.activity_button)
+        self.clock_label = QLabel()
+        self.clock_label.setToolTip('Local time')
+        layout.addWidget(self.clock_label)
+        self.clock_timer = QTimer(self)
+        self.clock_timer.setInterval(1000)
+        self.clock_timer.timeout.connect(self.update_clock)
+        self.update_clock()
+        self.clock_timer.start()
         layout.addWidget(self.window_ref.resume_button)
         self.stop_button = QPushButton('Emergency stop')
         self.stop_button.clicked.connect(self.window_ref.stop)
@@ -847,6 +924,11 @@ class PrimeShell(QWidget):
         layout.addWidget(self.stop_button)
         return bar
 
+    def update_clock(self):
+        now = datetime.now()
+        self.clock_label.setText(now.strftime('%H:%M'))
+        self.clock_label.setAccessibleName(now.strftime('%A, %d %B, %H:%M'))
+
     def update_usage(self, data):
         def percent(key):
             value = data.get(key)
@@ -854,6 +936,18 @@ class PrimeShell(QWidget):
 
         cpu, memory = percent('cpu_usage_percent'), percent('ram_usage_percent')
         self.usage_button.setText(f'CPU {cpu}  ·  RAM {memory}')
+        for key, (label, meter) in self.overview_usage.items():
+            value = data.get(key)
+            label.setText(percent(key) if value is not None else 'Unavailable')
+            meter.setVisible(value is not None)
+            if value is not None:
+                meter.setValue(round(value))
+        used, total = data.get('disk_used_gib'), data.get('disk_total_gib')
+        disk = f'Disk {used:.1f} / {total:.1f} GiB' if used is not None and total is not None else 'Disk unavailable'
+        network = data.get('network_status', 'Unavailable')
+        temperature = data.get('cpu_temperature_c')
+        thermal = f'CPU temperature {temperature:.0f} °C' if temperature is not None else 'CPU temperature unavailable'
+        self.overview_details.setText(f'{disk}\n{thermal}\n{network}')
 
     # -- the rail ------------------------------------------------------
 
@@ -918,6 +1012,7 @@ class PrimeShell(QWidget):
         self.build_label.setStyleSheet(f'color: {palette.muted.name()}; font-size: 11px;')
         self.set_state(self.mark.state)
         self.activity.refresh_theme()
+        self.style_overview()
 
     def open_section(self, name: str):
         if name == 'Cybersecurity':

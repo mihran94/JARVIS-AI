@@ -3145,6 +3145,14 @@ class Window(QMainWindow):
         page, layout = self.page('Settings & Safety')
         settings_links = QHBoxLayout()
         layout.addLayout(settings_links)
+        service_links = QHBoxLayout()
+        layout.addLayout(service_links)
+        for label, section in (
+            ('AI providers', 'AI Providers'), ('Voice & audio', 'Voice / Hey Jarvis'),
+            ('Memory', 'Memory'), ('Phone remote', 'Phone Remote'),
+        ):
+            self.flexible_button(service_links, label,
+                                 lambda _checked=False, section=section: self.open_section(section))
         self.settings_usage = QLabel('Collecting PC usage…')
         self.settings_usage.setWordWrap(True)
         usage = QGroupBox('Live PC usage')
@@ -3153,10 +3161,7 @@ class Window(QMainWindow):
         tools = QGroupBox('Settings shortcuts')
         tool_layout = QGridLayout(tools)
         for index, (label, name) in enumerate((
-            ('AI providers', 'AI Providers'),
-            ('Voice and microphone', 'Voice / Hey Jarvis'),
             ('PC Control', 'PC Control'),
-            ('Phone Remote', 'Phone Remote'),
             ('Files & Folders', 'Files & Folders'),
             ('Task queue', 'Task Queue'),
             ('Workflows', 'Step Workflows'),
@@ -3254,7 +3259,8 @@ class Window(QMainWindow):
             safety_layout.addWidget(label)
         layout.addWidget(safety)
         for name, section in (
-            ('Appearance', preferences), ('Updates', updates), ('Plugins', plugins), ('Safety', safety),
+            ('Assistant preferences', assistant_group), ('Appearance', preferences),
+            ('Updates', updates), ('Plugins', plugins), ('Safety', safety),
         ):
             self.flexible_button(settings_links, name,
                                  lambda _checked=False, section=section: self.scroll_to_setting(section))

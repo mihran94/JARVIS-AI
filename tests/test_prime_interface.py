@@ -38,6 +38,24 @@ def test_the_window_has_the_prime_composition(tmp_path):
         window.close()
 
 
+def test_overview_uses_live_values_and_gives_task_details_room(tmp_path):
+    app, window = make_window(tmp_path)
+    try:
+        shell = window.prime_shell
+        window.resize(1200, 740)
+        app.processEvents()
+        assert shell.overview.isVisibleTo(window)
+        shell.update_usage({'cpu_usage_percent': 18, 'ram_usage_percent': 52})
+        assert shell.usage_button.text() == 'CPU 18%  ·  RAM 52%'
+        assert shell.overview_usage['cpu_usage_percent'][1].value() == 18
+        assert shell.overview_usage['gpu_usage_percent'][1].isHidden()
+        shell.usage_button.click()
+        assert window.prime_chat.task_area.isVisibleTo(window)
+        assert shell.overview.isHidden()
+    finally:
+        window.close()
+
+
 def test_the_old_chrome_is_absent_at_construction_and_startup(tmp_path):
     app = QApplication.instance() or QApplication([])
     window = Window(tmp_path)
