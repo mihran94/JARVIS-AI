@@ -9,7 +9,7 @@ import time
 import psutil
 
 from automation import win_controls
-from automation.input import InputTarget, click_at, press_key, type_text
+from automation.input import InputTarget, _keyboard_event, click_at, press_key, send_input, type_text
 from automation.windows import editor_executable, launch_editor
 from video_studio.verification import ffprobe_executable, probe, verify_media
 
@@ -28,6 +28,7 @@ _GA_ROOTOWNER = 3
 _GW_ENABLEDPOPUP = 6
 _PICKER_ADDRESS_ID = 41477
 _PROMOTION_SIZE = (356, 508)
+_MAX_FILENAME_CHARS = 255
 
 
 def capcut_launcher(configured):
@@ -186,7 +187,8 @@ class _CapCutExportUI:
             return round(value * dpi / 96)
 
         width, height = _FORM_SIZE
-        if (rect.right - rect.left, rect.bottom - rect.top) != (scaled(width), scaled(height)):
+        if (abs(rect.right - rect.left - scaled(width)) > scaled(3)
+                or abs(rect.bottom - rect.top - scaled(height)) > scaled(3)):
             return None
 
         def point(x, y):
@@ -196,8 +198,12 @@ class _CapCutExportUI:
         if not dc:
             return None
         try:
-            if (not _teal(self.get_pixel(dc, *point(*_VIDEO_CHECK)))
-                    or not _teal(self.get_pixel(dc, *point(*_EXPORT_BUTTON)))
+            video_x, video_y = _VIDEO_CHECK
+            export_x, export_y = _EXPORT_BUTTON
+            if (not any(_teal(self.get_pixel(dc, *point(video_x + dx, video_y + dy)))
+                        for dx, dy in ((0, 0), (1, 2), (3, 4), (6, 2)))
+                    or not any(_teal(self.get_pixel(dc, *point(export_x + dx, export_y + dy)))
+                               for dx, dy in ((0, 0), (-16, 2), (18, -5)))
                     or (sync is not None and not sync(
                         self.get_pixel(dc, *point(*_SYNC_PIXEL))))):
                 return None
@@ -216,10 +222,12 @@ class _CapCutExportUI:
                 and self.user.IsWindowEnabled(self.editor) and self._popup() is None)
 
     def _form_ready(self, form):
-        return self._foreground() in (self.editor, form) and self._popup() in (None, form)
+        return (win_controls.window_process(form) == self.pid
+                and win_controls.foreground_window() in (self.editor, form)
+                and self._popup() in (None, form))
 
     def _current_form(self):
-        form = self._popup() or self._foreground()
+        form = self._popup() or win_controls.foreground_window()
         if form and self._form_ready(form) and self._form_point(form, _EXPORT_BUTTON):
             return form
         return None
@@ -307,7 +315,7 @@ class _CapCutExportUI:
     def _promotion_close(self):
         hwnd = win_controls.foreground_window()
         if (not hwnd or win_controls.window_process(hwnd) != self.pid
-                or self._title(hwnd) != 'CapCut' or not self._class(hwnd).endswith('QWindowIcon')):
+                or self._title(hwnd) != 'CapCut'):
             return None
         geometry = self._geometry(hwnd)
         if not geometry or geometry[2:] != _PROMOTION_SIZE:
@@ -321,9 +329,16 @@ class _CapCutExportUI:
             red, green, blue = _rgb(pixel)
             return 130 <= red <= 198 and green >= 210 and blue >= 230
 
-        return self._window_point(hwnd, (338, 17),
-                                  ((24, 55, purple), (37, 436, light_blue), (310, 436, purple)),
-                                  minimum=_PROMOTION_SIZE)
+        def dark_header(pixel):
+            return 25 <= min(_rgb(pixel)) <= max(_rgb(pixel)) <= 60
+
+        button = ((37, 436, light_blue), (310, 436, purple))
+        trial = None
+        if self._class(hwnd).endswith('QWindowIcon'):
+            trial = self._window_point(hwnd, (338, 17), ((24, 55, purple), *button),
+                                       minimum=_PROMOTION_SIZE)
+        return trial or self._window_point(hwnd, (338, 17), ((24, 17, dark_header), *button),
+                                           minimum=_PROMOTION_SIZE)
 
     def _empty_import(self):
         return self._editor_ready() and self._window_point(
@@ -439,8 +454,22 @@ class _CapCutExportUI:
         self._verify_export_folder(form, folder)
 
     def _verify_export_folder(self, form, folder):
-        self._click(form, _FOLDER_BUTTON)
-        picker = self._wait(self._folder_picker, 'CapCut did not reopen the selected export folder.')
+        # CapCut can finish closing the first Windows dialog before it has
+        # re-enabled the folder button. Retry only while this form is active.
+        next_click = 0
+
+        def reopen():
+            nonlocal next_click
+            picker = self._folder_picker()
+            if picker:
+                return picker
+            now = time.monotonic()
+            if now >= next_click and self._current_form() == form:
+                self._click(form, _FOLDER_BUTTON)
+                next_click = now + 1.3
+            return None
+
+        picker = self._wait(reopen, 'CapCut did not reopen the selected export folder.', timeout=8)
 
         def ready():
             return self._folder_picker() == picker
@@ -482,28 +511,66 @@ class _CapCutExportUI:
             form = self._current_form()
             if form:
                 return form
-            if self._promotion_close():
-                self._click_point(self._promotion_close, 'close the CapCut promotion')
+            dismiss = next((locate for locate in (self._promotion_close, self._editor_tutorial_close)
+                            if locate()), None)
+            if dismiss is not None:
+                self._click_point(dismiss, 'close the CapCut overlay')
                 requested_at = 0
-            elif self._editor_ready() and requests < 3 and time.monotonic() - requested_at >= 2:
+                requests = 0
+            elif requests < 3 and time.monotonic() - requested_at >= 2:
                 if self._editor_export_button():
                     self._click_point(self._editor_export_button, 'open the CapCut Export dialog')
-                else:
+                elif self._editor_ready():
                     self._key('ctrl+e', self._editor_ready)
+                else:
+                    time.sleep(0.15)
+                    continue
                 requested_at = time.monotonic()
                 requests += 1
             time.sleep(0.15)
         raise RuntimeError('CapCut did not open a supported Export form. Check the timeline and close any blocking dialogs.')
 
+    def _editor_tutorial_close(self):
+        """Find the Close link in CapCut's yellow EditPilot tutorial."""
+        foreground = win_controls.foreground_window()
+        if (not foreground or win_controls.window_process(foreground) != self.pid
+                or self._popup() is not None):
+            return None
+        geometry = self._geometry(self.editor)
+        if not geometry:
+            return None
+        rect, dpi, width, height = geometry
+        if width < 1150 or height < 690:
+            return None
+        probe = wintypes.POINT(rect.left + round((width - 314) * dpi / 96),
+                                rect.top + round((height - 35) * dpi / 96))
+        hit = self.user.GetAncestor(self.user.WindowFromPoint(probe), _GA_ROOT)
+        if not hit or hit == self.editor or win_controls.window_process(hit) != self.pid:
+            return None
+        popup = self._geometry(hit)
+        if not popup or not (173 <= popup[2] <= 181 and 226 <= popup[3] <= 235):
+            return None
+
+        def yellow(pixel):
+            red, green, blue = _rgb(pixel)
+            return red > 225 and 175 < green < 238 and blue < 100
+
+        return self._window_point(hit, (22, 209),
+                                  ((8, 205, yellow), (61, 198, yellow), (91, 218, yellow)),
+                                  minimum=(173, 226))
+
     def _editor_export_button(self):
-        if not self._editor_ready():
+        foreground = win_controls.foreground_window()
+        if (not foreground or win_controls.window_process(foreground) != self.pid
+                or self._title(foreground) != 'CapCut'
+                or not self.user.IsWindowEnabled(self.editor) or self._popup() is not None):
             return None
         geometry = self._geometry(self.editor)
         if not geometry:
             return None
         width = geometry[2]
-        return self._window_point(self.editor, (width - 126, 18),
-                                  ((width - 124, 22, _teal), (width - 128, 10, _teal)),
+        return self._window_point(self.editor, (width - 152, 18),
+                                  ((width - 172, 23, _teal), (width - 132, 10, _teal)),
                                   minimum=(1150, 690))
 
     def export(self, output):
@@ -519,7 +586,16 @@ class _CapCutExportUI:
         def form_ready():
             return self._current_form() == form
 
-        self._key('ctrl+a', form_ready)
+        # Some CapCut builds insert a literal "a" instead of acting on
+        # Ctrl+A. Clear the single-line field using layout-independent keys.
+        self._key('home', form_ready)
+        self._guard(form_ready, 'clear the export filename')
+        delete_events = [
+            _keyboard_event(0x2E, key_up=key_up, unicode=False)
+            for _ in range(_MAX_FILENAME_CHARS) for key_up in (False, True)
+        ]
+        if send_input(delete_events) != len(delete_events):
+            raise RuntimeError('Windows could not clear the CapCut export filename.')
         self._type(output.stem, form_ready)
         if self._form_point(form, _SYNC_CHECK, sync=_teal):
             self._click(form, _SYNC_CHECK, sync=_teal)
