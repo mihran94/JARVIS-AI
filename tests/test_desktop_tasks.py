@@ -105,6 +105,7 @@ def test_windows_sendinput_structure_and_mock_dispatch(monkeypatch):
             return 0
 
     api = FakeUser32()
+    monkeypatch.setattr('automation.input.sys.platform', 'win32')
     monkeypatch.setattr(desktop_tasks.ctypes, 'windll',
                         SimpleNamespace(user32=api), raising=False)
     monkeypatch.setattr(desktop_tasks, 'target_is_foreground',

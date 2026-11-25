@@ -629,6 +629,7 @@ class PrimeChat(QWidget):
         # Two states, one room: the assistant standing in the middle of
         # an empty conversation, and the conversation itself.
         self.states = QStackedWidget()
+        self.states.setMinimumHeight(150)
         self.assistant = PrimeAssistant(palette, window)
         self.conversation = PrimeConversation(palette)
         self.states.addWidget(self.assistant)
