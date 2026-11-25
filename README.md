@@ -210,6 +210,14 @@ for that service. The list was last checked on 16 November 2026:
 | Groq | `openai/gpt-oss-120b` | Availability depends on your Groq account. |
 | Ollama (local) | `qwen3:8b` | Runs on your own PC, no key, no network. Pull it first with `ollama pull qwen3:8b`. |
 
+**Windows CMD local model check:** If Ollama is already running, use
+`DIAGNOSE_JARVIS.cmd --local-model qwen3:8b` (replace the tag with the exact one
+you configured). This optional check reads only the model listing at
+`127.0.0.1:11434`, without a proxy, cloud fallback, startup or download. A
+missing tag or unavailable listing makes the command exit nonzero. A pass
+means the tag is listed; it does not verify text generation or voice. The
+default diagnostic does not contact Ollama.
+
 A model that was saved before is never overwritten. Open **API Providers →
 the provider → Advanced settings → Use recommended model**, then **Save
 provider settings**, to move to the model above. Every model costs money
