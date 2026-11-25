@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from core.runtime_profile import data_directory
+from core.runtime_profile import DATA_FOLDER, data_directory
 from scripts import launch, verify_windows
 from security.vault import Vault
 
@@ -21,7 +21,7 @@ def test_development_profile_uses_checkout_source_and_separate_vault(tmp_path, m
         assert env['JARVIS_SOURCE_RELEASE'] == 'base'
         with monkeypatch.context() as child:
             child.setenv('JARVIS_DEVELOPMENT_PROFILE', captured[-1])
-            assert data_directory().parent == default_data.with_name('JarvisAI-Development')
+            assert data_directory().parent == default_data.with_name(DATA_FOLDER + '-Development')
             assert Vault().service != default_service
         return 19
 

@@ -5,7 +5,7 @@ from core.runtime_profile import development_profile
 
 
 class Vault:
-    SERVICE = 'JARVIS-AI-0.1'
+    SERVICE = 'JARVIS-M'
 
     def __init__(self):
         profile = development_profile()

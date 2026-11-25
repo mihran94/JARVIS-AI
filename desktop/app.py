@@ -77,7 +77,7 @@ from video_studio.after_effects import after_effects_render
 from video_studio.after_effects_timeline import timeline_executable, timeline_script
 from video_studio.capcut import export_capcut
 from automation.capcut_export import capcut_launcher, new_mp4, save_open_capcut_export
-from core.runtime_profile import RESTART_EXIT_CODE, restart_supported
+from core.runtime_profile import APP_NAME, RESTART_EXIT_CODE, restart_supported
 from video_studio.preview import media_tools, render_preview
 from security.policy import Action, Denied, Policy, Stopped
 from security.vault import Vault
@@ -311,14 +311,12 @@ class TestRunWorker(QThread):
 class Window(QMainWindow):
     def __init__(self, data_root):
         super().__init__()
-        self.setWindowTitle('JARVIS AI')
+        self.setWindowTitle(APP_NAME)
         self.resize(1360, 790)
         self.root = Path(data_root)
         self.store = Store(self.root / 'history.sqlite3')
         saved_theme = self.store.get('omega:theme')
         self.interface_theme = saved_theme if isinstance(saved_theme, str) and saved_theme in OMEGA_THEMES else DEFAULT_THEME
-        if saved_theme == 'MARK LVII':
-            self.store.set('omega:theme', DEFAULT_THEME)
         self.setStyleSheet(theme_sheet(self.interface_theme))
         self.memory_service = MemoryService(self.root / 'history.sqlite3')
         self.router = ProviderRouter()
@@ -395,6 +393,20 @@ class Window(QMainWindow):
         self.add_page('PC Control', self.automation_page())
         self.add_page('Coding Assistant', self.editor_page())
         self.voice_panel = VoicePanel()
+        self.live_voice = None
+        self.voice_panel.allow.toggled.connect(self.on_live_mic_consent)
+        live_voice_row = QHBoxLayout()
+        self.voice_panel.layout().insertLayout(1, live_voice_row)
+        self.live_voice_settings_button = self.button(live_voice_row, 'Live Voice', self.toggle_live_voice)
+        self.live_speech_language = QComboBox()
+        self.live_speech_language.setAccessibleName('Live speech language')
+        self.live_speech_language.addItem('Automatic language detection', 'auto')
+        self.live_speech_language.addItem('Tamil + Tanglish', 'ta_en')
+        self.live_speech_language.setCurrentIndex(max(0, self.live_speech_language.findData(
+            self.store.get('voice:live_language', 'ta_en'))))
+        self.live_speech_language.currentIndexChanged.connect(
+            lambda _index: self.store.set('voice:live_language', self.live_speech_language.currentData()))
+        live_voice_row.addWidget(self.live_speech_language, 1)
         # The speech language is remembered, so the owner does not choose it
         # again every time the application starts.
         saved_language = self.store.get('voice_language')
@@ -598,6 +610,8 @@ class Window(QMainWindow):
             return 'stopped'
         if self.chat_launch is not None or getattr(self, 'coding_pending', None):
             return 'approval'
+        if self.live_voice is not None and self.live_voice.active:
+            return 'thinking' if self.live_voice.state == 'connecting' else self.live_voice.state
         if self.voice_panel.speaking:
             return 'speaking'
         if self.voice_panel.listening:
@@ -653,7 +667,7 @@ class Window(QMainWindow):
             chat.show_task(name)
             if name in chat.task_panels:
                 self.pages.setCurrentIndex(self.page_indices['JARVIS Chat'])
-                self.prime_shell.mark_active('JARVIS Chat')
+                self.prime_shell.mark_active(name if name in self.prime_shell.rail_buttons else 'JARVIS Chat')
                 return
         index = self.page_indices[name]
         for row in range(self.nav.count()):
@@ -678,6 +692,11 @@ class Window(QMainWindow):
             self.enable_omega()
         self.omega.switch('Island')
 
+    def open_saved_projects(self):
+        self.open_section('Settings & Safety')
+        self.scroll_to_setting(self.saved_projects_group)
+        self.prime_shell.mark_active('Projects')
+
     def update_assistant_navigation(self, _index=None):
         """Keep the composer with the conversation."""
         in_chat = self.pages.currentIndex() == self.page_indices['JARVIS Chat']
@@ -696,6 +715,7 @@ class Window(QMainWindow):
             self.hands_free_voice.isChecked()
             and not self.policy.stopped
             and self.voice_panel.consent.listening
+            and not self.voice_panel.live_voice_active
             and self.chat_provider.currentText() == 'Ollama'
             and self.router.spec('Ollama').local
             and not self.backup_consent.isChecked()
@@ -708,6 +728,7 @@ class Window(QMainWindow):
             busy_voice = (self.voice_panel.worker is not None
                           and self.voice_panel.worker.isRunning())
             if (self.policy.stopped or not self.voice_panel.consent.listening
+                    or self.voice_panel.live_voice_active
                     or self.chat_provider.currentText() != 'Ollama'
                     or not self.router.spec('Ollama').local
                     or self.backup_consent.isChecked() or self.worker is not None
@@ -926,6 +947,90 @@ class Window(QMainWindow):
         else:
             self.voice_panel.listen('once')
 
+    def on_live_mic_consent(self, allowed):
+        if not allowed and self.live_voice is not None:
+            self.live_voice.stop('Microphone permission was removed.')
+
+    def toggle_live_voice(self):
+        if self.live_voice is not None and self.live_voice.active:
+            self.live_voice.stop()
+            return
+        if self.policy.stopped:
+            return
+        if not self.voice_panel.consent.listening:
+            self.open_section('Voice / Hey Jarvis')
+            self.statusBar().showMessage('Allow the microphone, then choose Live Voice in Chat.', 15000)
+            return
+        if (self.worker is not None or self.voice_panel.audio_test_active
+                or self.voice_panel.playback_busy or self.voice_panel.pending_speech
+                or self.voice_panel.listening):
+            self.statusBar().showMessage('Finish the current chat or audio session first.', 10000)
+            return
+
+        def start():
+            key = self.get_key('Gemini')
+            if not self.confirm(Action(
+                'live_voice', 'Start Gemini Live voice chat. While on, audio from the microphone '
+                'is streamed to Google and may incur provider charges. Stop Live Voice closes '
+                'the microphone. The conversation is saved as chat text.',
+            )):
+                return
+            if self.policy.stopped or not self.voice_panel.consent.listening:
+                return
+            from desktop.live_voice import LiveVoice
+            if self.live_voice is None:
+                self.live_voice = LiveVoice(self)
+                self.live_voice.status.connect(lambda text: self.statusBar().showMessage(text, 20000))
+                self.live_voice.state_changed.connect(self.on_live_voice_state)
+                self.live_voice.turn_finished.connect(self.save_live_voice_turn)
+                self.live_voice.audio_level.connect(self.voice_panel.audio_level.emit)
+            self.hands_free_voice.setChecked(False)
+            self.voice_panel.stop_continuous()
+            self.open_section('JARVIS Chat')
+            guide = assistant_guidance(self.reply_language.currentData(), self.reply_tone.currentData())
+            guide += (' This is a spoken conversation. Keep replies brief. The desktop handles '
+                      'explicit local commands separately. For a requested PC action, tell the '
+                      'user to check for an approval in the app. Never claim the action ran. '
+                      'For saved projects, tell the user to check the result in Chat.')
+            self.live_voice.start(key, guide, tamil_tanglish=self.live_speech_language.currentData() == 'ta_en')
+        self.notify(start)
+
+    def on_live_voice_state(self, state):
+        self.voice_panel.live_voice_active = state != 'idle'
+        title = 'Stop Live Voice' if state != 'idle' else 'Live Voice'
+        self.live_voice_button.setText(title)
+        self.live_voice_settings_button.setText(title)
+        self.live_speech_language.setEnabled(state == 'idle')
+        self.voice_panel.refresh()
+        self.refresh_prime_state()
+
+    def save_live_voice_turn(self, spoken, reply):
+        if self.policy.stopped or not (spoken or reply):
+            return
+        if spoken:
+            from desktop.voice_tasks import local_voice_request
+            request = local_voice_request(spoken, load_projects(self.store))
+            if request is not None:
+                kind, value = request
+                if kind == 'desktop':
+                    if self.queue_desktop_task(spoken, value):
+                        return
+                elif kind == 'launch' and self.chat_launch is None and self.desktop_pending is None:
+                    self.queue_chat_launch(spoken, value)
+                    return
+                elif kind == 'project' and self.handle_developer_command(value, spoken=spoken):
+                    return
+        if spoken:
+            self.store.message(self.session, 'user', spoken)
+        if reply:
+            self.store.message(self.session, 'assistant', reply)
+        self.render_chat()
+        self.refresh_archives()
+
+    def interrupt_live_voice(self):
+        if self.live_voice is not None:
+            self.live_voice.interrupt()
+
     def page(self, title, note=''):
         page = QWidget()
         # The page root carries the premium surface, so the window is never
@@ -1083,11 +1188,12 @@ class Window(QMainWindow):
             if percent is not None:
                 meter.setValue(round(percent * 10))
 
-    def handle_developer_command(self, text):
+    def handle_developer_command(self, text, *, spoken=None):
         """Dispatch only known commands through existing approval-gated features."""
         command = parse_command(text, load_projects(self.store))
         if command is None or command.kind == 'analysis':
             return False
+        text = spoken if spoken is not None else text
         if command.kind == 'error':
             self.show_local_system_reply(text, command.detail)
         elif command.kind == 'help':
@@ -1308,12 +1414,12 @@ class Window(QMainWindow):
         self.system_metrics_label.hide()
         hero.addLayout(details, 1)
         layout.addLayout(hero)
-        # The MARK LVII-inspired holographic reactor shares the existing AI
+        # The original chat animation shares the existing AI
         # status and voice pipeline. It does not launch a second assistant.
         from desktop.omega_visuals import Reactor
         self.chat_reactor = Reactor()
         self.chat_reactor.theme = self.interface_theme
-        self.chat_reactor.setAccessibleName('JARVIS holographic core')
+        self.chat_reactor.setAccessibleName('Voice activity')
         self.chat_reactor.setFixedHeight(170)
         layout.addWidget(self.chat_reactor, 0, Qt.AlignmentFlag.AlignCenter)
         # The active brain sits on its own line. It is information the owner
@@ -1522,6 +1628,8 @@ class Window(QMainWindow):
         composer_layout.addLayout(composer_actions)
         self.chat_mic = self.button(composer_actions, 'Speak', self.listen_to_user)
         self.chat_mic.setObjectName('quiet')
+        self.live_voice_button = self.button(composer_actions, 'Live Voice', self.toggle_live_voice)
+        self.live_voice_button.setToolTip('Have a spoken conversation through Gemini Live.')
         self.attach_button = self.button(
             composer_actions, 'Attach', lambda: self.open_section('Files & Folders'))
         self.attach_button.setObjectName('quiet')
@@ -3023,6 +3131,8 @@ class Window(QMainWindow):
             return
         session = self.archives.currentData()
         if session:
+            if self.live_voice is not None:
+                self.live_voice.stop()
             self.clear_desktop_result()
             self.clear_suggested_plan()
             self.conversation_plan.cancel('Conversation changed; remaining steps cancelled.')
@@ -3231,7 +3341,9 @@ class Window(QMainWindow):
             history_path=self.root / 'history.sqlite3')
         backup_layout.addWidget(self.history_backup_panel)
         layout.addWidget(backup)
-        self.add_projects_settings(layout)
+        self.saved_projects_group = QWidget()
+        self.add_projects_settings(QVBoxLayout(self.saved_projects_group))
+        layout.addWidget(self.saved_projects_group)
         plugins = QGroupBox('Plugins')
         self.plugins_group = plugins
         plugin_layout = QVBoxLayout(plugins)
@@ -3451,7 +3563,8 @@ class Window(QMainWindow):
                   + task.text + '\nThe target window must be verified before typing.')
         self.show_local_system_reply(command, review)
         self.chat_approval_label.setText(
-            f'{step.title()} in {task.app}: {excerpt!r}\nSHA-256: {digest}')
+            f'{step.capitalize()} in {task.app}\n{excerpt}')
+        self.chat_approval_label.setToolTip(f'Exact action content fingerprint: {digest}')
         self.chat_approval.show()
         self.refresh_voice_hud()
         return True
@@ -5358,6 +5471,8 @@ class Window(QMainWindow):
             self.statusBar().showMessage(
                 'A task is still running. Finish or decline it before starting a new chat.', 12000)
             return
+        if self.live_voice is not None:
+            self.live_voice.stop()
         self.clear_desktop_result()
         self.clear_suggested_plan()
         self.conversation_plan.cancel('New conversation; remaining steps cancelled.')
@@ -5436,6 +5551,9 @@ class Window(QMainWindow):
 
     def send(self, *, allow_notes=True):
         if self.policy.stopped or self.worker is not None or not self.prompt.toPlainText().strip():
+            return
+        if self.live_voice is not None and self.live_voice.active:
+            self.statusBar().showMessage('Stop Live Voice before sending a typed chat message.', 10000)
             return
         self.clear_suggested_plan()
         text = self.prompt.toPlainText().strip()
@@ -5854,6 +5972,8 @@ class Window(QMainWindow):
 
     def stop(self):
         self.policy.stop()
+        if self.live_voice is not None:
+            self.live_voice.stop()
         self.browser.stop()
         if self.coding_mission_worker is not None:
             self.coding_mission_worker.cancel()
@@ -6026,6 +6146,8 @@ class Window(QMainWindow):
         self.request_exit()
 
     def closeEvent(self, event):
+        if self.live_voice is not None:
+            self.live_voice.stop()
         self.conversation_plan.cancel('Window closed; remaining steps cancelled.')
         self.audio_test.stop()
         self.cancel_launch_verification()
@@ -6126,6 +6248,7 @@ def main():
     if '--check-voice-runtime' in args[1:]:
         return voice_runtime_smoke_test()
     app = QApplication(args)
+    app.setApplicationName(APP_NAME)
     base = data_directory()
     base.mkdir(parents=True, exist_ok=True)
     lock = QLockFile(str(base / 'application.lock'))
@@ -6136,7 +6259,7 @@ def main():
         existing.connectToServer(endpoint)
         if existing.waitForConnected(1200):
             return 0
-        QMessageBox.warning(None, 'JARVIS AI',
+        QMessageBox.warning(None, APP_NAME,
                             'JARVIS is already running for this profile. '
                             'Use the tray icon or Ctrl+Alt+Space to show its window.')
         return 1
@@ -6160,7 +6283,7 @@ def main():
         # Offline native smoke test: no provider calls or remote listener.
         def finish_smoke():
             if (window.isVisible() and window.isAncestorOf(window.prime_shell)
-                    and window.prime_shell.brand.text() == 'JARVIS AI'
+                    and window.prime_shell.brand.text() == APP_NAME
                     and window.prime_shell.stop_button.isVisibleTo(window)
                     and not window.omega.floating.isVisible()):
                 app.quit()

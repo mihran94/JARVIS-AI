@@ -32,7 +32,7 @@ def test_the_window_has_the_prime_composition(tmp_path):
     try:
         assert isinstance(window.prime_shell, PrimeShell)
         assert isinstance(window.prime_chat, PrimeChat)
-        assert window.prime_shell.brand.text() == 'JARVIS AI'
+        assert window.prime_shell.brand.text() == 'JARVIS M'
         assert not window.omega.floating.isVisible()
     finally:
         window.close()

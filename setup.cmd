@@ -28,7 +28,7 @@ if errorlevel 1 (
   exit /b 1
 )
 echo Setup complete.
-echo For isolated source testing, run START_JARVIS.cmd --dev-data
+echo To open JARVIS M, run START_JARVIS_M.cmd
 exit /b 0
 
 :venv_failed

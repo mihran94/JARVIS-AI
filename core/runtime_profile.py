@@ -4,6 +4,8 @@ from pathlib import Path
 import re
 
 RESTART_EXIT_CODE = 75
+APP_NAME = 'JARVIS M'
+DATA_FOLDER = 'JarvisM'
 
 
 def restart_supported():
@@ -20,5 +22,5 @@ def data_directory():
     local = Path(os.environ.get('LOCALAPPDATA', str(Path.home() / '.local' / 'share')))
     profile = development_profile()
     if profile:
-        return local / 'JarvisAI-Development' / profile
-    return local / 'JarvisAI'
+        return local / (DATA_FOLDER + '-Development') / profile
+    return local / DATA_FOLDER

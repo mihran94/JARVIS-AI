@@ -20,8 +20,10 @@ import os
 from pathlib import Path
 import sys
 
+from core.runtime_profile import APP_NAME
+
 RUN_KEY = r'Software\Microsoft\Windows\CurrentVersion\Run'
-VALUE_NAME = 'JARVIS AI'
+VALUE_NAME = APP_NAME
 
 
 class StartupError(RuntimeError):

@@ -1,25 +1,4 @@
-"""What was ported from the Mark LVI source, and why.
-
-WHAT CAME FROM WHERE
-    `core/protection.py` is ported from the Mark LVI source,
-    `core/code_checks.py`. Its `Protection` class decides which files of a
-    project a coding agent may not read and may not change: anything that
-    looks like a secret by name, and anything the project's own `.gitignore`
-    keeps out.
-
-    The GPU load and the CPU temperature in `desktop/system_metrics.py` come
-    from the same archive's `actions/system_monitor.py`, which reads NVML
-    through ctypes and the temperature through psutil, so no subprocess is
-    started and a value that cannot be read stays unavailable.
-
-WHAT IS COVERED
-    * A file of secrets and a gitignored file never reach a provider.
-    * A coding agent may not write a protected file.
-    * A change to a protected file is put back and left out of the diff.
-    * The Codex prompt names the files that are off limits.
-    * The GPU and the temperature are reported as unavailable when they
-      cannot be read, and never as a made-up number.
-"""
+"""Regression coverage for private project files and available OS metrics."""
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
@@ -212,8 +191,7 @@ def test_a_file_that_is_not_a_settings_file_is_not_checked():
 
 def test_the_gpu_and_the_temperature_are_unavailable_when_they_cannot_be_read(monkeypatch):
     import desktop.system_metrics as metrics
-    monkeypatch.setattr(metrics, '_nvml_gpu', lambda: -1.0)
-    monkeypatch.setattr(metrics, '_cpu_temperature', lambda: -1.0)
+    monkeypatch.setattr(metrics, 'cpu_temperature', lambda: None)
     data = metrics.snapshot()
     assert data['gpu_usage_percent'] is None
     assert data['cpu_temperature_c'] is None
@@ -222,20 +200,16 @@ def test_the_gpu_and_the_temperature_are_unavailable_when_they_cannot_be_read(mo
     assert 'CPU TEMPERATURE  /  Unavailable' in text
 
 
-def test_a_read_gpu_and_temperature_are_reported(monkeypatch):
+def test_available_temperature_is_reported(monkeypatch):
     import desktop.system_metrics as metrics
-    monkeypatch.setattr(metrics, '_nvml_gpu', lambda: 42.0)
-    monkeypatch.setattr(metrics, '_cpu_temperature', lambda: 61.5)
+    monkeypatch.setattr(metrics, 'cpu_temperature', lambda: 61.5)
     data = metrics.snapshot()
-    assert data['gpu_usage_percent'] == 42.0
     assert data['cpu_temperature_c'] == 61.5
     text = metrics.format_snapshot(data)
-    assert '42.0% usage' in text
     assert '61.5 °C' in text
 
 
-def test_the_gpu_reader_never_raises_when_there_is_no_library(monkeypatch):
+def test_temperature_stays_unavailable_without_supported_sensor(monkeypatch):
     import desktop.system_metrics as metrics
-    monkeypatch.setattr(metrics, '_nvml_lib', None)
-    monkeypatch.setattr(metrics, '_nvml_state', False)
-    assert metrics._nvml_gpu() == -1.0
+    monkeypatch.setattr(metrics.psutil, 'sensors_temperatures', lambda: {}, raising=False)
+    assert metrics.cpu_temperature() is None
