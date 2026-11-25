@@ -56,6 +56,11 @@ EXECUTABLE = 'ollama.exe' if sys.platform == 'win32' else 'ollama'
 #: How long a check of the local server may take, in seconds.
 CHECK_TIMEOUT = 2.0
 
+#: How long a check of the local server may take when the interface is
+#: waiting for it, in seconds. The local server answers in a moment or
+#: it is not there at all, so a short wait is enough.
+STATUS_TIMEOUT = 0.5
+
 #: How long the supervisor waits for a server it started, in seconds.
 START_TIMEOUT = 12.0
 
@@ -297,4 +302,4 @@ class LocalModelSupervisor:
 __all__ = ['CHECK_TIMEOUT', 'DEFAULT_BASE', 'DEFAULT_ENDPOINT', 'DEFAULT_MODEL',
            'DEFAULT_PORT', 'EXECUTABLE', 'LOCAL_HOST', 'LocalModelStatus',
            'LocalModelSupervisor', 'LocalModelUnavailable', 'START_TIMEOUT',
-           'candidate_paths', 'find_executable', 'is_loopback']
+           'STATUS_TIMEOUT', 'candidate_paths', 'find_executable', 'is_loopback']

@@ -130,7 +130,7 @@ from agents.workflows import WorkflowQueue
 from core.engines import (EngineRouter, EngineStep, EngineUnavailable, GEMINI, LOCAL,
                           enabled_from_store, history_from_store, save_history_to_store,
                           set_enabled_in_store)
-from core.local_model import LocalModelSupervisor
+from core.local_model import LocalModelSupervisor, STATUS_TIMEOUT
 from desktop.hud import HudFrame
 from desktop.automation_panel import AutomationPanel, ProposedAction
 from voice import models as voice_models
@@ -140,6 +140,11 @@ from voice import models as voice_models
 #: stylesheet was previously only ever applied by the tests, so the shipping
 #: JARVIS rendered in the default light Qt theme.
 STYLE = prime_theme.PRIME_DARK
+
+#: The worker that starts the on-device model. It lives here and not in
+#: the window, because a thread that is still running when the window
+#: is destroyed takes the application down with it.
+_local_model_worker = None
 
 
 class ChatWorker(QThread):
@@ -281,14 +286,19 @@ class LocalModelWorker(QThread):
 
     The model can take a moment to answer the first time, and the
     window must not wait for it. The worker reports what happened, and
-    the interface shows it. Nothing here touches the network on the
-    interface thread.
+    the interface shows it.
+
+    The worker is **not** a child of the window. A thread that is still
+    running when its parent is destroyed takes the whole application
+    down with it, and a window can be closed at any moment. The worker
+    lives in the module instead, and it reports to the window only for
+    as long as the window is there to hear it.
     """
 
     done = Signal(object)
 
-    def __init__(self, supervisor, parent=None):
-        super().__init__(parent)
+    def __init__(self, supervisor):
+        super().__init__()
         self.supervisor = supervisor
 
     def run(self):
@@ -360,7 +370,11 @@ class Window(QMainWindow):
         self.workflows = WorkflowQueue(self.store, self.gateway)
         # The on-device model that answers most of the work, and the
         # router that decides when one step of a mission needs Gemini.
-        self.local_model = LocalModelSupervisor(model=self.selected_model('Ollama'))
+        # The status of the local server is read with a short wait: the
+        # server answers in a moment, and the interface must not wait
+        # for it when it is not there at all.
+        self.local_model = LocalModelSupervisor(model=self.selected_model('Ollama'),
+                                                timeout=STATUS_TIMEOUT)
         self.engines = self._build_engine_router()
         self.engine_history = history_from_store(self.store)
         # The HUD is always in sight: it answers what this computer is
@@ -517,12 +531,12 @@ class Window(QMainWindow):
         self.maintenance_timer.start(60_000)
         self.enable_prime()
         QTimer.singleShot(0, self.check_maintenance)
-        # The on-device model is started with JARVIS, away from the
-        # interface thread, and the voice models are read once.
-        self.local_model_worker = LocalModelWorker(self.local_model, self)
-        self.local_model_worker.done.connect(self.on_local_model_ready)
-        QTimer.singleShot(0, self.local_model_worker.start)
+        # The voice models are read once, and the on-device model is
+        # checked with a short wait: the local server answers in a
+        # moment, and the interface must not wait for it if it is not
+        # there.
         QTimer.singleShot(0, self.refresh_voice_models)
+        QTimer.singleShot(0, self.refresh_local_model_status)
 
     def prime_palette_or_default(self):
         """The PRIME palette, or the dark one when PRIME is not mounted yet."""
@@ -627,9 +641,10 @@ class Window(QMainWindow):
         done away from the interface thread, because the owner must not
         wait for the model on the way to a click.
         """
-        worker = LocalModelWorker(self.local_model, self)
+        global _local_model_worker
+        worker = LocalModelWorker(self.local_model)
         worker.done.connect(self.on_local_model_ready)
-        self.local_model_worker = worker
+        _local_model_worker = worker
         worker.start()
         return worker
 
@@ -648,17 +663,17 @@ class Window(QMainWindow):
     def refresh_local_model_status(self):
         """Show what the on-device model is doing.
 
-        The reading is the one the worker brought back. Nothing is asked
-        of the model here, because the interface must not wait for it.
+        The reading is taken with a short wait. The local server answers
+        in a moment or it is not there at all, and the interface must
+        not wait for it either way.
         """
         status = getattr(self, 'local_model_status', None)
-        label = getattr(self, 'local_model_label', None)
-        if label is None:
-            return
         if status is None:
-            label.setText('The on-device model has not been checked yet.')
-            return
-        label.setText(status.detail)
+            status = self.local_model.status()
+            self.local_model_status = status
+        label = getattr(self, 'local_model_label', None)
+        if label is not None:
+            label.setText(status.detail)
 
     def refresh_voice_models(self):
         """Show which local voice models are ready."""

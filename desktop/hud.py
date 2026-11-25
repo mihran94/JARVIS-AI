@@ -96,7 +96,6 @@ class HudCore(QWidget):
         self._timer = QTimer(self)
         self._timer.setInterval(SWEEP_MS)
         self._timer.timeout.connect(self._tick)
-        self._timer.start()
 
     def set_motion(self, enabled: bool):
         """Turn the motion on or off."""
@@ -111,6 +110,17 @@ class HudCore(QWidget):
         self.phase = (self.phase + 0.6) % 360.0
         self.pulse = (self.pulse + 0.4) % 360.0
         self.update()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # The sweep only runs while the core is on the screen. A core
+        # that is not visible must not keep the machine busy.
+        if self.motion:
+            self._timer.start()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self._timer.stop()
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -388,7 +398,6 @@ class HudFrame(QWidget):
         self._timer = QTimer(self)
         self._timer.setInterval(90)
         self._timer.timeout.connect(self._tick)
-        self._timer.start()
 
     def set_motion(self, enabled: bool):
         """Turn the motion on or off."""
@@ -403,6 +412,17 @@ class HudFrame(QWidget):
             return
         self.phase = (self.phase + 0.35) % 360.0
         self.update()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # The scan line only runs while the HUD is on the screen. A HUD
+        # that is not visible must not keep the machine busy.
+        if self.motion:
+            self._timer.start()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self._timer.stop()
 
     def paintEvent(self, event):
         painter = QPainter(self)
