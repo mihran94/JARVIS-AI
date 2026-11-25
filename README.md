@@ -2,6 +2,9 @@
 
 ## Command-first JARVIS (Island + Settings)
 
+**[JARVIS M](integrations/mark/README.md)** connects the Mark LVII HUD and Live
+Voice to JARVIS AI's Windows Calculator, Notepad, saved projects and approvals.
+
 The Windows HUD and its 3D reactor are adapted from
 [Mark LVII by FatihMakes](https://github.com/FatihMakes/Mark-LVII), copyright
 © 2026 FatihMakes, under [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/).

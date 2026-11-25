@@ -18,4 +18,7 @@ $pluginName = 'jarvis_pc_projects'
 $config = @{ root = $jarvis; development = [bool]$DevData } | ConvertTo-Json
 [IO.File]::WriteAllText((Join-Path $plugins "$pluginName.json"), $config)
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "$pluginName.py") -Destination $plugins
-Write-Output 'JARVIS PC & Projects installed. Restart Mark LVII to load it.'
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'jarvis_spoken.py') -Destination (Join-Path $plugins '_jarvis_spoken.py')
+& (Join-Path $jarvis '.venv\Scripts\python.exe') (Join-Path $PSScriptRoot 'install_spoken.py') $mark
+if ($LASTEXITCODE -ne 0) { throw 'JARVIS M speech hooks could not be installed.' }
+Write-Output 'JARVIS M installed. Restart Mark LVII to load it.'
