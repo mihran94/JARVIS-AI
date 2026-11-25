@@ -3,9 +3,65 @@ import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 import pytest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 from automation.desktop_tasks import DesktopTask, _events, parse_desktop_task, type_into_target
 from desktop.app import Window
+from security.policy import Action, ApprovalMode, ApprovalScope, Denied, Policy
+
+
+def test_auto_approval_respects_explicit_refusal_and_mode_changes():
+    policy = Policy(ApprovalMode.FULL)
+    local_write = Action('save', 'test.txt', approval_scope=ApprovalScope.LOCAL_WRITE)
+    guarded = Action('share', 'online')
+    with pytest.raises(Denied):
+        policy.approve(guarded, lambda _: False)
+    with pytest.raises(Denied):
+        policy.approve(local_write, lambda _: False, auto_approve=False)
+    token = policy.approve(local_write, lambda _: pytest.fail('Unexpected approval prompt'))
+    policy.set_mode(ApprovalMode.AUTOMATIC)
+    with pytest.raises(Denied, match='mode changed'):
+        policy.execute(local_write, token, lambda: pytest.fail('Unexpected write'))
+
+
+def test_approval_setting_controls_calculator_and_notepad(tmp_path, monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
+    launched = []
+    monkeypatch.setattr('desktop.app.launch_app', launched.append)
+    choice = window.approval_mode_choice
+    calc = parse_desktop_task('Open Calculator and calculate: 17 * 23')
+    typing = parse_desktop_task('Type into Notepad: வணக்கம்')
+    try:
+        assert choice.currentText() == 'Ask for approval'
+        choice.activated.emit(choice.findData('automatic'))
+        assert window.store.get('security:approval_mode') == 'automatic'
+        window.queue_desktop_task('Calculate', calc)
+        assert launched == ['Calculator']
+        assert window.chat_launch is None
+        assert window.desktop_pending['automatic_action'] is not None
+        choice.activated.emit(choice.findData('ask'))
+        window.complete_desktop_task()
+        assert window.desktop_pending is None
+        assert 'Approval mode changed' in window.desktop_result_label.text()
+
+        window.queue_desktop_task('Type', typing)
+        assert window.chat_launch is not None
+        full = choice.findData('full')
+        monkeypatch.setattr(QMessageBox, 'question', lambda *_: QMessageBox.StandardButton.No)
+        choice.activated.emit(full)
+        assert choice.currentText() == 'Ask for approval'
+        monkeypatch.setattr(QMessageBox, 'question', lambda *_: QMessageBox.StandardButton.Yes)
+        choice.activated.emit(full)
+        assert window.store.get('security:approval_mode') == 'full'
+        window.finish_chat_launch(False)
+        assert window.desktop_pending is None
+        window.queue_desktop_task('Type', typing)
+        assert window.chat_launch is None
+        assert window.desktop_pending['task'] == typing
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
 
 
 def test_parser_accepts_explicit_notepad_typing_and_unicode():

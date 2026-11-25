@@ -79,7 +79,7 @@ from video_studio.capcut import export_capcut
 from automation.capcut_export import capcut_launcher, new_mp4, save_open_capcut_export
 from core.runtime_profile import APP_NAME, RESTART_EXIT_CODE, restart_supported
 from video_studio.preview import media_tools, render_preview
-from security.policy import Action, Denied, Policy, Stopped
+from security.policy import Action, ApprovalMode, ApprovalScope, Denied, Policy, Stopped
 from security.vault import Vault
 from providers import profiles as profile_models
 from providers.chat import ProviderError, TransientProviderError
@@ -320,7 +320,7 @@ class Window(QMainWindow):
         self.setStyleSheet(theme_sheet(self.interface_theme))
         self.memory_service = MemoryService(self.root / 'history.sqlite3')
         self.router = ProviderRouter()
-        self.policy = Policy()
+        self.policy = Policy(self.store.get('security:approval_mode'))
         self.browser = BrowserControl(self)
         self.research_dialog = None
         self.vault = Vault()
@@ -867,7 +867,8 @@ class Window(QMainWindow):
                     raise ValueError('Provide the full path of the file already open in Notepad.')
                 ticket = self.policy.ticket()
                 return self.gateway.run(
-                    Action('Mouse click Notepad File and Save', str(destination)), self.confirm,
+                    Action('Mouse click Notepad File and Save', str(destination),
+                           approval_scope=ApprovalScope.LOCAL_WRITE), self.confirm,
                     lambda: save_notepad_with_mouse(destination, lambda: self.policy.check(ticket)),
                 )
 
@@ -3088,7 +3089,8 @@ class Window(QMainWindow):
                     lines.append(f'...and {len(windows) - len(visible)} more windows')
                 return '\n'.join(lines) or 'No visible titled windows were found.'
             details = self.gateway.run(
-                Action('inspect_visible_windows', 'Read visible window titles and process IDs'),
+                Action('inspect_visible_windows', 'Read visible window titles and process IDs',
+                       approval_scope=ApprovalScope.ROUTINE),
                 self.confirm, observation)
             QMessageBox.information(self, 'Visible windows (read only)', details)
             return 'Window inspection completed. No windows were controlled.'
@@ -3271,6 +3273,31 @@ class Window(QMainWindow):
 
     def permissions_page(self):
         page, layout = self.page('Settings & Safety')
+        approvals = QGroupBox('Action approvals')
+        approval_layout = QVBoxLayout(approvals)
+        self.approval_mode_choice = QComboBox()
+        self.approval_mode_choice.setAccessibleName('How should JARVIS actions be approved?')
+        for mode, title, description in (
+            (ApprovalMode.ASK, 'Ask for approval',
+             'Ask before opening apps, controlling the desktop or using a protected tool.'),
+            (ApprovalMode.AUTOMATIC, 'Approve for me',
+             'Open built-in apps, calculate and inspect windows automatically. Review other actions.'),
+            (ApprovalMode.FULL, 'Full access',
+             'Also allow built-in Notepad typing and file saves without prompting. '
+             'Other actions, including general app control and sharing data, still ask.'),
+        ):
+            self.approval_mode_choice.addItem(title, mode.value)
+            self.approval_mode_choice.setItemData(
+                self.approval_mode_choice.count() - 1, description, Qt.ItemDataRole.ToolTipRole)
+        approval_layout.addWidget(QLabel('How should JARVIS actions be approved?'))
+        approval_layout.addWidget(self.approval_mode_choice)
+        self.approval_mode_detail = QLabel()
+        self.approval_mode_detail.setWordWrap(True)
+        approval_layout.addWidget(self.approval_mode_detail)
+        self.approval_mode_choice.activated.connect(self.choose_approval_mode)
+        self.refresh_approval_mode()
+        layout.addWidget(approvals)
+
         conversation = QGroupBox('Conversation')
         conversation_layout = QVBoxLayout(conversation)
         reply_form = QFormLayout()
@@ -3384,8 +3411,8 @@ class Window(QMainWindow):
         safety = QGroupBox('Permissions and data')
         safety_layout = QVBoxLayout(safety)
         for note in (
-            'App launches, workflow steps, inspections and file changes require your approval. '
-            'Sending a chat message shares it with the selected provider.',
+            'Action approvals use the selected mode. Sending a chat message shares it '
+            'with the selected provider.',
             'Emergency Stop (Ctrl+Alt+J) cancels pending work and approvals. '
             'Apps already opened stay open, and requests already sent may be billed.',
             'Windows Credential Manager stores keys. Local history and code are stored as plaintext.',
@@ -3424,6 +3451,30 @@ class Window(QMainWindow):
                                  minimum=80)
         return page
 
+    def refresh_approval_mode(self):
+        choice = self.approval_mode_choice
+        index = choice.findData(self.policy.mode.value)
+        choice.setCurrentIndex(index)
+        self.approval_mode_detail.setText(choice.itemData(index, Qt.ItemDataRole.ToolTipRole))
+
+    def choose_approval_mode(self, index):
+        mode = ApprovalMode.from_setting(self.approval_mode_choice.itemData(index))
+        if mode is ApprovalMode.FULL and mode is not self.policy.mode:
+            choice = QMessageBox.question(
+                self, 'Enable Full access?',
+                'JARVIS can type in Notepad and save local files through its built-in tools '
+                'without asking each time. This setting persists after restart.',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if choice != QMessageBox.StandardButton.Yes:
+                self.refresh_approval_mode()
+                return
+        def save():
+            self.store.set('security:approval_mode', mode.value)
+            self.policy.set_mode(mode)
+        self.notify(save)
+        self.refresh_approval_mode()
+
     def scroll_to_setting(self, section):
         scroller = self.pages.widget(self.page_indices['Settings & Safety'])
         if isinstance(scroller, QScrollArea):
@@ -3451,7 +3502,7 @@ class Window(QMainWindow):
         try:
             ticket = self.policy.ticket()
             if name in APPS:
-                action = Action('launch_app', name)
+                action = Action('launch_app', name, approval_scope=ApprovalScope.ROUTINE)
                 operation = lambda: launch_app(name)
             else:
                 if not self.plugin_enabled(name):
@@ -3472,6 +3523,9 @@ class Window(QMainWindow):
             self.show_local_system_reply(command, str(error))
             return False
         self.chat_launch = (name, ticket, action, operation)
+        if not self.policy.requires_confirmation(action):
+            self.finish_chat_launch(None)
+            return True
         self.show_local_system_reply(command, f'Open {name}? Approve or decline below.')
         self.chat_approval_label.setText(action.target)
         self.chat_approval.show()
@@ -3488,11 +3542,12 @@ class Window(QMainWindow):
         success = False
         try:
             self.policy.check(ticket)
-            if approved and name not in APPS and not self.plugin_enabled(name):
+            if approved is not False and name not in APPS and not self.plugin_enabled(name):
                 raise ValueError(f'{name} is disabled in Settings → Plugins.')
             task_id = self.store.task(action.kind, action.target)
-            result = self.gateway.run(action, lambda _action: approved, operation,
-                                      task_id=task_id, completion_status='dispatched')
+            result = self.gateway.run(action, lambda _action: approved is True, operation,
+                                      task_id=task_id, completion_status='dispatched',
+                                      auto_approve=approved is None)
             if isinstance(result, LaunchRequest):
                 self.launch_verification = (name, result, ticket, task_id,
                                             self.session, time.monotonic() + 7)
@@ -3508,7 +3563,7 @@ class Window(QMainWindow):
         self.render_chat()
         self.refresh_history()
         if self.desktop_pending is None:
-            self.conversation_plan.result(success, str(result) if approved else 'declined')
+            self.conversation_plan.result(success, 'declined' if approved is False else str(result))
 
     def check_chat_launch(self):
         if self.launch_verification is None:
@@ -3567,10 +3622,17 @@ class Window(QMainWindow):
         calculator = task.app == 'Calculator'
         step = 'open, clear and calculate' if calculator else (
             'open and type' if task.launch else 'type into active window')
+        scope = ApprovalScope.ROUTINE if calculator else ApprovalScope.ALWAYS
+        if task.app == 'Notepad':
+            scope = ApprovalScope.LOCAL_WRITE
         action = Action('desktop_plan_approval', f'{task.app}: {step}, {len(task.text)} chars',
-                        digest)
-        self.chat_launch = (task.app, ticket, action,
-                            lambda: self.schedule_desktop_task(task, ticket, digest))
+                        digest, scope)
+        automatic = not self.policy.requires_confirmation(action)
+        self.chat_launch = (task.app, ticket, action, lambda: self.schedule_desktop_task(
+            task, ticket, digest, automatic_action=action if automatic else None))
+        if automatic:
+            self.finish_chat_launch(None)
+            return True
         excerpt = task.text[:160] + ('…' if len(task.text) > 160 else '')
         review = (f'Review desktop task: {step} in Calculator.\n{task.text}'
                   if calculator else
@@ -3585,7 +3647,7 @@ class Window(QMainWindow):
         self.refresh_voice_hud()
         return True
 
-    def schedule_desktop_task(self, task, ticket, digest):
+    def schedule_desktop_task(self, task, ticket, digest, *, automatic_action=None):
         """Schedule, never poll for a window on the Qt UI thread."""
         self.policy.check(ticket)
         if self.desktop_pending is not None:
@@ -3593,6 +3655,7 @@ class Window(QMainWindow):
         if task.launch:
             launch_app(task.app)
         self.desktop_pending = dict(task=task, ticket=ticket, digest=digest,
+                                    automatic_action=automatic_action,
                                     deadline=time.monotonic() + 7.0)
         self.desktop_task_timer.start()
         self.refresh_prime_state()
@@ -3658,6 +3721,9 @@ class Window(QMainWindow):
         task = pending['task']
         try:
             self.policy.check(pending['ticket'])
+            automatic = pending.get('automatic_action')
+            if automatic is not None and self.policy.requires_confirmation(automatic):
+                raise Denied('Approval mode changed. Request the action again.')
             if time.monotonic() >= pending['deadline']:
                 self.desktop_task_timer.stop()
                 self.desktop_pending = None
@@ -5252,8 +5318,8 @@ class Window(QMainWindow):
 
     def launch(self):
         name = self.app_choice.currentText()
-        self.notify(lambda: self.gateway.run(Action('launch_app', name), self.confirm,
-                                              lambda: launch_app(name)))
+        action = Action('launch_app', name, approval_scope=ApprovalScope.ROUTINE)
+        self.notify(lambda: self.gateway.run(action, self.confirm, lambda: launch_app(name)))
 
     def review_chat_pc_action(self):
         """Turn only an exact, allowlisted instruction into an approval request.
@@ -5271,7 +5337,8 @@ class Window(QMainWindow):
                 '(Tamil phrases also supported).', 15000)
             return
         self.notify(lambda: self.gateway.run(
-            Action('launch_app', name), self.confirm, lambda: launch_app(name)))
+            Action('launch_app', name, approval_scope=ApprovalScope.ROUTINE),
+            self.confirm, lambda: launch_app(name)))
 
     def open_file(self):
         def operation():
@@ -5287,7 +5354,8 @@ class Window(QMainWindow):
         name, content = self.filename.text(), self.editor.toPlainText()
         def operation():
             self.workspace.path(name)
-            result = self.gateway.run(Action('save_file', name, Workspace.digest(content)),
+            result = self.gateway.run(Action('save_file', name, Workspace.digest(content),
+                                             ApprovalScope.LOCAL_WRITE),
                                       self.confirm, lambda: self.workspace.save(name, content))
             self.editor.document().setModified(False)
             return result
