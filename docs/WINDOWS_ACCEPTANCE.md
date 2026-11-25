@@ -1,5 +1,6 @@
 # Windows acceptance results
 
+- Machine: **Linux-5.10.134-18.0.12.lifsea8.x86_64-x86_64-with-glibc2.36** (Python 3.11.2)
 - Checks run here: **13**
 - Checks that need the real Windows desktop: **2**
 - Passed: **13**
