@@ -20,10 +20,19 @@ WHAT THIS IS NOT
 from __future__ import annotations
 
 from dataclasses import dataclass
+import ctypes
+from ctypes import wintypes
 from pathlib import Path
+import sys
 import time
 
-from automation.input import FocusLost, InputRefused, UnexpectedDialog, press_key, validate_focus
+import psutil
+
+from automation.input import (
+    FocusLost, InputRefused, InputTarget, UnexpectedDialog, activate_window, click_at, press_key,
+    validate_focus,
+)
+from automation import win_controls
 from automation.win_controls import contents as editor_contents, focused_editor
 
 #: How long the save is given to finish, in seconds.
@@ -120,6 +129,109 @@ def editor_text() -> str:
     if handle is None:
         return ''
     return editor_contents(handle) or ''
+
+
+def save_notepad_with_mouse(path, checkpoint):
+    """Click File and Save in the one Notepad window matching an existing file."""
+    from automation.inspection import inspect_windows
+
+    if sys.platform != 'win32':
+        raise InputRefused('Mouse Save is available in Windows Notepad.')
+    source = Path(path)
+    if not source.is_absolute() or not source.is_file() or source.is_symlink():
+        raise InputRefused('Choose an existing local file open in Notepad.')
+    titles = {f'{label} - Notepad' for label in
+              (source.name, source.stem, '*' + source.name, '*' + source.stem)}
+    windows = [row for row in inspect_windows() if row['title'] in titles]
+    if len(windows) != 1:
+        raise InputRefused('Open exactly one Notepad window with the named file.')
+    pid = windows[0]['pid']
+    process = psutil.Process(pid)
+    if process.name().casefold() != 'notepad.exe':
+        raise InputRefused('The window did not belong to Windows Notepad.')
+    if not any(Path(arg).is_absolute() and Path(arg).resolve() == source.resolve()
+               for arg in process.cmdline()[1:]):
+        raise InputRefused('Open the named file directly in Notepad so its full path can be verified.')
+    checkpoint()
+    activate_window(pid)
+    hwnd = win_controls.foreground_window()
+    if not hwnd or win_controls.window_process(hwnd) != pid:
+        raise InputRefused('Windows did not bring the named Notepad window forward.')
+
+    user = ctypes.WinDLL('user32', use_last_error=True)
+    hmenu = wintypes.HMENU
+    signatures = {
+        'GetWindowTextW': ([wintypes.HWND, wintypes.LPWSTR, ctypes.c_int], ctypes.c_int),
+        'GetMenu': ([wintypes.HWND], hmenu),
+        'GetSubMenu': ([hmenu, ctypes.c_int], hmenu),
+        'GetMenuItemCount': ([hmenu], ctypes.c_int),
+        'GetMenuStringW': ([hmenu, wintypes.UINT, wintypes.LPWSTR, ctypes.c_int, wintypes.UINT], ctypes.c_int),
+        'GetMenuItemRect': ([wintypes.HWND, hmenu, wintypes.UINT, ctypes.POINTER(wintypes.RECT)], wintypes.BOOL),
+        'SetCursorPos': ([ctypes.c_int, ctypes.c_int], wintypes.BOOL),
+        'GetCursorPos': ([ctypes.POINTER(wintypes.POINT)], wintypes.BOOL),
+        'WindowFromPoint': ([wintypes.POINT], wintypes.HWND),
+    }
+    for name, (args, result) in signatures.items():
+        function = getattr(user, name)
+        function.argtypes, function.restype = args, result
+
+    def guard():
+        checkpoint()
+        title = ctypes.create_unicode_buffer(260)
+        user.GetWindowTextW(hwnd, title, len(title))
+        if win_controls.foreground_window() != hwnd or title.value not in titles:
+            raise InputRefused('The named Notepad window lost focus. No further input was sent.')
+        return pid
+
+    def item_at(menu, label):
+        matches = []
+        for index in range(user.GetMenuItemCount(menu)):
+            text = ctypes.create_unicode_buffer(128)
+            user.GetMenuStringW(menu, index, text, len(text), 0x0400)  # MF_BYPOSITION
+            if text.value.partition('\t')[0].replace('&', '').casefold() == label:
+                matches.append(index)
+        if len(matches) != 1:
+            raise InputRefused(f'Notepad did not expose one {label.title()} menu item.')
+        return matches[0]
+
+    def click_item(owner, menu, index):
+        guard()
+        rect = wintypes.RECT()
+        if not user.GetMenuItemRect(owner, menu, index, ctypes.byref(rect)):
+            raise InputRefused('Notepad did not expose the menu item location.')
+        x, y = (rect.left + rect.right) // 2, (rect.top + rect.bottom) // 2
+        if not user.SetCursorPos(x, y):
+            raise InputRefused('Windows could not move the mouse to the menu item.')
+
+        def checked_point():
+            guard()
+            cursor = wintypes.POINT()
+            hit = user.WindowFromPoint(wintypes.POINT(x, y))
+            if (not user.GetCursorPos(ctypes.byref(cursor)) or (cursor.x, cursor.y) != (x, y)
+                    or not hit or win_controls.window_process(hit) != pid):
+                raise InputRefused('The Notepad menu is covered or the pointer moved.')
+            return pid
+
+        click_at(x, y, InputTarget(pid), foreground=checked_point)
+
+    guard()
+    expected = editor_text()
+    if not expected:
+        raise InputRefused('The current Notepad text could not be read for verification.')
+    menu = user.GetMenu(hwnd)
+    file_item = item_at(menu, 'file')
+    submenu = user.GetSubMenu(menu, file_item)
+    save_item = item_at(submenu, 'save')
+    click_item(hwnd, menu, file_item)
+    click_item(None, submenu, save_item)
+    deadline = time.monotonic() + SAVE_TIMEOUT
+    while time.monotonic() < deadline:
+        checkpoint()
+        verified, message = verify_file(source, expected)
+        if verified:
+            return 'Notepad File → Save was clicked. ' + message
+        time.sleep(0.1)
+    raise RuntimeError(message)
 
 
 __all__ = ['SAVE_TIMEOUT', 'SaveResult', 'editor_text', 'save_open_document',

@@ -857,6 +857,22 @@ class Window(QMainWindow):
             'I heard you. Please review and press Ask JARVIS. No action ran.', 15000)
 
     def route_task(self, text):
+        command, separator, path = text.partition(':')
+        if separator and command.strip().casefold() == 'save notepad with mouse':
+            from automation.editor import save_notepad_with_mouse
+
+            def operation():
+                destination = Path(path.strip())
+                if not destination.is_absolute() or not destination.is_file():
+                    raise ValueError('Provide the full path of the file already open in Notepad.')
+                ticket = self.policy.ticket()
+                return self.gateway.run(
+                    Action('Mouse click Notepad File and Save', str(destination)), self.confirm,
+                    lambda: save_notepad_with_mouse(destination, lambda: self.policy.check(ticket)),
+                )
+
+            self.notify(operation)
+            return True
         return (self.route_video_brief(text) or self.route_business_brief(text)
                 or self.route_natural_task(text))
 
