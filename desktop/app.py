@@ -127,6 +127,13 @@ from business.drafting import (
 from agents.gateway import Gateway
 from agents.queue import TaskQueue
 from agents.workflows import WorkflowQueue
+from core.engines import (EngineRouter, EngineStep, EngineUnavailable, GEMINI, LOCAL,
+                          enabled_from_store, history_from_store, save_history_to_store,
+                          set_enabled_in_store)
+from core.local_model import LocalModelSupervisor
+from desktop.hud import HudFrame
+from desktop.automation_panel import AutomationPanel, ProposedAction
+from voice import models as voice_models
 
 #: The stylesheet the application uses. It is the premium dark interface
 #: theme, and it is applied to the running application at startup — the
@@ -269,6 +276,28 @@ class CodingTaskWorker(QThread):
         self.result.emit(outcome)
 
 
+class LocalModelWorker(QThread):
+    """Start the on-device model away from the interface thread.
+
+    The model can take a moment to answer the first time, and the
+    window must not wait for it. The worker reports what happened, and
+    the interface shows it.
+    """
+
+    done = Signal(object)
+
+    def __init__(self, supervisor, parent=None):
+        super().__init__(parent)
+        self.supervisor = supervisor
+
+    def run(self):
+        try:
+            status = self.supervisor.ensure_running()
+        except Exception:
+            status = self.supervisor.status()
+        self.done.emit(status)
+
+
 class TestRunWorker(QThread):
     """Run a project's tests off the UI thread.
 
@@ -327,6 +356,17 @@ class Window(QMainWindow):
         self.gateway = Gateway(self.policy, self.store)
         self.queue = TaskQueue(self.store, self.gateway)
         self.workflows = WorkflowQueue(self.store, self.gateway)
+        # The on-device model that answers most of the work, and the
+        # router that decides when one step of a mission needs Gemini.
+        self.local_model = LocalModelSupervisor(model=self.selected_model('Ollama'))
+        self.engines = self._build_engine_router()
+        self.engine_history = history_from_store(self.store)
+        # The HUD is always in sight: it answers what this computer is
+        # doing, what JARVIS is doing, and how to stop it.
+        self.hud = HudFrame()
+        self.hud.strip.stop_requested.connect(self.stop)
+        self.hud.set_motion(not self.store.get('omega:reduced', False))
+        self.hud.strip.set_engine(LOCAL, '')
         self.worker_kind = "chat"
         self.ai_visual_state = "idle"
         self.active_provider = None
@@ -475,6 +515,13 @@ class Window(QMainWindow):
         self.maintenance_timer.start(60_000)
         self.enable_prime()
         QTimer.singleShot(0, self.check_maintenance)
+        # The on-device model is started with JARVIS, away from the
+        # interface thread, and the voice models are read once.
+        self.local_model_worker = LocalModelWorker(self.local_model, self)
+        self.local_model_worker.done.connect(self.on_local_model_ready)
+        QTimer.singleShot(0, self.local_model_worker.start)
+        QTimer.singleShot(0, self.refresh_voice_models)
+        QTimer.singleShot(0, self.refresh_local_model_status)
 
     def prime_palette_or_default(self):
         """The PRIME palette, or the dark one when PRIME is not mounted yet."""
@@ -482,6 +529,153 @@ class Window(QMainWindow):
 
         palette = getattr(self, 'prime_palette', None)
         return palette if palette is not None else PrimePalette(dark=self.prime_is_dark())
+
+    # -- the engines -----------------------------------------------------
+
+    def gemini_key(self) -> str:
+        """The Gemini key, if the owner has one.
+
+        The key is read from the Windows vault when there is one. It is
+        never written anywhere else, and it is cleared as soon as the
+        step that needed it is over.
+        """
+        try:
+            return self.vault.get('Gemini')
+        except Exception:
+            return ''
+
+    def _build_engine_router(self) -> EngineRouter:
+        """The router that decides which engine answers one step.
+
+        The on-device model answers first. Gemini is used for a step only
+        when the owner has turned the automatic fallback on and the local
+        model could not do that step.
+        """
+        from providers import ollama
+        from providers.chat import stream_chat
+
+        def local_stream(model, messages, check, emit):
+            # The on-device model is reached through the same router as
+            # every other provider, so it is never a second path out of
+            # the application.
+            spec = self.router.spec('Ollama')
+            return self.router.stream(spec, model, '', messages, check, emit)
+
+        def gemini_stream(model, key, messages, check, emit):
+            return stream_chat('Gemini', model, key, messages, check, emit)
+
+        return EngineRouter(
+            local_model=self.selected_model('Ollama'),
+            local_stream=local_stream,
+            gemini_model=self.selected_model('Gemini'),
+            gemini_key=self.gemini_key(),
+            gemini_enabled=enabled_from_store(self.store),
+            gemini_stream=gemini_stream,
+        )
+
+    def approve_engine_share(self, kinds, note: str) -> bool:
+        """Ask the owner before anything sensitive goes to a cloud model.
+
+        The question goes through the same approval gateway as every
+        other action, so there is one place where an action can be
+        allowed and one place where it is refused.
+        """
+        action = Action('share_with_gemini', note)
+        try:
+            self.gateway.run(action, self.confirm, lambda: True, auto_approve=False)
+        except (Denied, Stopped):
+            return False
+        return True
+
+    def record_engine_step(self, record: EngineStep):
+        """Remember which engine answered a step, and show it."""
+        self.engine_history.append(record.as_dict())
+        if len(self.engine_history) > 50:
+            del self.engine_history[:-50]
+        save_history_to_store(self.store, self.engine_history)
+
+    def on_engine_used(self, record):
+        """Show the engine that answered, in the HUD and on the mission rail."""
+        self.record_engine_step(record)
+        hud = getattr(self, 'hud', None)
+        if hud is not None:
+            hud.strip.set_engine(record.engine, record.explanation)
+        panel = getattr(self, 'mission_panel', None)
+        if panel is not None:
+            panel.set_engine(record.engine, record.explanation)
+
+    def on_step_changed(self, step: int, total: int):
+        """Show the step of the task in the HUD."""
+        hud = getattr(self, 'hud', None)
+        if hud is not None:
+            hud.strip.set_progress(step, total)
+
+    def refresh_engine_settings(self):
+        """Read the engine settings the owner chose."""
+        self.engines.set_gemini(
+            model=self.selected_model('Gemini'),
+            key=self.gemini_key(),
+            enabled=enabled_from_store(self.store))
+
+    def start_local_model(self):
+        """Start the on-device model and remember that it is there.
+
+        The model runs on this computer, on the loopback interface only.
+        When it starts and the owner has never chosen a chat provider,
+        the chat uses it, so a fresh JARVIS is local first.
+        """
+        try:
+            status = self.local_model.ensure_running()
+        except Exception as error:
+            self.local_model_status = self.local_model.status()
+            self.refresh_local_model_status()
+            self.statusBar().showMessage(str(error), 15000)
+            return None
+        self.on_local_model_ready(status)
+        return status
+
+    def on_local_model_ready(self, status):
+        """The on-device model was started, or it could not be started."""
+        self.local_model_status = status
+        self.refresh_local_model_status()
+        if status is not None and status.ready:
+            # A fresh JARVIS is local first: the chat uses the model that
+            # runs on this computer until the owner chooses otherwise.
+            if not self.store.get(routing.PERSON_KEY):
+                self.store.set(routing.PERSON_KEY, 'Ollama')
+                if hasattr(self, 'chat_provider'):
+                    self.chat_provider.setCurrentText('Ollama')
+
+    def refresh_local_model_status(self):
+        """Show what the on-device model is doing."""
+        status = getattr(self, 'local_model_status', None)
+        if status is None:
+            status = self.local_model.status()
+            self.local_model_status = status
+        label = getattr(self, 'local_model_label', None)
+        if label is not None:
+            label.setText(status.detail)
+
+    def refresh_voice_models(self):
+        """Show which local voice models are ready."""
+        label = getattr(self, 'voice_models_label', None)
+        if label is None:
+            return
+        try:
+            models = voice_models.probe()
+        except Exception as error:
+            label.setText('The local voice models could not be read: ' + str(error))
+            return
+        label.setText(voice_models.summary(models))
+        self.voice_models = models
+
+    def set_gemini_fallback(self, enabled: bool):
+        """Turn the automatic Gemini fallback on or off."""
+        set_enabled_in_store(self.store, bool(enabled))
+        self.engines.enable(bool(enabled))
+        self.statusBar().showMessage(
+            'Gemini will answer only the steps the on-device model cannot do.'
+            if enabled else 'Every step stays on this computer.', 8000)
 
     def mission_page(self):
         """The mission console: one goal, watched step by step."""
@@ -491,6 +685,8 @@ class Window(QMainWindow):
                              root=self.root, memory=self.memory_service)
         self.mission_panel = panel
         self.mission_controller = MissionController(self, panel)
+        self.mission_controller.engine_used.connect(self.on_engine_used)
+        self.mission_controller.step_changed.connect(self.on_step_changed)
         return panel
 
     def enable_omega(self, *, smoke=False):
@@ -541,6 +737,9 @@ class Window(QMainWindow):
         self.prime_old_chat = old_chat
         self.prime_chat = chat
         chat.adopt_task_panels()
+        # The HUD sits above every page, so the readings, the task, the
+        # engine and the Emergency Stop are always in the same place.
+        shell.content.addWidget(self.hud)
         shell.content.addWidget(self.pages)
         shell.activity.set_rows(self.store.tasks())
         self.render_chat()
@@ -1204,6 +1403,14 @@ class Window(QMainWindow):
             meter.setVisible(percent is not None)
             if percent is not None:
                 meter.setValue(round(percent * 10))
+        hud = getattr(self, 'hud', None)
+        if hud is not None:
+            cpu = data.get('cpu_usage_percent')
+            ram = data.get('ram_usage_percent')
+            hud.strip.set_reading('cpu', None if cpu is None else cpu / 100.0,
+                                  '—' if cpu is None else f'{cpu:.0f}%')
+            hud.strip.set_reading('ram', None if ram is None else ram / 100.0,
+                                  '—' if ram is None else f'{ram:.0f}%')
 
     def handle_developer_command(self, text, *, spoken=None):
         """Dispatch only known commands through existing approval-gated features."""
@@ -1389,6 +1596,10 @@ class Window(QMainWindow):
             self.omega.set_voice(state)
         self.hud_talk.setEnabled(state not in ('stopped', 'listening', 'speaking')
                                  and not self.voice_panel.playback_busy)
+        hud = getattr(self, 'hud', None)
+        if hud is not None:
+            hud.strip.set_mic(self.voice_panel.consent.listener,
+                              self.voice_panel.muted)
         self.refresh_prime_state()
 
     def answer_spoken_system_command(self, command):
@@ -2000,8 +2211,10 @@ class Window(QMainWindow):
         return self.bridge
 
     def automation_page(self):
-        page, layout = self.page('PC Control',
-            'Choose an action to review. JARVIS asks before launching apps or accessing files and devices.')
+        page, layout = self.page('Automation',
+            'Everything JARVIS can do to this computer. A proposed action is shown here '
+            'first, with Run, Edit and Dismiss, and it goes through the same approval as '
+            'every other action in JARVIS.')
         apps = QGroupBox('Applications')
         app_layout = QFormLayout(apps)
         app_row = QHBoxLayout()
@@ -2026,6 +2239,18 @@ class Window(QMainWindow):
         self.flexible_button(device_layout, 'Open camera reader',
                              lambda: self.notify(lambda: open_camera_reader(self)))
         layout.addWidget(devices)
+
+        # The browser, Suggestion Mode, Work on this, Any App Control, the
+        # proposed actions and the task activity are all in here.
+        self.automation_panel = AutomationPanel()
+        self.automation_panel.browser_requested.connect(self.run_browser_command)
+        self.automation_panel.mission_requested.connect(self.run_mission_goal)
+        self.automation_panel.refresh_requested.connect(self.refresh_app_windows)
+        self.automation_panel.inspect_requested.connect(self.inspect_front_app)
+        self.automation_panel.action_run.connect(self.run_proposed_action)
+        self.automation_panel.action_dismissed.connect(self.dismiss_proposed_action)
+        layout.addWidget(self.automation_panel)
+
         # What the approval boundary has actually done, in the owner's words.
         safety_box = QGroupBox('Approval boundary')
         safety_layout = QVBoxLayout(safety_box)
@@ -2041,6 +2266,113 @@ class Window(QMainWindow):
         layout.addWidget(safety_box)
         self.refresh_safety_report()
         return page
+
+    # -- the Automation page ---------------------------------------------
+
+    def run_browser_command(self, command: str):
+        """Run a browser command that was typed in Automation."""
+        self.browser.command(command)
+        self.automation_panel.set_browser_status(
+            self.browser_output.toPlainText() or 'Working in the browser…')
+
+    def run_mission_goal(self, goal: str):
+        """Start a mission on the goal the owner typed in Automation."""
+        self.open_section('Mission Control')
+        self.mission_controller.start(goal)
+
+    def refresh_app_windows(self):
+        """List the applications that are open on this computer."""
+        from automation import app_control
+        try:
+            text = app_control.list_apps()
+        except Exception as error:
+            text = 'The applications could not be listed: ' + str(error)
+        self.automation_panel.set_windows(text)
+
+    def inspect_front_app(self, selection: str):
+        """Read the controls of the application the owner chose."""
+        from automation import app_control
+        pid, title = self._parse_window_row(selection)
+        if not pid:
+            self.automation_panel.set_controls(
+                'Refresh the list of windows and choose one of them first.')
+            return
+        try:
+            text = app_control.see_controls(pid, title)
+        except Exception as error:
+            text = 'The controls could not be read: ' + str(error)
+        self.automation_panel.set_controls(text)
+
+    @staticmethod
+    def _parse_window_row(text: str):
+        """The process id and the title of the first listed window."""
+        for line in (text or '').splitlines():
+            if 'pid=' not in line:
+                continue
+            head, _, tail = line.partition('): ')
+            pid_text = head.split('pid=')[-1].strip()
+            title = tail.strip()
+            if len(title) >= 2 and title[0] == "'" and title[-1] == "'":
+                title = title[1:-1]
+            try:
+                return int(pid_text), title
+            except ValueError:
+                continue
+        return 0, ''
+
+    def propose_action(self, ident: str, action, editable):
+        """Show one proposed action, with Run, Edit and Dismiss."""
+        panel = getattr(self, 'automation_panel', None)
+        if panel is None:
+            return False
+        proposed = ProposedAction(kind=action.kind, target=action.target,
+                                  detail=action.target, digest=action.digest,
+                                  editable=editable)
+        proposed.ident = ident
+        panel.propose(proposed)
+        hud = getattr(self, 'hud', None)
+        if hud is not None:
+            hud.strip.set_approval('Approval needed: ' + action.kind)
+        return True
+
+    def run_proposed_action(self, action, values):
+        """Run a proposed action, or answer the mission that is waiting for it."""
+        controller = getattr(self, 'mission_controller', None)
+        if controller is not None and controller.answer(action.ident, values or True):
+            self.automation_panel.remove(action.ident)
+            hud = getattr(self, 'hud', None)
+            if hud is not None:
+                hud.strip.clear_approval()
+            return
+        scope = {'routine': ApprovalScope.ROUTINE,
+                 'local_write': ApprovalScope.LOCAL_WRITE}.get(
+                     action.approval_scope, ApprovalScope.ALWAYS)
+        record = Action(action.kind, action.target, action.digest, scope)
+        try:
+            result = self.gateway.run(record, self.confirm,
+                                      lambda: action.run(values) if action.run else None)
+        except Denied:
+            self.automation_panel.remove(action.ident)
+            self.statusBar().showMessage('The action was not allowed.', 10000)
+            return
+        except Stopped:
+            self.automation_panel.remove(action.ident)
+            return
+        self.automation_panel.remove(action.ident)
+        self.statusBar().showMessage(str(result)[:400] if result else 'Done.', 12000)
+
+    def dismiss_proposed_action(self, action):
+        """The owner dismissed the action. It is recorded and it does not run."""
+        controller = getattr(self, 'mission_controller', None)
+        if controller is not None and controller.answer(action.ident, False):
+            self.automation_panel.remove(action.ident)
+            hud = getattr(self, 'hud', None)
+            if hud is not None:
+                hud.strip.clear_approval()
+            return
+        self.policy.note(action.kind, action.target, 'dismissed',
+                         'the owner dismissed the proposed action')
+        self.automation_panel.remove(action.ident)
 
     def refresh_safety_report(self):
         """Show what the approval boundary has allowed and refused."""
@@ -3298,6 +3630,47 @@ class Window(QMainWindow):
         self.refresh_approval_mode()
         layout.addWidget(approvals)
 
+        # The engines: the model that runs on this computer, and the one
+        # that may answer a single step when the owner allows it.
+        engines = QGroupBox('AI engines')
+        engine_layout = QVBoxLayout(engines)
+        self.gemini_fallback = QCheckBox('Use Gemini automatically when needed')
+        self.gemini_fallback.setAccessibleName('Use Gemini automatically when needed')
+        self.gemini_fallback.setToolTip(
+            'When the on-device model cannot complete one step of a task, that one step is '
+            'answered by Gemini and the HUD says so. Routine chat, voice and PC actions '
+            'stay on this computer, and nothing sensitive is shared without your approval.')
+        self.gemini_fallback.setChecked(enabled_from_store(self.store))
+        self.gemini_fallback.toggled.connect(self.set_gemini_fallback)
+        engine_layout.addWidget(self.gemini_fallback)
+        engine_note = QLabel(
+            'The on-device model answers a task whenever it can. With this turned on, '
+            'only the step it cannot do is sent to Gemini, with only the context that '
+            'step needs.')
+        engine_note.setWordWrap(True)
+        engine_layout.addWidget(engine_note)
+
+        model_row = QHBoxLayout()
+        self.local_model_label = QLabel('The on-device model has not been checked yet.')
+        self.local_model_label.setWordWrap(True)
+        model_row.addWidget(self.local_model_label, 1)
+        self.start_model_button = QPushButton('Start the on-device model')
+        self.start_model_button.setAccessibleName('Start the on-device model')
+        self.start_model_button.clicked.connect(self.start_local_model)
+        model_row.addWidget(self.start_model_button)
+        engine_layout.addLayout(model_row)
+
+        voice_row = QHBoxLayout()
+        self.voice_models_label = QLabel('The local voice models have not been checked yet.')
+        self.voice_models_label.setWordWrap(True)
+        voice_row.addWidget(self.voice_models_label, 1)
+        self.voice_models_button = QPushButton('Check the voice models')
+        self.voice_models_button.setAccessibleName('Check the local voice models')
+        self.voice_models_button.clicked.connect(self.refresh_voice_models)
+        voice_row.addWidget(self.voice_models_button)
+        engine_layout.addLayout(voice_row)
+        layout.addWidget(engines)
+
         conversation = QGroupBox('Conversation')
         conversation_layout = QVBoxLayout(conversation)
         reply_form = QFormLayout()
@@ -3442,7 +3815,8 @@ class Window(QMainWindow):
             tool_layout.addWidget(button, index // 2, index % 2)
         layout.addWidget(tools)
         for name, section in (
-            ('Chat options', assistant_group), ('Appearance', preferences),
+            ('Chat options', assistant_group), ('Engines', engines),
+            ('Appearance', preferences),
             ('Updates', updates), ('Plugins', plugins), ('Safety', safety),
             ('PC usage', usage),
         ):
