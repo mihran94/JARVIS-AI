@@ -184,8 +184,11 @@ class VoiceSpeakerWorker(QThread):
                         'language.')
                     return
             self.playing.emit()
+            print('SPK emitted playing, has_speak=%s interrupted=%s' % (
+                hasattr(speaker, 'speak_interruptibly'), self.isInterruptionRequested()))
             if hasattr(speaker, 'speak_interruptibly'):
                 speaker.speak_interruptibly(self._text, self.isInterruptionRequested)
+                print('SPK speak_interruptibly returned')
             elif not self.isInterruptionRequested():
                 speaker.speak(self._text, language)
         except VoiceError as error:
