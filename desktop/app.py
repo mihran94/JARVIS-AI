@@ -687,12 +687,7 @@ class Window(QMainWindow):
         if shell is not None:
             shell.mark_active(name)
         if name == 'Settings & Safety':
-            scroller = self.pages.widget(index)
-            scroller.verticalScrollBar().setValue(0)
-            # The saved-project table lives in Settings, so it is refreshed
-            # whenever the owner comes back to it.
-            self.refresh_projects_page()
-            self.audio_test.refresh_devices()
+            self.show_settings_view()
 
     def open_island(self):
         """The only optional presentation mode on the main assistant toolbar."""
@@ -702,7 +697,7 @@ class Window(QMainWindow):
 
     def open_saved_projects(self):
         self.open_section('Settings & Safety')
-        self.scroll_to_setting(self.saved_projects_group)
+        self.show_settings_view('projects', target=self.saved_projects_group)
         self.prime_shell.mark_active('Projects')
 
     def update_assistant_navigation(self, _index=None):
@@ -711,11 +706,9 @@ class Window(QMainWindow):
         self.composer_bar.setVisible(in_chat)
 
     def open_plugins(self):
-        """Open existing plugin switches without a large feature toolbar."""
+        """Reveal the existing plugin switches from the Work menu."""
         self.open_section('Settings & Safety')
-        scroller = self.pages.widget(self.page_indices['Settings & Safety'])
-        if isinstance(scroller, QScrollArea):
-            scroller.ensureWidgetVisible(self.plugins_group, 16, 16)
+        self.show_settings_view('projects', target=self.plugins_group)
 
     def local_voice_allowed(self):
         """Hands-free calls are allowed only to local, non-billable Ollama."""
@@ -3302,6 +3295,43 @@ class Window(QMainWindow):
 
     def permissions_page(self):
         page, layout = self.page('Settings & Safety')
+        self.settings_view = None
+        header = QHBoxLayout()
+        self.settings_mode_button = QPushButton('Advanced settings')
+        self.settings_mode_button.clicked.connect(self.toggle_settings_view)
+        header.addWidget(self.settings_mode_button)
+        self.settings_category = QComboBox()
+        self.settings_category.setAccessibleName('Advanced settings category')
+        self.settings_groups = {}
+        groups = {}
+        for key, title in (
+            ('assistant', 'Chat options, audio tests and connections'),
+            ('system', 'Startup, updates and recovery'),
+            ('privacy', 'Privacy, history and backup'),
+            ('projects', 'Saved projects and plugins'),
+            ('workspace', 'Workspace shortcuts and PC usage'),
+        ):
+            self.settings_category.addItem(title, key)
+            group = QWidget()
+            group.hide()
+            groups[key] = QVBoxLayout(group)
+            groups[key].setContentsMargins(0, 0, 0, 0)
+            self.settings_groups[key] = group
+        self.settings_category.hide()
+        self.settings_category.currentIndexChanged.connect(self.on_settings_category)
+        header.addWidget(self.settings_category)
+        header.addStretch()
+        layout.addLayout(header)
+        self.settings_essentials = QWidget()
+        essentials = QGridLayout(self.settings_essentials)
+        essentials.setContentsMargins(0, 0, 0, 0)
+        essentials.setColumnStretch(0, 1)
+        essentials.setColumnStretch(1, 1)
+        layout.addWidget(self.settings_essentials)
+        for group in self.settings_groups.values():
+            layout.addWidget(group)
+        layout.addStretch()
+
         approvals = QGroupBox('Action approvals')
         approval_layout = QVBoxLayout(approvals)
         self.approval_mode_choice = QComboBox()
@@ -3325,7 +3355,7 @@ class Window(QMainWindow):
         approval_layout.addWidget(self.approval_mode_detail)
         self.approval_mode_choice.activated.connect(self.choose_approval_mode)
         self.refresh_approval_mode()
-        layout.addWidget(approvals)
+        essentials.addWidget(approvals, 0, 0)
 
         conversation = QGroupBox('Conversation')
         conversation_layout = QVBoxLayout(conversation)
@@ -3349,38 +3379,41 @@ class Window(QMainWindow):
         note = QLabel('Applies to AI chat replies. You can also ask JARVIS to switch languages in a message.')
         note.setWordWrap(True)
         conversation_layout.addWidget(note)
-        layout.addWidget(conversation)
+        essentials.addWidget(conversation, 0, 1)
 
         connections = QGroupBox('Assistant services')
         service_links = QHBoxLayout(connections)
-        for label, section in (
-            ('AI providers', 'AI Providers'), ('Voice and audio', 'Voice / Hey Jarvis'),
-            ('Memory', 'Memory'), ('Phone remote', 'Phone Remote'),
+        more_connections = QGroupBox('Other connections')
+        other_links = QHBoxLayout(more_connections)
+        for links, label, section in (
+            (service_links, 'AI providers', 'AI Providers'),
+            (service_links, 'Voice and audio', 'Voice / Hey Jarvis'),
+            (other_links, 'Memory', 'Memory'),
+            (other_links, 'Phone remote', 'Phone Remote'),
         ):
-            self.flexible_button(service_links, label,
+            self.flexible_button(links, label,
                                  lambda _checked=False, section=section: self.open_section(section))
-        layout.addWidget(connections)
-        configuration = QGroupBox('App settings')
-        settings_links = QHBoxLayout(configuration)
-        layout.addWidget(configuration)
+        essentials.addWidget(connections, 1, 0)
+        groups['assistant'].addWidget(more_connections)
 
         assistant_group = QGroupBox('AI chat options')
         assistant_layout = QVBoxLayout(assistant_group)
         assistant_layout.addWidget(self.chat_settings_panel)
-        layout.addWidget(assistant_group)
+        groups['assistant'].addWidget(assistant_group)
         self.audio_test = AudioTest(self.voice_panel, self.policy)
         self.audio_test.finished.connect(self.schedule_local_voice_rearm)
-        layout.addWidget(self.audio_test)
+        groups['assistant'].addWidget(self.audio_test)
 
-        preferences = QGroupBox('Appearance and startup')
-        preference_layout = QVBoxLayout(preferences)
+        preferences = QGroupBox('Appearance')
+        startup = QGroupBox('Startup and background')
+        preference_layout = QVBoxLayout(startup)
         appearance = QFormLayout()
         self.theme_choice = QComboBox()
         self.theme_choice.addItems(list(OMEGA_THEMES))
         self.theme_choice.setCurrentText(self.interface_theme)
         self.theme_choice.currentTextChanged.connect(self.on_theme_chosen)
         appearance.addRow('Interface theme', self.theme_choice)
-        preference_layout.addLayout(appearance)
+        QVBoxLayout(preferences).addLayout(appearance)
         self.keep_in_tray = QCheckBox('Keep JARVIS running in the system tray')
         self.keep_in_tray.setChecked(bool(self.store.get('keep_running_in_tray', False)))
         self.keep_in_tray.toggled.connect(
@@ -3394,7 +3427,8 @@ class Window(QMainWindow):
         self.tray_note = QLabel(self.tray_note_text())
         self.tray_note.setWordWrap(True)
         preference_layout.addWidget(self.tray_note)
-        layout.addWidget(preferences)
+        essentials.addWidget(preferences, 1, 1)
+        groups['system'].addWidget(startup)
 
         updates = QGroupBox('Updates and recovery')
         update_layout = QVBoxLayout(updates)
@@ -3406,16 +3440,16 @@ class Window(QMainWindow):
         self.auto_maintenance.setChecked(bool(self.store.get('auto_maintenance', False)))
         self.auto_maintenance.toggled.connect(self.set_auto_maintenance)
         update_layout.addWidget(self.auto_maintenance)
-        layout.addWidget(updates)
+        groups['system'].addWidget(updates)
         backup = QGroupBox('History backup and restore')
         backup_layout = QVBoxLayout(backup)
         self.history_backup_panel = HistoryBackupPanel(
             history_path=self.root / 'history.sqlite3')
         backup_layout.addWidget(self.history_backup_panel)
-        layout.addWidget(backup)
+        groups['privacy'].addWidget(backup)
         self.saved_projects_group = QWidget()
         self.add_projects_settings(QVBoxLayout(self.saved_projects_group))
-        layout.addWidget(self.saved_projects_group)
+        groups['projects'].addWidget(self.saved_projects_group)
         plugins = QGroupBox('Plugins')
         self.plugins_group = plugins
         plugin_layout = QVBoxLayout(plugins)
@@ -3436,7 +3470,7 @@ class Window(QMainWindow):
                     lambda _checked=False, name=name, label=label: self.choose_editor_path(name, label))
                 row.addWidget(button)
             plugin_layout.addLayout(row)
-        layout.addWidget(plugins)
+        groups['projects'].addWidget(plugins)
         safety = QGroupBox('Permissions and data')
         safety_layout = QVBoxLayout(safety)
         for note in (
@@ -3449,12 +3483,12 @@ class Window(QMainWindow):
             label = QLabel(note)
             label.setWordWrap(True)
             safety_layout.addWidget(label)
-        layout.addWidget(safety)
+        groups['privacy'].insertWidget(0, safety)
         usage = QGroupBox('Live PC usage')
         self.settings_usage = QLabel('Collecting PC usage…')
         self.settings_usage.setWordWrap(True)
         QVBoxLayout(usage).addWidget(self.settings_usage)
-        layout.addWidget(usage)
+        groups['workspace'].addWidget(usage)
         tools = QGroupBox('Workspace shortcuts')
         tool_layout = QGridLayout(tools)
         for index, (label, name) in enumerate((
@@ -3469,16 +3503,49 @@ class Window(QMainWindow):
             button = QPushButton(label)
             button.clicked.connect(lambda _checked=False, name=name: self.open_section(name))
             tool_layout.addWidget(button, index // 2, index % 2)
-        layout.addWidget(tools)
-        for name, section in (
-            ('Chat options', assistant_group), ('Appearance', preferences),
-            ('Updates', updates), ('Plugins', plugins), ('Safety', safety),
-            ('PC usage', usage),
-        ):
-            self.flexible_button(settings_links, name,
-                                 lambda _checked=False, section=section: self.scroll_to_setting(section),
-                                 minimum=80)
+        groups['workspace'].addWidget(tools)
         return page
+
+    def toggle_settings_view(self):
+        if self.settings_view is None:
+            self.show_settings_view(self.settings_category.currentData())
+            self.settings_category.setFocus()
+        else:
+            self.show_settings_view()
+            self.settings_mode_button.setFocus()
+
+    def on_settings_category(self, _index):
+        if self.settings_view is not None:
+            self.show_settings_view(self.settings_category.currentData())
+
+    def show_settings_view(self, category=None, *, target=None):
+        """Show one Settings view without changing any of its controls."""
+        self.settings_view = category
+        advanced = category is not None
+        self.settings_mode_button.setText('Back to essentials' if advanced else 'Advanced settings')
+        self.settings_essentials.setVisible(not advanced)
+        self.settings_category.setVisible(advanced)
+        if advanced:
+            # A direct shortcut selects the category without showing it twice.
+            previous = self.settings_category.blockSignals(True)
+            self.settings_category.setCurrentIndex(self.settings_category.findData(category))
+            self.settings_category.blockSignals(previous)
+        for key, group in self.settings_groups.items():
+            group.setVisible(key == category)
+        if category == 'projects':
+            self.refresh_projects_page()
+        elif category == 'assistant':
+            self.audio_test.refresh_devices()
+
+        scroller = self.pages.widget(self.page_indices['Settings & Safety'])
+        scroller.verticalScrollBar().setValue(0)
+        if target is not None:
+            # The scroll range is recalculated after the hidden groups reflow.
+            def scroll_to_target():
+                if (self.pages.currentWidget() is scroller and self.settings_view == category
+                        and target.isVisibleTo(scroller)):
+                    self.scroll_to_setting(target)
+            QTimer.singleShot(0, self, scroll_to_target)
 
     def refresh_approval_mode(self):
         choice = self.approval_mode_choice

@@ -39,6 +39,8 @@ def test_mark_lvii_chat_first_but_existing_pages_remain(tmp_path):
         rail['Settings & Safety'].click()
         app.processEvents()
         assert win.pages.currentIndex() == win.page_indices['Settings & Safety']
+        assert not win.plugins_group.isVisible()
+        win.prime_shell.work_actions['Plugins'].trigger()
         assert win.plugins_group.isVisible()
         rail['JARVIS Chat'].click()
         assert win.pages.currentIndex() == win.page_indices['JARVIS Chat']
