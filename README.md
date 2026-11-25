@@ -240,6 +240,10 @@ controls, and verify supported text field edits. The app must publish those
 controls. Password fields and administrative Windows processes are excluded.
 The mission sends tool observations to its selected chat provider.
 
+For a task that needs physical input, ask JARVIS to mouse-click a named
+control, type into the named focused field, or press one navigation key.
+JARVIS checks that the target is still in front immediately before sending it.
+
 ## New in v0.3.0
 
 - **Step Workflows:** enter 1–10 comma-separated actions from the fixed Notepad/Calculator allowlist. Each step shows a fresh, explicit approval prompt. Runs stop on denial, error or Emergency Stop; no automatic replay of failed/interrupted work.
