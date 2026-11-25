@@ -48,11 +48,22 @@ from PySide6.QtGui import (
     QPen, QRadialGradient,
 )
 from PySide6.QtWidgets import (
-    QFrame, QGridLayout, QHBoxLayout, QLabel, QProgressBar, QPushButton, QScrollArea, QSizePolicy,
+    QFrame, QGridLayout, QHBoxLayout, QLabel, QMenu, QProgressBar, QPushButton, QScrollArea, QSizePolicy,
     QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from desktop.activity_panel import ActivityPanel, STATES
+
+
+def core_colour(palette, state):
+    """M-CORE signal colours follow confirmed runtime state, not commands."""
+    if state in ('stopped', 'error'):
+        return palette.danger
+    if state in ('thinking', 'responding', 'approval'):
+        return palette.warn
+    if state == 'working':
+        return palette.good
+    return palette.accent
 
 
 def build_commit() -> str:
@@ -94,18 +105,18 @@ class PrimePalette:
     def __init__(self, dark: bool = True):
         self.dark = dark
         if dark:
-            self.ground = QColor('#141218')
-            self.ground_far = QColor('#201b26')
-            self.glass = QColor('#292230')
-            self.glass_edge = QColor('#554859')
-            self.ink = QColor('#fff5ee')
-            self.muted = QColor('#c5b5c5')
-            self.accent = QColor('#ffbd93')
-            self.accent_deep = QColor('#b883d5')
-            self.good = QColor('#5df2b0')
-            self.warn = QColor('#ffcf6b')
-            self.danger = QColor('#ff6b81')
-            self.bubble_you = QColor(184, 131, 213, 52)
+            self.ground = QColor('#070e1d')
+            self.ground_far = QColor('#101e34')
+            self.glass = QColor('#142942')
+            self.glass_edge = QColor('#345672')
+            self.ink = QColor('#edf8ff')
+            self.muted = QColor('#adc7dc')
+            self.accent = QColor('#00e5ff')
+            self.accent_deep = QColor('#3b82f6')
+            self.good = QColor('#00ff9d')
+            self.warn = QColor('#ffb800')
+            self.danger = QColor('#ff526f')
+            self.bubble_you = QColor(59, 130, 246, 52)
             self.bubble_jarvis = QColor(255, 255, 255, 16)
         else:
             self.ground = QColor('#f4f6fb')
@@ -222,13 +233,8 @@ class PrimeOrb(QWidget):
 
     def _colours(self):
         palette = self.palette_
-        if self.state in ('listening', 'speaking'):
-            return palette.good, palette.accent
-        if self.state == 'approval':
-            return palette.warn, palette.warn.darker(160)
-        if self.state in ('error', 'stopped'):
-            return palette.danger, palette.danger
-        return palette.accent, palette.accent_deep
+        signal = core_colour(palette, self.state)
+        return signal, palette.accent_deep if signal == palette.accent else signal.darker(165)
 
     def paintEvent(self, _event):
         painter = QPainter(self)
@@ -260,6 +266,11 @@ class PrimeOrb(QWidget):
 
         painter.setPen(QPen(_alpha(bright.name(), 72), max(1, side * 0.006)))
         painter.drawEllipse(centre, radius * 0.81, radius * 0.81)
+        for index in range(18):
+            angle = math.radians(heading * -0.55 + index * 20)
+            direction = QPointF(math.cos(angle), math.sin(angle))
+            painter.drawLine(centre + direction * (radius * 0.88),
+                             centre + direction * (radius * (0.96 if index % 3 == 0 else 0.92)))
         breathing = 1.0 + 0.04 * math.sin(self._phase)
         size = radius * 0.94 * breathing
 
@@ -499,10 +510,9 @@ class PrimeAssistant(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
         layout.addStretch(1)
-        self.orb = VoiceMeter(palette)
-        window.voice_panel.audio_level.connect(self.orb.set_level)
+        self.orb = PrimeOrb(palette)
         self.orb.set_motion(not window.store.get('omega:reduced', False))
-        self.orb.setFixedSize(135, 70)
+        self.orb.setFixedSize(132, 132)
         row = QHBoxLayout()
         row.addStretch(1)
         row.addWidget(self.orb, 0, Qt.AlignmentFlag.AlignCenter)
@@ -512,7 +522,7 @@ class PrimeAssistant(QWidget):
         self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.title.setStyleSheet(f'color: {palette.ink.name()}; font-size: 20px; font-weight: 600;')
         layout.addWidget(self.title)
-        self.hint = QLabel('Speak in Tamil or Tanglish, or type a message below.')
+        self.hint = QLabel('Type below, or choose Speak to use the microphone.')
         self.hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.hint.setWordWrap(True)
         self.hint.setStyleSheet(f'color: {palette.muted.name()}; font-size: 13px;')
@@ -677,6 +687,7 @@ class PrimeChat(QWidget):
             window.composer_actions.removeWidget(button)
             button.setStyleSheet('padding: 7px 7px;')
         self.composer.set_controls(*buttons)
+        window.prime_shell.style_mcore()
 
         for card in (window.browser_output, getattr(window, 'chat_approval', None),
                      getattr(window, 'chat_task_card', None),
@@ -752,10 +763,14 @@ class PrimeShell(QWidget):
         outer.addWidget(self.build_rail())
         self.provider_label = QLabel()
         self.provider_label.setWordWrap(True)
+        self.provider_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.mic_button = QPushButton()
+        self.mic_button.clicked.connect(window.hud_mic_control)
         status = QHBoxLayout()
         status.setContentsMargins(24, 8, 24, 6)
         status.setSpacing(14)
         status.addWidget(self.provider_label, 1)
+        status.addWidget(self.mic_button)
         status.addWidget(self.build_label)
         status.addWidget(self.usage_button)
         outer.addLayout(status)
@@ -780,6 +795,26 @@ class PrimeShell(QWidget):
         window.pages.currentChanged.connect(self.refresh_mark)
         window.pages.currentChanged.connect(self.layout_overview)
         self.style_overview()
+        self.style_mcore()
+
+    def style_mcore(self):
+        palette = self.palette_
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(
+            'QWidget#primeShell { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, '
+            f'stop:0 {palette.ground_far.name()}, stop:1 {palette.ground.name()}); }}')
+        text = '#051321' if palette.dark else '#ffffff'
+        active = palette.accent.name() if palette.dark else '#005d96'
+        hover = palette.accent.lighter(120).name() if palette.dark else '#00436e'
+        primary = (
+            f'QPushButton {{ color: {text}; background: {active}; font-weight: 700; '
+            'border: 1px solid transparent; border-radius: 10px; padding: 7px 12px; }'
+            f'QPushButton:hover {{ background: {hover}; }}'
+            f'QPushButton:focus {{ border: 1px solid {palette.ink.name()}; }}'
+            f'QPushButton:disabled {{ color: {palette.muted.name()};'
+            f' background: {palette.glass.name()}; }}')
+        for button in (self.window_ref.live_voice_button, self.window_ref.send_button):
+            button.setStyleSheet(primary)
 
     def build_overview(self):
         panel = QFrame()
@@ -873,9 +908,11 @@ class PrimeShell(QWidget):
         mark.hide()
         layout.addWidget(mark)
         self.mark = mark
+        mark.setToolTip('Compact M-CORE voice activity')
 
         brand = QLabel(APP_NAME)
         self.brand = brand
+        brand.setToolTip('M-CORE HUD')
         brand.setStyleSheet(
             f'color: {palette.ink.name()}; font-size: 21px; font-weight: 700;')
         layout.addWidget(brand)
@@ -973,6 +1010,26 @@ class PrimeShell(QWidget):
         layout.setContentsMargins(24, 6, 24, 6)
         layout.setSpacing(8)
         self.rail_buttons = {}
+        self.work_button = QPushButton('Work')
+        self.work_button.setAccessibleName('Work tools')
+        work = QMenu(self.work_button)
+        self.work_actions = {}
+        for title, section in (
+            ('Coding and project tests', 'Coding Assistant'),
+            ('Creative planning', 'Video Editor'),
+            ('Business drafts', 'Business'),
+            ('Approved workflows', 'Step Workflows'),
+            ('Task queue', 'Task Queue'),
+            ('Phone connection', 'Phone Remote'),
+            ('Plugin settings', 'Plugins'),
+        ):
+            action = work.addAction(title)
+            handler = (self.window_ref.open_plugins if section == 'Plugins'
+                       else lambda checked=False, name=section: self.open_section(name))
+            action.triggered.connect(handler)
+            self.work_actions[section] = action
+        self.work_button.setMenu(work)
+        layout.addWidget(self.work_button)
         for title, section in (
             ('Chat', 'JARVIS Chat'),
             ('PC tools', 'PC Control'),
@@ -991,7 +1048,7 @@ class PrimeShell(QWidget):
             button.clicked.connect(lambda _checked=False, name=section: self.open_section(name))
             layout.addWidget(button)
             self.rail_buttons[section] = button
-        self.island_button = QPushButton('Mini view')
+        self.island_button = QPushButton('Island')
         self.island_button.setToolTip('Island')
         self.island_button.setAccessibleName('Island')
         self.island_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1019,6 +1076,7 @@ class PrimeShell(QWidget):
         self.set_state(self.mark.state)
         self.activity.refresh_theme()
         self.style_overview()
+        self.style_mcore()
 
     def open_section(self, name: str):
         if name == 'Projects':
@@ -1038,9 +1096,8 @@ class PrimeShell(QWidget):
 
     def set_state(self, state: str):
         """The state chip and the mark follow what JARVIS is doing."""
-        palette = self.palette_
-        label, tone = STATES[state]
-        colour = getattr(palette, tone)
+        label, _ = STATES[state]
+        colour = core_colour(self.palette_, state)
         self.activity.set_state(state)
         label = label.upper()
         self.state_chip.setText(label)
@@ -1053,3 +1110,11 @@ class PrimeShell(QWidget):
 
     def set_provider(self, text):
         self.provider_label.setText(text)
+
+    def set_microphone(self, state, allowed):
+        self.mic_button.setText(state)
+        self.mic_button.setAccessibleName(state + ('. Turn microphone access off' if allowed
+                                                   else '. Open voice settings'))
+        self.mic_button.setToolTip('Turn JARVIS microphone access off' if allowed
+                                   else 'Open Voice settings; microphone remains off until allowed')
+        self.mic_button.setEnabled(not self.window_ref.policy.stopped)

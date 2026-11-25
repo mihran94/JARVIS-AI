@@ -543,6 +543,7 @@ class Window(QMainWindow):
         chat.adopt_task_panels()
         shell.content.addWidget(self.pages)
         shell.activity.set_rows(self.store.tasks())
+        shell.update_usage(self.hud_usage_data)
         self.render_chat()
 
         self.refresh_prime_state()
@@ -566,7 +567,14 @@ class Window(QMainWindow):
         state = self.prime_state()
         shell.set_state(state)
         shell.activity.set_live_detail(self.current_desktop_activity(state))
-        shell.set_provider(self.brain_label.text())
+        if self.live_voice is not None and self.live_voice.active:
+            route = ('Connecting to Gemini Live' if self.live_voice.state == 'connecting'
+                     else 'Active route: Gemini Live · Uses microphone audio')
+        else:
+            title = 'Request route' if self.worker is not None else 'Selected chat route'
+            route = title + ': ' + self.brain_label.text().removeprefix('Active brain: ')
+        shell.set_provider(route)
+        shell.set_microphone(self.hud_mic_state(), self.voice_panel.consent.listening)
         chat = getattr(self, 'prime_chat', None)
         if chat is not None:
             chat.set_state(state)
@@ -950,6 +958,26 @@ class Window(QMainWindow):
         self.video_status.setText('Review the brief and select Generate with Gemini.')
         return True
 
+    def hud_mic_state(self):
+        """Report JARVIS microphone access without confusing it with reply mute."""
+        voice = self.voice_panel
+        if self.live_voice is not None and self.live_voice.active:
+            return 'Mic: connecting' if self.live_voice.state == 'connecting' else 'Mic: Gemini Live'
+        if self.audio_test.mode == 'microphone':
+            return 'Mic: testing'
+        if voice.worker is not None and voice.worker.isRunning():
+            return 'Mic: listening' if voice.listening else 'Mic: closing'
+        return 'Mic: ready' if voice.consent.listening else 'Mic: off'
+
+    def hud_mic_control(self):
+        """Revoke access immediately; reopening it is explicit in Voice settings."""
+        if self.policy.stopped:
+            return
+        if self.voice_panel.consent.listening:
+            self.voice_panel.allow.setChecked(False)
+        else:
+            self.open_section('Voice / Hey Jarvis')
+
     def listen_to_user(self):
         """One click in Chat; microphone permission always belongs to Voice."""
         if self.policy.stopped:
@@ -1188,6 +1216,7 @@ class Window(QMainWindow):
         """Refresh the HUD and cache the same snapshot for local chat commands."""
         data = snapshot(self.root, self.cpu_sampler)
         data['network_status'] = format_network(self.network_sampler.sample())
+        self.hud_usage_data = data
         self.system_summary = format_snapshot(data)
         self.system_metrics_label.setText(self.system_summary)
         self.dashboard_metrics.setText(self.system_summary)
@@ -5639,8 +5668,14 @@ class Window(QMainWindow):
         if self.live_voice is not None and self.live_voice.active:
             self.statusBar().showMessage('Stop Live Voice before sending a typed chat message.', 10000)
             return
-        self.clear_suggested_plan()
         text = self.prompt.toPlainText().strip()
+        if text.rstrip('!?.,').casefold() == 'hey jarvis':
+            # A typed summon is local. It never grants microphone or provider access.
+            self.prompt.clear()
+            self.prime_shell.pulse_wake()
+            self.statusBar().showMessage('JARVIS is ready. Type a request or choose Speak.', 10000)
+            return
+        self.clear_suggested_plan()
         if addressed_request(text).casefold() in ('/cancel', 'cancel task', 'task cancel pannu'):
             if self.browser.task:
                 self.browser.stop()
@@ -6090,6 +6125,7 @@ class Window(QMainWindow):
         self.voice_rearm_timer.stop()
         self.hands_free_voice.setChecked(False)
         self.voice_panel.stop_voice()
+        self.audio_test.stop()
         self.set_ai_visual_state('stopped')
         self.queue.cancel_pending()
         self.workflows.cancel_pending()

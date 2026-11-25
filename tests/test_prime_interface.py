@@ -131,7 +131,9 @@ def test_resume_stays_inside_the_assistant_and_provider_is_visible(tmp_path):
     try:
         shell = window.prime_shell
         assert shell.isAncestorOf(window.resume_button)
-        assert shell.provider_label.text() == window.brain_label.text()
+        assert shell.provider_label.text() == (
+            'Selected chat route: ' + window.brain_label.text().removeprefix('Active brain: ')
+        )
         shell.stop_button.click()
         assert shell.state_chip.text() == 'STOPPED'
         assert window.resume_button.isVisibleTo(window)
