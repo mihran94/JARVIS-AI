@@ -602,7 +602,7 @@ class PrimeComposer(QFrame):
                      + margins.left() + margins.right())
         columns = len(self.buttons)
         if self.width() < max(550, row_width):
-            columns = 3 if self.width() < 410 else 4
+            columns = 2 if self.width() < 410 else 4
         if columns == self._columns:
             return
         self._columns = columns
@@ -782,6 +782,7 @@ class PrimeShell(QWidget):
         outer.addWidget(self.build_top_bar())
         status = QHBoxLayout()
         status.setContentsMargins(18, 4, 18, 6)
+        status.setSpacing(12)
         self.provider_label = QLabel()
         self.provider_label.setWordWrap(True)
         status.addWidget(self.provider_label, 1)
@@ -1095,6 +1096,7 @@ class PrimeShell(QWidget):
             button.setAccessibleName(title)
             button.setCheckable(True)
             button.setFixedSize(68, 48)
+            button.setStyleSheet('padding: 4px 3px;')
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.clicked.connect(lambda _checked=False, name=section: self.open_section(name))
             layout.addWidget(button)
@@ -1103,6 +1105,7 @@ class PrimeShell(QWidget):
         self.island_button.setToolTip('Island')
         self.island_button.setAccessibleName('Island')
         self.island_button.setFixedSize(68, 48)
+        self.island_button.setStyleSheet('padding: 4px 3px;')
         self.island_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.island_button.clicked.connect(self.window_ref.open_island)
         layout.addWidget(self.island_button)
