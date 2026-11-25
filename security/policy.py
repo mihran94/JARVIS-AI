@@ -1,5 +1,6 @@
 """Approval boundary; approvals cannot survive stop/resume or be reused."""
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from enum import Enum
 from threading import RLock
 import uuid
 
@@ -12,11 +13,31 @@ class Denied(RuntimeError):
     pass
 
 
+class ApprovalMode(str, Enum):
+    ASK = 'ask'
+    AUTOMATIC = 'automatic'
+    FULL = 'full'
+
+    @classmethod
+    def from_setting(cls, value):
+        try:
+            return cls(value)
+        except ValueError:
+            return cls.ASK
+
+
+class ApprovalScope(Enum):
+    ALWAYS = 'always'
+    ROUTINE = 'routine'
+    LOCAL_WRITE = 'local_write'
+
+
 @dataclass(frozen=True)
 class Action:
     kind: str
     target: str
     digest: str = ''
+    approval_scope: ApprovalScope = ApprovalScope.ALWAYS
 
 
 @dataclass(frozen=True)
@@ -45,8 +66,9 @@ MAX_DECISIONS = 200
 
 
 class Policy:
-    def __init__(self):
+    def __init__(self, mode=ApprovalMode.ASK):
         self._lock = RLock()
+        self._mode = ApprovalMode.from_setting(mode)
         self._generation = 0
         self._stopped = False
         self._grants = {}
@@ -58,6 +80,23 @@ class Policy:
     def stopped(self):
         with self._lock:
             return self._stopped
+
+    @property
+    def mode(self):
+        with self._lock:
+            return self._mode
+
+    def set_mode(self, mode):
+        with self._lock:
+            self._mode = ApprovalMode.from_setting(mode)
+
+    def requires_confirmation(self, action):
+        with self._lock:
+            if action.approval_scope is ApprovalScope.ROUTINE:
+                return self._mode is ApprovalMode.ASK
+            if action.approval_scope is ApprovalScope.LOCAL_WRITE:
+                return self._mode is not ApprovalMode.FULL
+            return True
 
     def ticket(self):
         with self._lock:
@@ -124,8 +163,13 @@ class Policy:
         with self._lock:
             self._stopped = False
 
-    def approve(self, action, confirm):
-        ticket = self.ticket()
+    def approve(self, action, confirm, *, auto_approve=True):
+        with self._lock:
+            ticket = self.ticket()
+            if auto_approve and not self.requires_confirmation(action):
+                token = uuid.uuid4().hex
+                self._grants[token] = (ticket, action, self._mode)
+                return token
         if not confirm(action):
             with self._lock:
                 self._record(action.kind, action.target, 'refused',
@@ -134,7 +178,7 @@ class Policy:
         with self._lock:
             self.check(ticket)
             token = uuid.uuid4().hex
-            self._grants[token] = (ticket, action)
+            self._grants[token] = (ticket, action, None)
             return token
 
     def execute(self, action, token, operation):
@@ -156,5 +200,11 @@ class Policy:
                 self._record(action.kind, action.target, 'stopped',
                              'an emergency stop was active')
                 raise
-            self._record(action.kind, action.target, 'allowed')
+            automatic_mode = grant[2]
+            if automatic_mode is not None and self.requires_confirmation(action):
+                self._record(action.kind, action.target, 'refused',
+                             'the approval mode changed before execution')
+                raise Denied('Approval mode changed. Request the action again.')
+            detail = f'automatically approved in {automatic_mode.value} mode' if automatic_mode else ''
+            self._record(action.kind, action.target, 'allowed', detail)
             return operation()

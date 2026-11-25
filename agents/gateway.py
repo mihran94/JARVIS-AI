@@ -5,10 +5,11 @@ class Gateway:
     def __init__(self, policy, store):
         self.policy, self.store = policy, store
 
-    def run(self, action, confirm, operation, *, task_id=None, completion_status='completed'):
+    def run(self, action, confirm, operation, *, task_id=None, completion_status='completed',
+            auto_approve=True):
         ident = task_id if task_id is not None else self.store.task(action.kind, action.target)
         try:
-            token = self.policy.approve(action, confirm)
+            token = self.policy.approve(action, confirm, auto_approve=auto_approve)
             self.store.finish(ident, 'running')
             result = self.policy.execute(action, token, operation)
             self.store.finish(ident, completion_status, result)
