@@ -11,9 +11,18 @@ From CMD in a separate checkout of the review branch, using the existing
 Python 3.12 x64 development environment:
 
 ```bat
-VERIFY_JARVIS.cmd
+git rev-parse --short HEAD
+VERIFY_JARVIS.cmd --phase1
 START_JARVIS.cmd --dev-data
 ```
+
+The first command identifies the revision. The second checks the runtime,
+starts a disposable offscreen session, then runs the HUD, Settings, keyboard
+navigation, narrow-layout and approval source tests. This includes mocked
+voice playback and checks that the microphone doesn't rearm during playback.
+A missing pytest or a failing check gives a nonzero exit. Do not count a skipped or failed suite as
+a pass. The last command opens an interactive development profile; do the
+following live checks separately and note pass, fail, or not run for each.
 
 If this checkout does not have its own `.venv`, `setup.cmd` is the existing
 dependency setup. Run it only if you intend to install dependencies in the
@@ -21,7 +30,8 @@ checkout. Do not copy provider keys into the HUD or share keys in test evidence.
 
 1. Check the centered M-CORE orb and the compact indicator that replaces it
    after the first message. Resize the window and check readability, including
-   Windows display scaling and Tamil text.
+   Windows display scaling and Tamil text such as `வணக்கம் ஜார்விஸ்`. Note the
+   display scaling used; check that Settings and Emergency Stop remain usable.
 2. Type `Hey Jarvis`. The indicator pulses unless reduced motion is enabled.
    This is a local summon, not a speech recognition or model request.
 3. Confirm that the microphone reads **off** before consent. Clicking **Mic:
