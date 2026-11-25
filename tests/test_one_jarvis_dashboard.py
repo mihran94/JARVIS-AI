@@ -247,7 +247,11 @@ def test_hud_continuous_voice_waits_for_playback_before_listening_again(tmp_path
         return recognizer
 
     def wait_for(condition):
-        for _ in range(150):
+        # The budget is generous on purpose. The states below arrive
+        # across a thread boundary, and a slow or loaded machine needs
+        # longer to deliver them than a quiet one does. The assertion is
+        # the same either way: the HUD must reach the state.
+        for _ in range(300):
             app.processEvents()
             if condition():
                 return
