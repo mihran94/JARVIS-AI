@@ -249,9 +249,11 @@ def test_hud_continuous_voice_waits_for_playback_before_listening_again(tmp_path
     def wait_for(condition):
         # The budget is generous on purpose. The states below arrive
         # across a thread boundary, and a slow or loaded machine needs
-        # longer to deliver them than a quiet one does. The assertion is
-        # the same either way: the HUD must reach the state.
-        for _ in range(300):
+        # longer to deliver them than a quiet one does: the Windows
+        # runner works through the whole suite in one process, and the
+        # voice handoff has to win its turn in that queue. The assertion
+        # is the same either way: the HUD must reach the state.
+        for _ in range(900):
             app.processEvents()
             if condition():
                 return
