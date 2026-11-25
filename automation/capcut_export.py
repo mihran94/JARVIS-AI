@@ -418,15 +418,17 @@ class _CapCutExportUI:
         def address_ready():
             return address_field() == address
 
-        self._guard(address_ready, 'enter the folder path')
-        if not win_controls.replace_contents(address, str(folder)):
-            raise RuntimeError('The export folder could not be entered in CapCut.')
-        self._key('enter', address_ready)
-        self._wait(lambda: picker_ready() and not address_field(),
-                   'CapCut did not finish navigating to the export folder.')
-        self._key('alt+d', picker_ready)
-        address = self._wait(address_field, 'The selected export folder could not be read.')
         chosen = win_controls.contents(address)
+        if not chosen or not Path(chosen).is_absolute() or Path(chosen).resolve() != folder:
+            self._guard(address_ready, 'enter the folder path')
+            if not win_controls.replace_contents(address, str(folder)):
+                raise RuntimeError('The export folder could not be entered in CapCut.')
+            self._key('enter', address_ready)
+            self._wait(lambda: picker_ready() and not address_field(),
+                       'CapCut did not finish navigating to the export folder.')
+            self._key('alt+d', picker_ready)
+            address = self._wait(address_field, 'The selected export folder could not be read.')
+            chosen = win_controls.contents(address)
         if not chosen or not Path(chosen).is_absolute() or Path(chosen).resolve() != folder:
             raise RuntimeError('CapCut did not navigate to the approved export folder.')
 
@@ -453,17 +455,16 @@ class _CapCutExportUI:
             return None
 
         selected = self._wait(directory, 'CapCut did not report its saved export folder.')
-        # Escape dismisses address editing, then the picker, without changing
-        # the directory. Verify what CapCut actually committed before export.
-        self._key('escape', ready)
-        if ready():
-            self._key('escape', ready)
-        self._wait(self._current_form, 'CapCut did not close the export folder picker.')
+        # Cancel the read-only verification picker without changing the
+        # directory committed by the first picker.
+        self._press_picker_button(picker, 'Cancel', self._folder_picker, control_id=2)
+        if self._wait(self._current_form, 'CapCut did not close the export folder picker.') != form:
+            raise RuntimeError('CapCut switched to a different Export dialog.')
         if not Path(selected).is_absolute() or Path(selected).resolve() != folder:
             raise RuntimeError('CapCut kept a different export folder. No export was started.')
 
-    def _press_picker_button(self, picker, label, current_picker):
-        button = self.user.GetDlgItem(picker, 1)
+    def _press_picker_button(self, picker, label, current_picker, *, control_id=1):
+        button = self.user.GetDlgItem(picker, control_id)
         self.check()
         caption = win_controls.contents(button) if button else None
         if (current_picker() != picker or not button or not self.user.IsWindowVisible(button)
