@@ -22,3 +22,29 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m pytest -q
+
+  phase1-cmd:
+    name: Phase 1 source verifier (Windows CMD)
+    if: >-
+      github.ref == 'refs/heads/dev/windows-cmd-phase1-acceptance-20261125' ||
+      (github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.head_ref == 'dev/windows-cmd-phase1-acceptance-20261125')
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Prepare throwaway checkout environment
+        shell: cmd
+        run: |
+          python -m venv .venv || exit /b 1
+          .venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+      - name: Run the source CMD entry point
+        shell: cmd
+        run: call VERIFY_JARVIS.cmd --phase1

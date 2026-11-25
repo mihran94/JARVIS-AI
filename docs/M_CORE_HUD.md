@@ -18,8 +18,9 @@ START_JARVIS.cmd --dev-data
 
 The first command identifies the revision. The second checks the runtime,
 starts a disposable offscreen session, then runs the HUD, Settings, keyboard
-navigation, narrow-layout and approval source tests. A missing pytest or a
-failing check gives a nonzero exit. Do not count a skipped or failed suite as
+navigation, narrow-layout and approval source tests. This includes mocked
+voice playback and checks that the microphone doesn't rearm during playback.
+A missing pytest or a failing check gives a nonzero exit. Do not count a skipped or failed suite as
 a pass. The last command opens an interactive development profile; do the
 following live checks separately and note pass, fail, or not run for each.
 

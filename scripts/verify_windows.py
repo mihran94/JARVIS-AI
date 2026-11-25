@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TESTS = ('tests/test_omega.py', 'tests/test_mark_lvii_assistant.py')
 PHASE1_TESTS = (
     'tests/test_mcore_hud.py',
+    'tests/test_one_jarvis_dashboard.py',
     'tests/test_settings_views.py',
     'tests/test_command_first_window.py',
     'tests/test_personal_layout.py',

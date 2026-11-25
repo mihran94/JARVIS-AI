@@ -95,6 +95,7 @@ def test_phase1_entry_runs_source_startup_then_named_suite(monkeypatch, exit_cod
     assert calls[2][:4] == ['-m', 'pytest', '-q', '--basetemp']
     assert calls[2][5:] == [
         'tests/test_mcore_hud.py',
+        'tests/test_one_jarvis_dashboard.py',
         'tests/test_settings_views.py',
         'tests/test_command_first_window.py',
         'tests/test_personal_layout.py',
