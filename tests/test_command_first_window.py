@@ -39,6 +39,11 @@ def test_main_toolbar_is_chat_island_settings_and_safety(tmp_path):
         rail["Settings & Safety"].click()
         app.processEvents()
         assert window.pages.currentIndex() == window.page_indices["Settings & Safety"]
+        assert not window.chat_provider.isVisible()
+        assert window.settings_mode_button.text() == "Advanced settings"
+        window.settings_mode_button.click()
+        app.processEvents()
+        assert window.settings_category.currentText() == "Chat options, audio tests and connections"
         assert window.chat_provider.isVisible()
     finally:
         window.close()

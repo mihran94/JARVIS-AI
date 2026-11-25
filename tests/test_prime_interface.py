@@ -69,6 +69,8 @@ def test_conversation_settings_change_the_chat_reply_and_survive_restart(tmp_pat
         assert window.reply_language.isVisibleTo(window)
         assert window.reply_language.currentData() == 'auto'
         assert window.reply_tone.currentData() == 'friendly'
+        window.open_saved_projects()
+        app.processEvents()
         scroll = scroller.verticalScrollBar()
         scroll.setValue(scroll.maximum())
         assert scroll.value() > 0

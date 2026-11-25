@@ -26,8 +26,9 @@ checkout. Do not copy provider keys into the HUD or share keys in test evidence.
    This is a local summon, not a speech recognition or model request.
 3. Confirm that the microphone reads **off** before consent. Clicking **Mic:
    off** opens Voice settings without enabling capture. After explicit consent,
-   the HUD reads **ready**, not **listening**. Use the real mic test or Speak
-   to test capture, then turn off access from the HUD. Muting spoken replies is
+   the HUD reads **ready**, not **listening**. Use Speak, or run the mic test
+   from **Settings → Advanced settings → Chat options, audio tests and
+   connections**. Then turn off access from the HUD. Muting spoken replies is
    separate. Gemini Live requires its separate cloud-audio confirmation.
 4. In Chat, type `Open Calculator and calculate: 17 * 23`. In the default
    approval mode, decline once and check that nothing opened. Submit again,
@@ -37,6 +38,11 @@ checkout. Do not copy provider keys into the HUD or share keys in test evidence.
    Check the stopped status and confirm that Resume does not retry the action.
 6. Open **Island** and **Work**. Verify you can return to the same conversation,
    and that tools open existing JARVIS controls, not simulated tasks.
+7. Open **Settings** and check that approvals, language, tone and theme are
+   visible without opening Advanced. Open **Advanced settings** and switch
+   categories with the keyboard. Check that the **Projects** rail and **Work →
+   Plugin settings** still reveal their original controls. Reopen **Settings**
+   and verify it returns to the short essentials view.
 
 Local models, cloud providers, remote pairing, wake-word recognition, devices
 and external applications are not certified by a visual or offscreen smoke
