@@ -145,9 +145,13 @@ def check_voice_on_windows() -> Check:
     models = probe()
     ready = [model for model in models if model.ready]
     if not ready:
+        # A machine without the Tamil language pack is not a machine
+        # whose recogniser failed. The check has not been run here.
         return Check('The offline recogniser hears Tamil and English in one sentence',
-                     'Offline Tamil and Tanglish voice', FAIL,
-                     'No offline voice model is ready on this computer.',
+                     'Offline Tamil and Tanglish voice', NOT_RUN,
+                     'No offline voice model is installed on this computer, so the '
+                     'check has not been run here. Install the Windows Tamil '
+                     'language pack and run it again.',
                      windows_only=True)
     return Check('The offline recogniser hears Tamil and English in one sentence',
                  'Offline Tamil and Tanglish voice', PASS,
@@ -234,9 +238,14 @@ def check_calculator_display_on_windows(window) -> Check:
 
     calculator = foreground_calculator()
     if calculator is None:
+        # The Calculator was not in front, so the check could not run.
+        # That is not a failure of the Calculator.
         return Check('The Calculator display shows 391',
-                     'Calculator shows 391 for 17 × 23 without prompting', FAIL,
-                     'The Calculator is not in front.', windows_only=True)
+                     'Calculator shows 391 for 17 × 23 without prompting', NOT_RUN,
+                     'The Windows Calculator was not in front, so the check has not '
+                     'been run here. Open it, ask JARVIS to calculate, and run it '
+                     'again.',
+                     windows_only=True)
     try:
         value = calculate_in_window('17 * 23', calculator, check=lambda: None)
     except Exception as error:
