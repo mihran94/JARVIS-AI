@@ -1655,9 +1655,9 @@ class Window(QMainWindow):
         self.mission_mode = QPushButton('Work on this')
         self.mission_mode.setCheckable(True)
         self.mission_mode.setToolTip(
-            'Send this message as a mission. JARVIS plans it, picks a tool, asks '
-            'you before anything changes, and shows every step in Mission Control. '
-            'The answer comes back into this conversation.')
+            'Ask JARVIS to work on a task or use an open Windows app. Name the app '
+            'and the action you want. JARVIS asks before making changes and shows '
+            'each step in Mission Control.')
         self.mission_mode.toggled.connect(self.update_mission_mode)
         composer_actions.insertWidget(composer_actions.indexOf(self.send_button), self.mission_mode)
         return page

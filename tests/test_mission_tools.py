@@ -46,6 +46,7 @@ def test_the_catalogue_has_the_real_capabilities(registry):
     assert set(registry.names()) == {
         'current_time', 'system_status', 'evaluate_expression', 'research_fetch', 'discover_apps',
         'inspect_window', 'activate_window', 'observe_screen', 'read_calculator',
+        'list_app_windows', 'inspect_app_controls', 'click_app_control', 'set_app_field',
         'save_open_document', 'edit_image', 'render_timeline', 'apply_effects_changes',
         'verify_media',
         'launch_app', 'browser_draft', 'type_notepad', 'export_text', 'list_directory', 'read_text_file',
@@ -57,16 +58,29 @@ def test_only_the_tools_that_change_something_need_approval(registry):
     assert set(registry.read_only_names()) == {
         'current_time', 'system_status', 'evaluate_expression', 'research_fetch', 'discover_apps',
         'inspect_window', 'read_calculator', 'verify_media', 'list_directory',
+        'inspect_app_controls',
         'read_text_file', 'memory_search',
     }
     assert registry.get('launch_app').read_only is False
     assert registry.get('activate_window').read_only is False
+    assert registry.get('list_app_windows').read_only is False
+    assert registry.get('click_app_control').read_only is False
+    assert registry.get('set_app_field').read_only is False
     assert registry.get('observe_screen').read_only is False
     assert registry.get('edit_image').read_only is False
     assert registry.get('render_timeline').read_only is False
     assert registry.get('apply_effects_changes').read_only is False
     assert registry.get('save_open_document').read_only is False
     assert registry.get('memory_remember').read_only is False
+
+
+def test_app_control_approval_shows_the_complete_proposed_text(registry):
+    tool = registry.get('set_app_field')
+    value = 'தமிழ் Tanglish ' * 9 + 'last word'
+    summary = tool.summary({'process_id': 42, 'title': 'Test editor',
+                            'name': 'Message', 'text': value})
+    assert repr(value) in summary
+    assert "'Test editor'" in summary
 
 
 def test_a_tool_that_is_not_registered_does_not_exist(registry):
