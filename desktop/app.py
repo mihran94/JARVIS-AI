@@ -5977,6 +5977,9 @@ class Window(QMainWindow):
 
     def summon_from_hotkey(self):
         """Bring JARVIS to the front. The microphone is not opened."""
+        omega = getattr(self, 'omega', None)
+        if omega is not None and omega.mode == 'Island':
+            omega.switch('Omega', persist=False)
         controls = getattr(self, 'background_controls', None)
         if controls is not None and controls.tray is not None:
             controls.restore()
@@ -5984,7 +5987,6 @@ class Window(QMainWindow):
             self.showNormal()
             self.raise_()
             self.activateWindow()
-        omega = getattr(self, 'omega', None)
         if omega is not None:
             omega.window.activateWindow()
 
@@ -6127,6 +6129,8 @@ def main():
     activation.newConnection.connect(show_existing)
     activation.listen(endpoint)
     window.enable_omega(smoke=smoke)
+    if not smoke and restart_supported():
+        QTimer.singleShot(0, window.summon_from_hotkey)
     if smoke:
         # Offline native smoke test: no provider calls or remote listener.
         def finish_smoke():

@@ -484,12 +484,26 @@ class _CapCutExportUI:
             if self._promotion_close():
                 self._click_point(self._promotion_close, 'close the CapCut promotion')
                 requested_at = 0
-            elif self._editor_ready() and requests < 3 and time.monotonic() - requested_at >= 1.5:
-                self._key('ctrl+e', self._editor_ready)
+            elif self._editor_ready() and requests < 3 and time.monotonic() - requested_at >= 2:
+                if self._editor_export_button():
+                    self._click_point(self._editor_export_button, 'open the CapCut Export dialog')
+                else:
+                    self._key('ctrl+e', self._editor_ready)
                 requested_at = time.monotonic()
                 requests += 1
             time.sleep(0.15)
         raise RuntimeError('CapCut did not open a supported Export form. Check the timeline and close any blocking dialogs.')
+
+    def _editor_export_button(self):
+        if not self._editor_ready():
+            return None
+        geometry = self._geometry(self.editor)
+        if not geometry:
+            return None
+        width = geometry[2]
+        return self._window_point(self.editor, (width - 126, 18),
+                                  ((width - 124, 22, _teal), (width - 128, 10, _teal)),
+                                  minimum=(1150, 690))
 
     def export(self, output):
         self.check()
