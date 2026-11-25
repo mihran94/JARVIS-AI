@@ -312,7 +312,7 @@ class Window(QMainWindow):
     def __init__(self, data_root):
         super().__init__()
         self.setWindowTitle('JARVIS AI')
-        self.resize(1180, 790)
+        self.resize(1360, 790)
         self.root = Path(data_root)
         self.store = Store(self.root / 'history.sqlite3')
         saved_theme = self.store.get('omega:theme')

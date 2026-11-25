@@ -42,7 +42,7 @@ def test_overview_uses_live_values_and_gives_task_details_room(tmp_path):
     app, window = make_window(tmp_path)
     try:
         shell = window.prime_shell
-        window.resize(1200, 740)
+        window.resize(1440, 740)
         app.processEvents()
         assert shell.overview.isVisibleTo(window)
         shell.update_usage({'cpu_usage_percent': 18, 'ram_usage_percent': 52})

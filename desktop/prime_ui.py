@@ -757,6 +757,7 @@ class PrimeShell(QWidget):
         self.activity.hide()
         self.activity.closed.connect(lambda: self.activity_button.setChecked(False))
         self.activity_button.toggled.connect(self.activity.setVisible)
+        self.activity_button.toggled.connect(self.layout_overview)
         middle.addWidget(self.activity)
         outer.addLayout(middle, 1)
         window.pages.currentChanged.connect(self.refresh_mark)
@@ -809,13 +810,18 @@ class PrimeShell(QWidget):
         chat = getattr(self.window_ref, 'prime_chat', None)
         on_chat = (chat is not None and self.window_ref.pages.currentWidget() is chat
                    and chat.task_area.isHidden())
-        self.overview.setVisible(on_chat and self.width() >= 1120 and self.height() >= 560)
+        activity_width = self.activity.minimumSizeHint().width() if self.activity_button.isChecked() else 0
+        needed = (self.window_ref.pages.minimumSizeHint().width() + self.rail.width()
+                  + self.overview.width() + activity_width + 32)
+        self.overview.setVisible(on_chat and self.width() >= max(1120, needed) and self.height() >= 560)
 
     def style_overview(self):
         palette = self.palette_
+        background = palette.ground.lighter(150) if palette.dark else palette.ground.darker(104)
+        edge = palette.glass_edge
         self.overview.setStyleSheet(
-            f'QFrame#primeOverview {{ background: {palette.glass.name()};'
-            f' border-right: 1px solid {palette.glass_edge.name()}; }}'
+            f'QFrame#primeOverview {{ background: {background.name()};'
+            f' border-right: 1px solid rgba({edge.red()}, {edge.green()}, {edge.blue()}, 46); }}'
             f'QFrame#primeOverview QProgressBar {{ background: {palette.ground.name()};'
             ' border: none; border-radius: 3px; }'
             f'QFrame#primeOverview QProgressBar::chunk {{ background: {palette.accent.name()};'
