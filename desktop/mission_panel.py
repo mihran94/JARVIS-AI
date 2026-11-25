@@ -54,6 +54,8 @@ KIND_COLOURS = {
     'answer': 'good',
     'error': 'danger',
     'cancelled': 'warn',
+    'skipped': 'warn',
+    'engine': 'accent',
 }
 
 #: The words the status pill uses.
@@ -548,6 +550,12 @@ class MissionPanel(QWidget):
                               'letter-spacing: 2.6px;')
         header.addWidget(eyebrow)
         header.addStretch(1)
+        self.engine = QLabel('LOCAL')
+        self.engine.setAccessibleName('Engine that answered')
+        self.engine.setStyleSheet('color: #63e6ff; font-size: 10px; font-weight: 700; '
+                                  'letter-spacing: 1.6px; border: 1px solid #63e6ff; '
+                                  'border-radius: 9px; padding: 3px 9px;')
+        header.addWidget(self.engine)
         self.counter = QLabel('')
         self.counter.setAccessibleName('Mission step counter')
         self.counter.setStyleSheet('font-size: 11px; font-weight: 600;')
@@ -676,6 +684,16 @@ class MissionPanel(QWidget):
     def set_counter(self, used: int, total: int):
         """Which step of how many. No percentage, because none is known."""
         self.counter.setText(f'Step {used} of {total}' if total else '')
+
+    def set_engine(self, engine: str, reason: str = ''):
+        """Say which engine answered, and why it was used."""
+        name = (engine or 'Local').upper()
+        colour = '#ffcf6b' if name != 'LOCAL' else '#63e6ff'
+        self.engine.setText(name)
+        self.engine.setStyleSheet(
+            f'color: {colour}; font-size: 10px; font-weight: 700; letter-spacing: 1.6px; '
+            f'border: 1px solid {colour}; border-radius: 9px; padding: 3px 9px;')
+        self.engine.setToolTip(reason or 'Answered on this computer.')
 
     def show_result(self, mission):
         """Show the finished mission: its answer, its status and its evidence."""
