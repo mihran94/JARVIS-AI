@@ -20,14 +20,30 @@ OUTPUT_RATE = 24000
 MAX_AUDIO_QUEUE = 2_000_000
 
 
-def setup_message(guidance):
-    return {'setup': {
+def setup_message(guidance, *, tamil_tanglish=False):
+    transcription = {}
+    if tamil_tanglish:
+        transcription = {'languageCodes': ['ta-IN', 'en-IN']}
+        guidance += (
+            ' The speaker regularly switches between conversational Tamil and English '
+            'within one sentence. Treat the whole utterance as one turn. Preserve English '
+            'words, app names and numbers in their original form. In Match My Message mode, '
+            'reply naturally in spoken Tamil with English words where they fit, following '
+            'the speaker’s own mix. Honor an explicit request for another reply language. '
+            'If a detail is unclear, ask about only that detail instead of guessing.'
+        )
+    setup = {
         'model': f'models/{MODEL}',
         'generationConfig': {'responseModalities': ['AUDIO']},
-        'inputAudioTranscription': {},
+        'inputAudioTranscription': transcription,
         'outputAudioTranscription': {},
         'systemInstruction': {'parts': [{'text': guidance}]},
-    }}
+    }
+    if tamil_tanglish:
+        setup['realtimeInputConfig'] = {'automaticActivityDetection': {
+            'silenceDurationMs': 700,
+        }}
+    return {'setup': setup}
 
 
 def playback_pcm(raw, rate_hz, channels):
@@ -82,7 +98,7 @@ class LiveVoice(QObject):
             self.state = value
             self.state_changed.emit(value)
 
-    def start(self, key, guidance):
+    def start(self, key, guidance, *, tamil_tanglish=False):
         if self.active:
             return
         mic = QMediaDevices.defaultAudioInput()
@@ -101,7 +117,8 @@ class LiveVoice(QObject):
         self.capture.stateChanged.connect(self.audio_state_changed)
         self.player.stateChanged.connect(self.audio_state_changed)
         socket = self.socket = QWebSocket(parent=self)
-        socket.connected.connect(lambda: self.send(setup_message(guidance)) if self.socket is socket else None)
+        setup = setup_message(guidance, tamil_tanglish=tamil_tanglish)
+        socket.connected.connect(lambda: self.send(setup) if self.socket is socket else None)
         socket.textMessageReceived.connect(self.receive)
         socket.binaryMessageReceived.connect(lambda data: self.receive(bytes(data)))
         socket.errorOccurred.connect(self.connection_lost)

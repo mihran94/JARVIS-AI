@@ -400,9 +400,15 @@ class Window(QMainWindow):
         live_voice_row = QHBoxLayout()
         self.voice_panel.layout().insertLayout(1, live_voice_row)
         self.live_voice_settings_button = self.button(live_voice_row, 'Live Voice', self.toggle_live_voice)
-        live_voice_note = QLabel('Speak and hear replies through Gemini Live.')
-        live_voice_note.setWordWrap(True)
-        live_voice_row.addWidget(live_voice_note, 1)
+        self.live_speech_language = QComboBox()
+        self.live_speech_language.setAccessibleName('Live speech language')
+        self.live_speech_language.addItem('Automatic language detection', 'auto')
+        self.live_speech_language.addItem('Tamil + Tanglish', 'ta_en')
+        self.live_speech_language.setCurrentIndex(max(0, self.live_speech_language.findData(
+            self.store.get('voice:live_language', 'auto'))))
+        self.live_speech_language.currentIndexChanged.connect(
+            lambda _index: self.store.set('voice:live_language', self.live_speech_language.currentData()))
+        live_voice_row.addWidget(self.live_speech_language, 1)
         # The speech language is remembered, so the owner does not choose it
         # again every time the application starts.
         saved_language = self.store.get('voice_language')
@@ -979,9 +985,9 @@ class Window(QMainWindow):
             self.voice_panel.stop_continuous()
             self.open_section('JARVIS Chat')
             guide = assistant_guidance(self.reply_language.currentData(), self.reply_tone.currentData())
-            self.live_voice.start(key, guide + ' You are in a spoken conversation. Hear Tamil and '
-                                  'Tanglish naturally and reply in the same conversational language. '
-                                  'Keep spoken replies brief and use at most one question.')
+            guide += (' You are in a spoken conversation. Keep spoken replies brief '
+                      'and use at most one question.')
+            self.live_voice.start(key, guide, tamil_tanglish=self.live_speech_language.currentData() == 'ta_en')
         self.notify(start)
 
     def on_live_voice_state(self, state):
@@ -989,6 +995,7 @@ class Window(QMainWindow):
         title = 'Stop Live Voice' if state != 'idle' else 'Live Voice'
         self.live_voice_button.setText(title)
         self.live_voice_settings_button.setText(title)
+        self.live_speech_language.setEnabled(state == 'idle')
         self.voice_panel.refresh()
         self.refresh_prime_state()
 

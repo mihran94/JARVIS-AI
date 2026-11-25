@@ -20,6 +20,15 @@ def test_live_voice_requests_audio_and_transcripts_without_action_tools():
     assert 'Tanglish' in config['systemInstruction']['parts'][0]['text']
 
 
+def test_mixed_live_mode_hints_both_languages_and_allows_a_pause_between_them():
+    automatic = setup_message('Friendly voice.')['setup']
+    mixed = setup_message('Friendly voice.', tamil_tanglish=True)['setup']
+    assert automatic['inputAudioTranscription'] == {}
+    assert mixed['inputAudioTranscription']['languageCodes'] == ['ta-IN', 'en-IN']
+    assert mixed['realtimeInputConfig']['automaticActivityDetection']['silenceDurationMs'] == 700
+    assert 'within one sentence' in mixed['systemInstruction']['parts'][0]['text']
+
+
 def test_float_windows_headset_audio_is_converted_to_signed_mono():
     raw = struct.pack('<ffffff', 0.5, 0.25, -1, -1, 1, 1)
     pcm = microphone_pcm(raw, 2, QAudioFormat.SampleFormat.Float)
