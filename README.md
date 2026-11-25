@@ -2,6 +2,14 @@
 
 ## Command-first JARVIS (Island + Settings)
 
+The Windows HUD and its 3D reactor are adapted from
+[Mark LVII by FatihMakes](https://github.com/FatihMakes/Mark-LVII), copyright
+© 2026 FatihMakes, under [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/).
+The included reactor was ported from PyQt6 to PySide6. The layout connects the
+Mark LVII HUD, communications panel, and menus to JARVIS AI's existing features.
+These adaptations are for non-commercial use. See the
+[included license](licenses/Mark-LVII.CC-BY-NC-4.0.txt).
+
 The main Windows assistant uses the **JARVIS PRIME** design. Its primary
 controls are **Island**, **Settings**, a chat composer and **Emergency Stop**.
 Provider configuration, chat preferences, saved projects and advanced tools

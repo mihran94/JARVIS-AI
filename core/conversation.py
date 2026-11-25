@@ -81,6 +81,9 @@ REPLY_TONES = {
     'friendly': ('Friendly', 'Talk like a helpful colleague. Use warm, everyday language '
                  'and address the user respectfully. In Tamil or Tanglish, use familiar, '
                  'polite phrasing such as நீங்க or neenga when it fits. '
+                 'For casual conversation, respond to what the user shared. Keep it short '
+                 'and ask at most one relevant question if it helps the conversation flow. '
+                 'Do not assume details the user has not shared or turn small talk into advice. '
                  'Skip repeated greetings, titles like Sir or Boss, and generic sign-offs.'),
     'direct': ('Direct', 'Use plain language and short, factual answers. '
                'Start with the answer or result and include the detail needed to act.'),

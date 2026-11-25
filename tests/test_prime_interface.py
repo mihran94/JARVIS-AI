@@ -56,6 +56,38 @@ def test_overview_uses_live_values_and_gives_task_details_room(tmp_path):
         window.close()
 
 
+def test_wide_chat_docks_communications_and_keeps_the_chat_reachable(tmp_path):
+    app, window = make_window(tmp_path)
+    try:
+        shell = window.prime_shell
+        window.resize(1360, 780)
+        app.processEvents()
+        assert shell.overview.isVisibleTo(window)
+        assert shell.communications.isVisibleTo(window)
+        assert shell.communications.isAncestorOf(window.prime_chat.conversation)
+        assert shell.communications.isAncestorOf(window.prompt)
+        assert window.send_button.isVisibleTo(window)
+        shell.activity_button.click()
+        assert shell.activity.isVisibleTo(window)
+        assert shell.communications.isHidden()
+        assert window.prime_chat.isAncestorOf(window.prompt)
+        shell.activity_button.click()
+        settings = next(action for action in shell.setup_button.menu().actions()
+                        if action.text() == 'Conversation settings')
+        settings.trigger()
+        assert window.pages.currentIndex() == window.page_indices['Settings & Safety']
+        assert window.reply_language.isVisibleTo(window)
+        window.open_section('JARVIS Chat')
+        window.resize(1050, 680)
+        app.processEvents()
+        assert shell.communications.isHidden()
+        assert window.send_button.isVisibleTo(window)
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
 def test_conversation_settings_change_the_chat_reply_and_survive_restart(tmp_path, monkeypatch):
     app, window = make_window(tmp_path)
     sent = []
@@ -242,6 +274,8 @@ def test_the_conversation_shows_the_messages_as_a_column(tmp_path):
 def test_the_assistant_steps_aside_for_the_conversation(tmp_path):
     app, window = make_window(tmp_path)
     try:
+        window.resize(1050, 680)
+        app.processEvents()
         chat = window.prime_chat
         mark = window.prime_shell.mark
         chat.render([])
@@ -367,7 +401,7 @@ def test_saved_chat_is_loaded_as_plain_text_when_prime_starts(tmp_path):
     _app, window = make_window(tmp_path)
     try:
         chat = window.prime_chat
-        assert chat.states.currentWidget() is chat.conversation
+        assert chat.conversation.isVisibleTo(window)
         first, = chat.conversation.bubbles
         assert first.body.text() == '<b>saved message</b>'
         assert first.body.textFormat().name == 'PlainText'

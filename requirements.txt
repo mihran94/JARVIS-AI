@@ -3,5 +3,6 @@ httpx==0.28.1
 keyring==25.6.0
 qrcode==8.2
 psutil==7.2.2
+numpy==2.2.6
 pypdf==6.10.2
 playwright==1.62.0
