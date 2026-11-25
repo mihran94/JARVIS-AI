@@ -530,6 +530,13 @@ class Window(QMainWindow):
         self.maintenance_timer.timeout.connect(self.check_maintenance)
         self.maintenance_timer.start(60_000)
         self.enable_prime()
+        # The voice state in the HUD is read on a timer. A timer event is
+        # served before the paint events, so the HUD stays true even when
+        # the animation is keeping the machine busy.
+        self.voice_hud_timer = QTimer(self)
+        self.voice_hud_timer.setInterval(200)
+        self.voice_hud_timer.timeout.connect(self.refresh_voice_hud)
+        self.voice_hud_timer.start()
         QTimer.singleShot(0, self.check_maintenance)
         # The voice models are read once, and the on-device model is
         # checked with a short wait: the local server answers in a

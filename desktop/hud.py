@@ -30,7 +30,7 @@ WHAT THIS IS NOT
 from __future__ import annotations
 
 from PySide6.QtCore import QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen, QBrush
+from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QProgressBar, QPushButton, QSizePolicy,
     QVBoxLayout, QWidget,
@@ -383,6 +383,11 @@ class HudFrame(QWidget):
 
     It paints the faint grid, the soft corner light and the slow scan
     line that make the surface read as a projection rather than a form.
+
+    The grid is drawn once into a picture and kept, because the HUD is
+    repainted every time the scan line moves, and drawing thirty lines
+    again every time is work the machine does not need to do. The scan
+    line is the only thing that changes.
     """
 
     def __init__(self, parent=None):
@@ -390,14 +395,35 @@ class HudFrame(QWidget):
         self.setObjectName('hudFrame')
         self.phase = 0.0
         self.motion = True
+        self._grid = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         self.strip = HudStrip()
         layout.addWidget(self.strip)
         self._timer = QTimer(self)
-        self._timer.setInterval(90)
+        self._timer.setInterval(SWEEP_MS)
         self._timer.timeout.connect(self._tick)
+
+    def _grid_picture(self):
+        """The grid, drawn once and kept until the size changes."""
+        if self._grid is None or self._grid.size() != self.size():
+            picture = QPixmap(self.size())
+            picture.fill(QColor(GROUND))
+            painter = QPainter(picture)
+            painter.setPen(QPen(_alpha(EDGE, 46), 1))
+            step = 46
+            x = 0
+            while x < picture.width():
+                painter.drawLine(x, 0, x, picture.height())
+                x += step
+            y = 0
+            while y < picture.height():
+                painter.drawLine(0, y, picture.width(), y)
+                y += step
+            painter.end()
+            self._grid = picture
+        return self._grid
 
     def set_motion(self, enabled: bool):
         """Turn the motion on or off."""
@@ -410,8 +436,14 @@ class HudFrame(QWidget):
     def _tick(self):
         if not self.motion:
             return
+        old = int(self.rect().height() * (self.phase / 360.0))
         self.phase = (self.phase + 0.35) % 360.0
-        self.update()
+        new = int(self.rect().height() * (self.phase / 360.0))
+        # Only the two lines are repainted. The rest of the chassis is
+        # the picture that was drawn once, and it does not change.
+        top = min(old, new)
+        height = abs(new - old) + 2
+        self.update(0, top, self.rect().width(), height)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -424,33 +456,21 @@ class HudFrame(QWidget):
         super().hideEvent(event)
         self._timer.stop()
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._grid = None
+
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        rect = self.rect()
-        painter.fillRect(rect, QColor(GROUND))
-
-        # A faint grid, so the surface reads as a projection.
-        painter.setPen(QPen(_alpha(EDGE, 46), 1))
-        step = 46
-        x = 0
-        while x < rect.width():
-            painter.drawLine(x, 0, x, rect.height())
-            x += step
-        y = 0
-        while y < rect.height():
-            painter.drawLine(0, y, rect.width(), y)
-            y += step
-
+        painter.drawPixmap(0, 0, self._grid_picture())
         # The slow scan line. It is the only movement on the chassis.
         if self.motion:
             painter.setPen(QPen(_alpha(CYAN, 26), 2))
-            position = int(rect.height() * (self.phase / 360.0))
-            painter.drawLine(0, position, rect.width(), position)
-
+            position = int(self.rect().height() * (self.phase / 360.0))
+            painter.drawLine(0, position, self.rect().width(), position)
         painter.setPen(QPen(_alpha(CYAN, 70), 1))
-        painter.drawLine(0, rect.height() - 1, rect.width(), rect.height() - 1)
-
+        painter.drawLine(0, self.rect().height() - 1,
+                         self.rect().width(), self.rect().height() - 1)
 
 __all__ = ['CYAN', 'CYAN_DEEP', 'DANGER', 'EDGE', 'GOOD', 'GOLD', 'GROUND', 'INK',
            'MUTED', 'PANEL', 'SWEEP_MS', 'TAMIL_STACK', 'HudCore', 'HudDial',

@@ -184,11 +184,8 @@ class VoiceSpeakerWorker(QThread):
                         'language.')
                     return
             self.playing.emit()
-            print('SPK emitted playing, has_speak=%s interrupted=%s' % (
-                hasattr(speaker, 'speak_interruptibly'), self.isInterruptionRequested()))
             if hasattr(speaker, 'speak_interruptibly'):
                 speaker.speak_interruptibly(self._text, self.isInterruptionRequested)
-                print('SPK speak_interruptibly returned')
             elif not self.isInterruptionRequested():
                 speaker.speak(self._text, language)
         except VoiceError as error:
@@ -540,17 +537,10 @@ class VoicePanel(QWidget):
         self.speaker_worker.cloud_usage.connect(self.cloud_usage)
         self.speaker_worker.playing.connect(self.on_playback_started)
         self.speaker_worker.finished.connect(self.on_playback_finished)
-        print('SPEAK start text=%r worker_running=%s pending=%r' % (
-            self.spoken_text,
-            self.worker is not None and self.worker.isRunning(),
-            self.pending_speech))
         self.speaker_worker.start()
         self.refresh()
 
     def on_playback_started(self):
-        print('OPBS sender_is_worker=%s muted=%s stopped=%s speaking=%s' % (
-            self.sender() is self.speaker_worker, self.muted,
-            self.consent.stopped, self.speaking))
         if self.sender() is self.speaker_worker and not self.muted and not self.consent.stopped:
             self.speaking = True
             self.echo_guard.record(self.spoken_text)

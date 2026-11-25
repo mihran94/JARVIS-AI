@@ -275,13 +275,7 @@ def test_hud_continuous_voice_waits_for_playback_before_listening_again(tmp_path
         wait_for(lambda: window.hud_voice_status.text() == 'LISTENING')
         release_input.set()
         wait_for(playback_started.is_set)
-        reached = wait_for(lambda: window.hud_voice_status.text() == 'SPEAKING')
-        print('DIAG status=%r speaking=%r muted=%r stopped=%r ai=%r pending=%r busy=%r policy_stopped=%s' % (
-            window.hud_voice_status.text(), voice.speaking, voice.muted,
-            voice.consent.stopped, window.ai_visual_state,
-            getattr(voice, 'pending_speech', ''), voice.playback_busy,
-            window.policy.stopped))
-        assert window.hud_voice_status.text() == 'SPEAKING'
+        wait_for(lambda: window.hud_voice_status.text() == 'SPEAKING')
         assert window.hud_orb._state == 'speaking'
         assert window.hud_voice_reply.text() == replies[0]
         assert not voice.listening
