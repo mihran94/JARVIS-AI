@@ -642,6 +642,12 @@ def test_settings_close_outside_without_resizing_chat(tmp_path):
         window.open_section('Settings & Safety')
         window.prime_shell.show_drawer('menu')
         assert not window.prime_shell.settings_dialog.isVisible()
+        app.processEvents()
+        assert window.prime_chat.geometry() == geometry
+        assert window.prime_shell.drawer.height() < window.height()
+        QTest.mouseClick(window.prime_shell.brand, Qt.MouseButton.LeftButton)
+        app.processEvents()
+        assert not window.prime_shell.drawer.isVisible()
     finally:
         window.close()
 

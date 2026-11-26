@@ -704,6 +704,7 @@ class PrimeChat(QWidget):
         display_tabs = QHBoxLayout()
         display_tabs.setSpacing(5)
         self.displays = QStackedWidget()
+        self.displays.setMinimumHeight(150)
         self.displays.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
         self.assistant = PrimeAssistant(palette, window)
         self.timeline = ActivityPanel(palette, window.prime_shell.open_task_history)
@@ -1189,7 +1190,6 @@ class PrimeShell(QWidget):
         middle.addLayout(self.content, 1)
         self.build_drawer()
         self.build_settings_dialog()
-        middle.addWidget(self.drawer)
         outer.addLayout(middle, 1)
         self.startup_notice = QLabel()
         self.startup_notice.setObjectName('startupNotice')
@@ -1373,7 +1373,7 @@ class PrimeShell(QWidget):
         self.footer_status.setText(f'● ENGINE · {engine}     ● MIC · {mic}     ● M-CORE')
 
     def build_drawer(self):
-        self.drawer = QFrame()
+        self.drawer = QFrame(self)
         self.drawer.setObjectName('primeDrawer')
         layout = QVBoxLayout(self.drawer)
         layout.setContentsMargins(18, 14, 14, 14)
@@ -1461,6 +1461,10 @@ class PrimeShell(QWidget):
 
     def eventFilter(self, watched, event):
         dialog = getattr(self, 'settings_dialog', None)
+        if (event.type() == QEvent.Type.MouseButtonPress and self.drawer.isVisible()
+                and watched is not self.menu_button and QApplication.activePopupWidget() is None
+                and not self.drawer.rect().contains(self.drawer.mapFromGlobal(event.globalPosition().toPoint()))):
+            self.close_drawer()
         if (event.type() == QEvent.Type.MouseButtonPress and dialog is not None
                 and isValid(dialog) and dialog.isVisible()):
             popup = QApplication.activePopupWidget()
@@ -1492,6 +1496,8 @@ class PrimeShell(QWidget):
         self.menu_button.setChecked(name == 'menu')
         self.resize_drawer()
         self.drawer.show()
+        self.drawer.raise_()
+        QApplication.instance().installEventFilter(self)
         self.drawer_close.setFocus()
 
     def talk_once(self):
@@ -1508,6 +1514,7 @@ class PrimeShell(QWidget):
             dialog.close()
         was_open = not self.drawer.isHidden()
         self.drawer.hide()
+        QApplication.instance().removeEventFilter(self)
         self.menu_button.setChecked(False)
         if was_open:
             self.menu_button.setFocus()
@@ -1518,7 +1525,10 @@ class PrimeShell(QWidget):
             self.resize_drawer()
 
     def resize_drawer(self):
-        self.drawer.setFixedWidth(max(330, min(540, round(self.width() * 0.39))))
+        news = self.drawer_content.currentIndex() == 1
+        width = min(540 if news else 360, max(280, self.width() - 24))
+        height = min(560 if news else 270, max(240, self.height() - self.top_bar.height() - 24))
+        self.drawer.setGeometry(max(12, self.width() - width - 16), self.top_bar.height() + 8, width, height)
 
     def style_drawer(self):
         palette = self.palette_
