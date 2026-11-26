@@ -8,7 +8,12 @@ Windows machine before it is trusted.
 The voice is never started without the owner asking for it, and `stop()`
 closes it immediately.
 """
+import base64
+import os
+from pathlib import Path
+import subprocess
 import sys
+from time import monotonic
 
 from voice.errors import VoiceUnavailable
 
@@ -20,6 +25,62 @@ SAPI_LANGUAGES = {
     'ta': ('449', '849'),
     'fr': ('40c',),
 }
+
+
+TAMIL_WINRT_SCRIPT = r"""$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Runtime.WindowsRuntime
+$null = [Windows.Media.SpeechSynthesis.SpeechSynthesizer, Windows.Media.SpeechSynthesis, ContentType=WindowsRuntime]
+$resultType = [Windows.Media.SpeechSynthesis.SpeechSynthesisStream, Windows.Media.SpeechSynthesis, ContentType=WindowsRuntime]
+$synth = New-Object Windows.Media.SpeechSynthesis.SpeechSynthesizer
+$voice = [Windows.Media.SpeechSynthesis.SpeechSynthesizer]::AllVoices | Where-Object { $_.Language -like 'ta-*' } | Select-Object -First 1
+if (!$voice) { throw 'No Tamil voice.' }
+$synth.Voice = $voice
+$text = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([Console]::In.ReadToEnd().Trim()))
+$asTask = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
+    $_.Name -eq 'AsTask' -and $_.GetGenericArguments().Count -eq 1 -and $_.GetParameters().Count -eq 1
+} | Select-Object -First 1
+$task = $asTask.MakeGenericMethod($resultType).Invoke($null, @($synth.SynthesizeTextToStreamAsync($text)))
+$stream = $task.GetAwaiter().GetResult()
+$bytes = [System.IO.WindowsRuntimeStreamExtensions]::AsStreamForRead($stream)
+$bytes.CopyTo([Console]::OpenStandardOutput())
+"""
+
+
+def speak_tamil_winrt(text, cancelled, playing):
+    """Use the installed Windows Tamil voice when legacy SAPI cannot see it."""
+    from voice.azure_tts import play_wav
+
+    windows = Path(os.environ.get('SystemRoot', r'C:\Windows'))
+    powershell = windows / 'System32' / 'WindowsPowerShell' / 'v1.0' / 'powershell.exe'
+    command = base64.b64encode(TAMIL_WINRT_SCRIPT.encode('utf-16-le')).decode('ascii')
+    pending = base64.b64encode(text.encode('utf-8'))
+    if cancelled():
+        return
+    try:
+        with subprocess.Popen([str(powershell), '-NoProfile', '-NonInteractive',
+                               '-EncodedCommand', command],
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                              stderr=subprocess.DEVNULL,
+                              creationflags=subprocess.CREATE_NO_WINDOW) as child:
+            deadline = monotonic() + 12
+            while True:
+                if cancelled() or monotonic() >= deadline:
+                    child.kill()
+                    child.communicate()
+                    if cancelled():
+                        return
+                    raise VoiceUnavailable('The Windows Tamil voice did not respond.')
+                try:
+                    audio, _ = child.communicate(input=pending, timeout=0.15)
+                    break
+                except subprocess.TimeoutExpired:
+                    pending = None
+            if child.returncode or not audio.startswith(b'RIFF'):
+                raise VoiceUnavailable('The Windows Tamil voice could not produce audio.')
+    except OSError as error:
+        raise VoiceUnavailable('Windows could not start the installed Tamil voice.') from error
+    if not cancelled():
+        play_wav(audio, cancelled, playing)
 
 
 class WindowsTextToSpeech:

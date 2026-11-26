@@ -39,7 +39,9 @@ def test_completed_audio_turn_delivers_both_transcripts_once(monkeypatch):
     app = QApplication.instance() or QApplication([])
     live = LiveVoice()
     heard = []
+    partial = []
     audio = []
+    live.heard_changed.connect(partial.append)
     live.turn_finished.connect(lambda user, reply: heard.append((user, reply)))
     monkeypatch.setattr(live, 'queue_audio', audio.append)
     live.set_state('listening')
@@ -53,6 +55,7 @@ def test_completed_audio_turn_delivers_both_transcripts_once(monkeypatch):
         },
     }))
     assert audio == [raw]
+    assert partial == ['என் குரல்']
     assert heard == []
     live.receive(json.dumps({'serverContent': {
         'inputTranscription': {'text': ' கேட்குதா?'},
@@ -60,6 +63,7 @@ def test_completed_audio_turn_delivers_both_transcripts_once(monkeypatch):
         'turnComplete': True,
     }}))
     assert heard == [('என் குரல் கேட்குதா?', 'கேட்குது, சொல்லுங்க.')]
+    assert partial == ['என் குரல்', 'என் குரல் கேட்குதா?']
     assert live.transcript == ['', '']
     assert struct.unpack('<8h', playback_pcm(raw, 48000, 2)) == (
         -100, -100, 550, 550, 1200, 1200, 1200, 1200,

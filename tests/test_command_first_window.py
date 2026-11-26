@@ -41,7 +41,7 @@ def test_main_toolbar_is_chat_island_settings_and_safety(tmp_path):
         app.processEvents()
         assert window.settings_scroller.isVisibleTo(window)
         tabs = window.settings_categories
-        tabs.setCurrentIndex(next(i for i in range(tabs.count()) if tabs.tabText(i) == 'AI engines'))
+        tabs.setCurrentIndex(tabs.findText('AI engines'))
         assert window.chat_provider.isVisible()
     finally:
         window.close()

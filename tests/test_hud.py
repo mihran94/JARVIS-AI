@@ -78,6 +78,12 @@ def test_the_microphone_and_the_mute_are_visible(app):
     assert strip.mute.text() == 'Replies on'
     strip.set_mic('The microphone is allowed for the voice feature.', True)
     assert strip.mute.text() == 'Replies muted'
+    strip.set_mic('The microphone is listening.', False)
+    strip.set_mic_level(42)
+    assert strip.mic.text() == 'Mic listening · 42%'
+    strip.set_mic('The microphone is muted.', False)
+    strip.set_mic_level(80)
+    assert strip.mic.text() == 'Mic muted'
 
 
 def test_the_emergency_stop_says_what_it_does(app):

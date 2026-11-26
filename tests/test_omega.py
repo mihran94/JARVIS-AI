@@ -175,7 +175,7 @@ def test_floating_mic_shows_permissions_and_returns_voice_draft_to_chat(tmp_path
         ui.switch('Island')
         ui.toggle_mic()
         assert ui.mode == 'Omega'
-        assert window.pages.currentIndex() == window.page_indices['Voice / Hey Jarvis']
+        assert window.settings_categories.currentText() == 'Voice'
         window.voice_panel.allow.setChecked(True)
         ui.switch('Island')
         window.on_voice_transcript('Check the design')

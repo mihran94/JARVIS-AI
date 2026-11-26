@@ -26,7 +26,7 @@ from voice.errors import VoiceError, VoiceUnavailable
 from voice import local_stt
 from voice.wake import DEFAULT_PHRASE, WakePhraseMatcher
 from voice.windows_stt import WindowsSpeechRecognizer
-from voice.windows_tts import WindowsTextToSpeech
+from voice.windows_tts import WindowsTextToSpeech, speak_tamil_winrt
 
 
 #: The languages the owner can speak and hear, and what they are called.
@@ -181,6 +181,9 @@ class VoiceSpeakerWorker(QThread):
                 # always spoken with a Tamil voice when one is installed.
                 language = 'ta'
             if hasattr(speaker, 'select_language') and not speaker.select_language(language):
+                if language == 'ta' and self._speaker_factory is default_speaker_factory:
+                    speak_tamil_winrt(self._text, self.isInterruptionRequested, self.playing.emit)
+                    return
                 if language != 'en':
                     # English is the system default, so a missing English voice
                     # is not worth refusing to speak over. A missing Tamil or
@@ -511,7 +514,7 @@ class VoicePanel(QWidget):
         """Start optional text-to-speech without blocking Emergency Stop."""
         self.speak_response(self.speak_text.text())
 
-    def speak_response(self, text, *, sample_language=None):
+    def speak_response(self, text, *, sample_language=None, local_only=False):
         """Speak on a dedicated worker so Qt remains responsive."""
         if self.audio_test_active or self.live_voice_active:
             return
@@ -529,12 +532,14 @@ class VoicePanel(QWidget):
         self.wake_timer.stop()
         self.spoken_text = text
         if self.worker is not None and self.worker.isRunning():
+            if local_only:
+                return
             self.pending_speech = text
             self.pending_sample = sample_language
             self.cancel_listening()
             return
         cloud = None
-        if self.cloud_config:
+        if self.cloud_config and not local_only:
             try:
                 cloud = self.cloud_config()
             except VoiceError as error:
