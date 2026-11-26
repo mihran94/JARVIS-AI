@@ -1649,7 +1649,10 @@ class Window(QMainWindow):
         except (ValueError, TypeError):
             return False
         name = str(arguments.get('name', '')).casefold()
-        if re.search(r'send|submit|publish|pay|buy|delete|remove|save|confirm|approve|install|password|secret|sign.?in', name):
+        if tool in {'click_app_control', 'mouse_click_app_control', 'set_app_field',
+                    'type_app_text', 'press_app_navigation_key'} and not name.strip():
+            return False
+        if re.search(r'send|submit|publish|pay|buy|delete|remove|save|confirm|approve|install|password|secret|sign.?in|upload|attach|share|envoyer|supprimer|enregistrer|payer|acheter|publier|partager|அனுப்பு|நீக்கு|அழி|சேமி|பகிர்', name):
             return False
         kind = 'keyboard' if tool in {'set_app_field', 'type_app_text', 'press_app_navigation_key'} else 'mouse'
         return bool(self.store.get('input:' + kind, True))
