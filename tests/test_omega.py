@@ -79,7 +79,7 @@ def test_dock_links_keyboard_and_order(tmp_path, monkeypatch):
         ui.open_page('Omega Home')
         app.processEvents()
         assert window.pages.currentIndex() == window.page_indices['JARVIS Chat']
-        assert window.composer_bar.isVisibleTo(window)
+        assert window.prime_chat.composer.isVisibleTo(window)
         ui.open_page('Omega Settings')
         app.processEvents()
         assert window.settings_scroller.isVisibleTo(window.prime_shell.settings_dialog)
