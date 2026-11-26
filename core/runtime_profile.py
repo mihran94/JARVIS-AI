@@ -13,6 +13,11 @@ def restart_supported():
     return os.environ.get('JARVIS_RESTART_MANAGED') == '1'
 
 
+def reviewed_update_restart_supported():
+    return restart_supported() and (
+        not development_profile() or os.environ.get('JARVIS_RESTART_REVIEWED_DEV') == '1')
+
+
 def development_profile():
     value = os.environ.get('JARVIS_DEVELOPMENT_PROFILE', '')
     return value if re.fullmatch(r'[a-f0-9]{24}', value) else ''

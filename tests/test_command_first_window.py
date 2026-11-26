@@ -21,7 +21,7 @@ def test_main_toolbar_is_chat_island_settings_and_safety(tmp_path):
     try:
         shell = window.prime_shell
         assert shell.menu_button.isVisible()
-        assert shell.settings_button.isVisible()
+        assert not shell.settings_button.isVisible()
         assert not window.resume_button.isVisible()
         assert any(button.text() == "Emergency stop" and button.isVisible()
                    for button in window.findChildren(QPushButton))
@@ -37,11 +37,12 @@ def test_main_toolbar_is_chat_island_settings_and_safety(tmp_path):
         assert window.omega.mode == "Island"
         assert window.omega.floating.isVisible()
         window.omega.switch("Omega")
-        shell.settings_button.click()
+        shell.menu_button.click()
+        shell.menu_settings_button.click()
         app.processEvents()
-        assert window.settings_scroller.isVisibleTo(window)
+        assert window.settings_scroller.isVisibleTo(shell.settings_dialog)
         tabs = window.settings_categories
-        tabs.setCurrentIndex(tabs.findText('AI engines'))
+        tabs.setCurrentIndex(tabs.findText('AI Providers'))
         assert window.chat_provider.isVisible()
     finally:
         window.close()

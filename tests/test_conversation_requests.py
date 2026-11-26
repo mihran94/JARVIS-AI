@@ -290,7 +290,7 @@ def test_suggested_notepad_uses_user_text_and_existing_approval(tmp_path, monkey
         win.review_suggested_plan()
         assert typed == []
         assert win.chat_launch is not None
-        activity = win.prime_shell.activity
+        activity = win.prime_chat.timeline
         assert activity.state.text() == 'Approval required'
         assert 'Review the exact text' in activity.live_detail.text()
         win.finish_chat_launch(True)

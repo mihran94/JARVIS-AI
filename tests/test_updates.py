@@ -171,6 +171,28 @@ def test_launcher_uses_retained_environment(install,tmp_path,monkeypatch):
     assert 'JARVIS_BUILD_COMMIT' not in captured[0][1]['env']
 
 
+
+def test_development_launcher_switches_only_to_a_newly_approved_revision(install, tmp_path, monkeypatch):
+    from scripts import launch
+    archive_path = archive(tmp_path)
+    digest, _ = inspect_zip(archive_path)
+    monkeypatch.setattr(launch, 'ROOT', install)
+    launched = []
+
+    def child(_args, *, cwd, env):
+        launched.append((cwd, env['JARVIS_DEVELOPMENT_PROFILE']))
+        assert env['JARVIS_RESTART_REVIEWED_DEV'] == '1'
+        if len(launched) == 1:
+            activate_zip(install, archive_path, digest)
+            return launch.RESTART_EXIT_CODE
+        return 0
+
+    monkeypatch.setattr(launch.subprocess, 'call', child)
+    assert launch.main(['--dev-data', '--test-reviewed-updates']) == 0
+    assert [cwd for cwd, _ in launched] == [install, release_path(install, digest)]
+    assert launched[0][1] == launched[1][1]
+
+
 def test_the_raw_member_name_is_checked(tmp_path):
     # The zip module rewrites a backslash into a path separator while it
     # reads an archive on Windows. The name as it was written has to be

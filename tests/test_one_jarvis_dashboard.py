@@ -222,7 +222,7 @@ def test_hud_continuous_voice_waits_for_playback_before_listening_again(tmp_path
                 # The stub holds for as long as the test needs. A short
                 # timeout here ends the recognition before a slow machine
                 # has delivered the state the test is waiting for.
-                release_input.wait(30)
+                release_input.wait()
                 return 'Hey Jarvis', ''
             voice.worker.msleep(20)
             return '', ''
@@ -239,7 +239,10 @@ def test_hud_continuous_voice_waits_for_playback_before_listening_again(tmp_path
             playback_started.set()
             # The playback holds until the test says so, so the HUD is
             # SPEAKING for as long as the test waits for it.
-            release_audio.wait(30)
+            # The test's finally block always releases this event. A wall-clock
+            # timeout can expire while a loaded CI runner paints other windows,
+            # removing SPEAKING before the assertion can inspect it.
+            release_audio.wait()
 
     def recognizer_factory(*_):
         recognizer = Recognizer()
@@ -266,6 +269,9 @@ def test_hud_continuous_voice_waits_for_playback_before_listening_again(tmp_path
     monkeypatch.setattr(window, 'get_key', unexpected_provider)
     voice._recognizer_factory = recognizer_factory
     voice._speaker_factory = Speaker
+    # Exercise playback state deterministically without calling Gemini or
+    # opening the host speaker. Production readout uses Gemini exclusively.
+    monkeypatch.setattr(window, 'read_with_gemini', voice.speak_response)
     try:
         window.open_section('Command Center')
         voice.allow.setChecked(True)

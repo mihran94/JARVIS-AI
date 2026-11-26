@@ -645,7 +645,7 @@ def _verify_media(arguments: dict) -> str:
     return result.message
 
 
-def build_registry(*, root=None, memory=None, editor_paths=None) -> ToolRegistry:
+def build_registry(*, root=None, memory=None, editor_paths=None, input_allowed=None) -> ToolRegistry:
     """The standard catalogue of mission tools.
 
     `memory` is the owner's memory service. Without it, the two memory
@@ -772,6 +772,9 @@ def build_registry(*, root=None, memory=None, editor_paths=None) -> ToolRegistry
             raise ToolError('Windows did not expose that control or the requested action.') from None
 
     def use_app_control(args, checkpoint, operation=app_control.use_control, **options):
+        kind = 'keyboard' if operation is app_control.keyboard_input or 'text' in options else 'mouse'
+        if input_allowed is not None and not input_allowed(kind):
+            raise ToolError(kind.title() + ' control is disabled in Mouse & Keyboard settings.')
         return app_call(operation, pid=args['process_id'], title=args['title'],
                         name=args['name'], automation_id=args.get('automation_id', ''),
                         checkpoint=checkpoint, **options)

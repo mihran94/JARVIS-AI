@@ -1,5 +1,5 @@
 """Cancellable single-page research with separate success and failure states."""
-from PySide6.QtCore import QThread, Signal, Slot
+from PySide6.QtCore import QThread, Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QDialog, QFormLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QVBoxLayout,
 )
@@ -39,8 +39,13 @@ class ResearchWorker(QThread):
 
 
 class ResearchDialog(QDialog):
-    def __init__(self, window):
+    dismissed = Signal()
+
+    def __init__(self, window, *, embedded=False):
         super().__init__(window)
+        self.embedded = embedded
+        if embedded:
+            self.setWindowFlags(Qt.WindowType.Widget)
         self.window = window
         self.worker = None
         self.closing = False
@@ -122,7 +127,7 @@ class ResearchDialog(QDialog):
         self.worker = None
         self.start_button.setEnabled(True)
         if self.closing:
-            super().reject()
+            self.reject()
         if getattr(self.window, 'close_when_done', False):
             self.window.close()
 
@@ -130,6 +135,8 @@ class ResearchDialog(QDialog):
         if self.worker:
             self.closing = True
             self.cancel()
+        elif self.embedded:
+            self.dismissed.emit()
         else:
             super().reject()
 

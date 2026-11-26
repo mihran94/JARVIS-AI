@@ -4,26 +4,26 @@ from PySide6.QtWidgets import QApplication, QTabWidget
 from desktop.app import Window
 
 
-def test_mission_button_stays_clickable_in_the_hud_composer(tmp_path):
+def test_mission_button_stays_clickable_in_the_terminal(tmp_path):
     app = QApplication.instance() or QApplication([])
     window = Window(tmp_path)
     try:
         window.resize(1180, 820)
         window.show()
-        composer = window.prime_chat.composer
+        terminal = window.prime_chat.terminal
         button = window.mission_mode
 
         for width in (1180, 680, 1180):
             window.resize(width, 820)
             window.open_section('Settings & Safety')
             app.processEvents()
-            assert not button.isVisible()
+            assert button.isVisible()
             window.open_section('JARVIS Chat')
             app.processEvents()
 
             assert button.isVisible()
-            assert composer.controls.indexOf(button) >= 0
-            assert composer.rect().contains(button.geometry())
+            assert terminal.isAncestorOf(button)
+            assert terminal.rect().contains(button.mapTo(terminal, button.rect().center()))
             assert window.childAt(button.mapTo(window, button.rect().center())) is button
     finally:
         window.close()
@@ -40,15 +40,15 @@ def test_chat_and_phone_stay_readable_at_narrow_desktop_size(tmp_path):
         app.processEvents()
         chat = window.prime_chat.conversation
         assert chat.horizontalScrollBar().maximum() == 0
-        assert window.prime_chat.states.height() >= 150
+        assert window.prime_chat.displays.height() >= 150
         assert window.send_button.isVisible()
         assert not window.backup_provider.isVisible()
         # Advanced chat controls are deliberately accessible from Settings,
         # not inside an extra set of chat options on the narrow main screen.
         window.open_section("Settings & Safety")
         app.processEvents()
-        assert window.backup_provider.isVisible()
-        assert window.pages.currentWidget().horizontalScrollBar().maximum() == 0
+        assert not window.backup_provider.isVisible()
+        assert window.settings_scroller.horizontalScrollBar().maximum() == 0
         window.open_section("PC Control")
         app.processEvents()
         assert window.prime_chat.task_area.currentWidget().horizontalScrollBar().maximum() == 0

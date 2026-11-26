@@ -250,8 +250,10 @@ QPushButton {{
     background: {t['glass']};
     color: {t['text']};
     border: 1px solid {t['edge']};
-    border-radius: 11px;
-    padding: 8px 15px;
+    border-radius: 5px;
+    padding: 7px 12px;
+    font-family: {MONO_STACK};
+    font-size: 12px;
     font-weight: 600;
 }}
 QPushButton:hover {{ border-color: {t['edge_strong']}; background: {t['surface']}; }}
@@ -259,10 +261,9 @@ QPushButton:pressed {{ background: {t['ground_alt']}; }}
 QPushButton:focus {{ border-color: {t['accent']}; }}
 QPushButton:disabled {{ color: {t['dim']}; background: {t['glass']}; border-color: {t['edge']}; }}
 QPushButton#primary {{
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                stop:0 {t['accent']}, stop:1 {t['accent_deep']});
-    color: {t['accent_ink']};
-    border: 1px solid {t['accent_deep']};
+    background: {t['glass_solid']};
+    color: {t['accent']};
+    border: 1px solid {t['accent']};
     font-weight: 700;
 }}
 QPushButton#primary:hover {{ border-color: {t['accent']}; }}
@@ -456,7 +457,7 @@ QToolButton[active="true"], QPushButton#omegaPrimary {{
 
 
 #: The two palettes the owner can choose between by name.
-DARK_PALETTE = ('#05080e', '#111a26', '#7ec4ec', '#e9f3fc', '#8ba3bd', '#63dcff', '#efae67')
+DARK_PALETTE = ('#02070d', '#081b2b', '#23475b', '#e4f5ff', '#90b1c6', '#28e3ee', '#168cbd')
 LIGHT_PALETTE = ('#eef2f7', '#ffffff', '#1c4a74', '#0f1c29', '#4a5f75', '#0d7fb8', '#b06a2c')
 
 PRIME_DARK = stylesheet(DARK_PALETTE)

@@ -82,18 +82,20 @@ def test_cancelling_stops_inflight_synthesis(monkeypatch):
     assert started and closed
 
 
-def test_windows_audio_adapter_dispatches_and_stops(monkeypatch):
+@pytest.mark.parametrize(('rate', 'expected_rate'), [(24000, 24000), (16000, None)])
+def test_windows_audio_adapter_dispatches_and_stops(monkeypatch, rate, expected_rate):
     from types import SimpleNamespace
 
     calls = []
     buffer = io.BytesIO()
     with wave.open(buffer, 'wb') as audio:
-        audio.setparams((1, 2, 24000, 0, 'NONE', ''))
+        audio.setparams((1, 2, rate, 0, 'NONE', ''))
         audio.writeframes(b'\x00\x00' * 100)
     monkeypatch.setattr(azure_tts, 'sys', SimpleNamespace(platform='win32'))
     monkeypatch.setitem(sys.modules, 'winsound', SimpleNamespace(
         SND_FILENAME=1, SND_ASYNC=2, SND_NODEFAULT=4, PlaySound=lambda *args: calls.append(args)))
-    azure_tts.play_wav(buffer.getvalue(), lambda: False, lambda: calls.append('playing'))
+    azure_tts.play_wav(buffer.getvalue(), lambda: False, lambda: calls.append('playing'),
+                       expected_rate=expected_rate)
     assert calls[0][0].endswith('reply.wav')
     assert calls[1:] == ['playing', (None, 0)]
 

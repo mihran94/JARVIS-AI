@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (QCheckBox, QHBoxLayout, QLabel, QPlainTextEdit, Q
 from core.candidates import Candidate, reject_candidate, stage_candidate
 from core.coding_tasks import COMPLETED, REJECTED, load, set_state
 from core.development import Improvement, apply_improvement, reject_improvement
-from core.runtime_profile import development_profile, restart_supported
+from core.runtime_profile import reviewed_update_restart_supported
 from core.updates import UpdateError
 from security.policy import Action
 
@@ -179,7 +179,7 @@ class ReviewPanel(QWidget):
         if item is None or self.window.release_checker.source_worker is not None:
             return
         revision = item.short
-        restart = restart_supported() and not development_profile()
+        restart = reviewed_update_restart_supported()
         action = Action('activate_prepared_revision',
                         f'{item.revision}\nRestart JARVIS after applying.' if restart else item.revision,
                         item.digest)

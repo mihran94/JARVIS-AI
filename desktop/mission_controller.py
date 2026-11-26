@@ -121,7 +121,8 @@ class MissionController(QObject):
         from automation.windows import EDITOR_EXECUTABLES
 
         editor_paths = {name: window.store.get('editor_path:' + name, '') for name in EDITOR_EXECUTABLES}
-        registry = build_registry(root=window.root, memory=window.memory_service, editor_paths=editor_paths)
+        registry = build_registry(root=window.root, memory=window.memory_service, editor_paths=editor_paths,
+                                  input_allowed=lambda kind: bool(window.store.get('input:' + kind, True)))
         self.max_steps, budget_seconds = self.panel.run_limit.currentData()
         window.refresh_engine_settings()
         window.engines.validate = lambda text: parse_decision(text)[0] is not None
@@ -224,6 +225,8 @@ class MissionController(QObject):
         action and wants it run that way.
         """
         window = self.window
+        if getattr(window, 'desktop_control_allows', lambda _action: False)(action):
+            return True
         if QThread.currentThread() is window.thread():
             return bool(window.confirm(action))
         ident = uuid.uuid4().hex[:12]

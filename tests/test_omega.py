@@ -2,7 +2,7 @@ from unittest.mock import Mock
 
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QMessageBox, QToolButton
+from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton, QToolButton
 
 from desktop.app import Window
 from desktop.omega import DESTINATIONS
@@ -63,10 +63,14 @@ def test_dock_links_keyboard_and_order(tmp_path, monkeypatch):
             app.processEvents()
             assert window.pages.currentIndex() == window.page_indices[section]
         window.automation_workspace_button.click()
-        window.automation_tools['Network'].click()
+        window.open_section('Settings & Safety')
+        window.show_settings_panel('Network & Bluetooth')
+        network_button = next(button for button in window.settings_scroller.findChildren(QPushButton)
+                              if button.text() == 'Network diagnostics')
+        network_button.click()
         diagnostics.assert_called_once_with()
         window.automation_tools['Projects'].click()
-        assert window.settings_scroller.isVisibleTo(window)
+        assert window.settings_scroller.isVisibleTo(window.prime_shell.settings_dialog)
         assert not ui.dock.isVisible()
         ui.order_items.setCurrentText('AI Chat')
         ui.move_dock(-1)
@@ -79,10 +83,10 @@ def test_dock_links_keyboard_and_order(tmp_path, monkeypatch):
         ui.open_page('Omega Home')
         app.processEvents()
         assert window.pages.currentIndex() == window.page_indices['JARVIS Chat']
-        assert window.composer_bar.isVisibleTo(window)
+        assert window.prime_chat.composer.isVisibleTo(window)
         ui.open_page('Omega Settings')
         app.processEvents()
-        assert window.settings_scroller.isVisibleTo(window)
+        assert window.settings_scroller.isVisibleTo(window.prime_shell.settings_dialog)
     finally:
         window.close()
         window.deleteLater()

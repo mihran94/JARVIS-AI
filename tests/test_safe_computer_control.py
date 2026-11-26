@@ -208,7 +208,7 @@ def test_the_page_shows_the_owner_what_the_boundary_has_done(tmp_path):
 
 
 
-def test_settings_control_shortcut_opens_the_existing_chat_panel(tmp_path):
+def test_automation_route_closes_settings_and_opens_the_existing_chat_panel(tmp_path):
     from PySide6.QtWidgets import QPushButton
     from desktop.app import Window
 
@@ -216,10 +216,11 @@ def test_settings_control_shortcut_opens_the_existing_chat_panel(tmp_path):
     window = Window(tmp_path)
     try:
         window.open_section('Settings & Safety')
-        settings = window.pages.currentWidget()
-        button = next(button for button in settings.findChildren(QPushButton)
-                      if button.text() == 'PC Control')
-        button.click()
+        window.show_settings_panel('Approvals')
+        settings = window.settings_scroller
+        assert not any(button.text() == 'PC Control' for button in settings.findChildren(QPushButton))
+        window.open_section('PC Control')
+        assert not window.prime_shell.settings_dialog.isVisible()
         assert window.pages.currentWidget() is window.prime_chat
         assert window.prime_chat.task_area.currentIndex() == window.prime_chat.task_panels['PC Control']
     finally:

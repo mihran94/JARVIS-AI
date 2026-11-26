@@ -43,9 +43,9 @@ def test_file_and_folder_sections_reachable_without_another_main_menu(tmp_path, 
         assert not window.files_share_once.isChecked()
         assert window.attachment_list.count() == 2
         window.open_section("JARVIS Chat")
-        assert window.composer_bar.isVisibleTo(window)
+        assert window.prime_chat.composer.isVisibleTo(window)
         window.open_section("Settings & Safety")
-        assert not window.composer_bar.isVisibleTo(window)
+        assert window.prime_chat.composer.isVisibleTo(window)
     finally:
         window.close()
         app.processEvents()

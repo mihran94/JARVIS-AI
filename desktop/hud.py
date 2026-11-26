@@ -16,7 +16,7 @@ from desktop.prime_theme import MONO_STACK
 TAMIL_STACK = "'Nirmala UI', 'Noto Sans Tamil', 'Latha', 'Segoe UI', sans-serif"
 
 #: The colours of the HUD.
-GROUND = '#05080e'
+GROUND = '#000000'
 PANEL = '#0b1220'
 EDGE = '#1d3b57'
 CYAN = '#63dcff'
@@ -65,6 +65,25 @@ class HudDial(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setFont(_font(MONO_STACK, 8, 600))
+        if self.height() >= 60:
+            tall = self.height() >= 78
+            ring = QRectF((self.width() - 46) / 2 if tall else 5, 7, 46, 46)
+            painter.setPen(QPen(_alpha(CYAN, 62), 3))
+            painter.drawArc(ring, 225 * 16, -270 * 16)
+            if self.value is not None:
+                sweep = round(max(0.0, min(1.0, self.value)) * 270 * 16)
+                painter.setPen(QPen(_alpha(CYAN, 58), 7))
+                painter.drawArc(ring, 225 * 16, -sweep)
+                painter.setPen(QPen(QColor(CYAN), 2))
+                painter.drawArc(ring, 225 * 16, -sweep)
+            painter.setPen(QColor(INK))
+            painter.drawText(ring, Qt.AlignmentFlag.AlignCenter, self.text)
+            painter.setPen(QColor(MUTED))
+            painter.drawText(QRectF(0, 58, self.width(), 20) if tall else
+                             QRectF(60, 7, self.width() - 60, 46),
+                             Qt.AlignmentFlag.AlignCenter if tall else Qt.AlignmentFlag.AlignVCenter,
+                             self.caption)
+            return
         painter.setPen(QColor(MUTED))
         painter.drawText(QRectF(0, 3, self.width(), 14), Qt.AlignmentFlag.AlignLeft, self.caption)
         painter.setPen(QColor(INK))

@@ -38,7 +38,7 @@ def test_mark_lvii_chat_first_but_existing_pages_remain(tmp_path):
         assert not win.chat_provider.isVisible()
         shell.settings_button.click()
         app.processEvents()
-        assert win.settings_scroller.isVisibleTo(win)
+        assert win.settings_scroller.isVisibleTo(win.prime_shell.settings_dialog)
         assert not win.plugins_group.isVisible()
         win.open_plugins()
         app.processEvents()
@@ -52,8 +52,9 @@ def test_mark_lvii_chat_first_but_existing_pages_remain(tmp_path):
         assert win.chat_reactor.activity == 'thinking'
         for name in ('PC Control', 'Coding Assistant', 'Voice / Hey Jarvis',
                      'Phone Remote', 'Video Editor', 'Business', 'Memory',
-                     'AI Providers', 'Settings & Safety', 'Step Workflows'):
+                     'AI Providers', 'Step Workflows'):
             assert name in win.page_indices
+        assert win.settings_scroller.parentWidget() is win.prime_shell.settings_dialog
     finally:
         win.close()
         win.deleteLater()

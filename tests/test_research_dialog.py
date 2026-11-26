@@ -85,7 +85,10 @@ def test_the_automation_page_offers_the_research_window(tmp_path):
         dialog = window.research_dialog
         assert dialog is not None
         assert dialog.windowTitle() == 'JARVIS research'
-        dialog.close()
+        assert not dialog.isWindow()
+        assert window.prime_chat.task_area.isAncestorOf(dialog)
+        dialog.reject()
+        assert window.prime_chat.task_area.currentIndex() == window.prime_chat.task_panels['PC Control']
     finally:
         window.close()
         window.deleteLater()

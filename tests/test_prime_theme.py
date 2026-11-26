@@ -80,7 +80,7 @@ def test_the_composer_belongs_to_the_window_and_not_to_the_scrolling_page(tmp_pa
         app.processEvents()
 
 
-def test_the_composer_is_only_shown_with_the_chat(tmp_path):
+def test_settings_popup_keeps_the_chat_composer_visible(tmp_path):
     from desktop.app import Window
 
     app = QApplication.instance() or QApplication([])
@@ -89,7 +89,8 @@ def test_the_composer_is_only_shown_with_the_chat(tmp_path):
         window.open_section('JARVIS Chat')
         assert window.prime_chat.composer.isVisibleTo(window) is True
         window.open_section('Settings & Safety')
-        assert window.prime_chat.composer.isVisibleTo(window) is False
+        assert window.prime_chat.composer.isVisibleTo(window) is True
+        assert window.prime_shell.settings_dialog.isVisible()
     finally:
         window.close()
         window.deleteLater()
