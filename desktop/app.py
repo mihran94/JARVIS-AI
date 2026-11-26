@@ -823,6 +823,13 @@ class Window(QMainWindow):
     def update_cockpit_chrome(self, _index):
         on_cockpit = self.pages.currentWidget() is self.mcore_cockpit
         self.prime_shell.show_cockpit_chrome(on_cockpit)
+        # Switching chrome changes the minimum width. Apply that change before
+        # Windows handles the next resize, not on a later layout event.
+        for widget in (self.prime_shell, self.centralWidget(), self):
+            layout = widget.layout()
+            if layout is not None:
+                layout.invalidate()
+                layout.activate()
         if on_cockpit:
             self.mcore_cockpit.update_metrics(self.cockpit_usage)
             self.mcore_cockpit.update_tasks(self.queue.rows())
