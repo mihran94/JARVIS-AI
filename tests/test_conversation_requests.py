@@ -282,14 +282,15 @@ def test_suggested_notepad_uses_user_text_and_existing_approval(tmp_path, monkey
 
     monkeypatch.setattr('desktop.app.type_into_target', type_text)
     try:
-        win.request_suggestions('type in Notepad: ' + payload, explicit=True)
+        win.prompt.setPlainText('/suggest type in Notepad: ' + payload)
+        win.send()
         assert win.suggested_steps[0].typing.text == payload
         assert 'Typing will not save a file.' in win.transcript.toPlainText()
         assert win.chat_launch is None
         win.review_suggested_plan()
         assert typed == []
         assert win.chat_launch is not None
-        activity = win.prime_shell.activity
+        activity = win.prime_chat.timeline
         assert activity.state.text() == 'Approval required'
         assert 'Review the exact text' in activity.live_detail.text()
         win.finish_chat_launch(True)

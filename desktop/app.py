@@ -2667,7 +2667,7 @@ class Window(QMainWindow):
             self.prime_chat.cards.addWidget(self.suggestion_card)
         self.request_suggestions(goal, explicit=True)
 
-    def request_suggestions(self, goal: str, *, explicit: bool, consume_draft=False):
+    def request_suggestions(self, goal: str, *, explicit: bool, consume_draft=False, online=False):
         try:
             typing = parse_desktop_task(goal)
         except ValueError as error:
@@ -2675,7 +2675,7 @@ class Window(QMainWindow):
             return
         app = parse_voice_command(goal) if explicit and typing is None else None
         if typing is None and not app:
-            self.send_chat_reply(goal, suggestion=True)
+            self.send_chat_reply(goal, suggestion=True, suggestions_online=online)
             return
 
         if consume_draft:
@@ -6610,10 +6610,8 @@ class Window(QMainWindow):
                 return
             if self.automation_panel.isAncestorOf(self.suggestion_card):
                 self.prime_chat.cards.addWidget(self.suggestion_card)
-            if requested_goal is not None:
-                self.send_chat_reply(goal, suggestion=True, suggestions_online=True)
-            else:
-                self.request_suggestions(goal, explicit=False, consume_draft=True)
+            self.request_suggestions(goal, explicit=requested_goal is not None,
+                                     consume_draft=True, online=requested_goal is not None)
             return
         command, _, argument = addressed_request(text).partition(' ')
         if command.casefold() == '/browser':
