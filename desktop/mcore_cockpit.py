@@ -330,7 +330,9 @@ class MCoreCockpit(QScrollArea):
         window = self.window_ref
         self.settings_button = action('⚙ Settings', lambda: window.open_section('Settings & Safety'))
         controls.addWidget(self.settings_button)
-        controls.addWidget(action('Chat', lambda: window.open_section('JARVIS Chat')))
+        self.prime_button = action('PRIME', window.return_from_cockpit,
+                                   accessible='Return to PRIME, camera, Terminal and Media')
+        controls.addWidget(self.prime_button)
         self.state_chip = label('IDLE', 'mcoreState')
         self.state_chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.state_chip.setMaximumWidth(270)
@@ -549,13 +551,22 @@ class MCoreCockpit(QScrollArea):
                 self.fields['UPTIME'].setText('N/A')
                 self.fields['PROCESSES'].setText('N/A')
 
-    def update_runtime(self, state, route, mic):
+    def update_runtime(self, state, chat_route):
         window = self.window_ref
         live = window.live_voice
         live_connected = bool(live and live.active and live.state != 'connecting')
         live_mic = bool(live_connected and getattr(live, 'input', None) is not None
                         and live.state != 'speaking')
-        active = state != 'stopped' and (window.voice_panel.listening or live_mic)
+        panel = window.voice_panel
+        active = state != 'stopped' and not panel.microphone_muted and (panel.listening or live_mic)
+        connecting = window.live_voice_starting or (live and live.state == 'connecting')
+        if live_connected:
+            route = 'Active route: Gemini Live'
+        elif connecting:
+            route = 'Connecting to Gemini Live'
+        else:
+            title = 'Request route' if window.worker is not None else 'Selected chat route'
+            route = title + ': ' + chat_route.removeprefix('Active brain: ')
         status = STATES[state][0].upper()
         tone = (GREEN if state == 'listening' else RED if state in ('stopped', 'error')
                 else AMBER if state in ('approval', 'thinking') else CYAN)
@@ -566,12 +577,23 @@ class MCoreCockpit(QScrollArea):
             component.setText(('●  ' if component is self.state_chip else '') + status)
             component.setStyleSheet(f'color: {tone};')
         self.fields['ENGINE'].setText(route)
-        voice = ('Gemini Live' if live_connected else 'Connecting' if live and live.active
-                 else 'Speaking' if window.voice_panel.speaking else 'Not speaking')
+        voice = ('Gemini Live' if live_connected else 'Connecting' if connecting
+                 else 'Speaking' if panel.speaking else 'Not speaking')
         self.fields['VOICE'].setText(voice)
-        mic_label = 'MIC ACTIVE' if active else mic
-        if mic == 'Mic: Gemini Live' and not active:
+        if panel.microphone_muted:
+            mic_label = 'Mic: muted'
+        elif active:
+            mic_label = 'MIC ACTIVE'
+        elif connecting:
+            mic_label = 'Mic: connecting'
+        elif live_connected:
             mic_label = 'Mic: playback paused' if live.state == 'speaking' else 'Mic: unavailable'
+        elif window.audio_test.mode == 'microphone':
+            mic_label = 'Mic: testing'
+        elif panel.worker is not None and panel.worker.isRunning():
+            mic_label = 'Mic: closing'
+        else:
+            mic_label = 'Mic: ready' if panel.consent.listening else 'Mic: off'
         self.mic_button.setText(mic_label)
         self.mic_button.setAccessibleName(mic_label + '. Microphone access controls')
         self.mic_button.setStyleSheet(f'color: {GREEN if active else ICE};')
@@ -583,7 +605,8 @@ class MCoreCockpit(QScrollArea):
         self.send.setEnabled(state != 'stopped')
         self.resume_button.setVisible(state == 'stopped')
         self.review_button.setVisible(state == 'approval')
-        self.live_button.setText('Stop Live Voice' if live and live.active else 'Live Voice')
+        self.live_button.setText('Stop Live Voice' if connecting or (live and live.active)
+                                 else 'Live Voice')
         self.live_button.setEnabled(state != 'stopped')
         self.speak_button.setEnabled(state != 'stopped' and not (live and live.active)
                                      and not window.voice_panel.playback_busy)
@@ -593,7 +616,8 @@ class MCoreCockpit(QScrollArea):
 
     def toggle_microphone(self):
         window = self.window_ref
-        getattr(window, 'hud_toggle_microphone', window.hud_mic_control)()
+        fallback = window.prime_shell.mic_mute_button.click
+        getattr(window, 'hud_toggle_microphone', fallback)()
 
     def interrupt_reply(self):
         window = self.window_ref

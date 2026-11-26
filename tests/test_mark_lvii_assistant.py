@@ -33,19 +33,20 @@ def test_mark_lvii_chat_first_but_existing_pages_remain(tmp_path):
         win.show()
         app.processEvents()
         assert win.pages.currentIndex() == win.page_indices['JARVIS Chat']
-        rail = win.prime_shell.rail_buttons
-        assert win.prime_shell.island_button.accessibleName() == 'Island'
+        shell = win.prime_shell
+        assert shell.mini_view_button.text() == 'Mini view'
         assert not win.chat_provider.isVisible()
-        rail['Settings & Safety'].click()
+        shell.settings_button.click()
         app.processEvents()
-        assert win.pages.currentIndex() == win.page_indices['Settings & Safety']
+        assert win.settings_scroller.isVisibleTo(win.prime_shell.settings_dialog)
         assert not win.plugins_group.isVisible()
-        win.prime_shell.work_actions['Plugins'].trigger()
+        win.open_plugins()
+        app.processEvents()
         assert win.plugins_group.isVisible()
-        rail['JARVIS Chat'].click()
+        shell.drawer_close.click()
         assert win.pages.currentIndex() == win.page_indices['JARVIS Chat']
         win.enable_omega(smoke=True)
-        assert win.omega.theme == 'Warm Graphite'
+        assert win.omega.theme == 'M-Core'
         assert 'MARK LVII' not in THEMES
         win.omega.set_voice('thinking')
         assert win.chat_reactor.activity == 'thinking'

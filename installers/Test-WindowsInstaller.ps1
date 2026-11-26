@@ -26,8 +26,8 @@ function Invoke-CheckedProcess($File, [string[]]$Arguments, $Stage) {
 $root = Join-Path ([IO.Path]::GetTempPath()) ('jarvis-acceptance-' + [guid]::NewGuid().ToString('N'))
 $appDir = Join-Path $root 'application'
 $profile = Join-Path $root 'profile'
-New-Item -ItemType Directory -Path (Join-Path $profile 'JarvisAI') -Force | Out-Null
-$marker = Join-Path $profile 'JarvisAI\keep-data.txt'
+New-Item -ItemType Directory -Path (Join-Path $profile 'JarvisM') -Force | Out-Null
+$marker = Join-Path $profile 'JarvisM\keep-data.txt'
 Set-Content -LiteralPath $marker -Value 'JARVIS acceptance profile'
 $previousLocalAppData = $env:LOCALAPPDATA
 $env:LOCALAPPDATA = $profile
@@ -41,7 +41,7 @@ try {
     if (!(Test-Path -LiteralPath "HKCU:\$uninstallKey")) { throw 'Per-user uninstall registration is missing.' }
     Invoke-CheckedProcess $installed @('--smoke-test') 'Installed HUD startup'
     Invoke-CheckedProcess $installed @('--check-voice-runtime') 'Installed voice dependencies'
-    if (!(Test-Path -LiteralPath (Join-Path $profile 'JarvisAI\history.sqlite3'))) {
+    if (!(Test-Path -LiteralPath (Join-Path $profile 'JarvisM\history.sqlite3'))) {
         throw 'The installed application did not initialize its test profile.'
     }
 } finally {
@@ -61,7 +61,7 @@ if ($uninstallers.Count -ne 1 -or (Test-Path -LiteralPath $installed) -or
     throw 'Uninstall did not remove the executable and uninstall registration.'
 }
 if (!(Test-Path -LiteralPath $marker) -or
-        !(Test-Path -LiteralPath (Join-Path $profile 'JarvisAI\history.sqlite3'))) {
+        !(Test-Path -LiteralPath (Join-Path $profile 'JarvisM\history.sqlite3'))) {
     throw 'Uninstall did not preserve the test profile.'
 }
 Remove-Item -LiteralPath $root -Recurse -Force

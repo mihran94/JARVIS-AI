@@ -3,6 +3,8 @@
 This checklist is for the native JARVIS desktop app, not a browser prototype.
 Compare with the owner's reference at approximately 1227 × 912 and at a
 smaller desktop size. Use a separate source checkout and a disposable profile.
+Open M-CORE from the existing PRIME interface. The usual Chat, Terminal,
+Media, and camera preview remain in PRIME; the cockpit does not replace them.
 
 ## Layout
 
@@ -36,7 +38,7 @@ smaller desktop size. Use a separate source checkout and a disposable profile.
   does not resume a muted or stopped microphone. A hosted test cannot
   replace that observation.
 
-Run source checks in CMD: `VERIFY_JARVIS.cmd --phase1`. Use the dedicated
+Run source checks in CMD: `VERIFY_JARVIS.cmd`. Use the dedicated
 M-CORE tests for layout/interaction regressions. Launch the review source
 with the existing interpreter and `scripts\launch.py --dev-data`; do not
 change the normal installation or use a packaging workflow.

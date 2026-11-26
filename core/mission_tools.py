@@ -128,8 +128,20 @@ class ToolRegistry:
         """The names of the tools that only report."""
         return [name for name, tool in self.tools.items() if tool.read_only]
 
-    def describe(self) -> str:
+    def describe(self, *, compact=False) -> str:
         """The catalogue, written for the model's instructions."""
+        if compact:
+            lines = []
+            for tool in self.tools.values():
+                required = tool.parameters.get('required', ())
+                fields = []
+                for name, spec in tool.parameters.get('properties', {}).items():
+                    option = '' if name in required else '?'
+                    choices = spec.get('enum')
+                    kind = '|'.join(map(str, choices)) if choices else spec.get('type', 'value')
+                    fields.append(f'{name}{option}:{kind}')
+                lines.append(f'{tool.name}({",".join(fields)})')
+            return '\n'.join(lines)
         lines = []
         for tool in self.tools.values():
             kind = 'read-only' if tool.read_only else 'changes something and needs approval'

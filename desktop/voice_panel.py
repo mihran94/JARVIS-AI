@@ -23,21 +23,25 @@ from voice.consent import VoiceConsent
 from voice import azure_tts
 from voice.echo_guard import EchoGuard
 from voice.errors import VoiceError, VoiceUnavailable
+from voice import local_stt
 from voice.wake import DEFAULT_PHRASE, WakePhraseMatcher
 from voice.windows_stt import WindowsSpeechRecognizer
-from voice.windows_tts import WindowsTextToSpeech
+from voice.windows_tts import WindowsTextToSpeech, speak_tamil_winrt
 
 
 #: The languages the owner can speak and hear, and what they are called.
 LANGUAGE_NAMES = {
     'en': 'English',
     'ta': 'தமிழ் (Tamil)',
+    'ta_en': 'Tamil + Tanglish (offline)',
     'fr': 'Français (French)',
 }
 
 
 def default_recognizer_factory(consent, language='en'):
-    """The Windows recogniser. It raises `VoiceUnavailable` off Windows."""
+    """Prefer the local multilingual model for Tamil and mixed speech."""
+    if language == 'ta_en' or (language == 'ta' and local_stt.ready()):
+        return local_stt.LocalSpeechRecognizer(consent, language)
     return WindowsSpeechRecognizer(consent=consent, language=language)
 
 
@@ -77,6 +81,9 @@ class VoiceWorker(QThread):
             self.failed.emit(str(error))
             return
         try:
+            set_cancel = getattr(recognizer, 'set_cancel_check', None)
+            if callable(set_cancel):
+                set_cancel(self.isInterruptionRequested)
             set_level = getattr(recognizer, 'set_level_listener', None)
             if callable(set_level):
                 set_level(self.audio_level.emit)
@@ -174,6 +181,9 @@ class VoiceSpeakerWorker(QThread):
                 # always spoken with a Tamil voice when one is installed.
                 language = 'ta'
             if hasattr(speaker, 'select_language') and not speaker.select_language(language):
+                if language == 'ta' and self._speaker_factory is default_speaker_factory:
+                    speak_tamil_winrt(self._text, self.isInterruptionRequested, self.playing.emit)
+                    return
                 if language != 'en':
                     # English is the system default, so a missing English voice
                     # is not worth refusing to speak over. A missing Tamil or
@@ -225,7 +235,7 @@ class VoicePanel(QWidget):
         self.live_voice_active = False
         self.speaker_worker = None
         self.muted = False
-        self.speaking = False
+        self.microphone_muted = False
         self.pending_speech = ''
         self.pending_sample = None
         self.cloud_config = None
@@ -248,16 +258,13 @@ class VoicePanel(QWidget):
         title.setStyleSheet('font-size:24px;font-weight:600')
         layout.addWidget(title)
         note = QLabel(
-            'Say Hey Jarvis, or dictate one message. Speech is added to Chat as a '
-            'draft; review and press Ask JARVIS before a provider is contacted. '
-            'No voice command can run a PC action without your approval. '
-            'The microphone needs your permission and an installed Windows '
-            'speech language pack.')
+            'Use the local microphone to add a draft to Chat, then review it before sending.')
         note.setWordWrap(True)
         layout.addWidget(note)
 
         consent_box = QGroupBox('Microphone')
         consent_layout = QFormLayout(consent_box)
+        consent_layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         self.phrase = QLineEdit(self.matcher.canonical_phrase or DEFAULT_PHRASE)
         self.phrase.textChanged.connect(self.set_phrase)
         consent_layout.addRow('Wake phrase', self.phrase)
@@ -266,7 +273,7 @@ class VoicePanel(QWidget):
             self.language.addItem(name, code)
         self.language.setCurrentIndex(0)
         self.language.setToolTip(
-            'Windows speech recognition needs an installed recogniser for this language.')
+            'Tamil + Tanglish uses the installed on-device multilingual speech model.')
         consent_layout.addRow('Speech language', self.language)
         self.allow = QCheckBox('Allow the microphone')
         self.allow.toggled.connect(self.set_allowed)
@@ -278,7 +285,7 @@ class VoicePanel(QWidget):
 
         talk_box = QGroupBox('Talk')
         talk_layout = QVBoxLayout(talk_box)
-        row = QHBoxLayout()
+        row = QVBoxLayout()
         self.listen_button = QPushButton('Talk once (draft only)')
         self.listen_button.clicked.connect(lambda: self.listen('once'))
         row.addWidget(self.listen_button)
@@ -306,6 +313,7 @@ class VoicePanel(QWidget):
 
         speak_box = QGroupBox('Speak')
         speak_layout = QFormLayout(speak_box)
+        speak_layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         self.speak_text = QLineEdit()
         self.speak_text.setPlaceholderText('Text for JARVIS to say')
         speak_layout.addRow('Text', self.speak_text)
@@ -376,7 +384,7 @@ class VoicePanel(QWidget):
 
     def listen(self, mode='once'):
         """Start one recognition request on a worker thread."""
-        if self.audio_test_active or self.live_voice_active:
+        if self.microphone_muted or self.audio_test_active or self.live_voice_active:
             return
         if self.playback_busy:
             self.status('Wait for JARVIS to finish speaking.')
@@ -410,11 +418,19 @@ class VoicePanel(QWidget):
 
     @property
     def playback_busy(self):
+        """True while a reply is being read aloud."""
         return self.speaker_worker is not None and self.speaker_worker.isRunning()
 
     @property
-    def microphone_muted(self):
-        return self.consent.muted
+    def speaking(self) -> bool:
+        """True while the reply is being read aloud.
+
+        The state is read from the worker itself, not from a message the
+        worker sent. A thread that is busy cannot always deliver its
+        message at once, and the interface must be able to say that the
+        assistant is speaking even when the message is still on its way.
+        """
+        return self.playback_busy
 
     @property
     def listening(self):
@@ -500,7 +516,7 @@ class VoicePanel(QWidget):
         """Start optional text-to-speech without blocking Emergency Stop."""
         self.speak_response(self.speak_text.text())
 
-    def speak_response(self, text, *, sample_language=None):
+    def speak_response(self, text, *, sample_language=None, local_only=False):
         """Speak on a dedicated worker so Qt remains responsive."""
         if self.audio_test_active or self.live_voice_active:
             return
@@ -518,12 +534,14 @@ class VoicePanel(QWidget):
         self.wake_timer.stop()
         self.spoken_text = text
         if self.worker is not None and self.worker.isRunning():
+            if local_only:
+                return
             self.pending_speech = text
             self.pending_sample = sample_language
             self.cancel_listening()
             return
         cloud = None
-        if self.cloud_config:
+        if self.cloud_config and not local_only:
             try:
                 cloud = self.cloud_config()
             except VoiceError as error:
@@ -535,7 +553,8 @@ class VoicePanel(QWidget):
         if sample_language and not cloud:
             self.status('Allow Azure Speech in API Provider Manager before testing cloud voices.')
             return
-        self.speaker_worker = VoiceSpeakerWorker(self._speaker_factory, text, self.language_code,
+        spoken_language = 'ta' if self.language_code == 'ta_en' else self.language_code
+        self.speaker_worker = VoiceSpeakerWorker(self._speaker_factory, text, spoken_language,
                                                  cloud=cloud, sample_language=sample_language)
         self.speaker_worker.failed.connect(self.status)
         self.speaker_worker.cloud_usage.connect(self.cloud_usage)
@@ -546,14 +565,12 @@ class VoicePanel(QWidget):
 
     def on_playback_started(self):
         if self.sender() is self.speaker_worker and not self.muted and not self.consent.stopped:
-            self.speaking = True
             self.echo_guard.record(self.spoken_text)
             self.refresh()
 
     def on_playback_finished(self):
         if self.sender() is not self.speaker_worker:
             return
-        self.speaking = False
         self.refresh()
         self.speech_finished.emit()
         if self.continuous:
@@ -569,20 +586,6 @@ class VoicePanel(QWidget):
             self.discard_recognition = True
             self.worker.requestInterruption()
             self.refresh()
-
-    def interrupt_reply(self):
-        """Cancel a queued reply or request only the current speaker to stop."""
-        worker = self.speaker_worker
-        playing = worker is not None and worker.isRunning()
-        if not self.pending_speech and not playing:
-            return False
-        self.pending_speech = ''
-        self.pending_sample = None
-        if playing:
-            worker.requestInterruption()
-        # Do not claim silence or restart recognition until the worker exits.
-        self.refresh()
-        return True
 
     def cancel_cloud_speech(self):
         self.pending_speech = ''
@@ -629,8 +632,6 @@ class VoicePanel(QWidget):
             return 'Stopping the active listening session.'
         if self.consent.stopped:
             return 'Stopped: the microphone is closed until the owner allows it again.'
-        if self.microphone_muted:
-            return 'The microphone is muted for this session.'
         if self.listening:
             return 'A listening session is active.'
         if self.consent.granted:
@@ -650,7 +651,8 @@ class VoicePanel(QWidget):
         self.allow.blockSignals(False)
         self.stop_button.setEnabled(not self.consent.stopped)
         self.resume_button.setEnabled(self.consent.stopped)
-        microphone_ready = (self.consent.listening and not self.audio_test_active and not self.live_voice_active
+        microphone_ready = (self.consent.listening and not self.microphone_muted
+                            and not self.audio_test_active and not self.live_voice_active
                             and not self.playback_busy and
                             not (self.worker is not None and self.worker.isRunning()))
         self.listen_button.setEnabled(microphone_ready)

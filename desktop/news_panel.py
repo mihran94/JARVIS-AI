@@ -1,17 +1,16 @@
 """Controls and results for the optional Tamil news briefing."""
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QCheckBox, QComboBox, QDialog, QFormLayout, QPlainTextEdit, QPushButton, QSpinBox
+from PySide6.QtWidgets import QCheckBox, QComboBox, QFormLayout, QPlainTextEdit, QPushButton, QSpinBox, QWidget
 
 from news.briefing import REGIONS
 
 
-class NewsPanel(QDialog):
+class NewsPanel(QWidget):
     def __init__(self, window):
         super().__init__(window)
         self.window = window
-        self.setWindowTitle('Tamil news briefing')
-        self.resize(660, 480)
         layout = QFormLayout(self)
+        layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         self.region = QComboBox()
         for key, label in REGIONS.items():
             self.region.addItem(label, key)

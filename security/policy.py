@@ -38,6 +38,10 @@ class Action:
     target: str
     digest: str = ''
     approval_scope: ApprovalScope = ApprovalScope.ALWAYS
+    #: The arguments of the call, as JSON, so the owner can see what the
+    #: call would do and change it before the call runs. It is a string
+    #: and not a mapping, because this object is compared and hashed.
+    arguments: str = ''
 
 
 @dataclass(frozen=True)
@@ -137,6 +141,15 @@ class Policy:
         """What the boundary was asked for, newest last."""
         with self._lock:
             return list(self._decisions)
+
+    def note(self, kind, target, outcome, detail=''):
+        """Record a decision that did not come from approve and execute.
+
+        A proposal the owner dismissed is a decision of the boundary
+        too, and it belongs in the same record as the ones that ran.
+        """
+        with self._lock:
+            self._record(kind, target, outcome, detail)
 
     def decision_counts(self) -> dict:
         """How many of each outcome there are."""

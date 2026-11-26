@@ -60,6 +60,32 @@ def wait_for(predicate, timeout=15):
     return False
 
 
+def answer_proposal(window, *, approve=True, edit=None):
+    """Answer the proposed action that is waiting in Automation.
+
+    A proposed action is a card with Run, Edit and Dismiss. The owner
+    answers it there, whichever engine proposed it.
+    """
+    deadline = time.monotonic() + 15
+    app = QApplication.instance()
+    while time.monotonic() < deadline:
+        app.processEvents()
+        cards = window.automation_panel.cards()
+        if cards:
+            card = cards[0]
+            if edit:
+                card.editor.setVisible(True)
+                for name, value in edit.items():
+                    card.fields[name].setText(value)
+            if approve:
+                card.run_button.click()
+            else:
+                card.dismiss_button.click()
+            return card.action
+        time.sleep(0.005)
+    return None
+
+
 @pytest.fixture
 def window(tmp_path):
     app = QApplication.instance() or QApplication([])
@@ -104,25 +130,38 @@ def test_a_tool_the_model_asks_for_really_runs(window):
 
 
 def test_a_tool_that_changes_something_asks_the_owner(window):
-    asked = []
-    window.confirm = lambda action: asked.append(action) or True
     connect(window, [tool_call('memory_remember',
                                {'title': 'Launch', 'body': 'On Friday.', 'tags': []}),
                      final('Saved.')])
     window.mission_controller.start('Remember that the launch is on Friday.')
+    proposed = answer_proposal(window)
+    assert proposed is not None
+    assert proposed.kind == 'mission_tool'
+    assert 'memory_remember' in proposed.target
     assert wait_for(lambda: window.mission_panel.status.text() == 'COMPLETE')
-    assert len(asked) == 1
-    assert asked[0].kind == 'mission_tool'
-    assert 'memory_remember' in asked[0].target
     assert 'tool result' in window.mission_panel.evidence_column.count.text()
 
 
-def test_a_refused_tool_does_not_run(window):
-    window.confirm = lambda action: False
+def test_the_owner_can_edit_a_proposed_action_before_it_runs(window):
     connect(window, [tool_call('memory_remember',
                                {'title': 'Launch', 'body': 'On Friday.', 'tags': []}),
                      final('Saved.')])
     window.mission_controller.start('Remember that the launch is on Friday.')
+    proposed = answer_proposal(window, edit={'body': 'On Monday.'})
+    assert proposed is not None
+    assert 'body' in proposed.editable
+    assert wait_for(lambda: window.mission_panel.status.text() == 'COMPLETE')
+    titles = [row.title for row in window.memory_service.all()]
+    assert 'On Monday.' in [row.body for row in window.memory_service.all()]
+
+
+def test_a_refused_tool_does_not_run(window):
+    connect(window, [tool_call('memory_remember',
+                               {'title': 'Launch', 'body': 'On Friday.', 'tags': []}),
+                     final('Saved.')])
+    window.mission_controller.start('Remember that the launch is on Friday.')
+    proposed = answer_proposal(window, approve=False)
+    assert proposed is not None
     assert wait_for(lambda: window.mission_panel.status.text() == 'FAILED')
     assert window.mission_panel.evidence_column.count.text() == 'no tool ran'
     labels = ' '.join(entry['label'] for entry in window.mission_panel.timeline.entries())

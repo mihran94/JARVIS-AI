@@ -47,10 +47,6 @@ def test_chat_and_phone_stay_readable_at_narrow_desktop_size(tmp_path):
         # not inside an extra set of chat options on the narrow main screen.
         window.open_section("Settings & Safety")
         app.processEvents()
-        assert not window.backup_provider.isVisible()
-        window.settings_mode_button.click()
-        app.processEvents()
-        assert window.settings_category.currentText() == "Chat options, audio tests and connections"
         assert window.backup_provider.isVisible()
         assert window.pages.currentWidget().horizontalScrollBar().maximum() == 0
         window.open_section("PC Control")

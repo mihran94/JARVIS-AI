@@ -1,3 +1,5 @@
+import json
+import re
 import os
 from pathlib import Path
 import sys
@@ -13,14 +15,14 @@ from PySide6.QtWidgets import (
     QPushButton, QListWidget, QStackedWidget, QPlainTextEdit, QLineEdit,
     QComboBox, QMessageBox, QFormLayout, QGridLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QCheckBox, QDialog, QFileDialog, QScrollArea, QLayout,
-    QProgressBar, QGroupBox, QSizePolicy, QInputDialog,
+    QProgressBar, QGroupBox, QInputDialog,
 )
 from dataclasses import replace
 
 from core.store import Store
 from core.conversation import (REPLY_LANGUAGES, REPLY_TONES, SUGGESTION_GUIDANCE,
                                addressed_request, assistant_guidance, mission_argument,
-                               suggestion_argument)
+                               self_update_argument, suggestion_argument)
 from desktop.conversation_plan import (ConversationPlan, Step, extract_suggested_plan,
                                        parse_plan as parse_conversation_plan)
 from desktop.browser_control import BrowserControl
@@ -127,12 +129,24 @@ from business.drafting import (
 from agents.gateway import Gateway
 from agents.queue import TaskQueue
 from agents.workflows import WorkflowQueue
+from core.engines import (EngineRouter, EngineStep, EngineUnavailable, GEMINI, LOCAL,
+                          enabled_from_store, history_from_store, save_history_to_store,
+                          set_enabled_in_store)
+from core.local_model import LocalModelSupervisor, STATUS_TIMEOUT
+from desktop.hud import HudFrame
+from desktop.automation_panel import AutomationPanel, ProposedAction
+from voice import models as voice_models
 
 #: The stylesheet the application uses. It is the premium dark interface
 #: theme, and it is applied to the running application at startup — the
 #: stylesheet was previously only ever applied by the tests, so the shipping
 #: JARVIS rendered in the default light Qt theme.
 STYLE = prime_theme.PRIME_DARK
+
+#: The worker that starts the on-device model. It lives here and not in
+#: the window, because a thread that is still running when the window
+#: is destroyed takes the application down with it.
+_local_model_worker = None
 
 
 class ChatWorker(QThread):
@@ -269,6 +283,35 @@ class CodingTaskWorker(QThread):
         self.result.emit(outcome)
 
 
+class LocalModelWorker(QThread):
+    """Start the on-device model away from the interface thread.
+
+    The model can take a moment to answer the first time, and the
+    window must not wait for it. The worker reports what happened, and
+    the interface shows it.
+
+    The worker is **not** a child of the window. A thread that is still
+    running when its parent is destroyed takes the whole application
+    down with it, and a window can be closed at any moment. The worker
+    lives in the module instead, and it reports to the window only for
+    as long as the window is there to hear it.
+    """
+
+    done = Signal(object)
+
+    def __init__(self, supervisor):
+        super().__init__()
+        self.supervisor = supervisor
+
+    def run(self):
+        try:
+            status = self.supervisor.ensure_running()
+        except Exception as error:
+            status = self.supervisor.status()
+            status.detail = str(error)
+        self.done.emit(status)
+
+
 class TestRunWorker(QThread):
     """Run a project's tests off the UI thread.
 
@@ -308,6 +351,20 @@ class TestRunWorker(QThread):
         self.result.emit(status, output, {})
 
 
+class ChatPrompt(QPlainTextEdit):
+    submitted = Signal()
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not (
+                event.modifiers() & (Qt.KeyboardModifier.ShiftModifier
+                                     | Qt.KeyboardModifier.AltModifier)):
+            if not event.isAutoRepeat():
+                self.submitted.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
 class Window(QMainWindow):
     def __init__(self, data_root):
         super().__init__()
@@ -327,6 +384,20 @@ class Window(QMainWindow):
         self.gateway = Gateway(self.policy, self.store)
         self.queue = TaskQueue(self.store, self.gateway)
         self.workflows = WorkflowQueue(self.store, self.gateway)
+        # The on-device model that answers most of the work, and the
+        # router that decides when one step of a mission needs Gemini.
+        # The status of the local server is read with a short wait: the
+        # server answers in a moment, and the interface must not wait
+        # for it when it is not there at all.
+        self.local_model = LocalModelSupervisor(model=self.selected_model('Ollama'),
+                                                timeout=STATUS_TIMEOUT)
+        self.engines = self._build_engine_router()
+        self.engine_history = history_from_store(self.store)
+        # The HUD is always in sight: it answers what this computer is
+        # doing, what JARVIS is doing, and how to stop it.
+        self.hud = HudFrame()
+        self.hud.strip.stop_requested.connect(self.stop)
+        self.hud.strip.set_engine(LOCAL, '')
         self.worker_kind = "chat"
         self.ai_visual_state = "idle"
         self.active_provider = None
@@ -355,7 +426,7 @@ class Window(QMainWindow):
         self.pending_clarification = None
         self.assistant_language = assistant_language(self.store)
         self.site_export = None
-        self.news_panel = None
+        self.news_panel = NewsPanel(self)
         self.site_draft = None
         self.site_preview_path = None
         self.worker = None
@@ -383,6 +454,7 @@ class Window(QMainWindow):
         self.nav = QListWidget(self)
         self.nav.hide()
         self.pages = QStackedWidget()
+        self.pages.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
         outer.addWidget(self.pages, 1)
         # One main UI: specialized tools remain available under Settings.
         self.page_indices = {}
@@ -394,9 +466,14 @@ class Window(QMainWindow):
         self.add_page('Coding Assistant', self.editor_page())
         self.voice_panel = VoicePanel()
         self.live_voice = None
+        self.live_voice_starting = False
         self.voice_panel.allow.toggled.connect(self.on_live_mic_consent)
-        live_voice_row = QHBoxLayout()
-        self.voice_panel.layout().insertLayout(1, live_voice_row)
+        self.voice_panel.allow.clicked.connect(lambda: self.store.set(
+            'voice:remember_permission', self.voice_panel.allow.isChecked()))
+        cloud_voice = QGroupBox('Gemini Live')
+        live_voice_form = QFormLayout(cloud_voice)
+        live_voice_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        live_voice_row = QVBoxLayout()
         self.live_voice_settings_button = self.button(live_voice_row, 'Live Voice', self.toggle_live_voice)
         self.live_speech_language = QComboBox()
         self.live_speech_language.setAccessibleName('Live speech language')
@@ -407,6 +484,8 @@ class Window(QMainWindow):
         self.live_speech_language.currentIndexChanged.connect(
             lambda _index: self.store.set('voice:live_language', self.live_speech_language.currentData()))
         live_voice_row.addWidget(self.live_speech_language, 1)
+        live_voice_form.addRow('Cloud conversation', live_voice_row)
+        self.voice_panel.layout().insertWidget(4, cloud_voice)
         # The speech language is remembered, so the owner does not choose it
         # again every time the application starts.
         saved_language = self.store.get('voice_language')
@@ -418,9 +497,10 @@ class Window(QMainWindow):
         self.voice_panel.utterance_detected.connect(self.on_voice_transcript)
         self.voice_panel.cycle_finished.connect(self.schedule_local_voice_rearm)
         self.voice_panel.speech_finished.connect(self.schedule_local_voice_rearm)
-        self.add_page('Voice / Hey Jarvis', self.voice_panel)
+        self.add_page('Voice / Hey Jarvis', QWidget())
         self.add_page('Phone Remote', self.bridge_page())
-        self.add_page('Settings & Safety', self.permissions_page())
+        self.provider_settings = self.provider_page()
+        self.settings_scroller = self.scroll_page(self.permissions_page())
         self.add_page('Video Editor', self.video_page())
         self.add_page('Business', self.business_page())
         self.add_page('Memory', MemoryPanel(service=self.memory_service))
@@ -431,13 +511,14 @@ class Window(QMainWindow):
         self.add_page('Quantum Visual Player', self.player_panel, primary=False)
         self.add_page('Command Center', self.dashboard(), primary=False)
         self.voice_panel.activity_changed.connect(self.refresh_voice_hud)
+        self.voice_panel.audio_level.connect(self.hud.strip.set_mic_level)
         self.voice_panel.recognition_failed.connect(lambda: self.hands_free_voice.setChecked(False))
         self.voice_panel.feedback.connect(lambda message: self.statusBar().showMessage(message, 10000))
         self.refresh_voice_hud()
         self.add_page('Task Queue', self.queue_page(), primary=False)
         self.add_page('Step Workflows', self.workflow_page(), primary=False)
         self.add_page('Task History', self.history_page(), primary=False)
-        self.add_page('AI Providers', self.provider_page(), primary=False)
+        self.add_page('AI Providers', QWidget(), primary=False)
         self.add_page('System & Usage', self.usage_page(), primary=False)
         self.add_page('Review changes', ReviewPanel(self), primary=False)
         # The chat page is built first, so the brain label can be filled in
@@ -465,10 +546,6 @@ class Window(QMainWindow):
         self.microphone_mute_shortcut = QShortcut(QKeySequence('F4'), self)
         self.microphone_mute_shortcut.setAutoRepeat(False)
         self.microphone_mute_shortcut.activated.connect(self.hud_toggle_microphone)
-        self.interrupt_reply_shortcut = QShortcut(QKeySequence('Escape'), self)
-        self.interrupt_reply_shortcut.setAutoRepeat(False)
-        self.interrupt_reply_shortcut.setEnabled(False)
-        self.interrupt_reply_shortcut.activated.connect(self.hud_interrupt_reply)
         self.refresh_system_metrics()
         self.refresh_history()
         self.render_chat()
@@ -481,23 +558,191 @@ class Window(QMainWindow):
         self.maintenance_timer.timeout.connect(self.check_maintenance)
         self.maintenance_timer.start(60_000)
         self.enable_prime()
+        # The voice state in the HUD is read on a timer. A timer event is
+        # served before the paint events, so the HUD stays true even when
+        # the animation is keeping the machine busy.
+        self.voice_hud_timer = QTimer(self)
+        self.voice_hud_timer.setInterval(200)
+        self.voice_hud_timer.timeout.connect(self.refresh_voice_hud)
+        self.voice_hud_timer.start()
         QTimer.singleShot(0, self.check_maintenance)
+        # The voice models are read once, and the on-device model is
+        # checked with a short wait: the local server answers in a
+        # moment, and the interface must not wait for it if it is not
+        # there.
+        QTimer.singleShot(0, self.refresh_voice_models)
+        QTimer.singleShot(0, self.refresh_local_model_status)
 
     def prime_palette_or_default(self):
         """The PRIME palette, or the dark one when PRIME is not mounted yet."""
         from desktop.prime_ui import PrimePalette
 
         palette = getattr(self, 'prime_palette', None)
-        return palette if palette is not None else PrimePalette(dark=self.prime_is_dark())
+        return palette if palette is not None else PrimePalette(
+            dark=self.prime_is_dark(), theme=OMEGA_THEMES[self.interface_theme])
+
+    # -- the engines -----------------------------------------------------
+
+    def gemini_key(self) -> str:
+        """The Gemini key, if the owner has one.
+
+        The key is read from the Windows vault when there is one. It is
+        never written anywhere else, and it is cleared as soon as the
+        step that needed it is over.
+        """
+        try:
+            return self.vault.get('Gemini')
+        except Exception:
+            return ''
+
+    def _build_engine_router(self) -> EngineRouter:
+        """The router that decides which engine answers one step.
+
+        The on-device model answers first. Gemini is used for a step only
+        when the owner has turned the automatic fallback on and the local
+        model could not do that step.
+        """
+        from providers import ollama
+        from providers.chat import stream_chat
+
+        def local_stream(model, messages, check, emit):
+            # The on-device model is reached through the same router as
+            # every other provider, so it is never a second path out of
+            # the application.
+            spec = self.router.spec('Ollama')
+            return self.router.stream(spec, model, '', messages, check, emit, planning=True)
+
+        def gemini_stream(model, key, messages, check, emit):
+            return stream_chat('Gemini', model, key, messages, check, emit)
+
+        return EngineRouter(
+            local_model=self.selected_model('Ollama'),
+            local_stream=local_stream,
+            gemini_model=self.selected_model('Gemini'),
+            gemini_key=self.gemini_key(),
+            gemini_enabled=enabled_from_store(self.store),
+            gemini_stream=gemini_stream,
+        )
+
+    def approve_engine_share(self, kinds, note: str) -> bool:
+        """Ask the owner before anything sensitive goes to a cloud model.
+
+        The question goes through the same approval gateway as every
+        other action, so there is one place where an action can be
+        allowed and one place where it is refused.
+        """
+        action = Action('share_with_gemini', note)
+        try:
+            self.gateway.run(action, self.confirm, lambda: True, auto_approve=False)
+        except (Denied, Stopped):
+            return False
+        return True
+
+    def record_engine_step(self, record: EngineStep):
+        """Remember which engine answered a step, and show it."""
+        self.engine_history.append(record.as_dict())
+        if len(self.engine_history) > 50:
+            del self.engine_history[:-50]
+        save_history_to_store(self.store, self.engine_history)
+
+    def on_engine_used(self, record):
+        """Show the engine that answered, in the HUD and on the mission rail."""
+        self.record_engine_step(record)
+        hud = getattr(self, 'hud', None)
+        if hud is not None:
+            hud.strip.set_engine(record.engine, record.explanation)
+        panel = getattr(self, 'mission_panel', None)
+        if panel is not None:
+            panel.set_engine(record.engine, record.explanation)
+
+    def on_step_changed(self, step: int, total: int):
+        """Show the step of the task in the HUD."""
+        hud = getattr(self, 'hud', None)
+        if hud is not None:
+            hud.strip.set_progress(step, total)
+
+    def refresh_engine_settings(self):
+        """Read the engine settings the owner chose."""
+        self.engines.set_gemini(
+            model=self.selected_model('Gemini'),
+            key=self.gemini_key(),
+            enabled=enabled_from_store(self.store))
+
+    def start_local_model(self):
+        """Start the on-device model and remember that it is there.
+
+        The model runs on this computer, on the loopback interface only.
+        When it starts and the owner has never chosen a chat provider,
+        the chat uses it, so a fresh JARVIS is local first. The work is
+        done away from the interface thread, because the owner must not
+        wait for the model on the way to a click.
+        """
+        global _local_model_worker
+        worker = LocalModelWorker(self.local_model)
+        worker.done.connect(self.on_local_model_ready)
+        _local_model_worker = worker
+        worker.start()
+        return worker
+
+    def on_local_model_ready(self, status):
+        """The on-device model was started, or it could not be started."""
+        self.local_model_status = status
+        self.refresh_local_model_status()
+        if status is not None and status.ready:
+            # A fresh JARVIS is local first: the chat uses the model that
+            # runs on this computer until the owner chooses otherwise.
+            if not self.store.get(routing.PERSON_KEY):
+                self.store.set(routing.PERSON_KEY, 'Ollama')
+                if hasattr(self, 'chat_provider'):
+                    self.chat_provider.setCurrentText('Ollama')
+
+    def refresh_local_model_status(self):
+        """Show what the on-device model is doing.
+
+        The reading is taken with a short wait. The local server answers
+        in a moment or it is not there at all, and the interface must
+        not wait for it either way.
+        """
+        status = getattr(self, 'local_model_status', None)
+        if status is None:
+            status = self.local_model.status()
+            self.local_model_status = status
+        label = getattr(self, 'local_model_label', None)
+        if label is not None:
+            label.setText(status.detail)
+
+    def refresh_voice_models(self):
+        """Show which local voice models are ready."""
+        label = getattr(self, 'voice_models_label', None)
+        if label is None:
+            return
+        try:
+            models = voice_models.probe()
+        except Exception as error:
+            label.setText('The local voice models could not be read: ' + str(error))
+            return
+        label.setText(voice_models.summary(models))
+        self.voice_models = models
+
+    def set_gemini_fallback(self, enabled: bool):
+        """Turn the automatic Gemini fallback on or off."""
+        set_enabled_in_store(self.store, bool(enabled))
+        self.engines.enable(bool(enabled))
+        self.statusBar().showMessage(
+            'Gemini will answer only the steps the on-device model cannot do.'
+            if enabled else 'Every step stays on this computer.', 8000)
 
     def mission_page(self):
         """The mission console: one goal, watched step by step."""
         from desktop.prime_ui import PrimePalette
 
-        panel = MissionPanel(PrimePalette(dark=self.prime_is_dark()),
+        panel = MissionPanel(PrimePalette(dark=self.prime_is_dark(),
+                                         theme=OMEGA_THEMES[self.interface_theme]),
                              root=self.root, memory=self.memory_service)
         self.mission_panel = panel
         self.mission_controller = MissionController(self, panel)
+        self.mission_controller.engine_used.connect(self.on_engine_used)
+        self.mission_controller.step_changed.connect(self.on_step_changed)
         return panel
 
     def enable_omega(self, *, smoke=False):
@@ -519,7 +764,7 @@ class Window(QMainWindow):
 
         if getattr(self, 'prime_shell', None) is not None:
             return self.prime_shell
-        palette = PrimePalette(dark=self.prime_is_dark())
+        palette = PrimePalette(dark=self.prime_is_dark(), theme=OMEGA_THEMES[self.interface_theme])
         self.prime_palette = palette
         shell = PrimeShell(self, palette)
         self.prime_shell = shell
@@ -528,6 +773,7 @@ class Window(QMainWindow):
         outer = central.layout()
         outer.removeWidget(self.pages)
         outer.removeWidget(self.composer_bar)
+        self.composer_bar.hide()
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
         outer.addWidget(shell)
@@ -554,20 +800,28 @@ class Window(QMainWindow):
         self.mcore_cockpit = MCoreCockpit(self)
         self.page_indices[MCoreCockpit.section] = self.pages.addWidget(self.mcore_cockpit)
         self.pages.currentChanged.connect(self.update_cockpit_chrome)
-        shell.activity.set_rows(self.store.tasks())
-        shell.update_usage(self.hud_usage_data)
+        self.news_panel.output.textChanged.connect(
+            lambda: self.mcore_cockpit.update_news(self.news_panel.output.toPlainText()))
+        chat.timeline.set_rows(self.store.tasks())
+        shell.refresh_mark()
         self.render_chat()
 
         self.refresh_prime_state()
         return shell
 
     def update_cockpit_chrome(self, _index):
-        cockpit = self.mcore_cockpit
-        on_cockpit = self.pages.currentWidget() is cockpit
+        on_cockpit = self.pages.currentWidget() is self.mcore_cockpit
         self.prime_shell.show_cockpit_chrome(on_cockpit)
         if on_cockpit:
-            cockpit.update_metrics(self.hud_usage_data)
-            cockpit.update_tasks(self.queue.rows())
+            self.mcore_cockpit.update_metrics(self.cockpit_usage)
+            self.mcore_cockpit.update_tasks(self.queue.rows())
+
+    def return_from_cockpit(self):
+        """Expose the same PRIME workspace without resetting its current display."""
+        self.prime_shell.close_drawer()
+        self.pages.setCurrentWidget(self.prime_chat)
+        self.prime_shell.mark_active('JARVIS Chat')
+        self.prime_shell.refresh_mark()
 
     def prime_is_dark(self) -> bool:
         """The PRIME surface follows the theme the owner chose."""
@@ -586,24 +840,21 @@ class Window(QMainWindow):
             return
         state = self.prime_state()
         shell.set_state(state)
-        shell.activity.set_live_detail(self.current_desktop_activity(state))
-        if self.live_voice is not None and self.live_voice.active:
-            route = ('Connecting to Gemini Live' if self.live_voice.state == 'connecting'
-                     else 'Active route: Gemini Live · Uses microphone audio')
-        else:
-            title = 'Request route' if self.worker is not None else 'Selected chat route'
-            route = title + ': ' + self.brain_label.text().removeprefix('Active brain: ')
-        shell.set_provider(route)
-        mic_state = self.hud_mic_state()
-        shell.set_microphone(mic_state, self.voice_panel.consent.granted)
-        shortcut = getattr(self, 'interrupt_reply_shortcut', None)
-        if shortcut is not None:
-            shortcut.setEnabled(self.hud_can_interrupt_reply())
+        detail = self.current_desktop_activity(state)
+        shell.set_provider(self.brain_label.text())
         cockpit = getattr(self, 'mcore_cockpit', None)
         if cockpit is not None:
-            cockpit.update_runtime(state, route, mic_state)
+            cockpit.update_runtime(state, self.brain_label.text())
         chat = getattr(self, 'prime_chat', None)
         if chat is not None:
+            summary = detail or {
+                'working': 'JARVIS is working. Open activity for task details.',
+                'approval': 'Waiting for an approval.',
+                'stopped': 'Emergency stop is active.',
+            }.get(state, '')
+            chat.work_state.setText(summary)
+            chat.work_state.setVisible(bool(summary))
+            chat.timeline.set_live_detail(detail)
             chat.set_state(state)
 
     def current_desktop_activity(self, state):
@@ -627,7 +878,7 @@ class Window(QMainWindow):
             return
         from desktop.prime_ui import PrimePalette
 
-        palette = PrimePalette(dark=self.prime_is_dark())
+        palette = PrimePalette(dark=self.prime_is_dark(), theme=OMEGA_THEMES[self.interface_theme])
         shell.palette_.adopt(palette)
         shell.refresh_theme()
         chat = getattr(self, 'prime_chat', None)
@@ -643,7 +894,8 @@ class Window(QMainWindow):
         """idle, listening, working or error, from the real state."""
         if self.policy.stopped:
             return 'stopped'
-        if self.chat_launch is not None or getattr(self, 'coding_pending', None):
+        if (self.chat_launch is not None or getattr(self, 'coding_pending', None)
+                or self.hud.strip.approval_text):
             return 'approval'
         if self.live_voice is not None and self.live_voice.active:
             return 'thinking' if self.live_voice.state == 'connecting' else self.live_voice.state
@@ -653,6 +905,9 @@ class Window(QMainWindow):
             return 'listening'
         if self.ai_visual_state in ('thinking', 'responding'):
             return self.ai_visual_state
+        controller = getattr(self, 'mission_controller', None)
+        if controller is not None and controller.worker is not None and controller.worker.isRunning():
+            return 'working'
         if (self.worker is not None or self.coding_worker is not None or self.test_worker is not None
                 or self.browser.task is not None or self.desktop_pending is not None
                 or self.launch_verification is not None):
@@ -678,17 +933,21 @@ class Window(QMainWindow):
         index = self.pages.count()
         self.page_indices[name] = index
         if name != 'Phone Remote':
-            scroller = QScrollArea()
-            scroller.setWidgetResizable(True)
-            if page.layout() is not None:
-                page.layout().setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
-            scroller.setWidget(page)
-            page = scroller
+            page = self.scroll_page(page)
         self.pages.addWidget(page)
         if primary:
             self.nav.addItem(name)
             self.nav.item(self.nav.count() - 1).setData(
                 Qt.ItemDataRole.UserRole, index)
+
+    @staticmethod
+    def scroll_page(page):
+        scroller = QScrollArea()
+        scroller.setWidgetResizable(True)
+        if page.layout() is not None:
+            page.layout().setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
+        scroller.setWidget(page)
+        return scroller
 
     def show_primary_page(self, row):
         item = self.nav.item(row)
@@ -697,12 +956,31 @@ class Window(QMainWindow):
 
     def open_section(self, name):
         name = {'Omega Home': 'JARVIS Chat', 'Omega Settings': 'Settings & Safety'}.get(name, name)
+        shell = getattr(self, 'prime_shell', None)
+        settings_category = {
+            'Settings & Safety': 'Voice',
+            'Voice / Hey Jarvis': 'Voice',
+            'AI Providers': 'AI Providers',
+        }.get(name)
+        if settings_category is not None:
+            self.show_settings_panel(settings_category)
+            self.settings_scroller.verticalScrollBar().setValue(0)
+            if settings_category == 'Voice':
+                self.audio_test.refresh_devices()
+            self.refresh_projects_page()
+            shell.show_drawer('settings')
+            return
+        if shell is not None:
+            shell.close_drawer()
         chat = getattr(self, 'prime_chat', None)
         if chat is not None:
             chat.show_task(name)
-            if name in chat.task_panels:
+            if name in chat.task_panels or name == 'Quantum Visual Player':
                 self.pages.setCurrentIndex(self.page_indices['JARVIS Chat'])
-                self.prime_shell.mark_active(name if name in self.prime_shell.rail_buttons else 'JARVIS Chat')
+                if name == 'Quantum Visual Player':
+                    chat.show_display('local_media')
+                shell.mark_active(name)
+                shell.refresh_mark()
                 return
         index = self.page_indices[name]
         for row in range(self.nav.count()):
@@ -710,11 +988,17 @@ class Window(QMainWindow):
                 self.nav.setCurrentRow(row)
                 break
         self.pages.setCurrentIndex(index)
-        shell = getattr(self, 'prime_shell', None)
         if shell is not None:
             shell.mark_active(name)
-        if name == 'Settings & Safety':
-            self.show_settings_view()
+            shell.refresh_mark()
+
+    def section_widget(self, name):
+        chat = getattr(self, 'prime_chat', None)
+        if chat is not None and name in chat.task_panels:
+            widget = chat.task_area.widget(chat.task_panels[name])
+        else:
+            widget = self.pages.widget(self.page_indices[name])
+        return widget.widget() if isinstance(widget, QScrollArea) else widget
 
     def open_island(self):
         """The only optional presentation mode on the main assistant toolbar."""
@@ -724,18 +1008,23 @@ class Window(QMainWindow):
 
     def open_saved_projects(self):
         self.open_section('Settings & Safety')
-        self.show_settings_view('projects', target=self.saved_projects_group)
-        self.prime_shell.mark_active('Projects')
+        self.scroll_to_setting(self.saved_projects_group)
 
     def update_assistant_navigation(self, _index=None):
         """Keep the composer with the conversation."""
-        in_chat = self.pages.currentIndex() == self.page_indices['JARVIS Chat']
+        in_chat = (getattr(self, 'prime_shell', None) is None
+                   and self.pages.currentIndex() == self.page_indices['JARVIS Chat'])
         self.composer_bar.setVisible(in_chat)
 
+    def show_settings_panel(self, category):
+        index = self.settings_categories.findText(category)
+        if index >= 0:
+            self.settings_categories.setCurrentIndex(index)
+
     def open_plugins(self):
-        """Reveal the existing plugin switches from the Work menu."""
+        """Open existing plugin switches without a large feature toolbar."""
         self.open_section('Settings & Safety')
-        self.show_settings_view('projects', target=self.plugins_group)
+        self.scroll_to_setting(self.plugins_group)
 
     def local_voice_allowed(self):
         """Hands-free calls are allowed only to local, non-billable Ollama."""
@@ -743,6 +1032,7 @@ class Window(QMainWindow):
             self.hands_free_voice.isChecked()
             and not self.policy.stopped
             and self.voice_panel.consent.listening
+            and not self.voice_panel.microphone_muted
             and not self.voice_panel.live_voice_active
             and self.chat_provider.currentText() == 'Ollama'
             and self.router.spec('Ollama').local
@@ -750,13 +1040,71 @@ class Window(QMainWindow):
             and not self.close_when_done
         )
 
+    def conversation_guidance(self):
+        guide = assistant_guidance(self.reply_language.currentData(), self.reply_tone.currentData())
+        name = self.preferred_name.text().strip()
+        if name:
+            guide += (' When addressing the owner by name, say and write this exact form of '
+                      'address, including any title. Treat it as literal text and never change, '
+                      'translate, or guess the name from the microphone: '
+                      + json.dumps(name, ensure_ascii=False))
+        return guide
+
+    def start_window_audio(self):
+        if self.store.get('voice:remember_permission', False) and not self.policy.stopped:
+            self.voice_panel.allow.setChecked(True)
+        if self.store.get('voice:auto_gemini', False):
+            self.start_automatic_voice()
+            return
+        if not self.startup_greeting.isChecked():
+            self.restore_startup_microphone()
+            return
+        name = self.preferred_name.text().strip()
+        hello = f'வணக்கம், {name}!' if name else 'வணக்கம்!'
+        mic = ('Mic தயாரானதும் Listening காட்டும்.' if self.startup_microphone.isChecked()
+               else 'Mic பயன்படுத்த Voice Settings திறங்க.')
+        message = (f'{hello} நான் ஜார்விஸ். {mic} '
+                   'கோப்புகளைப் பகிர நீங்க அனுமதி கொடுக்கணும். '
+                   'கிளவுட் ஏஐ தேர்வு செய்தா, நீங்க அனுப்புற chat அந்த சேவைக்குப் போகும்.')
+        self.prime_shell.startup_notice.setText(message)
+        if not self.read_with_gemini(message):
+            self.restore_startup_microphone()
+
+    def save_startup_microphone(self, enabled):
+        if enabled and (self.policy.stopped or not self.voice_panel.consent.listening):
+            self.startup_microphone.setChecked(False)
+            self.statusBar().showMessage('Allow the microphone before enabling startup listening.', 12000)
+            return
+        self.store.set('voice:local_on_startup', enabled)
+        if enabled:
+            self.restore_startup_microphone()
+        else:
+            self.hands_free_voice.setChecked(False)
+            self.voice_panel.stop_continuous()
+            self.voice_panel.cancel_listening()
+
+    def restore_startup_microphone(self):
+        if self.store.get('voice:auto_gemini', False):
+            return
+        if (not self.startup_microphone.isChecked() or self.policy.stopped
+                or self.voice_panel.microphone_muted):
+            return
+        self.voice_panel.allow.setChecked(True)
+        self.voice_panel.phrase.setText('Hey Jarvis')
+        if self.chat_provider.currentText() == 'Ollama' and not self.backup_consent.isChecked():
+            self.hands_free_voice.setChecked(True)
+        else:
+            # Wake-word recognition stays on-device. Sending a chat draft to a
+            # provider remains a separate user action.
+            self.voice_panel.listen('continuous')
+
     def set_local_hands_free(self, enabled):
         """An explicit, session-only microphone and local-provider opt-in."""
         if enabled:
             busy_voice = (self.voice_panel.worker is not None
                           and self.voice_panel.worker.isRunning())
             if (self.policy.stopped or not self.voice_panel.consent.listening
-                    or self.voice_panel.live_voice_active
+                    or self.voice_panel.microphone_muted or self.voice_panel.live_voice_active
                     or self.chat_provider.currentText() != 'Ollama'
                     or not self.router.spec('Ollama').local
                     or self.backup_consent.isChecked() or self.worker is not None
@@ -831,7 +1179,8 @@ class Window(QMainWindow):
         return True
 
     def on_wake_detected(self, transcript, command):
-        if self.policy.stopped or not self.voice_panel.consent.listening:
+        if (self.policy.stopped or self.voice_panel.microphone_muted
+                or not self.voice_panel.consent.listening):
             return
         if self.omega is not None and self.omega.mode == 'Island':
             self.omega.switch('Omega')
@@ -864,7 +1213,8 @@ class Window(QMainWindow):
 
     def on_voice_transcript(self, transcript):
         """Draft spoken text on the main screen; never automatically send."""
-        if self.policy.stopped or not self.voice_panel.consent.listening:
+        if (self.policy.stopped or self.voice_panel.microphone_muted
+                or not self.voice_panel.consent.listening):
             return
         text = (transcript or '').strip()[:4000]
         if not text:
@@ -884,7 +1234,21 @@ class Window(QMainWindow):
         self.statusBar().showMessage(
             'I heard you. Please review and press Ask JARVIS. No action ran.', 15000)
 
+    def route_self_update(self, text):
+        goal = self_update_argument(text)
+        if goal is None:
+            return False
+        if not goal:
+            self.show_local_system_reply(text, 'ஜார்விஸில் என்ன மாற்றணும் என்று சொல்லுங்க.')
+            return True
+        self.open_section('Coding Assistant')
+        self.improvement_goal.setText(goal[:8000])
+        self.start_improvement(show_review=True)
+        return True
+
     def route_task(self, text):
+        if self.route_self_update(text):
+            return True
         command, separator, path = text.partition(':')
         if separator and command.strip().casefold() == 'save notepad with mouse':
             from automation.editor import save_notepad_with_mouse
@@ -978,57 +1342,37 @@ class Window(QMainWindow):
         self.video_status.setText('Review the brief and select Generate with Gemini.')
         return True
 
-    def hud_mic_state(self):
-        """Report JARVIS microphone access without confusing it with reply mute."""
-        voice = self.voice_panel
-        if voice.microphone_muted:
-            if voice.worker is not None and voice.worker.isRunning():
-                return 'Mic: closing'
-            return 'Mic: muted'
-        if self.live_voice is not None and self.live_voice.active:
-            return 'Mic: connecting' if self.live_voice.state == 'connecting' else 'Mic: Gemini Live'
-        if self.audio_test.mode == 'microphone':
-            return 'Mic: testing'
-        if voice.worker is not None and voice.worker.isRunning():
-            return 'Mic: listening' if voice.listening else 'Mic: closing'
-        return 'Mic: ready' if voice.consent.listening else 'Mic: off'
-
-    def hud_mic_control(self):
-        """Revoke access immediately; reopening it is explicit in Voice settings."""
-        if self.policy.stopped:
-            return
-        if self.voice_panel.consent.granted:
-            self.voice_panel.allow.setChecked(False)
-        else:
-            self.open_section('Voice / Hey Jarvis')
-
     def hud_toggle_microphone(self):
-        """Mute session input without changing consent or starting a new capture."""
-        if self.policy.stopped or QApplication.activeModalWidget() or QApplication.activePopupWidget():
-            return
-        voice = self.voice_panel
-        voice.consent.set_muted(not voice.microphone_muted)
-        if voice.microphone_muted:
+        """Use the existing mute control so keyboard and cockpit state stay in sync."""
+        if not self.policy.stopped:
+            self.prime_shell.mic_mute_button.click()
+
+    def set_microphone_muted(self, muted):
+        self.voice_panel.microphone_muted = muted
+        if muted:
             self.hands_free_voice.setChecked(False)
             self.voice_rearm_timer.stop()
-            voice.stop_continuous()
-            voice.cancel_listening()
+            self.voice_panel.stop_continuous()
+            self.voice_panel.cancel_listening()
             if self.audio_test.mode == 'microphone':
                 self.audio_test.stop()
-            if self.live_voice is not None and self.live_voice.active:
+            if self.live_voice is not None:
                 self.live_voice.stop('Microphone muted. Live Voice ended.')
-            voice.audio_level.emit(0)
-        voice.refresh()
-        self.statusBar().showMessage(
-            'Microphone muted.' if voice.microphone_muted else
-            'Microphone unmuted. Start listening explicitly.', 10000)
+            self.voice_panel.audio_level.emit(0)
+        self.voice_panel.refresh()
+        if not muted and self.store.get('voice:auto_gemini', False):
+            self.start_automatic_voice()
+
+    def start_automatic_voice(self):
+        if (self.policy.stopped or self.close_when_done or self.voice_panel.microphone_muted
+                or self.live_voice_starting or (self.live_voice and self.live_voice.active)):
+            return
+        self.voice_panel.allow.setChecked(True)
+        self.toggle_live_voice()
 
     def listen_to_user(self):
         """One click in Chat; microphone permission always belongs to Voice."""
         if self.policy.stopped:
-            return
-        if self.voice_panel.microphone_muted:
-            self.statusBar().showMessage('Unmute the microphone before listening.', 10000)
             return
         if not self.voice_panel.consent.listening:
             self.open_section('Voice / Hey Jarvis')
@@ -1041,69 +1385,137 @@ class Window(QMainWindow):
             self.voice_panel.listen('once')
 
     def on_live_mic_consent(self, allowed):
+        if not allowed and hasattr(self, 'startup_microphone'):
+            self.startup_microphone.setChecked(False)
         if not allowed and self.live_voice is not None:
             self.live_voice.stop('Microphone permission was removed.')
 
     def toggle_live_voice(self):
+        if self.live_voice_starting:
+            self.live_voice_starting = False
+            self.refresh_voice_hud()
+            return
         if self.live_voice is not None and self.live_voice.active:
             self.live_voice.stop()
             return
-        if self.policy.stopped:
-            return
         if self.voice_panel.microphone_muted:
-            self.statusBar().showMessage('Unmute the microphone before opening Live Voice.', 10000)
+            self.statusBar().showMessage('Unmute the microphone to start Live Voice.', 10000)
+            return
+        if self.policy.stopped:
             return
         if not self.voice_panel.consent.listening:
             self.open_section('Voice / Hey Jarvis')
-            self.statusBar().showMessage('Allow the microphone, then choose Live Voice in Chat.', 15000)
+            self.statusBar().showMessage('Allow the microphone, then choose Talk in Chat.', 15000)
             return
         if (self.worker is not None or self.voice_panel.audio_test_active
-                or self.voice_panel.playback_busy or self.voice_panel.pending_speech
-                or (self.voice_panel.worker is not None and self.voice_panel.worker.isRunning())):
+                or self.voice_panel.playback_busy or self.voice_panel.pending_speech):
             self.statusBar().showMessage('Finish the current chat or audio session first.', 10000)
             return
 
         def start():
             key = self.get_key('Gemini')
-            if not self.confirm(Action(
+            if not self.store.get('voice:auto_gemini', False) and not self.confirm(Action(
                 'live_voice', 'Start Gemini Live voice chat. While on, audio from the microphone '
                 'is streamed to Google and may incur provider charges. Stop Live Voice closes '
                 'the microphone. The conversation is saved as chat text.',
             )):
                 return
-            if self.policy.stopped or not self.voice_panel.consent.listening:
+            if (self.policy.stopped or self.voice_panel.microphone_muted
+                    or not self.voice_panel.consent.listening):
                 return
-            from desktop.live_voice import LiveVoice
-            if self.live_voice is None:
-                self.live_voice = LiveVoice(self)
-                self.live_voice.status.connect(lambda text: self.statusBar().showMessage(text, 20000))
-                self.live_voice.state_changed.connect(self.on_live_voice_state)
-                self.live_voice.turn_finished.connect(self.save_live_voice_turn)
-                self.live_voice.audio_level.connect(self.voice_panel.audio_level.emit)
-            self.hands_free_voice.setChecked(False)
-            self.voice_panel.stop_continuous()
-            self.open_section('JARVIS Chat')
-            guide = assistant_guidance(self.reply_language.currentData(), self.reply_tone.currentData())
-            guide += (' This is a spoken conversation. Keep replies brief. The desktop handles '
-                      'explicit local commands separately. For a requested PC action, tell the '
-                      'user to check for an approval in the app. Never claim the action ran. '
-                      'For saved projects, tell the user to check the result in Chat.')
-            self.live_voice.start(key, guide, tamil_tanglish=self.live_speech_language.currentData() == 'ta_en')
+            self.live_voice_starting = True
+            worker = self.voice_panel.worker
+            if worker is not None and worker.isRunning():
+                self.voice_panel.cycle_finished.connect(
+                    lambda: self.notify(lambda: self.finish_live_voice_start(key)),
+                    Qt.ConnectionType.SingleShotConnection)
+                self.voice_panel.stop_continuous()
+                self.voice_panel.cancel_listening()
+                self.hands_free_voice.setChecked(False)
+                self.refresh_voice_hud()
+            else:
+                self.finish_live_voice_start(key)
+
         self.notify(start)
+
+    def finish_live_voice_start(self, key):
+        if not self.live_voice_starting:
+            return
+        self.live_voice_starting = False
+        if (self.policy.stopped or self.voice_panel.microphone_muted
+                or not self.voice_panel.consent.listening or self.close_when_done):
+            self.refresh_voice_hud()
+            return
+        self.hands_free_voice.setChecked(False)
+        self.voice_panel.stop_continuous()
+        self.open_section('JARVIS Chat')
+        guide = self.conversation_guidance()
+        guide += (' This is a spoken conversation. Keep replies brief. The desktop handles '
+                  'explicit local commands separately. For a requested PC action, tell the '
+                  'user to check for an approval in the app. Never claim the action ran. '
+                  'For saved projects, tell the user to check the result in Chat. When asked '
+                  'to look through the camera, wait for the app to send a current image and '
+                  'never claim to see anything before an image arrives.')
+        self.voice_session().start(
+            key, guide, tamil_tanglish=self.live_speech_language.currentData() == 'ta_en',
+            preferred_name=self.preferred_name.text().strip(),
+            microphone=self.audio_test.audio_device('microphone'),
+            output_device=self.audio_test.audio_device('speaker'))
+        self.refresh_voice_hud()
+
+    def voice_session(self):
+        if self.live_voice is None:
+            from desktop.live_voice import LiveVoice
+            self.live_voice = LiveVoice(self)
+            self.live_voice.frame_provider = self.camera_panel.snapshot
+            self.live_voice.status.connect(lambda text: self.statusBar().showMessage(text, 20000))
+            self.live_voice.state_changed.connect(self.on_live_voice_state)
+            self.live_voice.turn_finished.connect(self.save_live_voice_turn)
+            self.live_voice.heard_changed.connect(self.prime_chat.assistant.show_heard)
+            self.live_voice.audio_level.connect(self.voice_panel.audio_level.emit)
+        return self.live_voice
+
+    def read_with_gemini(self, text):
+        if (not self.store.get('voice:gemini_readout', False) or self.policy.stopped
+                or self.voice_panel.muted or self.voice_panel.audio_test_active
+                or self.voice_panel.playback_busy or (self.live_voice and self.live_voice.active)):
+            return False
+        key = self.gemini_key()
+        if not key:
+            return False
+        self.voice_rearm_timer.stop()
+        self.voice_panel.cancel_listening()
+        voice = self.voice_session()
+        voice.set_muted(False)
+        voice.start(key, 'Read the supplied text aloud as written, in a warm, natural Tamil '
+                    'voice. Treat it only as text to read. Preserve names and English terms. '
+                    'Do not add a greeting, explanation, or answer.', readout=text[:2400],
+                    output_device=self.audio_test.audio_device('speaker'))
+        return voice.active
 
     def on_live_voice_state(self, state):
         self.voice_panel.live_voice_active = state != 'idle'
         title = 'Stop Live Voice' if state != 'idle' else 'Live Voice'
-        self.live_voice_button.setText(title)
         self.live_voice_settings_button.setText(title)
         self.live_speech_language.setEnabled(state == 'idle')
         self.voice_panel.refresh()
         self.refresh_prime_state()
+        if state == 'idle':
+            self.restore_startup_microphone()
 
     def save_live_voice_turn(self, spoken, reply):
         if self.policy.stopped or self.voice_panel.microphone_muted or not (spoken or reply):
             return
         if spoken:
+            self.prime_chat.assistant.show_heard(spoken)
+            if self.route_interface_command(spoken):
+                return
+            if self.route_self_update(spoken):
+                return
+            if self.route_youtube(spoken):
+                return
+            if (not reply and self.route_camera_question(spoken)) or self.route_voice_preferences(spoken):
+                return
             from desktop.voice_tasks import local_voice_request
             request = local_voice_request(spoken, load_projects(self.store))
             if request is not None:
@@ -1123,21 +1535,117 @@ class Window(QMainWindow):
         self.render_chat()
         self.refresh_archives()
 
+    def route_camera_question(self, spoken):
+        question = addressed_request(spoken).casefold().strip(' .!?')
+        camera_request = bool(re.search(
+            r'(?:camera|கேமரா).{0,60}(?:look|see|paaru|paru|பாரு|பார்|காட்டு)', question))
+        if not camera_request and question not in {
+            'look at this', 'what am i doing', 'what am i showing you', 'look through the camera',
+            'இதைப் பார்', 'இதை பாரு', 'நான் என்ன செய்றேன்', 'நான் என்ன செய்கிறேன்',
+            'நான் என்ன காட்டுறேன்', 'நான் காட்டியது என்ன', 'நான் காட்டுறது என்ன',
+        }:
+            return False
+        image = self.camera_panel.snapshot()
+        if not self.live_voice.look_at(image, spoken):
+            self.show_local_system_reply(spoken, 'Turn on Camera and wait for the preview.')
+            return True
+        self.store.message(self.session, 'user', spoken)
+        self.render_chat()
+        return True
+
+    def route_interface_command(self, spoken):
+        text = addressed_request(spoken).casefold().strip(' .!?')
+        text = re.sub(r'\s+', ' ', text)
+        camera = re.fullmatch(r'(?:camera|கேமரா)(?:வை|வ)?\s+(off|on|ஆஃப்|ஆப்|ஆன்|நிறுத்து|மூடு|திற)(?:\s+(?:pannu|பண்ணு|பண்ணுங்க|செய்))?', text)
+        if camera:
+            off = camera[1] in ('off', 'ஆஃப்', 'ஆப்', 'நிறுத்து', 'மூடு')
+            self.camera_toggle.setChecked(not off)
+            self.show_local_system_reply(spoken, 'Camera off.' if off else 'Camera on.')
+            return True
+        if re.fullmatch(r'(?:mic(?:rophone)? )?(?:mute|மியூட்)(?: பண்ணு| pannu| பண்ணுங்க| பண்ணு இப்ப)?', text):
+            self.prime_shell.mic_mute_button.setChecked(True)
+            self.show_local_system_reply(spoken, 'Microphone muted.')
+            return True
+        destinations = {
+            'open settings': 'Settings & Safety', 'settings திற': 'Settings & Safety',
+            'settings open pannu': 'Settings & Safety', 'செட்டிங்ஸ் திற': 'Settings & Safety',
+            'open plugins': 'plugins', 'plugins open pannu': 'plugins',
+        }
+        destination = destinations.get(text)
+        if destination:
+            self.open_plugins() if destination == 'plugins' else self.open_section(destination)
+            return True
+        return False
+
+    def route_voice_preferences(self, spoken):
+        command = addressed_request(spoken).strip(' .!?')
+        languages = {
+            'தமிழ்ல பேசு': 'ta', 'தமிழ்ல கதை': 'ta', 'தமிழில் பேசு': 'ta',
+            'speak tamil': 'ta', 'speak english': 'en', 'speak tanglish': 'tanglish',
+        }
+        language = languages.get(command.casefold())
+        if language:
+            index = self.reply_language.findData(language)
+            if index >= 0:
+                self.reply_language.setCurrentIndex(index)
+                self.show_local_system_reply(spoken, 'Reply language saved.')
+                return True
+        memory = re.fullmatch(r'(?:remember|நினைவில் வை|நினைவில் வச்சுக்கோ)[\s,:]+(.{1,900})',
+                              command, flags=re.IGNORECASE)
+        if memory:
+            note = memory[1].strip()
+            if note:
+                self.memory_service.remember(note[:60], note)
+                self.show_local_system_reply(spoken, 'Saved to local memory.')
+                return True
+        forget = re.fullmatch(r'(?:forget|மறந்துவிடு|நினைவிலிருந்து அழி)[\s,:]+(.{1,900})',
+                              command, flags=re.IGNORECASE)
+        if forget:
+            query = forget[1].strip()
+            notes = [note for note in self.memory_service.search(query)
+                     if query.casefold() in (note.title.casefold(), note.body.casefold())]
+            if len(notes) == 1:
+                answer = QMessageBox.question(self, 'Forget saved memory?',
+                                              f'Delete this saved memory?\n\n{notes[0].title}')
+                if answer == QMessageBox.StandardButton.Yes:
+                    self.memory_service.forget(notes[0].id)
+                    self.show_local_system_reply(spoken, 'Deleted the saved memory.')
+            else:
+                self.show_local_system_reply(spoken, 'Say the exact saved note to forget it.')
+            return True
+        return False
+
     def hud_can_interrupt_reply(self):
-        """Only speech output is interruptible here, not tasks or approvals."""
         return not self.policy.stopped and bool(
             (self.live_voice is not None and self.live_voice.state == 'speaking')
-            or self.voice_panel.playback_busy or self.voice_panel.pending_speech)
+            or self.voice_panel.pending_speech or self.voice_panel.playback_busy)
 
     def hud_interrupt_reply(self):
-        """Interrupt active output using its existing worker/session control."""
-        if (not self.hud_can_interrupt_reply() or QApplication.activeModalWidget()
-                or QApplication.activePopupWidget()):
+        """Interrupt spoken output, not the microphone or a pending PC action."""
+        if not self.hud_can_interrupt_reply():
             return False
         if self.live_voice is not None and self.live_voice.state == 'speaking':
-            self.live_voice.interrupt()
-            return True
-        return self.voice_panel.interrupt_reply()
+            self.interrupt_live_voice()
+        else:
+            voice = self.voice_panel
+            voice.pending_speech = ''
+            voice.pending_sample = None
+            if voice.playback_busy:
+                voice.speaker_worker.requestInterruption()
+            # Existing worker completion controls any already opt-in mic rearm.
+            voice.refresh()
+        return True
+
+    def keyPressEvent(self, event):
+        # Let focused widgets, drawer shortcuts, and separate dialogs handle Esc
+        # first. Don't let a window-wide shortcut steal their normal dismiss key.
+        if (event.key() == Qt.Key.Key_Escape
+                and event.modifiers() == Qt.KeyboardModifier.NoModifier
+                and not event.isAutoRepeat() and not QApplication.activeModalWidget()
+                and not QApplication.activePopupWidget() and self.hud_interrupt_reply()):
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def interrupt_live_voice(self):
         if self.live_voice is not None:
@@ -1150,9 +1658,10 @@ class Window(QMainWindow):
         page.setObjectName('pageRoot')
         layout = QVBoxLayout(page)
         layout.setContentsMargins(22, 18, 10, 10)
-        label = QLabel(title)
-        label.setObjectName('pageTitle')
-        layout.addWidget(label)
+        if title:
+            label = QLabel(title)
+            label.setObjectName('pageTitle')
+            layout.addWidget(label)
         if note:
             label = QLabel(note)
             label.setObjectName('pageSubtitle')
@@ -1244,15 +1753,7 @@ class Window(QMainWindow):
         return page
 
     def open_news_briefing(self):
-        if self.news_panel is None:
-            self.news_panel = NewsPanel(self)
-            cockpit = getattr(self, 'mcore_cockpit', None)
-            if cockpit is not None:
-                self.news_panel.output.textChanged.connect(
-                    lambda: cockpit.update_news(self.news_panel.output.toPlainText()))
-        self.news_panel.show()
-        self.news_panel.raise_()
-        self.news_panel.activateWindow()
+        self.prime_shell.show_drawer('news')
 
     def start_news_briefing(self, region):
         if self.policy.stopped or self.worker is not None:
@@ -1287,17 +1788,14 @@ class Window(QMainWindow):
         """Refresh the HUD and cache the same snapshot for local chat commands."""
         data = snapshot(self.root, self.cpu_sampler)
         data['network_status'] = format_network(self.network_sampler.sample())
-        self.hud_usage_data = data
+        self.cockpit_usage = data
+        cockpit = getattr(self, 'mcore_cockpit', None)
+        if cockpit is not None:
+            cockpit.update_metrics(data)
         self.system_summary = format_snapshot(data)
         self.system_metrics_label.setText(self.system_summary)
         self.dashboard_metrics.setText(self.system_summary)
         self.settings_usage.setText(self.system_summary)
-        shell = getattr(self, 'prime_shell', None)
-        if shell is not None:
-            shell.update_usage(data)
-        cockpit = getattr(self, 'mcore_cockpit', None)
-        if cockpit is not None:
-            cockpit.update_metrics(data)
         self.hud_clock.setText(datetime.now().strftime('%H:%M'))
         if self.omega is not None:
             self.omega.update_metrics(data)
@@ -1307,6 +1805,14 @@ class Window(QMainWindow):
             meter.setVisible(percent is not None)
             if percent is not None:
                 meter.setValue(round(percent * 10))
+        hud = getattr(self, 'hud', None)
+        if hud is not None:
+            cpu = data.get('cpu_usage_percent')
+            ram = data.get('ram_usage_percent')
+            hud.strip.set_reading('cpu', None if cpu is None else cpu / 100.0,
+                                  '—' if cpu is None else f'{cpu:.0f}%')
+            hud.strip.set_reading('ram', None if ram is None else ram / 100.0,
+                                  '—' if ram is None else f'{ram:.0f}%')
 
     def handle_developer_command(self, text, *, spoken=None):
         """Dispatch only known commands through existing approval-gated features."""
@@ -1485,15 +1991,36 @@ class Window(QMainWindow):
         if self.chat_launch is not None and not self.policy.stopped:
             label = 'APPROVAL REQUIRED'
         self.orb_status.setText('JARVIS  /  ' + label)
-        self.chat_mic.setText('Cancel mic' if self.voice_panel.listening else 'Speak')
-        self.chat_mic.setEnabled(not self.policy.stopped and not self.voice_panel.playback_busy
-                                 and not self.voice_panel.microphone_muted)
+        muted = self.voice_panel.microphone_muted
+        output_muted = self.voice_panel.muted
+        if self.live_voice is not None:
+            self.live_voice.set_muted(output_muted)
+        shell = getattr(self, 'prime_shell', None)
+        if shell is not None:
+            mic_action = 'Unmute mic' if muted else 'Mute mic'
+            shell.mic_mute_button.setText('🎙×' if muted else '🎙')
+            shell.mic_mute_button.setAccessibleName(mic_action)
+            shell.mic_mute_button.setToolTip(mic_action)
+            shell.output_mute_button.setChecked(output_muted)
+            shell.output_mute_button.setText('Unmute replies' if output_muted else 'Mute replies')
+        chat = getattr(self, 'prime_chat', None)
+        if chat is not None:
+            live_state = self.live_voice.state if self.live_voice is not None else 'idle'
+            chat.set_live_voice_status('connecting' if self.live_voice_starting else live_state,
+                                       enabled=not muted and not self.policy.stopped)
+            chat.assistant.refresh_caption()
         self.hud_voice_status.setText(label)
         if self.omega is not None:
             self.omega.set_voice(state)
-        self.hud_talk.setEnabled(state not in ('stopped', 'listening', 'speaking')
-                                 and not self.voice_panel.playback_busy
-                                 and not self.voice_panel.microphone_muted)
+        self.hud_talk.setEnabled(not muted and state not in ('stopped', 'listening', 'speaking')
+                                 and not self.voice_panel.playback_busy)
+        hud = getattr(self, 'hud', None)
+        if hud is not None:
+            live_listening = self.live_voice is not None and self.live_voice.state == 'listening'
+            microphone_open = self.voice_panel.listening or live_listening
+            mic_state = ('The microphone is listening.' if microphone_open else
+                         self.voice_panel.consent.listener)
+            hud.strip.set_mic('The microphone is muted.' if muted else mic_state, output_muted)
         self.refresh_prime_state()
 
     def answer_spoken_system_command(self, command):
@@ -1512,9 +2039,11 @@ class Window(QMainWindow):
         self.refresh_archives()
         self.show_hud_text(reply)
         if self.read_replies.isChecked():
-            self.voice_panel.speak_response(reply)
+            self.read_with_gemini(reply)
 
     def show_hud_text(self, text):
+        if text.startswith('Heard: '):
+            self.prime_chat.assistant.show_heard(text.removeprefix('Heard: '))
         self.hud_voice_reply.setText(text if len(text) <= 600 else text[:600] + '…')
         self.hud_voice_reply.show()
 
@@ -1688,7 +2217,8 @@ class Window(QMainWindow):
         self.suggestion_preview.setWordWrap(True)
         suggestion_layout.addWidget(self.suggestion_preview)
         suggestion_actions = QHBoxLayout()
-        self.button(suggestion_actions, 'Review suggested steps', self.review_suggested_plan)
+        self.review_suggestions_button = self.button(
+            suggestion_actions, 'Review suggested steps', self.review_suggested_plan)
         self.button(suggestion_actions, 'Dismiss', self.clear_suggested_plan)
         suggestion_layout.addLayout(suggestion_actions)
         self.suggestion_card.hide()
@@ -1705,7 +2235,7 @@ class Window(QMainWindow):
                                                self.save_desktop_result)
         self.desktop_result_card.hide()
         layout.addWidget(self.desktop_result_card)
-        self.prompt = QPlainTextEdit()
+        self.prompt = ChatPrompt()
         self.prompt.setObjectName('composerCard')
         self.prompt.setPlaceholderText(
             'என்ன செய்ய வேண்டும்? Tell me what you need… e.g. Jarvis, CapCut open pannu')
@@ -1714,9 +2244,8 @@ class Window(QMainWindow):
         # nothing is cut off when the display is scaled to 150 % or 200 %.
         self.prompt.setMinimumHeight(78)
         self.prompt.setMaximumHeight(190)
-        self.chat_send_shortcut = QShortcut(QKeySequence('Ctrl+Return'), self.prompt)
-        self.chat_send_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
-        self.chat_send_shortcut.activated.connect(self.send)
+        self.prompt.submitted.connect(self.send)
+        self.prompt.textChanged.connect(self.refresh_chat_send_button)
         # The composer is NOT part of the scrolling page. It lives in the
         # window's own bottom bar, so the conversation scrolls and the input
         # is always in sight, whatever the window size.
@@ -1748,25 +2277,15 @@ class Window(QMainWindow):
         composer_actions = QHBoxLayout()
         self.composer_actions = composer_actions
         composer_layout.addLayout(composer_actions)
-        self.chat_mic = self.button(composer_actions, 'Speak', self.listen_to_user)
-        self.chat_mic.setObjectName('quiet')
-        self.live_voice_button = self.button(composer_actions, 'Live Voice', self.toggle_live_voice)
-        self.live_voice_button.setToolTip('Have a spoken conversation through Gemini Live.')
         self.attach_button = self.button(
             composer_actions, 'Attach', lambda: self.open_section('Files & Folders'))
         self.attach_button.setObjectName('quiet')
         self.attach_button.setToolTip(
             'Choose files or a folder to preview. AI sharing is opt-in for one message.')
-        self.research_button = self.button(
-            composer_actions, 'Research a page', self.open_research_window)
-        self.research_button.setObjectName('quiet')
-        self.research_button.setToolTip(
-            'Read one page you name and ask a question about it. The page is read '
-            'here, and only its text goes to the provider.')
         composer_actions.addStretch()
         self.send_button = self.button(composer_actions, 'Ask JARVIS', self.send)
         self.send_button.setObjectName('primary')
-        self.send_button.setToolTip('Send message (Ctrl+Enter)')
+        self.send_button.setToolTip('Enter to send. Shift+Enter for a new line.')
         self.suggestion_mode = QPushButton('Suggestion Mode')
         self.suggestion_mode.setCheckable(True)
         self.suggestion_mode.setToolTip(
@@ -1786,22 +2305,15 @@ class Window(QMainWindow):
 
     def open_research_window(self):
         """Open the research window: the owner names a page and a question."""
-        from desktop.research_dialog import open_research
+        from desktop.research_dialog import ResearchDialog
 
         if self.research_dialog is None:
-            self.research_dialog = open_research(self)
-        self.research_dialog.show()
-        self.research_dialog.raise_()
+            self.research_dialog = ResearchDialog(self, embedded=True)
+            self.research_dialog.dismissed.connect(lambda: self.open_section('PC Control'))
+            self.prime_chat.task_panels['Research'] = self.prime_chat.task_area.addWidget(
+                self.scroll_page(self.research_dialog))
+        self.open_section('Research')
         return self.research_dialog
-
-    def show_browser_commands(self):
-        from automation.browser import HELP
-        self.open_section('JARVIS Chat')
-        self.browser_output.setPlainText(HELP)
-        self.browser_output.show()
-        if not self.prompt.toPlainText().strip():
-            self.prompt.insertPlainText('/browser ')
-        self.prompt.setFocus()
 
     def files_page(self):
         """User-chosen local files and folders; no background upload."""
@@ -2108,8 +2620,45 @@ class Window(QMainWindow):
         return self.bridge
 
     def automation_page(self):
-        page, layout = self.page('PC Control',
-            'Choose an action to review. JARVIS asks before launching apps or accessing files and devices.')
+        page, layout = self.page('Automation',
+            'Plan a task, work with an app or browser, and review proposed actions.')
+        self.automation_workspace_button = shortcuts = QPushButton('Workspace tools')
+        shortcuts.setCheckable(True)
+        shortcuts.setToolTip('Projects, Windows tools, files, PC usage and activity')
+        layout.addWidget(shortcuts, 0, Qt.AlignmentFlag.AlignLeft)
+        workspace = QWidget()
+        workspace_layout = QGridLayout(workspace)
+        workspace_layout.setContentsMargins(0, 0, 0, 0)
+        self.automation_tools = {}
+        for index, (title, open_tool) in enumerate((
+            ('Projects', self.open_saved_projects),
+            ('Files & folders', lambda: self.open_section('Files & Folders')),
+            ('PC usage', lambda: self.open_section('Command Center')),
+            ('Task queue', lambda: self.open_section('Task Queue')),
+            ('Workflows', lambda: self.open_section('Step Workflows')),
+            ('Review changes', lambda: self.open_section('Review changes')),
+        )):
+            button = QPushButton(title)
+            button.clicked.connect(open_tool)
+            workspace_layout.addWidget(button, index // 3, index % 3)
+            self.automation_tools[title] = button
+        workspace.hide()
+        shortcuts.toggled.connect(workspace.setVisible)
+        layout.addWidget(workspace)
+
+        self.automation_panel = AutomationPanel()
+        self.automation_panel.browser_requested.connect(self.run_browser_command)
+        self.automation_panel.research_requested.connect(self.open_research_window)
+        self.automation_panel.mission_requested.connect(self.run_mission_goal)
+        self.automation_panel.suggestion_requested.connect(self.run_automation_suggestion)
+        self.automation_panel.refresh_requested.connect(self.refresh_app_windows)
+        self.automation_panel.inspect_requested.connect(self.inspect_front_app)
+        self.automation_panel.action_run.connect(self.run_proposed_action)
+        self.automation_panel.action_dismissed.connect(self.dismiss_proposed_action)
+        self.browser_output.textChanged.connect(lambda: self.automation_panel.set_browser_status(
+            self.browser_output.toPlainText()))
+        layout.addWidget(self.automation_panel)
+
         apps = QGroupBox('Applications')
         app_layout = QFormLayout(apps)
         app_row = QHBoxLayout()
@@ -2134,6 +2683,7 @@ class Window(QMainWindow):
         self.flexible_button(device_layout, 'Open camera reader',
                              lambda: self.notify(lambda: open_camera_reader(self)))
         layout.addWidget(devices)
+
         # What the approval boundary has actually done, in the owner's words.
         safety_box = QGroupBox('Approval boundary')
         safety_layout = QVBoxLayout(safety_box)
@@ -2149,6 +2699,164 @@ class Window(QMainWindow):
         layout.addWidget(safety_box)
         self.refresh_safety_report()
         return page
+
+    # -- the Automation page ---------------------------------------------
+
+    def run_browser_command(self, command: str):
+        """Run a browser command that was typed in Automation."""
+        self.browser.command(command)
+
+    def run_mission_goal(self, goal: str):
+        """Start a mission on the goal the owner typed in Automation."""
+        self.open_section('Mission Control')
+        self.mission_controller.start(goal)
+
+    def run_automation_suggestion(self, goal: str):
+        if (self.policy.stopped or self.worker is not None
+                or (self.live_voice is not None and self.live_voice.active)):
+            return
+        self.clear_suggested_plan()
+        self.automation_panel.suggestion_results.addWidget(self.suggestion_card)
+        self.request_suggestions(goal, explicit=True)
+
+    def suggest_chat_draft(self):
+        if (self.policy.stopped or self.worker is not None
+                or (self.live_voice is not None and self.live_voice.active)):
+            return
+        goal = self.prompt.toPlainText().strip()
+        if not goal:
+            return
+        explicit_goal = suggestion_argument(goal)
+        if explicit_goal is not None:
+            goal = explicit_goal
+        if not goal:
+            return
+        self.clear_suggested_plan()
+        if self.automation_panel.isAncestorOf(self.suggestion_card):
+            self.prime_chat.cards.addWidget(self.suggestion_card)
+        self.request_suggestions(goal, explicit=True)
+
+    def request_suggestions(self, goal: str, *, explicit: bool, consume_draft=False):
+        try:
+            typing = parse_desktop_task(goal)
+        except ValueError as error:
+            self.statusBar().showMessage(str(error), 10000)
+            return
+        app = parse_voice_command(goal) if explicit and typing is None else None
+        if typing is None and not app:
+            self.send_chat_reply(goal, suggestion=True)
+            return
+
+        if consume_draft:
+            self.prompt.clear()
+        self.use_notes.setChecked(False)
+        self.files_share_once.setChecked(False)
+        self.backup_consent.setChecked(False)
+        if typing is None:
+            review = f'Review the proposed launch of {app}.'
+            step = Step(app)
+        else:
+            review = ('Review the calculation JARVIS would enter in Calculator:\n' + typing.text
+                      if typing.app == 'Calculator' else
+                      'Review the exact text JARVIS would enter in Notepad:\n' + typing.text
+                      + '\n\nTyping will not save a file.')
+            step = Step(typing.app, typing)
+        self.show_local_system_reply(goal, review)
+        self.show_suggested_steps((step,), detail=review)
+
+    def refresh_app_windows(self):
+        """List the applications that are open on this computer."""
+        from automation import app_control
+        try:
+            text = app_control.list_apps()
+        except Exception as error:
+            text = 'The applications could not be listed: ' + str(error)
+        self.automation_panel.set_windows(text)
+
+    def inspect_front_app(self, selection: str):
+        """Read the controls of the application the owner chose."""
+        from automation import app_control
+        pid, title = self._parse_window_row(selection)
+        if not pid:
+            self.automation_panel.set_controls(
+                'Refresh the list of windows and choose one of them first.')
+            return
+        try:
+            text = app_control.see_controls(pid, title)
+        except Exception as error:
+            text = 'The controls could not be read: ' + str(error)
+        self.automation_panel.set_controls(text)
+
+    @staticmethod
+    def _parse_window_row(text: str):
+        """The process id and the title of the first listed window."""
+        for line in (text or '').splitlines():
+            if 'pid=' not in line:
+                continue
+            head, _, tail = line.partition('): ')
+            pid_text = head.split('pid=')[-1].strip()
+            title = tail.strip()
+            if len(title) >= 2 and title[0] == "'" and title[-1] == "'":
+                title = title[1:-1]
+            try:
+                return int(pid_text), title
+            except ValueError:
+                continue
+        return 0, ''
+
+    def propose_action(self, ident: str, action, editable):
+        """Show one proposed action, with Run, Edit and Dismiss."""
+        panel = getattr(self, 'automation_panel', None)
+        if panel is None:
+            return False
+        proposed = ProposedAction(kind=action.kind, target=action.target,
+                                  detail=action.target, digest=action.digest,
+                                  editable=editable)
+        proposed.ident = ident
+        panel.propose(proposed)
+        hud = getattr(self, 'hud', None)
+        if hud is not None:
+            hud.strip.set_approval('Approval needed: ' + action.kind)
+        return True
+
+    def run_proposed_action(self, action, values):
+        """Run a proposed action, or answer the mission that is waiting for it."""
+        controller = getattr(self, 'mission_controller', None)
+        if controller is not None and controller.answer(action.ident, values or True):
+            self.automation_panel.remove(action.ident)
+            hud = getattr(self, 'hud', None)
+            if hud is not None:
+                hud.strip.clear_approval()
+            return
+        scope = {'routine': ApprovalScope.ROUTINE,
+                 'local_write': ApprovalScope.LOCAL_WRITE}.get(
+                     action.approval_scope, ApprovalScope.ALWAYS)
+        record = Action(action.kind, action.target, action.digest, scope)
+        try:
+            result = self.gateway.run(record, self.confirm,
+                                      lambda: action.run(values) if action.run else None)
+        except Denied:
+            self.automation_panel.remove(action.ident)
+            self.statusBar().showMessage('The action was not allowed.', 10000)
+            return
+        except Stopped:
+            self.automation_panel.remove(action.ident)
+            return
+        self.automation_panel.remove(action.ident)
+        self.statusBar().showMessage(str(result)[:400] if result else 'Done.', 12000)
+
+    def dismiss_proposed_action(self, action):
+        """The owner dismissed the action. It is recorded and it does not run."""
+        controller = getattr(self, 'mission_controller', None)
+        if controller is not None and controller.answer(action.ident, False):
+            self.automation_panel.remove(action.ident)
+            hud = getattr(self, 'hud', None)
+            if hud is not None:
+                hud.strip.clear_approval()
+            return
+        self.policy.note(action.kind, action.target, 'dismissed',
+                         'the owner dismissed the proposed action')
+        self.automation_panel.remove(action.ident)
 
     def refresh_safety_report(self):
         """Show what the approval boundary has allowed and refused."""
@@ -3071,13 +3779,16 @@ class Window(QMainWindow):
             'OpenRouter routes requests to downstream providers. Claude uses the Anthropic Messages API. '
             'Ollama runs on this computer, needs no key and never reaches the network.')
         form = QFormLayout()
+        form.addRow('Chat provider', self.chat_provider)
         self.provider = QComboBox()
         self.provider.addItems(provider_names())
         self.model = QLineEdit()
         self.model.setPlaceholderText("Enter the exact model ID from your provider account")
         self.secret = QLineEdit()
         self.secret.setEchoMode(QLineEdit.EchoMode.Password)
-        self.secret.setPlaceholderText('Enter key locally; never paste it in chat')
+        self.secret.setPlaceholderText('Enter API key')
+        self.secret.setToolTip('Saved to Windows Credential Manager when you press Enter or leave this field.')
+        self.secret.editingFinished.connect(self.autosave_provider_key)
         self.endpoint = QLabel()
         self.endpoint.setWordWrap(True)
         self.key_status = QLabel()
@@ -3117,6 +3828,7 @@ class Window(QMainWindow):
         self.load_provider()
         self.azure_voice = AzureVoiceSettings(self)
         layout.addWidget(self.azure_voice)
+        self.azure_voice.hide()
         layout.addStretch()
         return page
 
@@ -3247,7 +3959,7 @@ class Window(QMainWindow):
         self.archives.clear()
         for row in self.store.sessions():
             title = row['title'] or 'Conversation'
-            self.archives.addItem(title + ' · ' + row['session'][:8], row['session'])
+            self.archives.addItem(title, row['session'])
         index = self.archives.findData(self.session)
         if index >= 0:
             self.archives.setCurrentIndex(index)
@@ -3363,7 +4075,8 @@ class Window(QMainWindow):
         self.worker.chunk.connect(self.on_chunk)
         self.worker.result.connect(self.on_result)
         self.worker.finished.connect(self.on_finished)
-        for button in (self.send_button, self.new_chat_button, self.clear_button,
+        self.refresh_chat_send_button()
+        for button in (self.new_chat_button, self.clear_button,
                        self.archive_button, self.probe_button, self.generate_button,
                        self.repair_button, self.availability_button):
             button.setEnabled(False)
@@ -3380,44 +4093,7 @@ class Window(QMainWindow):
         self.worker.start()
 
     def permissions_page(self):
-        page, layout = self.page('Settings & Safety')
-        self.settings_view = None
-        header = QHBoxLayout()
-        self.settings_mode_button = QPushButton('Advanced settings')
-        self.settings_mode_button.clicked.connect(self.toggle_settings_view)
-        header.addWidget(self.settings_mode_button)
-        self.settings_category = QComboBox()
-        self.settings_category.setAccessibleName('Advanced settings category')
-        self.settings_groups = {}
-        groups = {}
-        for key, title in (
-            ('assistant', 'Chat options, audio tests and connections'),
-            ('system', 'Startup, updates and recovery'),
-            ('privacy', 'Privacy, history and backup'),
-            ('projects', 'Saved projects and plugins'),
-            ('workspace', 'Workspace shortcuts and PC usage'),
-        ):
-            self.settings_category.addItem(title, key)
-            group = QWidget()
-            group.hide()
-            groups[key] = QVBoxLayout(group)
-            groups[key].setContentsMargins(0, 0, 0, 0)
-            self.settings_groups[key] = group
-        self.settings_category.hide()
-        self.settings_category.currentIndexChanged.connect(self.on_settings_category)
-        header.addWidget(self.settings_category)
-        header.addStretch()
-        layout.addLayout(header)
-        self.settings_essentials = QWidget()
-        essentials = QGridLayout(self.settings_essentials)
-        essentials.setContentsMargins(0, 0, 0, 0)
-        essentials.setColumnStretch(0, 1)
-        essentials.setColumnStretch(1, 1)
-        layout.addWidget(self.settings_essentials)
-        for group in self.settings_groups.values():
-            layout.addWidget(group)
-        layout.addStretch()
-
+        page, layout = self.page('')
         approvals = QGroupBox('Action approvals')
         approval_layout = QVBoxLayout(approvals)
         self.approval_mode_choice = QComboBox()
@@ -3441,13 +4117,58 @@ class Window(QMainWindow):
         approval_layout.addWidget(self.approval_mode_detail)
         self.approval_mode_choice.activated.connect(self.choose_approval_mode)
         self.refresh_approval_mode()
-        essentials.addWidget(approvals, 0, 0)
+
+        # The engines: the model that runs on this computer, and the one
+        # that may answer a single step when the owner allows it.
+        engines = QGroupBox('AI engines')
+        engine_layout = QVBoxLayout(engines)
+        self.gemini_fallback = QCheckBox('Use Gemini automatically when needed')
+        self.gemini_fallback.setAccessibleName('Use Gemini automatically when needed')
+        self.gemini_fallback.setToolTip(
+            'When the on-device model cannot complete one step of a task, that one step is '
+            'answered by Gemini and the HUD says so. Routine chat, voice and PC actions '
+            'stay on this computer, and nothing sensitive is shared without your approval.')
+        self.gemini_fallback.setChecked(enabled_from_store(self.store))
+        self.gemini_fallback.toggled.connect(self.set_gemini_fallback)
+        engine_layout.addWidget(self.gemini_fallback)
+        engine_note = QLabel(
+            'The on-device model answers a task whenever it can. With this turned on, '
+            'only the step it cannot do is sent to Gemini, with only the context that '
+            'step needs.')
+        engine_note.setWordWrap(True)
+        engine_layout.addWidget(engine_note)
+
+        model_row = QHBoxLayout()
+        self.local_model_label = QLabel('The on-device model has not been checked yet.')
+        self.local_model_label.setWordWrap(True)
+        model_row.addWidget(self.local_model_label, 1)
+        self.start_model_button = QPushButton('Start the on-device model')
+        self.start_model_button.setAccessibleName('Start the on-device model')
+        self.start_model_button.clicked.connect(self.start_local_model)
+        model_row.addWidget(self.start_model_button)
+        engine_layout.addLayout(model_row)
+
+        voice_models = QGroupBox('Local speech models')
+        voice_row = QHBoxLayout(voice_models)
+        self.voice_models_label = QLabel('The local voice models have not been checked yet.')
+        self.voice_models_label.setWordWrap(True)
+        voice_row.addWidget(self.voice_models_label, 1)
+        self.voice_models_button = QPushButton('Check the voice models')
+        self.voice_models_button.setAccessibleName('Check the local voice models')
+        self.voice_models_button.clicked.connect(self.refresh_voice_models)
+        voice_row.addWidget(self.voice_models_button)
 
         conversation = QGroupBox('Conversation')
         conversation_layout = QVBoxLayout(conversation)
         reply_form = QFormLayout()
         reply_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         reply_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
+        self.preferred_name = QLineEdit(self.store.get('chat:preferred_name', ''))
+        self.preferred_name.setMaxLength(48)
+        self.preferred_name.setPlaceholderText('How JARVIS should address you')
+        self.preferred_name.editingFinished.connect(
+            lambda: self.store.set('chat:preferred_name', self.preferred_name.text().strip()))
+        reply_form.addRow('Your name', self.preferred_name)
         self.reply_language = QComboBox()
         self.reply_tone = QComboBox()
         for label, key, choices, box in (
@@ -3462,44 +4183,95 @@ class Window(QMainWindow):
                 lambda _index, key=key, box=box: self.store.set(key, box.currentData()))
             reply_form.addRow(label, box)
         conversation_layout.addLayout(reply_form)
-        note = QLabel('Applies to AI chat replies. You can also ask JARVIS to switch languages in a message.')
+        note = QLabel('Applies to Chat and new Live Voice sessions. You can switch languages in conversation.')
         note.setWordWrap(True)
         conversation_layout.addWidget(note)
-        essentials.addWidget(conversation, 0, 1)
+        self.flexible_button(conversation_layout, 'Memory',
+                             lambda: self.open_section('Memory'))
+        remote = QGroupBox('Phone Remote')
+        self.flexible_button(QHBoxLayout(remote), 'Open pairing and permissions',
+                             lambda: self.open_section('Phone Remote'))
 
-        connections = QGroupBox('Assistant services')
-        service_links = QHBoxLayout(connections)
-        more_connections = QGroupBox('Other connections')
-        other_links = QHBoxLayout(more_connections)
-        for links, label, section in (
-            (service_links, 'AI providers', 'AI Providers'),
-            (service_links, 'Voice and audio', 'Voice / Hey Jarvis'),
-            (other_links, 'Memory', 'Memory'),
-            (other_links, 'Phone remote', 'Phone Remote'),
-        ):
-            self.flexible_button(links, label,
-                                 lambda _checked=False, section=section: self.open_section(section))
-        essentials.addWidget(connections, 1, 0)
-        groups['assistant'].addWidget(more_connections)
+        voice_service = QGroupBox('Microphone and playback')
+        voice_controls = QVBoxLayout(voice_service)
+        voice_controls.addWidget(self.voice_panel.allow)
+        self.gemini_readout = QCheckBox('Allow Gemini to read the welcome, replies and news aloud')
+        self.gemini_readout.setChecked(bool(self.store.get('voice:gemini_readout', False)))
+        self.gemini_readout.setToolTip('Sends the text to Gemini for speech. This does not open the microphone.')
+        self.gemini_readout.toggled.connect(
+            lambda enabled: self.store.set('voice:gemini_readout', enabled))
+        self.startup_greeting = QCheckBox('Show the Tamil welcome when JARVIS opens')
+        self.startup_greeting.setChecked(bool(self.store.get('voice:startup_greeting', False)))
+        self.startup_greeting.toggled.connect(
+            lambda enabled: self.store.set('voice:startup_greeting', enabled))
+        self.startup_microphone = QCheckBox('Hey Jarvis')
+        self.startup_microphone.setToolTip('Wake-word recognition stays on this PC.')
+        self.startup_microphone.setChecked(bool(self.store.get('voice:local_on_startup', False)))
+        self.startup_microphone.toggled.connect(self.save_startup_microphone)
+        voice_controls.addWidget(self.startup_microphone)
+        auto_voice = QCheckBox('Start Gemini voice automatically')
+        auto_voice.setChecked(bool(self.store.get('voice:auto_gemini', False)))
+        auto_voice.setToolTip('Streams microphone audio to Google while unmuted. Provider charges may apply.')
+        auto_voice.toggled.connect(lambda enabled: self.store.set('voice:auto_gemini', enabled))
+        voice_controls.addWidget(auto_voice)
+        voice_links = QHBoxLayout()
+        if sys.platform == 'win32':
+            self.flexible_button(voice_links, 'Windows sound volume',
+                                 lambda: QDesktopServices.openUrl(QUrl('ms-settings:sound')))
+        voice_controls.addLayout(voice_links)
+        from desktop.camera import CameraPanel
+        self.camera_toggle = QPushButton('Camera off')
+        self.camera_toggle.setCheckable(True)
+        self.camera_toggle.setAccessibleName('Camera on or off')
+        self.camera_toggle.setToolTip('Camera On shares live frames with Google during Gemini voice. '
+                                      'Camera Off stops sharing.')
+        self.camera_panel = CameraPanel(self.store, self.policy, self.camera_toggle)
+        voice_advanced = QWidget()
+        advanced_layout = QVBoxLayout(voice_advanced)
+        advanced_layout.setContentsMargins(0, 0, 0, 0)
+        for item in (self.read_replies, self.gemini_readout, self.startup_greeting, voice_models):
+            advanced_layout.addWidget(item)
+        for item in (self.hands_free_voice, self.voice_panel, conversation):
+            item.setParent(voice_advanced)
+            item.hide()
+        advanced_toggle = QPushButton('Advanced voice and automation')
+        advanced_toggle.setCheckable(True)
+        advanced_toggle.toggled.connect(voice_advanced.setVisible)
+        voice_advanced.hide()
+        self.advanced_voice_panel = voice_advanced
+        self.advanced_voice_toggle = advanced_toggle
 
         assistant_group = QGroupBox('AI chat options')
         assistant_layout = QVBoxLayout(assistant_group)
         assistant_layout.addWidget(self.chat_settings_panel)
-        groups['assistant'].addWidget(assistant_group)
-        self.audio_test = AudioTest(self.voice_panel, self.policy)
+        self.audio_test = AudioTest(self.voice_panel, self.policy, self.store)
         self.audio_test.finished.connect(self.schedule_local_voice_rearm)
-        groups['assistant'].addWidget(self.audio_test)
 
-        preferences = QGroupBox('Appearance')
-        startup = QGroupBox('Startup and background')
-        preference_layout = QVBoxLayout(startup)
+        preferences = QGroupBox('Appearance and startup')
+        preference_layout = QVBoxLayout(preferences)
         appearance = QFormLayout()
         self.theme_choice = QComboBox()
         self.theme_choice.addItems(list(OMEGA_THEMES))
         self.theme_choice.setCurrentText(self.interface_theme)
         self.theme_choice.currentTextChanged.connect(self.on_theme_chosen)
         appearance.addRow('Interface theme', self.theme_choice)
-        QVBoxLayout(preferences).addLayout(appearance)
+        self.show_hologram = QCheckBox('Show M-Core hologram on the Chat home view')
+        self.show_hologram.setChecked(bool(self.store.get('appearance:hologram', True)))
+        self.show_hologram.toggled.connect(self.set_hologram_visible)
+        appearance.addRow(self.show_hologram)
+        hologram_captions = QCheckBox('Show heard words under the hologram')
+        hologram_captions.setChecked(bool(self.store.get('appearance:hologram_captions', False)))
+        hologram_captions.toggled.connect(self.set_hologram_captions)
+        appearance.addRow(hologram_captions)
+        self.show_terminal = QCheckBox('Show Terminal under the main display')
+        self.show_terminal.setChecked(bool(self.store.get('appearance:terminal', True)))
+        self.show_terminal.toggled.connect(self.set_terminal_visible)
+        appearance.addRow(self.show_terminal)
+        self.reduce_motion = QCheckBox('Reduce motion')
+        self.reduce_motion.setChecked(bool(self.store.get('omega:reduced', False)))
+        self.reduce_motion.toggled.connect(self.set_interface_motion_reduced)
+        appearance.addRow(self.reduce_motion)
+        preference_layout.addLayout(appearance)
         self.keep_in_tray = QCheckBox('Keep JARVIS running in the system tray')
         self.keep_in_tray.setChecked(bool(self.store.get('keep_running_in_tray', False)))
         self.keep_in_tray.toggled.connect(
@@ -3513,8 +4285,6 @@ class Window(QMainWindow):
         self.tray_note = QLabel(self.tray_note_text())
         self.tray_note.setWordWrap(True)
         preference_layout.addWidget(self.tray_note)
-        essentials.addWidget(preferences, 1, 1)
-        groups['system'].addWidget(startup)
 
         updates = QGroupBox('Updates and recovery')
         update_layout = QVBoxLayout(updates)
@@ -3526,16 +4296,13 @@ class Window(QMainWindow):
         self.auto_maintenance.setChecked(bool(self.store.get('auto_maintenance', False)))
         self.auto_maintenance.toggled.connect(self.set_auto_maintenance)
         update_layout.addWidget(self.auto_maintenance)
-        groups['system'].addWidget(updates)
         backup = QGroupBox('History backup and restore')
         backup_layout = QVBoxLayout(backup)
         self.history_backup_panel = HistoryBackupPanel(
             history_path=self.root / 'history.sqlite3')
         backup_layout.addWidget(self.history_backup_panel)
-        groups['privacy'].addWidget(backup)
         self.saved_projects_group = QWidget()
         self.add_projects_settings(QVBoxLayout(self.saved_projects_group))
-        groups['projects'].addWidget(self.saved_projects_group)
         plugins = QGroupBox('Plugins')
         self.plugins_group = plugins
         plugin_layout = QVBoxLayout(plugins)
@@ -3556,82 +4323,79 @@ class Window(QMainWindow):
                     lambda _checked=False, name=name, label=label: self.choose_editor_path(name, label))
                 row.addWidget(button)
             plugin_layout.addLayout(row)
-        groups['projects'].addWidget(plugins)
         safety = QGroupBox('Permissions and data')
         safety_layout = QVBoxLayout(safety)
         for note in (
             'Action approvals use the selected mode. Sending a chat message shares it '
             'with the selected provider.',
-            'Emergency Stop (Ctrl+Alt+J) cancels pending work and approvals. '
+            'Emergency Stop (Ctrl+Alt+J or /stop in chat) cancels pending work and approvals. '
             'Apps already opened stay open, and requests already sent may be billed.',
             'Windows Credential Manager stores keys. Local history and code are stored as plaintext.',
         ):
             label = QLabel(note)
             label.setWordWrap(True)
             safety_layout.addWidget(label)
-        groups['privacy'].insertWidget(0, safety)
         usage = QGroupBox('Live PC usage')
         self.settings_usage = QLabel('Collecting PC usage…')
         self.settings_usage.setWordWrap(True)
-        QVBoxLayout(usage).addWidget(self.settings_usage)
-        groups['workspace'].addWidget(usage)
-        tools = QGroupBox('Workspace shortcuts')
-        tool_layout = QGridLayout(tools)
-        for index, (label, name) in enumerate((
-            ('PC Control', 'PC Control'),
-            ('Files & Folders', 'Files & Folders'),
-            ('Task queue', 'Task Queue'),
-            ('Workflows', 'Step Workflows'),
-            ('Task history', 'Task History'),
-            ('System & usage', 'System & Usage'),
-            ('Review prepared changes', 'Review changes'),
-        )):
-            button = QPushButton(label)
-            button.clicked.connect(lambda _checked=False, name=name: self.open_section(name))
-            tool_layout.addWidget(button, index // 2, index % 2)
-        groups['workspace'].addWidget(tools)
+        usage_layout = QVBoxLayout(usage)
+        usage_layout.addWidget(self.settings_usage)
+        self.flexible_button(usage_layout, 'Network diagnostics', self.open_network_diagnostics)
+        self.flexible_button(usage_layout, 'AI usage history',
+                             lambda: self.open_section('System & Usage'))
+        self.settings_categories = QComboBox()
+        self.settings_categories.setAccessibleName('Settings category')
+        layout.addWidget(self.settings_categories)
+        categories = (
+            ('Voice', (voice_service, self.audio_test, advanced_toggle, voice_advanced)),
+            ('Camera', (self.camera_panel,)),
+            ('AI Providers', (self.provider_settings,)),
+            ('Approvals', (approvals, safety)),
+            ('Appearance', (preferences,)),
+            ('Projects & plugins', (self.saved_projects_group, plugins)),
+            ('System', (usage, updates, backup, remote)),
+        )
+        self.settings_category_sections = []
+        for advanced_ai in (engines, assistant_group):
+            layout.addWidget(advanced_ai)
+            advanced_ai.hide()
+        for index, (label, sections) in enumerate(categories):
+            self.settings_categories.addItem(label)
+            self.settings_category_sections.append(sections)
+            for section in sections:
+                layout.addWidget(section)
+                section.setVisible(index == 0 and section is not voice_advanced)
+        layout.addStretch(1)
+        self.settings_categories.currentIndexChanged.connect(self.show_setting_category)
         return page
 
-    def toggle_settings_view(self):
-        if self.settings_view is None:
-            self.show_settings_view(self.settings_category.currentData())
-            self.settings_category.setFocus()
+    def set_hologram_visible(self, enabled):
+        self.store.set('appearance:hologram', enabled)
+        self.prime_chat.assistant.refresh_hologram()
+
+    def set_terminal_visible(self, enabled):
+        self.store.set('appearance:terminal', enabled)
+        self.prime_chat.terminal.setVisible(enabled)
+
+    def set_hologram_captions(self, enabled):
+        self.store.set('appearance:hologram_captions', enabled)
+        self.prime_chat.assistant.refresh_caption()
+
+    def set_interface_motion_reduced(self, enabled):
+        if self.omega is None:
+            self.store.set('omega:reduced', enabled)
         else:
-            self.show_settings_view()
-            self.settings_mode_button.setFocus()
+            self.omega.set_reduced(enabled)
+        self.refresh_prime_state()
 
-    def on_settings_category(self, _index):
-        if self.settings_view is not None:
-            self.show_settings_view(self.settings_category.currentData())
-
-    def show_settings_view(self, category=None, *, target=None):
-        """Show one Settings view without changing any of its controls."""
-        self.settings_view = category
-        advanced = category is not None
-        self.settings_mode_button.setText('Back to essentials' if advanced else 'Advanced settings')
-        self.settings_essentials.setVisible(not advanced)
-        self.settings_category.setVisible(advanced)
-        if advanced:
-            # A direct shortcut selects the category without showing it twice.
-            previous = self.settings_category.blockSignals(True)
-            self.settings_category.setCurrentIndex(self.settings_category.findData(category))
-            self.settings_category.blockSignals(previous)
-        for key, group in self.settings_groups.items():
-            group.setVisible(key == category)
-        if category == 'projects':
-            self.refresh_projects_page()
-        elif category == 'assistant':
-            self.audio_test.refresh_devices()
-
-        scroller = self.pages.widget(self.page_indices['Settings & Safety'])
-        scroller.verticalScrollBar().setValue(0)
-        if target is not None:
-            # The scroll range is recalculated after the hidden groups reflow.
-            def scroll_to_target():
-                if (self.pages.currentWidget() is scroller and self.settings_view == category
-                        and target.isVisibleTo(scroller)):
-                    self.scroll_to_setting(target)
-            QTimer.singleShot(0, self, scroll_to_target)
+    def show_setting_category(self, current):
+        for index, sections in enumerate(self.settings_category_sections):
+            for section in sections:
+                if section is self.advanced_voice_panel:
+                    section.setVisible(index == current and self.advanced_voice_toggle.isChecked())
+                else:
+                    section.setVisible(index == current)
+        self.settings_scroller.verticalScrollBar().setValue(0)
 
     def refresh_approval_mode(self):
         choice = self.approval_mode_choice
@@ -3658,9 +4422,12 @@ class Window(QMainWindow):
         self.refresh_approval_mode()
 
     def scroll_to_setting(self, section):
-        scroller = self.pages.widget(self.page_indices['Settings & Safety'])
-        if isinstance(scroller, QScrollArea):
-            scroller.verticalScrollBar().setValue(section.mapTo(scroller.widget(), section.rect().topLeft()).y())
+        for index, sections in enumerate(self.settings_category_sections):
+            if section in sections:
+                self.settings_categories.setCurrentIndex(index)
+                break
+        scroller = self.settings_scroller
+        QTimer.singleShot(0, scroller, lambda: scroller.ensureWidgetVisible(section, 16, 16))
 
     def plugin_enabled(self, name):
         return bool(self.store.get('plugin:' + name, True))
@@ -4913,6 +5680,7 @@ class Window(QMainWindow):
             if item['key'] == step:
                 item['state'] = 'running'
         self.render_coding_card()
+        self.prime_chat.write_terminal('Coding', text)
         self.store.message(self.session, 'system', '· ' + text)
         self.render_chat()
 
@@ -5248,7 +6016,7 @@ class Window(QMainWindow):
         self.render_chat()
         self.show_hud_text(reply)
         if self.read_replies.isChecked() and not self.policy.stopped:
-            self.voice_panel.speak_response(reply[:600])
+            self.read_with_gemini(reply)
 
     def mission_finished(self):
         """The mission stopped, so the window may close if it was waiting."""
@@ -5256,6 +6024,8 @@ class Window(QMainWindow):
         if controller is not None and controller.worker is not None:
             controller.worker.deleteLater()
             controller.worker = None
+        self.hud.strip.set_progress(0, 0)
+        self.refresh_prime_state()
         if (self.close_when_done and self.coding_worker is None and self.test_worker is None
                 and self.worker is None):
             self.close()
@@ -5317,9 +6087,7 @@ class Window(QMainWindow):
 
     def refresh_review(self):
         """Show the prepared changes again, after one of them changed."""
-        widget = self.pages.widget(self.page_indices['Review changes'])
-        if isinstance(widget, QScrollArea):
-            widget = widget.widget()
+        widget = self.section_widget('Review changes')
         if hasattr(widget, 'refresh'):
             widget.refresh()
 
@@ -5395,7 +6163,7 @@ class Window(QMainWindow):
         self.store.set('last_maintenance_goal', [state['active'], goal])
         self.run_improvement(goal, provider, automatic=True)
 
-    def start_improvement(self):
+    def start_improvement(self, *, show_review=False):
         """Ask a coding provider to prepare an improvement, in the background."""
         if self.improvement_worker is not None:
             self.statusBar().showMessage('A change is already being prepared.', 10000)
@@ -5410,7 +6178,7 @@ class Window(QMainWindow):
 
         def operation():
             self.improvement_goal.clear()
-            self.run_improvement(goal, provider)
+            self.run_improvement(goal, provider, show_review=show_review)
 
         self.notify(lambda: self.gateway.run(action, self.confirm, operation))
 
@@ -5426,7 +6194,7 @@ class Window(QMainWindow):
         self.notify(lambda: self.gateway.run(action, self.confirm,
                     lambda: self.run_improvement(task.goal, provider, task=task)))
 
-    def run_improvement(self, goal, provider, *, automatic=False, task=None):
+    def run_improvement(self, goal, provider, *, automatic=False, task=None, show_review=False):
         """Start the background work for one improvement."""
         if self.improvement_worker is not None:
             self.statusBar().showMessage('A change is already being prepared.', 10000)
@@ -5434,6 +6202,8 @@ class Window(QMainWindow):
         worker = ImprovementWorker(self, goal, provider, parent=self, automatic=automatic, task=task)
         self.improvement_worker = worker
         worker.prepared.connect(self.on_improvement_prepared)
+        if show_review:
+            worker.prepared.connect(lambda _revision: self.open_section('Review changes'))
         worker.message.connect(lambda text: self.statusBar().showMessage(text, 20000))
         worker.finished.connect(self.finish_improvement_worker)
         worker.start()
@@ -5442,9 +6212,7 @@ class Window(QMainWindow):
         """A prepared change is ready to be looked at."""
         self.statusBar().showMessage(
             f'Revision {improvement.short} is prepared. Review it before it is used.', 20000)
-        review = self.pages.widget(self.page_indices['Review changes'])
-        if isinstance(review, QScrollArea):
-            review = review.widget()
+        review = self.section_widget('Review changes')
         if hasattr(review, 'refresh'):
             review.refresh()
 
@@ -5614,6 +6382,7 @@ class Window(QMainWindow):
         self.model.setText(self.selected_model(provider))
         self.endpoint.setText(spec.endpoint)
         self.secret.clear()
+        self.secret.setEnabled(not spec.local)
         health = self.store.get('health:' + provider + ':' + self.model.text())
         self.provider_health.setText('Last explicit check: ' + (health['summary'] if health else 'Not tested'))
         if hasattr(self, 'price_note'):
@@ -5662,6 +6431,31 @@ class Window(QMainWindow):
         self.price_note.setText(
             pricing.describe(self.provider.currentText(), self.model.text()))
 
+    def store_provider_key(self, provider):
+        key = self.secret.text().strip()
+        if not key:
+            return False
+        try:
+            self.vault.put(provider, key)
+        except Exception:
+            raise RuntimeError('Could not save the key to Windows Credential Manager.') from None
+        self.secret.clear()
+        self.store.set('catalogue:' + provider, [])
+        self.key_status.setText('Stored in Windows vault')
+        return True
+
+    def autosave_provider_key(self):
+        provider = self.provider.currentText()
+        if self.router.spec(provider).local or not self.secret.text().strip():
+            return
+        try:
+            self.policy.ticket()
+            self.store_provider_key(provider)
+        except RuntimeError as error:
+            self.key_status.setText(str(error))
+        else:
+            self.statusBar().showMessage('API key saved to Windows Credential Manager.', 10000)
+
     def save_provider(self):
         def operation():
             if self.worker is not None:
@@ -5681,15 +6475,7 @@ class Window(QMainWindow):
                 self.chat_provider.setCurrentText(provider)
                 self.refresh_brain_label()
                 return 'Local model saved. Ready for chat; connection has not been tested.'
-            new_key = bool(self.secret.text())
-            if new_key:
-                try:
-                    self.vault.put(provider, self.secret.text())
-                except Exception:
-                    raise RuntimeError('Could not save the key to Windows Credential Manager.') from None
-                finally:
-                    self.secret.clear()
-                self.store.set('catalogue:' + provider, [])
+            new_key = self.store_provider_key(provider)
             self.store.set('custom_model:' + provider,
                            self.advanced_provider.isChecked() and model not in
                            {spec.default_model, *profile_models.profiles_for(provider).values()})
@@ -5774,10 +6560,14 @@ class Window(QMainWindow):
         self.suggested_steps = ()
         self.suggestion_card.hide()
 
-    def show_suggested_steps(self, steps):
+    def show_suggested_steps(self, steps, *, detail=''):
         self.suggested_steps = steps
-        self.suggestion_preview.setText('Suggested steps:\n' +
-            '\n'.join(f'{index}. {step.label}' for index, step in enumerate(steps, 1)))
+        summary = ('Suggested steps:\n' +
+                   '\n'.join(f'{index}. {step.label}' for index, step in enumerate(steps, 1))) if steps else ''
+        in_automation = self.automation_panel.isAncestorOf(self.suggestion_card)
+        self.suggestion_preview.setText('\n\n'.join(
+            part for part in (detail if in_automation else '', summary) if part))
+        self.review_suggestions_button.setVisible(bool(steps))
         self.suggestion_card.show()
 
     def review_suggested_plan(self):
@@ -5818,18 +6608,30 @@ class Window(QMainWindow):
         else:
             self.send_button.setText('Send')
 
+    @staticmethod
+    def is_emergency_stop(text):
+        return addressed_request(text).casefold() in (
+            '/stop', 'emergency stop', 'emergency stop pannu', 'அவசர நிறுத்தம்')
+
+    def refresh_chat_send_button(self):
+        if hasattr(self, 'send_button'):
+            self.send_button.setEnabled(not self.policy.stopped and (
+                self.worker is None or self.is_emergency_stop(self.prompt.toPlainText().strip())))
+
     def send(self, *, allow_notes=True):
-        if self.policy.stopped or self.worker is not None or not self.prompt.toPlainText().strip():
+        text = self.prompt.toPlainText().strip()
+        if self.is_emergency_stop(text):
+            self.prompt.clear()
+            if not self.policy.stopped:
+                self.stop()
+            return
+        if self.policy.stopped or self.worker is not None or not text:
             return
         if self.live_voice is not None and self.live_voice.active:
             self.statusBar().showMessage('Stop Live Voice before sending a typed chat message.', 10000)
             return
-        text = self.prompt.toPlainText().strip()
-        if text.rstrip('!?.,').casefold() == 'hey jarvis':
-            # A typed summon is local. It never grants microphone or provider access.
+        if self.route_youtube(text):
             self.prompt.clear()
-            self.prime_shell.pulse_wake()
-            self.statusBar().showMessage('JARVIS is ready. Type a request or choose Speak.', 10000)
             return
         self.clear_suggested_plan()
         if addressed_request(text).casefold() in ('/cancel', 'cancel task', 'task cancel pannu'):
@@ -5870,33 +6672,12 @@ class Window(QMainWindow):
             if not goal:
                 self.statusBar().showMessage('Usage: /suggest followed by your goal.', 10000)
                 return
-            try:
-                typing = parse_desktop_task(goal)
-            except ValueError as error:
-                self.statusBar().showMessage(str(error), 10000)
-                return
-            if typing is not None:
-                self.prompt.clear()
-                self.use_notes.setChecked(False)
-                self.files_share_once.setChecked(False)
-                self.backup_consent.setChecked(False)
-                review = ('Review the calculation JARVIS would enter in Calculator:\n' + typing.text
-                          if typing.app == 'Calculator' else
-                          'Review the exact text JARVIS would enter in Notepad:\n' + typing.text
-                          + '\n\nTyping will not save a file.')
-                self.show_local_system_reply(goal, review)
-                self.show_suggested_steps((Step(typing.app, typing),))
-                return
-            app = parse_voice_command(goal) if requested_goal is not None else None
-            if app:
-                self.prompt.clear()
-                self.use_notes.setChecked(False)
-                self.files_share_once.setChecked(False)
-                self.backup_consent.setChecked(False)
-                self.show_local_system_reply(goal, f'Review the proposed launch of {app}.')
-                self.show_suggested_steps((Step(app),))
-                return
-            self.send_chat_reply(goal, suggestion=True)
+            if self.automation_panel.isAncestorOf(self.suggestion_card):
+                self.prime_chat.cards.addWidget(self.suggestion_card)
+            if requested_goal is not None:
+                self.send_chat_reply(goal, suggestion=True, suggestions_online=True)
+            else:
+                self.request_suggestions(goal, explicit=False, consume_draft=True)
             return
         command, _, argument = addressed_request(text).partition(' ')
         if command.casefold() == '/browser':
@@ -5991,12 +6772,31 @@ class Window(QMainWindow):
                 return
         self.send_chat_reply(text, analysis=analysis, use_notes=use_notes)
 
-    def send_chat_reply(self, text, *, analysis=None, use_notes=False, suggestion=False):
+    def route_youtube(self, text):
+        from desktop.youtube_panel import youtube_request
+        command = addressed_request(text)
+        if command.casefold().strip(' .!?') in ('stop youtube', 'youtube stop', 'youtube stop pannu'):
+            self.prime_chat.youtube.stop()
+            self.show_local_system_reply(text, 'YouTube playback stopped.')
+            return True
+        url = youtube_request(command)
+        if not url:
+            return False
+        self.open_section('JARVIS Chat')
+        self.prime_chat.play_youtube(url)
+        notice = ('YouTube results are open in Media.' if '/results?' in url
+                  else 'The YouTube video is open in Media.')
+        self.prime_chat.write_terminal('Media', notice)
+        self.show_local_system_reply(text, notice)
+        return True
+
+    def send_chat_reply(self, text, *, analysis=None, use_notes=False, suggestion=False,
+                        suggestions_online=False):
         def operation():
             self.chat_ticket = self.policy.ticket()
-            provider = self.chat_provider.currentText()
+            provider = 'Gemini' if suggestions_online else self.chat_provider.currentText()
             effort = task_brain.effort_for(text, self.reasoning_effort.currentText(), bool(analysis))
-            if self.auto_brain.isChecked() and provider in ('Gemini', 'OpenAI', 'MiniMax'):
+            if not suggestions_online and self.auto_brain.isChecked() and provider in ('Gemini', 'OpenAI', 'MiniMax'):
                 def available(name):
                     try:
                         return bool(self.get_key(name))
@@ -6044,9 +6844,9 @@ class Window(QMainWindow):
             self.store.message(self.session, 'user', prompt)
             self.render_chat()
             self.transcript.appendPlainText('\nJARVIS\n')
-            self.prompt.clear()
-            guidance = assistant_guidance(self.reply_language.currentData(),
-                                          self.reply_tone.currentData())
+            if not (suggestion and self.automation_panel.isAncestorOf(self.suggestion_card)):
+                self.prompt.clear()
+            guidance = self.conversation_guidance()
             if suggestion:
                 guidance += SUGGESTION_GUIDANCE
             else:
@@ -6126,10 +6926,12 @@ class Window(QMainWindow):
             if status == 'completed':
                 parts.extend(value for value in (
                     data.get('news_provider_error'), data.get('news_sources')) if value)
-            self.news_panel.output.setPlainText('\n\n'.join(parts))
+            briefing = '\n\n'.join(parts)
+            self.news_panel.output.setPlainText(briefing)
+            self.prime_chat.write_terminal('Tamil news', briefing)
             if (status == 'completed' and data.get('news_tamil')
                     and self.news_panel.speech.isChecked() and not self.policy.stopped):
-                self.voice_panel.speak_response(text)
+                self.read_with_gemini(text)
         elif self.worker_kind == 'website_preview':
             if status == 'completed':
                 try:
@@ -6161,13 +6963,13 @@ class Window(QMainWindow):
             if status == 'completed':
                 if self.worker_kind == 'suggestion':
                     text, steps = extract_suggested_plan(text)
-                    if steps:
-                        self.show_suggested_steps(steps)
+                    if steps or self.automation_panel.isAncestorOf(self.suggestion_card):
+                        self.show_suggested_steps(steps, detail=text)
                 self.store.message(self.session, 'assistant', text)
                 self.render_chat()
                 self.show_hud_text(text)
                 if self.read_replies.isChecked() and not self.policy.stopped:
-                    self.voice_panel.speak_response(text[:600])
+                    self.read_with_gemini(text)
             else:
                 if status == 'cancelled':
                     # A late reply from an invalidated ticket must never be
@@ -6246,7 +7048,10 @@ class Window(QMainWindow):
         self.after_effects_timeline_button.setEnabled(ready and self.video_plan is not None)
 
     def stop(self):
+        self.camera_toggle.setChecked(False)
+        self.prime_chat.youtube.stop()
         self.policy.stop()
+        self.startup_microphone.setChecked(False)
         if self.live_voice is not None:
             self.live_voice.stop()
         self.browser.stop()
@@ -6281,7 +7086,6 @@ class Window(QMainWindow):
         self.voice_rearm_timer.stop()
         self.hands_free_voice.setChecked(False)
         self.voice_panel.stop_voice()
-        self.audio_test.stop()
         self.set_ai_visual_state('stopped')
         self.queue.cancel_pending()
         self.workflows.cancel_pending()
@@ -6315,9 +7119,9 @@ class Window(QMainWindow):
 
     def refresh_history(self):
         rows = self.store.tasks()
-        shell = getattr(self, 'prime_shell', None)
-        if shell is not None:
-            shell.activity.set_rows(rows)
+        chat = getattr(self, 'prime_chat', None)
+        if chat is not None:
+            chat.timeline.set_rows(rows)
         self.history.setRowCount(len(rows))
         for index, task in enumerate(rows):
             for column, key in enumerate(('created', 'kind', 'status', 'detail')):
@@ -6425,6 +7229,7 @@ class Window(QMainWindow):
         self.request_exit()
 
     def closeEvent(self, event):
+        self.camera_toggle.setChecked(False)
         if self.live_voice is not None:
             self.live_voice.stop()
         self.conversation_plan.cancel('Window closed; remaining steps cancelled.')
@@ -6556,8 +7361,10 @@ def main():
     activation.newConnection.connect(show_existing)
     activation.listen(endpoint)
     window.enable_omega(smoke=smoke)
-    if not smoke and restart_supported():
-        QTimer.singleShot(0, window.summon_from_hotkey)
+    if not smoke:
+        if restart_supported():
+            QTimer.singleShot(0, window.summon_from_hotkey)
+        QTimer.singleShot(0, window.start_window_audio)
     if smoke:
         # Offline native smoke test: no provider calls or remote listener.
         def finish_smoke():

@@ -72,19 +72,23 @@ def test_the_worker_reports_a_question_that_is_not_there():
     assert messages
 
 
-def test_the_chat_page_offers_the_research_window(tmp_path):
+def test_the_automation_page_offers_the_research_window(tmp_path):
     """The owner names a page and a question, and gets an answer from it."""
     from desktop.app import Window
 
     app = QApplication.instance() or QApplication([])
     window = Window(tmp_path)
     try:
-        assert window.research_button.text() == 'Read page'
-        window.research_button.click()
+        window.open_section('PC Control')
+        assert window.automation_panel.research_button.text() == 'Read page with AI'
+        window.automation_panel.research_button.click()
         dialog = window.research_dialog
         assert dialog is not None
         assert dialog.windowTitle() == 'JARVIS research'
-        dialog.close()
+        assert not dialog.isWindow()
+        assert window.prime_chat.task_area.isAncestorOf(dialog)
+        dialog.reject()
+        assert window.prime_chat.task_area.currentIndex() == window.prime_chat.task_panels['PC Control']
     finally:
         window.close()
         window.deleteLater()

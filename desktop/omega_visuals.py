@@ -7,9 +7,10 @@ from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap, QRadial
 from PySide6.QtWidgets import QWidget
 
 
-DEFAULT_THEME = 'Warm Graphite'
+DEFAULT_THEME = 'M-Core'
 THEMES = {
-    DEFAULT_THEME: ('#141218', '#292230', '#554859', '#fff5ee', '#c5b5c5', '#ffbd93', '#b883d5'),
+    DEFAULT_THEME: ('#000000', '#101519', '#283b45', '#e9f7ff', '#a3b9cb', '#50dff4', '#3b82f6'),
+    'Warm Graphite': ('#141218', '#292230', '#554859', '#fff5ee', '#c5b5c5', '#ffbd93', '#b883d5'),
     'Midnight Blue': ('#060d1a', '#10253d', '#203f57', '#eef9ff', '#9db9cd', '#6ae6ff', '#ffae68'),
     'Apple Silver': ('#dfeaf4', '#f3f8fd', '#a0b9cb', '#132939', '#426176', '#006fa3', '#a6470f'),
     'Dark Titanium': ('#0d1017', '#202834', '#374757', '#f0f5fc', '#a4b5c8', '#82bfed', '#ffc481'),

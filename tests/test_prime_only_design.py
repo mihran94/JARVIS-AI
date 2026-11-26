@@ -46,7 +46,7 @@ def test_legacy_presentation_preferences_cannot_reopen_old_design(tmp_path):
         window.omega.open_page("Omega Home")
         assert window.pages.currentIndex() == window.page_indices["JARVIS Chat"]
         window.omega.open_page("Omega Settings")
-        assert window.pages.currentIndex() == window.page_indices["Settings & Safety"]
+        assert window.settings_scroller.isVisibleTo(window.prime_shell.settings_dialog)
         window.omega.switch("Stealth")
         assert window.omega.mode == "Omega"
         window.omega.switch("Island")

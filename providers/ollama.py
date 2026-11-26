@@ -16,10 +16,13 @@ import httpx
 from providers.chat import ProviderError, TransientProviderError
 
 DEFAULT_ENDPOINT = 'http://127.0.0.1:11434/v1/chat/completions'
+TAGS_ENDPOINT = 'http://127.0.0.1:11434/api/tags'
 LOOPBACK_HOSTS = ('127.0.0.1', '::1', 'localhost')
 REQUEST_LIMIT = 100_000
 RESPONSE_LIMIT = 200_000
 TIME_LIMIT_SECONDS = 180
+TAGS_LIMIT = 256 * 1024
+TAGS_TIMEOUT = 2.0
 
 
 def is_loopback(url: str) -> bool:
@@ -31,8 +34,53 @@ def is_loopback(url: str) -> bool:
     return host in LOOPBACK_HOSTS
 
 
+def _local_client(*, timeout, transport):
+    return httpx.Client(timeout=timeout, transport=transport, trust_env=False,
+                        follow_redirects=False)
+
+
+def probe_model_listing(model, *, transport=None):
+    """Check an exact tag with one read-only request, not a generation request."""
+    model = model.strip()
+    if not model:
+        return False, 'An exact local model tag is required.'
+    try:
+        with _local_client(timeout=TAGS_TIMEOUT, transport=transport) as client:
+            with client.stream('GET', TAGS_ENDPOINT,
+                               headers={'Accept-Encoding': 'identity'}) as response:
+                if response.status_code != 200:
+                    return False, f'Local Ollama listing returned HTTP {response.status_code}.'
+                if response.headers.get('Content-Encoding', 'identity').lower() != 'identity':
+                    return False, 'Local Ollama returned an unsupported listing encoding.'
+                contents = bytearray()
+                for chunk in response.iter_bytes():
+                    if len(contents) + len(chunk) > TAGS_LIMIT:
+                        return False, 'Local Ollama model listing exceeded the size limit.'
+                    contents.extend(chunk)
+        payload = json.loads(contents.decode('utf-8'))
+    except httpx.TimeoutException:
+        return False, 'Local Ollama model listing timed out.'
+    except httpx.HTTPError:
+        return False, 'Could not reach the local Ollama listing at 127.0.0.1:11434.'
+    except (ValueError, RecursionError):
+        return False, 'Local Ollama returned an invalid model listing.'
+
+    models = payload.get('models') if isinstance(payload, dict) else None
+    if not isinstance(models, list):
+        return False, 'Local Ollama returned an invalid model listing.'
+    names = []
+    for entry in models:
+        name = (entry.get('name') or entry.get('model')) if isinstance(entry, dict) else None
+        if not isinstance(name, str) or not name.strip():
+            return False, 'Local Ollama returned an invalid model listing.'
+        names.append(name)
+    if model not in names:
+        return False, 'The exact requested tag is not in the local Ollama listing.'
+    return True, 'Local Ollama lists the exact tag. Text generation was not tested.'
+
+
 def stream_local(model, messages, check, emit, endpoint=DEFAULT_ENDPOINT, transport=None,
-                  metrics=None):
+                  metrics=None, *, planning=False):
     """Stream one answer from the local model."""
     if not model or not model.strip():
         raise ProviderError('Configure a model first.')
@@ -42,14 +90,17 @@ def stream_local(model, messages, check, emit, endpoint=DEFAULT_ENDPOINT, transp
         raise ProviderError('Conversation exceeds the 100,000-character limit. Start a new chat.')
 
     payload = {'model': model.strip(), 'messages': messages, 'stream': True}
+    if planning:
+        payload.update(response_format={'type': 'json_object'}, temperature=0,
+                       max_tokens=384, reasoning_effort='none')
     started = time.monotonic()
     total = 0
     finished = False
     parts = []
     try:
         check()
-        with httpx.Client(timeout=httpx.Timeout(30, connect=10), follow_redirects=False,
-                          transport=transport) as client:
+        with _local_client(timeout=httpx.Timeout(90 if planning else 30, connect=10),
+                           transport=transport) as client:
             with client.stream('POST', endpoint, json=payload) as response:
                 if response.status_code in (502, 503, 504):
                     raise TransientProviderError(

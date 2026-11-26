@@ -6,7 +6,7 @@ import struct
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 from PySide6.QtWidgets import QApplication
-from PySide6.QtMultimedia import QAudioFormat
+from PySide6.QtMultimedia import QAudio, QAudioFormat
 
 from desktop.live_voice import LiveVoice, microphone_pcm, playback_pcm, setup_message
 
@@ -29,6 +29,43 @@ def test_mixed_live_mode_hints_both_languages_and_allows_a_pause_between_them():
     assert 'within one sentence' in mixed['systemInstruction']['parts'][0]['text']
 
 
+def test_name_is_a_literal_transcription_hint():
+    name = 'மிஹ்ரான் பாஸ்'
+    config = setup_message('Friendly voice.', tamil_tanglish=True, preferred_name=name)['setup']
+    assert config['inputAudioTranscription']['customVocabulary'] == [name]
+
+
+def test_camera_stream_requires_a_live_session_and_current_frame(monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    live = LiveVoice()
+    packets = []
+    live.frame_provider = lambda: b'current image'
+    live.socket = type('Socket', (), {'bytesToWrite': lambda _: 0})()
+    monkeypatch.setattr(live, 'send', packets.append)
+    live.send_camera_frame()
+    assert packets == []
+    live.set_state('listening')
+    live.send_camera_frame()
+    assert base64.b64decode(packets[-1]['realtimeInput']['video']['data']) == b'current image'
+    live.frame_provider = lambda: b''
+    live.send_camera_frame()
+    assert len(packets) == 1
+
+
+def test_microphone_waits_after_the_speaker_finishes():
+    app = QApplication.instance() or QApplication([])
+    live = LiveVoice()
+    live.output = object()
+    live.player = type('IdleSpeaker', (), {'state': lambda self: QAudio.State.IdleState})()
+    live.set_state('speaking')
+    live.flush_audio()
+    assert live.state == 'speaking'
+    assert live.speaker_tail.isActive()
+    live.speaker_tail.stop()
+    live.speaker_tail.timeout.emit()
+    assert live.state == 'listening'
+
+
 def test_float_windows_headset_audio_is_converted_to_signed_mono():
     raw = struct.pack('<ffffff', 0.5, 0.25, -1, -1, 1, 1)
     pcm = microphone_pcm(raw, 2, QAudioFormat.SampleFormat.Float)
@@ -39,7 +76,9 @@ def test_completed_audio_turn_delivers_both_transcripts_once(monkeypatch):
     app = QApplication.instance() or QApplication([])
     live = LiveVoice()
     heard = []
+    partial = []
     audio = []
+    live.heard_changed.connect(partial.append)
     live.turn_finished.connect(lambda user, reply: heard.append((user, reply)))
     monkeypatch.setattr(live, 'queue_audio', audio.append)
     live.set_state('listening')
@@ -53,6 +92,7 @@ def test_completed_audio_turn_delivers_both_transcripts_once(monkeypatch):
         },
     }))
     assert audio == [raw]
+    assert partial == ['என் குரல்']
     assert heard == []
     live.receive(json.dumps({'serverContent': {
         'inputTranscription': {'text': ' கேட்குதா?'},
@@ -60,6 +100,7 @@ def test_completed_audio_turn_delivers_both_transcripts_once(monkeypatch):
         'turnComplete': True,
     }}))
     assert heard == [('என் குரல் கேட்குதா?', 'கேட்குது, சொல்லுங்க.')]
+    assert partial == ['என் குரல்', 'என் குரல் கேட்குதா?']
     assert live.transcript == ['', '']
     assert struct.unpack('<8h', playback_pcm(raw, 48000, 2)) == (
         -100, -100, 550, 550, 1200, 1200, 1200, 1200,

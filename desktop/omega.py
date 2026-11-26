@@ -169,7 +169,9 @@ class Dock(QFrame):
     def update_active(self):
         window = self.controller.window
         for item in self.buttons:
-            active = window.pages.currentIndex() == window.page_indices[DESTINATIONS[item.name][0]]
+            section = DESTINATIONS[item.name][0]
+            active = (window.prime_shell.settings_button.isChecked() if section == 'Settings & Safety'
+                      else window.pages.currentIndex() == window.page_indices.get(section))
             if item.property('active') != active:
                 item.setProperty('active', active)
                 item.style().unpolish(item)

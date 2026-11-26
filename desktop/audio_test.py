@@ -4,7 +4,7 @@ from math import sin, tau
 from time import monotonic
 
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QTimer, Signal
-from PySide6.QtWidgets import QGridLayout, QGroupBox, QLabel, QProgressBar, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import QComboBox, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QProgressBar, QPushButton, QVBoxLayout
 
 try:
     from PySide6.QtMultimedia import QAudio, QAudioFormat, QAudioSink, QAudioSource, QMediaDevices
@@ -18,10 +18,11 @@ class AudioTest(QGroupBox):
 
     finished = Signal()
 
-    def __init__(self, voice, policy):
+    def __init__(self, voice, policy, store=None):
         super().__init__('Audio devices and testing')
         self.voice = voice
         self.policy = policy
+        self.store = store
         self.stream = None
         self.buffer = None
         self.mode = None
@@ -30,9 +31,23 @@ class AudioTest(QGroupBox):
         self.timer = QTimer(self, interval=80)
         self.timer.timeout.connect(self.poll)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 16, 12, 12)
+        layout.setSpacing(7)
         self.devices = QLabel('Open Settings to detect the default audio devices.')
         self.devices.setWordWrap(True)
-        layout.addWidget(self.devices)
+        self.devices.hide()
+        selectors = QGridLayout()
+        self.device_choices = {}
+        for row, (mode, label) in enumerate((('microphone', 'Microphone'), ('speaker', 'Speaker'))):
+            choice = QComboBox()
+            choice.setAccessibleName(label + ' device')
+            selectors.addWidget(QLabel(label), row, 0)
+            selectors.addWidget(choice, row, 1)
+            self.device_choices[mode] = choice
+        save = QPushButton('Save audio devices')
+        save.clicked.connect(self.save_devices)
+        selectors.addWidget(save, 2, 0, 1, 2)
+        layout.addLayout(selectors)
         controls = QGridLayout()
         for index, (label, slot) in enumerate((
             ('Refresh', self.refresh_devices), ('Test microphone', self.test_microphone),
@@ -44,9 +59,21 @@ class AudioTest(QGroupBox):
         layout.addLayout(controls)
         self.level = QProgressBar()
         self.level.setRange(0, 100)
+        self.level.setValue(0)
         self.level.setTextVisible(False)
         self.level.setAccessibleName('Microphone level')
-        layout.addWidget(self.level)
+        meters = QGridLayout()
+        meters.addWidget(QLabel('Microphone level'), 0, 0)
+        meters.addWidget(self.level, 0, 1)
+        self.level.setFixedHeight(16)
+        self.speaker_level = QProgressBar()
+        self.speaker_level.setRange(0, 100)
+        self.speaker_level.setValue(0)
+        self.speaker_level.setAccessibleName('Speaker test level')
+        self.speaker_level.setFixedHeight(16)
+        meters.addWidget(QLabel('Speaker test level'), 1, 0)
+        meters.addWidget(self.speaker_level, 1, 1)
+        layout.addLayout(meters)
         self.status = QLabel('Microphone test needs permission in Voice. Tests stay on this PC.')
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
@@ -61,6 +88,35 @@ class AudioTest(QGroupBox):
         self.devices.setText(
             f'Microphone: {mic.description() or "not detected"} ({len(inputs)} inputs)\n'
             f'Speaker: {speaker.description() or "not detected"} ({len(outputs)} outputs)')
+        for mode, devices in (('microphone', inputs), ('speaker', outputs)):
+            choice = self.device_choices[mode]
+            saved = self.saved_device_id(mode)
+            choice.clear()
+            choice.addItem('Windows default', '')
+            for device in devices:
+                choice.addItem(device.description(), bytes(device.id()).hex())
+            choice.setCurrentIndex(max(0, choice.findData(saved)))
+
+    def saved_device_id(self, mode):
+        return self.store.get('audio:device:' + mode, '') if self.store else ''
+
+    def save_devices(self):
+        if self.store is None:
+            return
+        for mode, choice in self.device_choices.items():
+            self.store.set('audio:device:' + mode, choice.currentData() or '')
+        self.status.setText('Audio devices saved.')
+
+    def audio_device(self, mode, *, use_selection=False):
+        picked = self.device_choices[mode].currentData() if use_selection else self.saved_device_id(mode)
+        microphone = mode == 'microphone'
+        fallback = QMediaDevices.defaultAudioInput if microphone else QMediaDevices.defaultAudioOutput
+        if picked:
+            devices = QMediaDevices.audioInputs() if microphone else QMediaDevices.audioOutputs()
+            for device in devices:
+                if bytes(device.id()).hex() == picked:
+                    return device
+        return fallback()
 
     def ready(self, mode):
         if QMediaDevices is None:
@@ -74,7 +130,7 @@ class AudioTest(QGroupBox):
             self.status.setText('Stop the current voice session or audio test first.')
             return False
         if mode == 'microphone' and self.voice.microphone_muted:
-            self.status.setText('Unmute the microphone before testing.')
+            self.status.setText('Unmute the microphone before testing it.')
             return False
         if mode == 'microphone' and not self.voice.consent.listening:
             self.status.setText('Enable Allow the microphone in Voice before testing.')
@@ -104,7 +160,7 @@ class AudioTest(QGroupBox):
     def test_microphone(self):
         if not self.ready('microphone'):
             return
-        device = QMediaDevices.defaultAudioInput()
+        device = self.audio_device('microphone', use_selection=True)
         fmt = self.begin('microphone', device, 5)
         if fmt is None:
             return
@@ -117,7 +173,7 @@ class AudioTest(QGroupBox):
     def test_speaker(self):
         if not self.ready('speaker'):
             return
-        device = QMediaDevices.defaultAudioOutput()
+        device = self.audio_device('speaker', use_selection=True)
         fmt = self.begin('speaker', device, 3)
         if fmt is None:
             return
@@ -134,6 +190,7 @@ class AudioTest(QGroupBox):
         self.status.setText('Playing a short tone through the default speaker.')
         self.stream = QAudioSink(device, fmt, self)
         self.stream.start(self.buffer)
+        self.speaker_level.setValue(round(4500 * 100 / 32768))
 
     def poll(self):
         if self.stream is None:
@@ -171,6 +228,7 @@ class AudioTest(QGroupBox):
             stream.stop()
             stream.deleteLater()
         if mode == 'speaker' and buffer is not None:
+            self.speaker_level.setValue(0)
             buffer.close()
             buffer.deleteLater()
         self.voice.audio_test_active = False

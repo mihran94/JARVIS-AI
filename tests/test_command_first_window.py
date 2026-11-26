@@ -19,9 +19,9 @@ def make_window(tmp_path):
 def test_main_toolbar_is_chat_island_settings_and_safety(tmp_path):
     app, window = make_window(tmp_path)
     try:
-        rail = window.prime_shell.rail_buttons
-        assert window.prime_shell.island_button.isVisible()
-        assert rail["Settings & Safety"].isVisible()
+        shell = window.prime_shell
+        assert shell.menu_button.isVisible()
+        assert shell.settings_button.isVisible()
         assert not window.resume_button.isVisible()
         assert any(button.text() == "Emergency stop" and button.isVisible()
                    for button in window.findChildren(QPushButton))
@@ -31,19 +31,17 @@ def test_main_toolbar_is_chat_island_settings_and_safety(tmp_path):
         app.processEvents()
         assert not window.omega.dock.isVisible()
         assert window.omega.reveal.isHidden()
-        window.prime_shell.island_button.click()
+        shell.menu_button.click()
+        shell.mini_view_button.click()
         app.processEvents()
         assert window.omega.mode == "Island"
         assert window.omega.floating.isVisible()
         window.omega.switch("Omega")
-        rail["Settings & Safety"].click()
+        shell.settings_button.click()
         app.processEvents()
-        assert window.pages.currentIndex() == window.page_indices["Settings & Safety"]
-        assert not window.chat_provider.isVisible()
-        assert window.settings_mode_button.text() == "Advanced settings"
-        window.settings_mode_button.click()
-        app.processEvents()
-        assert window.settings_category.currentText() == "Chat options, audio tests and connections"
+        assert window.settings_scroller.isVisibleTo(shell.settings_dialog)
+        tabs = window.settings_categories
+        tabs.setCurrentIndex(tabs.findText('AI Providers'))
         assert window.chat_provider.isVisible()
     finally:
         window.close()

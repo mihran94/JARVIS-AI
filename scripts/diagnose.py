@@ -1,4 +1,4 @@
-"""Offline installation checks. Never reads keys, chat history or environment values."""
+"""Installation checks and optional same-PC Ollama listing check. No keys or chat history."""
 import argparse
 import importlib.metadata
 import json
@@ -81,16 +81,38 @@ def probe_voice():
     return code == 0, messages.get(code, f'Voice runtime check failed (exit {code}).')
 
 
-def main():
+def probe_local_model(model):
+    # Keep the default diagnostics useful even when the runtime dependencies
+    # are missing. Only load the provider for an explicit listing check.
+    sys.path.insert(0, str(ROOT))
+    try:
+        from providers.ollama import probe_model_listing
+    except ImportError:
+        return False, 'Local Ollama listing check could not load its dependencies.'
+    finally:
+        sys.path.pop(0)
+    return probe_model_listing(model)
+
+
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--voice', action='store_true', help='also check native speech dependencies')
-    args = parser.parse_args()
+    parser.add_argument('--local-model', metavar='TAG',
+                        help='also check that the running local Ollama server lists TAG')
+    args = parser.parse_args(argv)
     report = collect()
     if args.voice:
         ok, detail = probe_voice()
         report['checks'].append(dict(name='Native voice runtime',
                                      status='pass' if ok else 'fail', detail=detail))
         report['ready'] = report['ready'] and ok
+    if args.local_model is not None:
+        ok, detail = probe_local_model(args.local_model)
+        report['checks'].append(dict(name='Local Ollama model listing',
+                                     status='pass' if ok else 'fail', detail=detail))
+        report['ready'] = report['ready'] and ok
+        report['limitations'] += (' The optional loopback listing does not verify model '
+                                  'generation, response quality or offline voice.')
     print(json.dumps(report, indent=2))
     return 0 if report['ready'] else 1
 

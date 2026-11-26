@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 import subprocess
 from types import SimpleNamespace
@@ -52,3 +53,38 @@ def test_bounded_child(monkeypatch,outcome):
     ok,message=diag.probe_imports()
     assert ok == (outcome==0)
     assert 'private path' not in message
+
+
+def test_default_does_not_probe_ollama(installed, monkeypatch, capsys):
+    def unexpected(_):
+        pytest.fail('default diagnostics contacted Ollama')
+    monkeypatch.setattr(diag, 'probe_local_model', unexpected)
+    assert diag.main([]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report['ready']
+    assert all('Ollama' not in check['name'] for check in report['checks'])
+
+
+@pytest.mark.parametrize('installed_ok,listed,code', [
+    (True, True, 0), (True, False, 1), (False, True, 1),
+])
+def test_requested_listing_contributes_to_exit_status(monkeypatch, capsys,
+                                                      installed_ok, listed, code):
+    monkeypatch.setattr(diag, 'collect', lambda: {
+        'ready': installed_ok, 'checks': [], 'limitations': 'Installation check only.',
+    })
+
+    def probe(tag):
+        assert tag == 'qwen3:8b'
+        return listed, 'listing result'
+
+    monkeypatch.setattr(diag, 'probe_local_model', probe)
+    assert diag.main(['--local-model', 'qwen3:8b']) == code
+    report = json.loads(capsys.readouterr().out)
+    assert report['ready'] == (code == 0)
+    assert report['checks'] == [{
+        'name': 'Local Ollama model listing',
+        'status': 'pass' if listed else 'fail',
+        'detail': 'listing result',
+    }]
+    assert 'does not verify model generation' in report['limitations']

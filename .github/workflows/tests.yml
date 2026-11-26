@@ -23,33 +23,6 @@ jobs:
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m pytest -q
 
-  phase1-cmd:
-    name: Phase 1 source verifier (Windows CMD)
-    if: >-
-      github.ref == 'refs/heads/dev/windows-cmd-phase1-acceptance-20261125' ||
-      (github.event_name == 'pull_request' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.head_ref == 'dev/windows-cmd-phase1-acceptance-20261125')
-    runs-on: windows-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Prepare throwaway checkout environment
-        shell: cmd
-        run: |
-          python -m venv .venv || exit /b 1
-          .venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-      - name: Run the source CMD entry point
-        shell: cmd
-        run: call VERIFY_JARVIS.cmd --phase1
-
-
   mcore-photo-cmd:
     name: M-CORE screenshot and controls (Windows CMD)
     if: >-
@@ -70,20 +43,23 @@ jobs:
         with:
           python-version: '3.12'
       - name: Prepare source test environment
+        id: prepare-mcore-source
         shell: cmd
         run: |
           python -m venv .venv || exit /b 1
           .venv\Scripts\python.exe -m pip install -r requirements-dev.txt
       - name: Run Windows CMD source verification
         shell: cmd
-        run: call VERIFY_JARVIS.cmd --phase1
+        run: call VERIFY_JARVIS.cmd
       - name: Check cockpit and controls
+        id: check-mcore
+        if: ${{ !cancelled() && steps.prepare-mcore-source.outcome == 'success' }}
         shell: cmd
         run: |
           set "JARVIS_MCORE_TEST_SCREENSHOT=%RUNNER_TEMP%\jarvis-mcore-hosted-windows.png"
           .venv\Scripts\python.exe -m pytest -q tests/test_mcore_cockpit.py tests/test_mcore_controls.py
       - name: Save synthetic cockpit preview
-        if: success()
+        if: ${{ !cancelled() && steps.check-mcore.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: mcore-hosted-windows-preview

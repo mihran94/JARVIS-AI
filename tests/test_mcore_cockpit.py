@@ -21,6 +21,8 @@ def opened_cockpit(tmp_path):
         window.resize(1227, 912)
         window.show()
         app.processEvents()
+        assert window.pages.currentWidget() is window.prime_chat
+        assert 'M-CORE' not in {window.nav.item(i).text() for i in range(window.nav.count())}
         window.prime_shell.cockpit_button.click()
         app.processEvents()
         yield window, window.mcore_cockpit, app
@@ -51,7 +53,7 @@ def test_cockpit_uses_reference_columns_and_keeps_settings_reachable(opened_cock
     assert str(datetime.now().year) in cockpit.date_label.text()
     cockpit.update_metrics({})
     assert cockpit.metrics['gpu_usage_percent'].readout == 'N/A'
-    cockpit.update_metrics(window.hud_usage_data)
+    cockpit.update_metrics(window.cockpit_usage)
     assert 'No briefing yet' in cockpit.news_output.toPlainText()
     assert 'Mic: off' == cockpit.mic_button.text()
 
@@ -66,7 +68,12 @@ def test_cockpit_uses_reference_columns_and_keeps_settings_reachable(opened_cock
 
     cockpit.settings_button.click()
     app.processEvents()
-    assert window.pages.currentIndex() == window.page_indices['Settings & Safety']
+    assert window.prime_shell.settings_dialog.isVisible()
+    assert window.pages.currentWidget() is cockpit
+    window.prime_shell.settings_dialog.close()
+    cockpit.prime_button.click()
+    app.processEvents()
+    assert window.pages.currentWidget() is window.prime_chat
     assert window.prime_shell.top_bar.isVisible()
 
 
@@ -157,3 +164,38 @@ def test_cockpit_reports_capture_not_just_provider_selection(opened_cockpit):
         assert cockpit.mic_button.text() == 'Mic: playback paused'
     finally:
         window.live_voice = None
+
+
+def test_cockpit_return_preserves_original_prime_displays(opened_cockpit, monkeypatch):
+    window, cockpit, app = opened_cockpit
+    chat = window.prime_chat
+    launch = lambda *_a, **_k: pytest.fail('No audio or camera device may start')
+    monkeypatch.setattr(window, 'toggle_live_voice', launch)
+    monkeypatch.setattr(window.camera_panel, 'start', launch, raising=False)
+
+    # Exercise widget selection only. Never toggle camera capture or fetch Media.
+    chat.show_camera_preview(True)
+    assert chat.displays.currentWidget() is chat.camera_preview
+    cockpit.prime_button.click()
+    app.processEvents()
+    assert window.pages.currentWidget() is chat
+    assert chat.displays.currentWidget() is window.camera_panel.preview
+    terminal = chat.terminal
+    chat.show_display('media')
+    window.prime_shell.cockpit_button.click()
+    cockpit.prime_button.click()
+    app.processEvents()
+    assert chat.displays.currentWidget() is chat.youtube
+    assert chat.terminal is terminal
+
+
+def test_cockpit_offers_existing_news_without_auto_fetch(opened_cockpit, monkeypatch):
+    window, cockpit, app = opened_cockpit
+    monkeypatch.setattr(window, 'start_news_briefing', lambda *_a: pytest.fail('No news fetch'))
+    # Basic navigation is offline; only a user pressing Fetch in the real News panel requests it.
+    window.open_news_briefing()
+    app.processEvents()
+    assert window.prime_shell.drawer_content.currentWidget() is window.news_panel
+    assert window.pages.currentWidget() is cockpit
+    window.news_panel.output.setPlainText('Offline fixture: briefing result.')
+    assert cockpit.news_output.toPlainText() == 'Offline fixture: briefing result.'

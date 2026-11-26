@@ -11,6 +11,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QTextCursor
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QFrame, QLabel, QPushButton
 
 from desktop.app import Window
@@ -38,20 +41,51 @@ def test_the_window_has_the_prime_composition(tmp_path):
         window.close()
 
 
-def test_overview_uses_live_values_and_gives_task_details_room(tmp_path):
+def test_the_compact_hud_keeps_one_stop_and_leaves_room_for_chat(tmp_path):
     app, window = make_window(tmp_path)
     try:
         shell = window.prime_shell
-        window.resize(1440, 740)
+        window.showNormal()
+        window.resize(1093, 614)
         app.processEvents()
-        assert shell.overview.isVisibleTo(window)
-        shell.update_usage({'cpu_usage_percent': 18, 'ram_usage_percent': 52})
-        assert shell.usage_button.text() == 'CPU 18%  ·  RAM 52%'
-        assert shell.overview_usage['cpu_usage_percent'][1].value() == 18
-        assert shell.overview_usage['gpu_usage_percent'][1].isHidden()
-        shell.usage_button.click()
+        assert not window.hud.isVisibleTo(window)
+        assert shell.state_chip.isVisibleTo(window)
+        assert shell.findChild(QFrame, 'primeOverview') is None
+        stops = [button for button in shell.findChildren(QPushButton)
+                 if button.text() == 'Emergency stop' and button.isVisibleTo(window)]
+        assert stops == [shell.stop_button]
+        assert window.send_button.isVisibleTo(window)
+        assert window.send_button.mapTo(window, window.send_button.rect().bottomRight()).x() < window.width()
+        shell.menu_items['PC Control'].click()
+        window.automation_workspace_button.click()
+        window.automation_tools['PC usage'].click()
         assert window.prime_chat.task_area.isVisibleTo(window)
-        assert shell.overview.isHidden()
+        assert shell.state_chip.isVisibleTo(window)
+    finally:
+        window.close()
+
+
+def test_the_automation_rail_groups_tools_and_previews_suggestions(tmp_path):
+    app, window = make_window(tmp_path)
+    try:
+        assert window.prime_shell.menu_items['PC Control'].text() == 'Automation'
+        window.prime_shell.menu_items['PC Control'].click()
+        panel = window.automation_panel
+        assert panel.browser_command.isVisibleTo(window)
+        assert panel.suggestion_mode.isVisibleTo(window)
+        panel.suggestion_mode.setChecked(True)
+        panel.goal.setText('Open Calculator and calculate: 17 * 23')
+        panel.work_button.click()
+        assert window.suggested_steps[0].app == 'Calculator'
+        assert window.chat_launch is None
+        assert window.desktop_pending is None
+        assert window.pages.currentWidget() is window.prime_chat
+        assert window.prime_chat.task_area.isAncestorOf(panel)
+        assert window.prime_chat.chat_history.isVisibleTo(window)
+        assert window.send_button.isVisibleTo(window)
+        assert window.suggestion_card.isVisibleTo(window)
+        assert panel.isAncestorOf(window.suggestion_card)
+        assert window.suggestion_mode.isHidden()
     finally:
         window.close()
 
@@ -65,17 +99,25 @@ def test_conversation_settings_change_the_chat_reply_and_survive_restart(tmp_pat
                         sent.append(messages))
     try:
         window.open_section('Settings & Safety')
-        scroller = window.pages.currentWidget()
-        assert window.reply_language.isVisibleTo(window)
+        scroller = window.settings_scroller
+        dialog = window.prime_shell.settings_dialog
+        assert not window.reply_language.isVisibleTo(dialog)
+        window.advanced_voice_toggle.setChecked(True)
+        assert not window.reply_language.isVisibleTo(dialog)
         assert window.reply_language.currentData() == 'auto'
         assert window.reply_tone.currentData() == 'friendly'
-        window.open_saved_projects()
+        tabs = window.settings_categories
+        system_tab = tabs.findText('System')
+        tabs.setCurrentIndex(system_tab)
         app.processEvents()
+        assert not window.reply_language.isVisibleTo(dialog)
         scroll = scroller.verticalScrollBar()
         scroll.setValue(scroll.maximum())
         assert scroll.value() > 0
         window.open_section('Settings & Safety')
         assert scroll.value() == 0
+        assert dialog.isVisible()
+        assert window.get_key('Gemini') == 'test-key'
 
         window.open_section('JARVIS Chat')
         window.prompt.setPlainText('Namma ippo enna pesalam?')
@@ -87,7 +129,7 @@ def test_conversation_settings_change_the_chat_reply_and_survive_restart(tmp_pat
         window.reply_language.setCurrentIndex(window.reply_language.findData('tanglish'))
         window.reply_tone.setCurrentIndex(window.reply_tone.findData('direct'))
         window.open_section('JARVIS Chat')
-        assert window.prime_chat.assistant.title.text() == 'Enna help venum?'
+        assert window.prime_chat.assistant.title.text() == 'What can I help with?'
         window.prompt.setPlainText('தமிழ்ல சொல்லுங்க. இன்று என்ன பேசலாம்?')
         window.send()
         assert 'Use conversational Tamil in Latin script by default' in sent[-1][0]['content']
@@ -102,7 +144,7 @@ def test_conversation_settings_change_the_chat_reply_and_survive_restart(tmp_pat
     try:
         assert window.reply_language.currentData() == 'tanglish'
         assert window.reply_tone.currentData() == 'direct'
-        assert window.prime_chat.assistant.title.text() == 'Enna help venum?'
+        assert window.prime_chat.assistant.title.text() == 'What can I help with?'
     finally:
         window.close()
         window.deleteLater()
@@ -133,9 +175,7 @@ def test_resume_stays_inside_the_assistant_and_provider_is_visible(tmp_path):
     try:
         shell = window.prime_shell
         assert shell.isAncestorOf(window.resume_button)
-        assert shell.provider_label.text() == (
-            'Selected chat route: ' + window.brain_label.text().removeprefix('Active brain: ')
-        )
+        assert shell.provider_label.text() == 'Chat · ' + window.brain_label.text().removeprefix('Active brain: ')
         shell.stop_button.click()
         assert shell.state_chip.text() == 'STOPPED'
         assert window.resume_button.isVisibleTo(window)
@@ -181,13 +221,15 @@ def test_source_revision_resolves_in_a_git_worktree(tmp_path, monkeypatch):
     assert ui.build_commit() == git('rev-parse', 'HEAD')[:7]
 
 
-def test_the_rail_has_the_destinations(tmp_path):
+def test_the_top_bar_and_automation_have_the_destinations(tmp_path):
     app, window = make_window(tmp_path)
     try:
-        rail = window.prime_shell.rail_buttons
-        for section in ('JARVIS Chat', 'Files & Folders', 'Voice / Hey Jarvis',
-                        'Cybersecurity', 'Memory', 'Settings & Safety'):
-            assert section in rail, section
+        shell = window.prime_shell
+        bar = shell.top_bar.layout()
+        assert bar.indexOf(shell.menu_button) == bar.indexOf(shell.settings_button) + 1
+        assert set(shell.menu_items) == {'JARVIS Chat', 'PC Control'}
+        assert {'Projects', 'Files & folders', 'Task queue', 'Workflows', 'Review changes'} <= set(
+            window.automation_tools)
     finally:
         window.close()
 
@@ -196,15 +238,26 @@ def test_the_composer_uses_the_real_prompt_and_the_real_buttons(tmp_path):
     app, window = make_window(tmp_path)
     try:
         chat = window.prime_chat
+        assert chat.chat_history.isAncestorOf(chat.conversation)
+        assert chat.chat_history.isAncestorOf(window.prompt)
+        assert chat.chat_history.isAncestorOf(chat.assistant.heard)
+        assert chat.chat_history.layout().indexOf(chat.conversation) < chat.chat_history.layout().indexOf(chat.composer)
         assert chat.composer.body.indexOf(window.prompt) >= 0
         controls = chat.composer.body.itemAt(1).layout()
         found = [controls.itemAt(index).widget()
                  for index in range(controls.count())
                  if controls.itemAt(index).widget() is not None]
-        assert window.send_button in found
-        assert window.chat_mic in found
-        assert window.attach_button in found
-        assert window.research_button in found
+        assert found == [window.prime_shell.mic_mute_button, window.camera_toggle,
+                         window.attach_button, window.send_button]
+        assert chat.voice_button.isHidden()
+        assert chat.suggestions_button.isHidden()
+        chat.populate_suggestions()
+        assert 'Suggest next steps' in [action.text() for action in chat.suggestions_menu.actions()]
+        window.prompt.setPlainText('Open Calculator')
+        chat.populate_suggestions()
+        assert 'Suggest with Gemini' in [
+            action.text() for action in chat.suggestions_menu.actions()]
+        assert chat.safety_controls.indexOf(window.prime_shell.stop_button) >= 0
     finally:
         window.close()
 
@@ -239,25 +292,39 @@ def test_the_conversation_shows_the_messages_as_a_column(tmp_path):
         # A message is a bubble and not a line of text.
         assert isinstance(bubbles[0], PrimeBubble)
         assert isinstance(bubbles[0], QFrame)
+        chat = window.prime_chat
+        chat.render([{'role': 'assistant', 'content': 'This wraps across several lines. ' * 9}
+                     for _ in range(14)])
+        for _ in range(4):
+            app.processEvents()
+        window.open_section('Settings & Safety')
+        for _ in range(4):
+            app.processEvents()
+        bar = conversation.verticalScrollBar()
+        last = conversation.bubbles[-1]
+        assert bar.value() == bar.maximum()
+        assert conversation.viewport().rect().contains(
+            last.mapTo(conversation.viewport(), last.rect().bottomLeft()))
     finally:
         window.close()
 
 
-def test_the_assistant_steps_aside_for_the_conversation(tmp_path):
+def test_the_hologram_stays_visible_beside_the_conversation(tmp_path):
     app, window = make_window(tmp_path)
     try:
         chat = window.prime_chat
         mark = window.prime_shell.mark
         chat.render([])
-        assert chat.states.currentIndex() == 0
+        assert chat.empty_history.isVisibleTo(window)
         assert chat.assistant.orb.isVisibleTo(window)
         assert chat.assistant.orb._timer.isActive()
-        assert mark.isHidden()
+        assert mark.isVisibleTo(window)
 
         chat.render([{'role': 'user', 'content': 'hello'}])
-        assert chat.states.currentIndex() == 1
+        assert chat.conversation.isVisibleTo(window)
+        assert chat.assistant.orb.isVisibleTo(window)
+        assert chat.assistant.orb._timer.isActive()
         assert mark.isVisibleTo(window)
-        assert not chat.assistant.orb._timer.isActive()
 
         chat.render([])
         window.open_section('PC Control')
@@ -267,7 +334,7 @@ def test_the_assistant_steps_aside_for_the_conversation(tmp_path):
         assert mark.isVisibleTo(window)
 
         window.open_section('JARVIS Chat')
-        assert mark.isHidden()
+        assert mark.isVisibleTo(window)
         assert chat.assistant.orb.isVisibleTo(window)
         window.store.set('omega:reduced', True)
         window.refresh_prime_state()
@@ -282,7 +349,8 @@ def test_the_state_reaches_the_shell_and_the_island(tmp_path):
         window.prime_state = lambda: 'listening'
         window.refresh_prime_state()
         assert window.prime_shell.state_chip.text() == 'LISTENING'
-        assert window.prime_shell.mark.state == 'listening'
+        assert window.prime_shell.mark.text() == 'M'
+        assert window.prime_chat.assistant.orb.state == 'listening'
         window.prime_state = lambda: 'working'
         window.refresh_prime_state()
         assert window.prime_shell.state_chip.text() == 'WORKING'
@@ -290,13 +358,13 @@ def test_the_state_reaches_the_shell_and_the_island(tmp_path):
         window.close()
 
 
-def test_the_rail_marks_the_page_that_is_open(tmp_path):
+def test_the_menu_marks_the_workspace_that_is_open(tmp_path):
     app, window = make_window(tmp_path)
     try:
         window.open_section('Memory')
         for _ in range(2):
             app.processEvents()
-        assert window.prime_shell.rail_buttons['Memory'].isChecked()
+        assert window.prime_shell.menu_items['PC Control'].isEnabled()
     finally:
         window.close()
 
@@ -322,13 +390,16 @@ def test_the_palette_has_two_sides():
     assert dark.accent.name() != ''
 
 
-def test_the_rail_buttons_are_not_the_old_toolbar(tmp_path):
+def test_the_menu_replaces_the_toolbar(tmp_path):
     app, window = make_window(tmp_path)
     try:
-        # The old toolbar button that opened the Island is not in the rail.
-        for button in window.prime_shell.rail_buttons.values():
-            assert isinstance(button, QPushButton)
-            assert button.text() not in ('Tools', 'Plugins')
+        shell = window.prime_shell
+        assert shell.findChild(QFrame, 'primeRail') is None
+        shell.menu_button.click()
+        assert shell.drawer.isVisibleTo(window)
+        assert [button.text() for button in shell.menu_items.values()] == [
+            'Chat', 'Automation']
+        assert shell.mini_view_button.text() == 'Mini view'
     finally:
         window.close()
 
@@ -337,26 +408,27 @@ def test_activity_panel_shows_live_state_and_persisted_action_result(tmp_path):
     app, window = make_window(tmp_path)
     try:
         shell = window.prime_shell
-        shell.activity_button.click()
-        assert shell.activity.isVisibleTo(window)
-        assert shell.activity.empty.isVisibleTo(window)
+        window.prime_chat.show_display('timeline')
+        timeline = window.prime_chat.timeline
+        assert timeline.isVisibleTo(window)
+        assert timeline.empty.isVisibleTo(window)
 
         ident = window.store.task('open_app', 'Awaiting approval')
         window.refresh_history()
-        assert shell.activity.records.currentItem().text() == 'Open app\nPending'
-        assert 'Awaiting approval' in shell.activity.details.toPlainText()
+        assert timeline.records.currentItem().text() == 'Open app\nPending'
+        assert 'Awaiting approval' in timeline.details.toPlainText()
 
         window.store.finish(ident, 'dispatched', 'Started process. Window unverified.')
         window.refresh_history()
-        assert shell.activity.records.currentItem().text() == 'Open app\nDispatched'
-        assert 'Window unverified.' in shell.activity.details.toPlainText()
+        assert timeline.records.currentItem().text() == 'Open app\nDispatched'
+        assert 'Window unverified.' in timeline.details.toPlainText()
 
         window.stop()
-        assert shell.activity.state.text() == 'Stopped'
+        assert timeline.state.text() == 'Stopped'
         assert shell.state_chip.text() == 'STOPPED'
         shell.open_task_history()
         app.processEvents()
-        assert shell.activity.isHidden()
+        assert not timeline.isVisibleTo(window)
         assert window.pages.currentIndex() == window.page_indices['Task History']
     finally:
         window.close()
@@ -371,7 +443,7 @@ def test_saved_chat_is_loaded_as_plain_text_when_prime_starts(tmp_path):
     _app, window = make_window(tmp_path)
     try:
         chat = window.prime_chat
-        assert chat.states.currentWidget() is chat.conversation
+        assert chat.conversation.isVisibleTo(window)
         first, = chat.conversation.bubbles
         assert first.body.text() == '<b>saved message</b>'
         assert first.body.textFormat().name == 'PlainText'
@@ -406,5 +478,180 @@ def test_wake_summons_the_window_and_animates_the_m_after_consent(tmp_path, monk
         assert summoned == [True]
         assert window.pages.currentWidget() is window.prime_chat
         assert window.prime_chat.assistant.orb._wake_timer.isActive()
+    finally:
+        window.close()
+
+
+def test_hud_links_voice_feedback_and_keyboard_emergency_stop(tmp_path):
+    app, window = make_window(tmp_path)
+    try:
+        window.prime_chat.show_display('timeline')
+        assert window.prime_chat.timeline.isVisibleTo(window)
+        window.open_news_briefing()
+        assert window.news_panel.isVisibleTo(window)
+        assert not window.news_panel.isWindow()
+        window.prime_shell.close_drawer()
+        window.open_section('Quantum Visual Player')
+        assert window.prime_chat.displays.isAncestorOf(window.player_panel)
+        assert window.player_panel.isVisibleTo(window)
+        window.prime_chat.show_display('hologram')
+
+        window.voice_panel.allow.setChecked(True)
+        window.on_voice_transcript('நாளைக்கு ஒரு quick break')
+        assert 'quick break' in window.prime_chat.assistant.heard.toPlainText()
+        full_sentence = ('இன்னைக்கு meeting முடிஞ்சதும் ஒரு quick break எடுக்கலாம். ' * 4).strip()
+        window.prime_chat.assistant.show_heard(full_sentence)
+        assert window.prime_chat.assistant.heard.toPlainText().endswith(full_sentence)
+        assert window.prime_chat.assistant.heard.isReadOnly()
+        window.prime_shell.mic_mute_button.click()
+        assert window.voice_panel.consent.listening
+        assert window.voice_panel.microphone_muted
+        assert not window.voice_panel.listen_button.isEnabled()
+        window.prime_shell.mic_mute_button.click()
+        assert not window.voice_panel.microphone_muted
+        window.prime_shell.output_mute_button.click()
+        assert window.voice_panel.muted
+        assert window.voice_panel.consent.listening
+        window.voice_panel.mute_button.click()
+        assert not window.prime_shell.output_mute_button.isChecked()
+
+        window.prompt.setPlainText('/stop')
+        window.prompt.moveCursor(QTextCursor.MoveOperation.End)
+        QTest.keyClick(window.prompt, Qt.Key.Key_Return, Qt.KeyboardModifier.ShiftModifier)
+        assert window.prompt.toPlainText() == '/stop\n'
+        assert not window.policy.stopped
+        QTest.keyClick(window.prompt, Qt.Key.Key_Enter)
+        assert window.policy.stopped
+        assert window.prime_chat.assistant.orb.state == 'stopped'
+        assert not window.prompt.toPlainText()
+    finally:
+        window.close()
+
+
+def test_provider_key_autosaves_without_contacting_provider(tmp_path, monkeypatch):
+    app, window = make_window(tmp_path)
+    saved = []
+    monkeypatch.setattr(window.vault, 'put', lambda provider, key: saved.append((provider, key)))
+    monkeypatch.setattr(window, 'check_model_availability', lambda: pytest.fail('Unexpected API check'))
+    try:
+        window.open_section('AI Providers')
+        window.provider.setCurrentText('Gemini')
+        window.secret.setFocus()
+        QTest.keyClicks(window.secret, 'test-credential')
+        QTest.keyClick(window.secret, Qt.Key.Key_Return)
+        assert saved == [('Gemini', 'test-credential')]
+        assert not window.secret.text()
+        assert 'Stored' in window.key_status.text()
+    finally:
+        window.close()
+
+
+def test_welcome_and_spoken_update_use_the_existing_local_routes(tmp_path, monkeypatch):
+    app, window = make_window(tmp_path)
+    try:
+        spoken = []
+        window.preferred_name.setText('தமிழ் பயனர்')
+        window.preferred_name.editingFinished.emit()
+        assert window.store.get('chat:preferred_name') == 'தமிழ் பயனர்'
+        window.startup_greeting.setChecked(True)
+        monkeypatch.setattr(window, 'read_with_gemini', spoken.append)
+        window.start_window_audio()
+        assert 'தமிழ் பயனர்' in window.prime_shell.startup_notice.text()
+        assert spoken == [window.prime_shell.startup_notice.text()]
+
+        opened = []
+        monkeypatch.setattr(window, 'start_improvement',
+                            lambda *, show_review: opened.append(
+                                (window.improvement_goal.text(), show_review)))
+        window.voice_panel.allow.setChecked(True)
+        window.on_voice_transcript('Jarvis update pannu improve the mic indicator')
+        assert opened == [('improve the mic indicator', True)]
+        assert not window.route_self_update('I was asking about how update pannu works')
+    finally:
+        window.close()
+
+
+def test_gemini_voice_waits_for_the_local_listener_to_release_the_mic(tmp_path, monkeypatch):
+    app, window = make_window(tmp_path)
+    class LocalListener:
+        running = True
+        interrupted = False
+
+        def isRunning(self):
+            return self.running
+
+        def isInterruptionRequested(self):
+            return self.interrupted
+
+        def requestInterruption(self):
+            self.interrupted = True
+
+    listener = LocalListener()
+    opened = []
+    monkeypatch.setattr(window, 'get_key', lambda _: 'test-key')
+    monkeypatch.setattr(window, 'confirm', lambda _: True)
+    monkeypatch.setattr(window, 'finish_live_voice_start', opened.append)
+    try:
+        window.voice_panel.allow.setChecked(True)
+        window.voice_panel.worker = listener
+        window.prime_chat.voice_button.click()
+        assert listener.interrupted and window.live_voice_starting
+        assert opened == []
+        listener.running = False
+        window.voice_panel.cycle_finished.emit()
+        assert opened == ['test-key']
+    finally:
+        window.voice_panel.worker = None
+        window.close()
+
+
+def test_live_mixed_speech_is_saved_and_camera_requests_route(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    app, window = make_window(tmp_path)
+    sent = []
+    try:
+        monkeypatch.setattr(window.camera_panel, 'snapshot', lambda: b'jpeg')
+        window.live_voice = SimpleNamespace(look_at=lambda image, text: sent.append((image, text)) or True)
+        assert window.route_camera_question('கேமரா விப் பண்ணி பாரு')
+        assert sent == [(b'jpeg', 'கேமரா விப் பண்ணி பாரு')]
+        window.live_voice = None
+        spoken = 'இன்னைக்கு meeting முடிஞ்சதும் ஒரு quick break எடுக்கலாமா?'
+        window.save_live_voice_turn(spoken, 'எடுக்கலாம் மிஹ்ரான் பாஸ்.')
+        messages = window.store.messages(window.session)
+        assert messages[-2]['content'] == spoken
+        assert messages[-1]['content'] == 'எடுக்கலாம் மிஹ்ரான் பாஸ்.'
+    finally:
+        window.live_voice = None
+        window.close()
+
+
+def test_settings_close_outside_without_resizing_chat(tmp_path):
+    app, window = make_window(tmp_path)
+    try:
+        geometry = window.prime_chat.geometry()
+        window.open_section('Settings & Safety')
+        app.processEvents()
+        assert window.prime_chat.geometry() == geometry
+        assert window.prime_shell.settings_dialog.isVisible()
+        QTest.mouseClick(window.prime_shell.brand, Qt.MouseButton.LeftButton)
+        app.processEvents()
+        assert not window.prime_shell.settings_dialog.isVisible()
+        window.open_section('Settings & Safety')
+        window.prime_shell.show_drawer('menu')
+        assert not window.prime_shell.settings_dialog.isVisible()
+    finally:
+        window.close()
+
+
+def test_slash_suggestion_goes_to_gemini_without_running_a_pc_action(tmp_path, monkeypatch):
+    app, window = make_window(tmp_path)
+    calls = []
+    monkeypatch.setattr(window, 'send_chat_reply', lambda text, **options: calls.append((text, options)))
+    try:
+        window.prompt.setPlainText('/suggestion help me edit a short video')
+        window.send()
+        assert calls == [('help me edit a short video', {'suggestion': True, 'suggestions_online': True})]
+        assert window.desktop_pending is None
+        assert window.chat_launch is None
     finally:
         window.close()
