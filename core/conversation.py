@@ -33,7 +33,7 @@ def self_update_argument(text):
 def suggestion_argument(text):
     """Return the goal for /suggest, or None for an ordinary message."""
     words = addressed_request(text).split(maxsplit=1)
-    if words and words[0].casefold() == '/suggest':
+    if words and words[0].casefold() in ('/suggest', '/suggestion'):
         return words[1] if len(words) == 2 else ''
     return None
 

@@ -46,7 +46,7 @@ from PySide6.QtGui import (
     QPen, QRadialGradient, QShortcut,
 )
 from PySide6.QtWidgets import (
-    QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy,
+    QApplication, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLayout, QMenu, QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy,
     QStackedWidget, QVBoxLayout, QWidget,
 )
 
@@ -392,10 +392,13 @@ class PrimeBubble(QFrame):
     def fit_to_text(self, cap: int = 660):
         """The bubble is as wide as the words need and no wider."""
         metrics = QFontMetrics(self.body.font())
-        width = metrics.horizontalAdvance(self.body.text()) + 34
-        self.setFixedWidth(max(1, min(cap, max(135, width))))
-        self.setMinimumHeight(0)
-        self.updateGeometry()
+        width = max(1, min(cap, max(135, metrics.horizontalAdvance(self.body.text()) + 34)))
+        layout = self.layout()
+        margins = layout.contentsMargins()
+        body_width = max(1, width - margins.left() - margins.right())
+        body_height = max(self.body.fontMetrics().height(), self.body.heightForWidth(body_width))
+        height = margins.top() + self.who.sizeHint().height() + layout.spacing() + body_height + margins.bottom()
+        self.setFixedSize(width, height)
 
     def set_content(self, content: str):
         self.body.setText(content)
@@ -424,7 +427,8 @@ class PrimeConversation(QScrollArea):
         self._layout = QVBoxLayout(self._holder)
         self._layout.setContentsMargins(4, 4, 4, 4)
         self._layout.setSpacing(12)
-        self._layout.addStretch(1)
+        self._layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self._layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         self.setWidget(self._holder)
         self._rows = []
         self._messages = []
@@ -445,9 +449,13 @@ class PrimeConversation(QScrollArea):
             bubble.refresh_theme()
 
     def resizeEvent(self, event):
+        bar = self.verticalScrollBar()
+        follow_latest = bar.value() >= bar.maximum() - 8
         super().resizeEvent(event)
         for bubble in self.bubbles:
             bubble.fit_to_text(self.bubble_width())
+        if follow_latest:
+            QTimer.singleShot(0, self, lambda: bar.setValue(bar.maximum()))
 
     def bubble_width(self):
         return min(self.MAX_WIDTH, self.viewport().width() - 8)
@@ -482,7 +490,7 @@ class PrimeConversation(QScrollArea):
                 row.addWidget(bubble, 0, Qt.AlignmentFlag.AlignLeft
                               | Qt.AlignmentFlag.AlignTop)
                 row.addStretch(1)
-            self._layout.insertLayout(self._layout.count() - 1, row)
+            self._layout.addLayout(row)
             self._rows.append(row)
         self._messages = messages
         self._layout.activate()
@@ -521,11 +529,17 @@ class PrimeAssistant(QWidget):
         self.hint.setWordWrap(True)
         self.hint.setStyleSheet(f'color: {palette.muted.name()}; font-size: 13px;')
         layout.addWidget(self.hint)
-        self.heard = QLabel()
-        self.heard.setWordWrap(True)
-        self.heard.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.heard.setTextFormat(Qt.TextFormat.PlainText)
-        self.heard.setMaximumHeight(54)
+        self.caption = QLabel()
+        self.caption.setAccessibleName('Hologram captions')
+        self.caption.setWordWrap(True)
+        self.caption.setTextFormat(Qt.TextFormat.PlainText)
+        self.caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.caption.hide()
+        layout.addWidget(self.caption)
+        self.heard = QPlainTextEdit()
+        self.heard.setReadOnly(True)
+        self.heard.setAccessibleName('Heard')
+        self.heard.setFixedHeight(70)
         self.heard.hide()
         layout.addWidget(self.heard)
         layout.addStretch(1)
@@ -574,28 +588,25 @@ class PrimeAssistant(QWidget):
             self.refresh_greeting()
 
     def show_heard(self, text):
-        self.heard.setText('Heard  ·  ' + text[:160] + ('…' if len(text) > 160 else ''))
-        self.heard.setToolTip(text)
+        self.heard.setPlainText('Heard  ·  ' + text)
         self.heard.show()
+        self.caption.setText(text)
+        self.refresh_caption()
+
+    def refresh_caption(self):
+        window = self.window_ref
+        self.caption.setVisible(bool(self.caption.text()) and not window.voice_panel.microphone_muted
+                                and bool(window.store.get('appearance:hologram_captions', False)))
 
 
-class PrimeComposer(QFrame):
-    """The composer: the prompt and the controls, in one glass card."""
+class PrimeComposer(QWidget):
+    """The prompt and controls at the bottom of the chat panel."""
 
-    def __init__(self, palette: PrimePalette, parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self.palette_ = palette
         self.setObjectName('primeComposer')
-        self.setMaximumWidth(900)
-        self.setStyleSheet(
-            f'QFrame#primeComposer {{ background: rgba({palette.glass.red()}, '
-            f'{palette.glass.green()}, {palette.glass.blue()}, {palette.glass.alpha()});'
-            f' border: 1px solid rgba({palette.glass_edge.red()}, '
-            f'{palette.glass_edge.green()}, {palette.glass_edge.blue()}, '
-            f'{palette.glass_edge.alpha()}); border-radius: 5px; }}')
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 12, 14, 12)
-        layout.setSpacing(10)
+        layout.setContentsMargins(0, 0, 0, 0)
         self.body = QVBoxLayout()
         self.body.setSpacing(10)
         layout.addLayout(self.body)
@@ -620,25 +631,16 @@ class PrimeComposer(QFrame):
         row_width = (sum(button.sizeHint().width() for button in self.buttons)
                      + self.controls.spacing() * (len(self.buttons) - 1)
                      + margins.left() + margins.right())
-        compact = self.width() < max(550, row_width)
+        compact = self.width() < row_width
         if compact == self._compact:
             return
         self._compact = compact
-        columns = 4 if compact else len(self.buttons)
+        columns = min(3, len(self.buttons)) if compact else len(self.buttons)
         for index, button in enumerate(self.buttons):
             row, column = divmod(index, columns)
             self.controls.addWidget(button, row, column)
         for column in range(len(self.buttons)):
             self.controls.setColumnStretch(column, int(column < columns))
-
-    def refresh_theme(self):
-        palette = self.palette_
-        self.setStyleSheet(
-            f'QFrame#primeComposer {{ background: rgba({palette.glass.red()}, '
-            f'{palette.glass.green()}, {palette.glass.blue()}, {palette.glass.alpha()});'
-            f' border: 1px solid rgba({palette.glass_edge.red()}, '
-            f'{palette.glass_edge.green()}, {palette.glass_edge.blue()}, '
-            f'{palette.glass_edge.alpha()}); border-radius: 5px; }}')
 
 
 class PrimeChat(QWidget):
@@ -657,43 +659,28 @@ class PrimeChat(QWidget):
         dashboard.setContentsMargins(0, 0, 0, 0)
         dashboard.setHorizontalSpacing(16)
 
-        self.right_panel = QWidget()
-        self.right_panel.setMinimumWidth(266)
-        self.right_panel.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
-        self.right_layout = QVBoxLayout(self.right_panel)
-        self.right_layout.setContentsMargins(0, 0, 0, 0)
-        self.right_layout.setSpacing(10)
-
         self.chat_history = GlassCard(palette)
+        self.chat_history.setMinimumWidth(266)
+        self.chat_history.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
         history = QVBoxLayout(self.chat_history)
         history.setContentsMargins(14, 13, 14, 13)
-        history_title = QLabel('CHAT HISTORY')
+        history.setSpacing(8)
+        history_title = QLabel('CHAT')
         history_title.setObjectName('hudSectionTitle')
-        history.addWidget(history_title)
+        chat_header = QHBoxLayout()
+        chat_header.addWidget(history_title, 1)
+        history.addLayout(chat_header)
+        self.safety_controls = QGridLayout()
+        self.safety_controls.setSpacing(6)
+        self._safety_buttons = ()
+        history.addLayout(self.safety_controls)
+        self.chat_history.installEventFilter(self)
         self.conversation = PrimeConversation(palette)
         history.addWidget(self.conversation, 1)
         self.empty_history = QLabel('Your conversation will appear here.')
         self.empty_history.setWordWrap(True)
         history.addWidget(self.empty_history, 1)
-        window.archives.setSizeAdjustPolicy(window.archives.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        window.archives.setMinimumContentsLength(12)
-        window.archives.setPlaceholderText('Saved conversations')
-        window.archives.setAccessibleName('Saved conversations')
-        history.addWidget(window.archives)
-        archive_actions = QHBoxLayout()
-        for title, button in (('Open', window.archive_button), ('New', window.new_chat_button)):
-            button.setText(title)
-            archive_actions.addWidget(button)
-        history.addLayout(archive_actions)
-        self.safety_controls = QGridLayout()
-        self.safety_controls.setSpacing(6)
-        self._safety_buttons = ()
-        self.right_panel.installEventFilter(self)
-        history.insertLayout(1, self.safety_controls)
-        self.chat_history.setMinimumWidth(150)
-        self.chat_history.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
-        self.right_layout.addWidget(self.chat_history, 1)
-        dashboard.addWidget(self.right_panel, 0, 2)
+        dashboard.addWidget(self.chat_history, 0, 2)
 
         display = QWidget()
         display.setMinimumWidth(145)
@@ -712,8 +699,17 @@ class PrimeChat(QWidget):
         self.timeline.closed.connect(lambda: self.show_display('hologram'))
         self.displays.addWidget(self.assistant)
         self.displays.addWidget(self.timeline)
+        self.camera_preview = window.camera_panel.preview
+        self.camera_preview.setMinimumHeight(0)
+        self.camera_preview.setMaximumHeight(16777215)
+        self.camera_preview.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.displays.addWidget(self.camera_preview)
+        window.camera_toggle.toggled.connect(self.show_camera_preview)
+        from desktop.youtube_panel import YouTubePanel
+        self.youtube = YouTubePanel()
+        self.displays.addWidget(self.youtube)
         self.display_buttons = {}
-        for key, label in (('hologram', 'Hologram'), ('timeline', 'Timeline'), ('media', 'Media')):
+        for key, label in (('hologram', 'Hologram'), ('media', 'Media')):
             button = QPushButton(label)
             button.setCheckable(True)
             button.setAutoExclusive(True)
@@ -723,34 +719,61 @@ class PrimeChat(QWidget):
         self.display_buttons['hologram'].setChecked(True)
         display_layout.addLayout(display_tabs)
         display_layout.addWidget(self.displays, 1)
+        display_layout.addWidget(window.prime_shell.microphone_waveform)
+        self.terminal = GlassCard(palette)
+        terminal_layout = QVBoxLayout(self.terminal)
+        terminal_layout.setContentsMargins(10, 6, 10, 8)
+        terminal_header = QHBoxLayout()
+        terminal_header.addWidget(QLabel('Terminal'), 1)
+        history_button = QPushButton('Task history')
+        history_button.setCheckable(True)
+        history_button.toggled.connect(self.switch_terminal)
+        terminal_header.addWidget(history_button)
+        terminal_header.addWidget(window.mission_mode)
+        terminal_layout.addLayout(terminal_header)
+        self.work_state = QLabel()
+        self.work_state.setWordWrap(True)
+        self.work_state.setTextFormat(Qt.TextFormat.PlainText)
+        self.work_state.hide()
+        terminal_layout.addWidget(self.work_state)
+        self.terminal_output = QPlainTextEdit()
+        self.terminal_output.setAccessibleName('Terminal output')
+        self.terminal_output.setReadOnly(True)
+        self.terminal_output.setPlaceholderText('Coding and news activity appears here.')
+        self.terminal_output.document().setMaximumBlockCount(400)
+        self.terminal_output.setFixedHeight(82)
+        terminal_layout.addWidget(self.terminal_output)
+        self.terminal_history = QPlainTextEdit()
+        self.terminal_history.setAccessibleName('Task history')
+        self.terminal_history.setReadOnly(True)
+        self.terminal_history.setFixedHeight(82)
+        self.terminal_history.hide()
+        terminal_layout.addWidget(self.terminal_history)
+        self.terminal.setVisible(bool(window.store.get('appearance:terminal', True)))
+        display_layout.addWidget(self.terminal)
         dashboard.addWidget(display, 0, 1)
 
         self.workspace = GlassCard(palette)
         self.workspace.setMinimumWidth(150)
+        self.workspace.setMaximumWidth(190)
+        self.workspace.setMaximumHeight(245)
         self.workspace.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
         workspace = QVBoxLayout(self.workspace)
         workspace.setContentsMargins(14, 13, 14, 13)
-        work_title = QLabel('PC WORK')
-        work_title.setObjectName('hudSectionTitle')
-        workspace.addWidget(work_title)
-        self.work_state = QLabel()
-        self.work_state.setWordWrap(True)
-        self.work_state.setTextFormat(Qt.TextFormat.PlainText)
-        self.work_state.setMinimumHeight(38)
-        workspace.addWidget(self.work_state)
-        window.mission_mode.show()
-        workspace.addWidget(window.mission_mode)
-        workspace.addStretch(1)
+        system_title = QLabel('SYSTEM')
+        system_title.setObjectName('hudSectionTitle')
+        workspace.addWidget(system_title)
         for meter in (window.hud.strip.cpu, window.hud.strip.ram):
-            meter.setFixedHeight(30)
+            meter.setFixedHeight(64)
             meter.setMinimumWidth(0)
             meter.setMaximumWidth(16777215)
             meter.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             workspace.addWidget(meter)
+        workspace.addStretch(1)
         news = QPushButton('Tamil news')
         news.clicked.connect(window.open_news_briefing)
         workspace.addWidget(news)
-        dashboard.addWidget(self.workspace, 0, 0)
+        dashboard.addWidget(self.workspace, 0, 0, Qt.AlignmentFlag.AlignTop)
         for column, stretch in enumerate((2, 5, 3)):
             dashboard.setColumnStretch(column, stretch)
         layout.addWidget(self.dashboard, 1)
@@ -766,8 +789,23 @@ class PrimeChat(QWidget):
         self.cards.setSpacing(10)
         layout.addLayout(self.cards)
 
-        self.composer = PrimeComposer(palette)
-        self.right_layout.addWidget(self.composer)
+        self.composer = PrimeComposer()
+        self.composer_rule = QFrame()
+        self.composer_rule.setFixedHeight(1)
+        self.composer_rule.setStyleSheet(f'background: {palette.glass_edge.name()};')
+        history.addWidget(self.assistant.heard)
+        history.addWidget(self.composer_rule)
+        history.addWidget(self.composer)
+        self.voice_button = QPushButton('Start voice')
+        self.voice_button.setAccessibleName('Start Gemini voice conversation')
+        self.voice_button.setToolTip('Start a continuous Tamil or Tanglish conversation with Gemini.')
+        self.voice_button.clicked.connect(window.toggle_live_voice)
+        self.suggestions_button = QPushButton('💡')
+        self.suggestions_button.setAccessibleName('Suggestions')
+        self.suggestions_button.setToolTip('Show suggestions for the current chat')
+        self.suggestions_menu = QMenu(self.suggestions_button)
+        self.suggestions_button.setMenu(self.suggestions_menu)
+        self.suggestions_menu.aboutToShow.connect(self.populate_suggestions)
         self._adopt_composer()
 
     def _adopt_composer(self):
@@ -786,11 +824,13 @@ class PrimeChat(QWidget):
         self.composer.body.addWidget(window.prompt)
 
         window.suggestion_mode.hide()
-        buttons = (window.attach_button, window.send_button)
-        for button in buttons:
+        for button in (window.attach_button, window.send_button):
             window.composer_actions.removeWidget(button)
             button.setStyleSheet('padding: 7px 7px;')
-        self.composer.set_controls(*buttons)
+        self.voice_button.hide()
+        self.suggestions_button.hide()
+        self.composer.set_controls(window.prime_shell.mic_mute_button, window.camera_toggle,
+                                   window.attach_button, window.send_button)
 
         for card in (window.browser_output, getattr(window, 'chat_approval', None),
                      getattr(window, 'chat_task_card', None),
@@ -802,6 +842,51 @@ class PrimeChat(QWidget):
             if old_layout is not None:
                 old_layout.removeWidget(card)
             self.cards.addWidget(card)
+
+    def set_live_voice_status(self, state, *, enabled):
+        if state == 'idle':
+            label, description = 'Start voice', 'Start Gemini voice conversation'
+        elif state == 'connecting':
+            label, description = 'Cancel', 'Cancel the Gemini voice connection'
+        else:
+            label, description = 'End voice', 'End Gemini voice conversation'
+        self.voice_button.setText(label)
+        self.voice_button.setAccessibleName(description)
+        self.voice_button.setToolTip(description)
+        self.voice_button.setEnabled(enabled or state != 'idle')
+        self.composer.layout_controls()
+
+    def populate_suggestions(self):
+        window = self.window_ref
+        menu = self.suggestions_menu
+        menu.clear()
+        if window.suggested_steps:
+            menu.addAction('Review suggested steps', window.review_suggested_plan)
+        if window.prompt.toPlainText().strip():
+            action = menu.addAction('Suggest with Gemini', window.suggest_chat_draft)
+            action.setEnabled(window.worker is None and not window.voice_panel.live_voice_active
+                              and not window.policy.stopped)
+        else:
+            menu.addAction('Suggest next steps', lambda: self.draft_suggestion('/suggest '))
+
+    def draft_suggestion(self, text):
+        prompt = self.window_ref.prompt
+        if not prompt.toPlainText().strip():
+            prompt.insertPlainText(text)
+        prompt.setFocus()
+
+    def switch_terminal(self, history):
+        self.terminal_history.setVisible(history)
+        self.terminal_output.setVisible(not history)
+        if history:
+            rows = self.window_ref.store.tasks()
+            self.terminal_history.setPlainText('\n\n'.join(
+                f"{row['kind']} · {row['status']}\n{row['detail'] or ''}" for row in rows
+            ) or 'No actions recorded yet.')
+
+    def write_terminal(self, label, text):
+        if text:
+            self.terminal_output.appendPlainText(f'{label}\n{text}')
 
     def adopt_task_panels(self):
         window = self.window_ref
@@ -830,11 +915,26 @@ class PrimeChat(QWidget):
             item.setData(Qt.ItemDataRole.UserRole, window.page_indices[item.text()])
 
     def show_display(self, name):
-        widget = {'hologram': self.assistant, 'timeline': self.timeline, 'media': self.player}[name]
+        widget = {'hologram': self.assistant, 'timeline': self.timeline, 'media': self.youtube,
+                  'local_media': self.player}[name]
         self.displays.setCurrentWidget(widget)
-        self.display_buttons[name].setChecked(True)
+        button = self.display_buttons.get('media' if name == 'local_media' else name)
+        if button is not None:
+            button.setChecked(True)
         self.window_ref.prime_shell.mark_active('JARVIS Chat')
         self.update_workspace_visibility()
+
+    def play_youtube(self, url):
+        self.displays.setCurrentWidget(self.youtube)
+        self.display_buttons['media'].setChecked(True)
+        self.update_workspace_visibility()
+        self.youtube.open_url(url)
+
+    def show_camera_preview(self, enabled):
+        if enabled:
+            self.displays.setCurrentWidget(self.camera_preview)
+        elif self.displays.currentWidget() is self.camera_preview:
+            self.show_display('hologram')
 
     def show_task(self, name):
         if name in self.task_panels:
@@ -860,13 +960,13 @@ class PrimeChat(QWidget):
         self.window_ref.mission_mode.setVisible(not task_open)
 
     def eventFilter(self, watched, event):
-        if watched is self.right_panel and event.type() == QEvent.Type.Resize:
+        if watched is self.chat_history and event.type() == QEvent.Type.Resize:
             self.layout_safety_controls(event.size().width())
         return super().eventFilter(watched, event)
 
     def place_safety_controls(self, buttons):
         self._safety_buttons = buttons
-        self.layout_safety_controls(self.right_panel.width())
+        self.layout_safety_controls(self.chat_history.width())
 
     def layout_safety_controls(self, width):
         if not self._safety_buttons or not self._safety_buttons[0].parentWidget():
@@ -884,8 +984,9 @@ class PrimeChat(QWidget):
         self.conversation.refresh_theme()
         self.chat_history.refresh()
         self.workspace.refresh()
+        self.terminal.refresh()
         self.timeline.refresh_theme()
-        self.composer.refresh_theme()
+        self.composer_rule.setStyleSheet(f'background: {self.palette_.glass_edge.name()};')
 
     def render(self, messages):
         self.conversation.setVisible(bool(messages))
@@ -896,6 +997,40 @@ class PrimeChat(QWidget):
         self.assistant.orb.set_motion(not self.window_ref.store.get('omega:reduced', False))
         self.assistant.set_state(state)
         self.timeline.set_state(state)
+
+
+class MicrophoneWaveform(QWidget):
+    """A scrolling history of the measured microphone input."""
+
+    def __init__(self, palette, parent=None):
+        super().__init__(parent)
+        self.palette_ = palette
+        self.level = 0
+        self.samples = [0] * 90
+        self.setFixedHeight(38)
+        self.setAccessibleName('Microphone waveform')
+        self.timer = QTimer(self, interval=60)
+        self.timer.timeout.connect(self.advance)
+        self.timer.start()
+
+    def set_level(self, value):
+        self.level = max(0, min(100, value))
+
+    def advance(self):
+        self.samples = self.samples[1:] + [self.level]
+        self.level = 0
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(self.palette_.accent, 2))
+        spacing = self.width() / len(self.samples)
+        center = self.height() / 2
+        for index, value in enumerate(self.samples):
+            half = max(0.5, value / 100 * (center - 3))
+            x = spacing * (index + 0.5)
+            painter.drawLine(QPointF(x, center - half), QPointF(x, center + half))
 
 
 class PrimeShell(QWidget):
@@ -911,7 +1046,8 @@ class PrimeShell(QWidget):
         outer.setSpacing(0)
         outer.addWidget(self.build_top_bar())
         self.provider_label = window.hud.strip.provider
-        outer.addWidget(window.hud)
+        window.hud.setParent(self)
+        window.hud.hide()
 
         middle = QHBoxLayout()
         middle.setContentsMargins(0, 0, 0, 0)
@@ -921,6 +1057,7 @@ class PrimeShell(QWidget):
         self.content.setSpacing(0)
         middle.addLayout(self.content, 1)
         self.build_drawer()
+        self.build_settings_dialog()
         middle.addWidget(self.drawer)
         outer.addLayout(middle, 1)
         self.startup_notice = QLabel()
@@ -930,7 +1067,17 @@ class PrimeShell(QWidget):
         self.startup_notice.setWordWrap(True)
         self.startup_notice.setContentsMargins(16, 4, 16, 6)
         self.startup_notice.hide()
-        outer.addWidget(self.startup_notice)
+        self.microphone_waveform = MicrophoneWaveform(palette, self)
+        window.voice_panel.audio_level.connect(self.microphone_waveform.set_level)
+        footer = QHBoxLayout()
+        footer.setContentsMargins(16, 0, 16, 5)
+        footer.addStretch(1)
+        window.hud.strip.mic.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        window.hud.strip.mic.setMinimumWidth(110)
+        window.hud.strip.mic.hide()
+        window.hud.strip.mute.hide()
+        self.output_mute_button.hide()
+        outer.addLayout(footer)
         window.pages.currentChanged.connect(self.refresh_mark)
 
     def pulse_wake(self):
@@ -943,7 +1090,7 @@ class PrimeShell(QWidget):
     def refresh_mark(self, _index=None):
         chat = getattr(self.window_ref, 'prime_chat', None)
         if chat is not None:
-            buttons = (self.mic_mute_button, self.output_mute_button, self.stop_button)
+            buttons = (self.stop_button,)
             if self.window_ref.pages.currentWidget() is chat:
                 chat.place_safety_controls(buttons)
             else:
@@ -1002,7 +1149,7 @@ class PrimeShell(QWidget):
         brand.setToolTip(label)
 
         layout.addStretch(1)
-        self.mic_mute_button = QPushButton('Mute mic')
+        self.mic_mute_button = QPushButton('🎙')
         self.mic_mute_button.setCheckable(True)
         self.mic_mute_button.toggled.connect(self.window_ref.set_microphone_muted)
         self.output_mute_button = self.window_ref.voice_panel.mute_button
@@ -1017,8 +1164,6 @@ class PrimeShell(QWidget):
         layout.addWidget(self.window_ref.resume_button)
         self.safety_controls = QHBoxLayout()
         self.safety_controls.setSpacing(6)
-        self.safety_controls.addWidget(self.mic_mute_button)
-        self.safety_controls.addWidget(self.output_mute_button)
         self.stop_button = self.window_ref.hud.strip.stop_button
         self.stop_button.setStyleSheet(
             f'QPushButton {{ color: {palette.danger.name()}; font-size: 12px;'
@@ -1033,7 +1178,7 @@ class PrimeShell(QWidget):
         self.settings_button = QPushButton('Settings')
         self.settings_button.setCheckable(True)
         self.settings_button.clicked.connect(lambda checked: (
-            self.open_section('Settings & Safety') if checked else self.close_drawer()))
+            self.open_section('Settings & Safety') if checked else self.settings_dialog.close()))
         layout.addWidget(self.settings_button)
 
         self.menu_button = QPushButton('Menu')
@@ -1077,9 +1222,26 @@ class PrimeShell(QWidget):
             button.clicked.connect(lambda _checked=False, name=section: self.open_section(name))
             menu_layout.addWidget(button)
             self.menu_items[section] = button
+            button.hide()
+        plugins = QPushButton('Plugins')
+        plugins.clicked.connect(self.window_ref.open_plugins)
+        menu_layout.addWidget(plugins)
+        archives = self.window_ref.archives
+        archives.setSizeAdjustPolicy(archives.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        archives.setMinimumContentsLength(10)
+        archives.setAccessibleName('Saved conversations')
+        archives.setPlaceholderText('Saved conversations')
+        archives.setParent(menu)
+        archives.hide()
+        for title, button in (('Open chat', self.window_ref.archive_button),
+                              ('New chat', self.window_ref.new_chat_button)):
+            button.setText(title)
+            button.clicked.connect(self.close_drawer)
+        for button in (self.window_ref.archive_button, self.window_ref.new_chat_button):
+            button.setParent(menu)
+            button.hide()
         controls = QGridLayout()
         for index, (title, action) in enumerate((
-            ('Talk once', self.talk_once),
             ('Fullscreen', self.window_ref.toggle_fullscreen),
         )):
             button = QPushButton(title)
@@ -1091,7 +1253,6 @@ class PrimeShell(QWidget):
         menu_layout.addWidget(self.mini_view_button)
         menu_layout.addStretch(1)
         self.drawer_content.addWidget(menu)
-        self.drawer_content.addWidget(self.window_ref.settings_scroller)
         self.drawer_content.addWidget(self.window_ref.news_panel)
         layout.addWidget(self.drawer_content, 1)
         close = QShortcut(QKeySequence('Escape'), self.drawer)
@@ -1100,15 +1261,45 @@ class PrimeShell(QWidget):
         self.drawer.hide()
         self.style_drawer()
 
+    def build_settings_dialog(self):
+        self.settings_dialog = QDialog(self, Qt.WindowType.Tool)
+        self.settings_dialog.setWindowTitle('Settings & Safety')
+        self.settings_dialog.setObjectName('primeDrawer')
+        available = self.screen().availableGeometry().height()
+        self.settings_dialog.resize(550, min(690, max(400, available - 80)))
+        self.settings_dialog.setMinimumSize(360, 400)
+        self.settings_dialog.finished.connect(lambda: self.settings_button.setChecked(False))
+        layout = QVBoxLayout(self.settings_dialog)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.addWidget(self.window_ref.settings_scroller)
+        self.settings_dialog.setStyleSheet(self.drawer.styleSheet())
+        QApplication.instance().installEventFilter(self)
+
+    def eventFilter(self, watched, event):
+        dialog = getattr(self, 'settings_dialog', None)
+        if dialog is not None and dialog.isVisible() and event.type() == QEvent.Type.MouseButtonPress:
+            popup = QApplication.activePopupWidget()
+            inside_popup = popup is not None and isinstance(watched, QWidget) and (
+                popup is watched or popup.isAncestorOf(watched))
+            if not inside_popup and not dialog.frameGeometry().contains(event.globalPosition().toPoint()):
+                dialog.close()
+        return super().eventFilter(watched, event)
+
     def show_drawer(self, name):
+        if name == 'settings':
+            self.close_drawer()
+            self.settings_button.setChecked(True)
+            self.settings_dialog.show()
+            self.settings_dialog.raise_()
+            self.settings_dialog.activateWindow()
+            return
         title, index = {
             'menu': ('JARVIS Menu', 0),
-            'settings': ('Settings & Safety', 1),
-            'news': ('Tamil news', 2),
+            'news': ('Tamil news', 1),
         }[name]
+        self.settings_dialog.close()
         self.drawer_title.setText(title)
         self.drawer_content.setCurrentIndex(index)
-        self.settings_button.setChecked(name == 'settings')
         self.menu_button.setChecked(name == 'menu')
         self.resize_drawer()
         self.drawer.show()
@@ -1124,12 +1315,10 @@ class PrimeShell(QWidget):
 
     def close_drawer(self):
         was_open = not self.drawer.isHidden()
-        return_focus = self.settings_button if self.settings_button.isChecked() else self.menu_button
         self.drawer.hide()
-        self.settings_button.setChecked(False)
         self.menu_button.setChecked(False)
         if was_open:
-            return_focus.setFocus()
+            self.menu_button.setFocus()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1169,6 +1358,7 @@ class PrimeShell(QWidget):
         self.style_core_logo(self.mark)
         self.set_state(self.window_ref.prime_state())
         self.style_drawer()
+        self.settings_dialog.setStyleSheet(self.drawer.styleSheet())
 
     def open_section(self, name: str):
         self.window_ref.open_section(name)

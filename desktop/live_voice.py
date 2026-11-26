@@ -12,15 +12,17 @@ from desktop.audio_test import AudioTest
 
 
 MODEL = 'gemini-3.8-live'
+VOICE = 'Achird'
 ENDPOINT = (
     'wss://generativelanguage.googleapis.com/ws/'
     'google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent'
 )
 OUTPUT_RATE = 24000
 MAX_AUDIO_QUEUE = 2_000_000
+SPEAKER_TAIL_MS = 450
 
 
-def setup_message(guidance, *, tamil_tanglish=False):
+def setup_message(guidance, *, tamil_tanglish=False, preferred_name=''):
     transcription = {}
     if tamil_tanglish:
         transcription = {'languageCodes': ['ta-IN', 'en-IN']}
@@ -32,9 +34,14 @@ def setup_message(guidance, *, tamil_tanglish=False):
             'the speaker’s own mix. Honor an explicit request for another reply language. '
             'If a detail is unclear, ask about only that detail instead of guessing.'
         )
+    if preferred_name:
+        transcription['customVocabulary'] = [preferred_name]
     setup = {
         'model': f'models/{MODEL}',
-        'generationConfig': {'responseModalities': ['AUDIO']},
+        'generationConfig': {
+            'responseModalities': ['AUDIO'],
+            'speechConfig': {'voiceConfig': {'prebuiltVoiceConfig': {'voiceName': VOICE}}},
+        },
         'inputAudioTranscription': transcription,
         'outputAudioTranscription': {},
         'systemInstruction': {'parts': [{'text': guidance}]},
@@ -85,11 +92,18 @@ class LiveVoice(QObject):
         self.transcript = ['', '']
         self.ignore_reply = False
         self.muted = False
+        self.readout = ''
+        self.readout_finished = False
+        self.frame_provider = None
+        self.video_timer = QTimer(self, interval=1000)
+        self.video_timer.timeout.connect(self.send_camera_frame)
         self.connection_timer = QTimer(self, singleShot=True, interval=12000)
         self.connection_timer.timeout.connect(
             lambda: self.stop('Gemini Live did not connect. Check your provider and network.'))
         self.play_timer = QTimer(self, interval=20)
         self.play_timer.timeout.connect(self.flush_audio)
+        self.speaker_tail = QTimer(self, singleShot=True, interval=SPEAKER_TAIL_MS)
+        self.speaker_tail.timeout.connect(lambda: self.set_state('listening'))
 
     @property
     def active(self):
@@ -106,27 +120,31 @@ class LiveVoice(QObject):
             if self.player is not None:
                 self.player.setVolume(0.0 if muted else 1.0)
 
-    def start(self, key, guidance, *, tamil_tanglish=False):
+    def start(self, key, guidance, *, tamil_tanglish=False, preferred_name='', readout='',
+              microphone=None, output_device=None):
         if self.active:
             return
-        mic = QMediaDevices.defaultAudioInput()
-        speaker = QMediaDevices.defaultAudioOutput()
+        mic = microphone if microphone is not None else QMediaDevices.defaultAudioInput()
+        speaker = output_device if output_device is not None else QMediaDevices.defaultAudioOutput()
         input_format = mic.preferredFormat()
         usable_input = (not mic.isNull() and mic.isFormatSupported(input_format)
                         and input_format.sampleFormat() in (
                             QAudioFormat.SampleFormat.Int16, QAudioFormat.SampleFormat.Float))
         self.input_format = input_format if usable_input else None
         self.output_format = None if speaker.isNull() else AudioTest.pcm_format(speaker)
-        if self.input_format is None or self.output_format is None:
+        if self.output_format is None or (not readout and self.input_format is None):
             self.status.emit('Live Voice needs a working default Windows microphone and speaker.')
             return
-        self.capture = QAudioSource(mic, self.input_format, self)
+        self.readout = readout
+        self.readout_finished = False
+        if not readout:
+            self.capture = QAudioSource(mic, self.input_format, self)
+            self.capture.stateChanged.connect(self.audio_state_changed)
         self.player = QAudioSink(speaker, self.output_format, self)
         self.player.setVolume(0.0 if self.muted else 1.0)
-        self.capture.stateChanged.connect(self.audio_state_changed)
         self.player.stateChanged.connect(self.audio_state_changed)
         socket = self.socket = QWebSocket(parent=self)
-        setup = setup_message(guidance, tamil_tanglish=tamil_tanglish)
+        setup = setup_message(guidance, tamil_tanglish=tamil_tanglish, preferred_name=preferred_name)
         socket.connected.connect(lambda: self.send(setup) if self.socket is socket else None)
         socket.textMessageReceived.connect(self.receive)
         socket.binaryMessageReceived.connect(lambda data: self.receive(bytes(data)))
@@ -144,6 +162,19 @@ class LiveVoice(QObject):
         if self.socket is not None:
             self.socket.sendTextMessage(json.dumps(payload, separators=(',', ':')))
 
+    def look_at(self, image, question):
+        socket = self.socket
+        if not self.active or socket is None or self.readout or not image:
+            return False
+        self.send({'realtimeInput': {'video': {
+            'mimeType': 'image/jpeg', 'data': base64.b64encode(image).decode('ascii'),
+        }}})
+        # Gemini processes the realtime video and text streams independently.
+        # Give the frame time to enter context before asking about it.
+        QTimer.singleShot(1000, self, lambda: self.send({'realtimeInput': {'text': question}})
+                          if self.socket is socket else None)
+        return True
+
     def connection_lost(self, *_):
         if self.sender() is self.socket:
             self.stop('Gemini Live disconnected. Check Gemini access or start Live Voice again.')
@@ -159,6 +190,15 @@ class LiveVoice(QObject):
         self.output = self.player.start()
         if self.player is None:
             return
+        if self.readout:
+            if self.output is None:
+                self.stop('Could not open the speaker for Gemini.')
+                return
+            self.play_timer.start()
+            self.set_state('speaking')
+            self.send({'realtimeInput': {'text': self.readout}})
+            self.connection_timer.start(12000)
+            return
         self.input = self.capture.start()
         if self.capture is None:
             return
@@ -168,13 +208,15 @@ class LiveVoice(QObject):
         self.input.readyRead.connect(self.send_audio)
         self.play_timer.start()
         self.set_state('listening')
+        self.send_camera_frame()
+        self.video_timer.start()
         self.status.emit('Live Voice is listening. Speak naturally, or select Stop Live Voice to close the mic.')
 
     def send_audio(self):
         if self.input is None:
             return
         pcm = bytes(self.input.readAll())
-        if not pcm or self.state == 'speaking':
+        if not pcm or self.state != 'listening':
             return
         samples = microphone_pcm(pcm, self.input_format.channelCount(), self.input_format.sampleFormat())
         if not len(samples):
@@ -189,6 +231,17 @@ class LiveVoice(QObject):
             'mimeType': f'audio/pcm;rate={rate}',
             'data': base64.b64encode(samples.tobytes()).decode('ascii'),
         }}})
+
+    def send_camera_frame(self):
+        if (self.state not in ('listening', 'speaking') or self.readout
+                or self.socket is None or self.frame_provider is None
+                or self.socket.bytesToWrite() > 128_000):
+            return
+        frame = self.frame_provider()
+        if frame:
+            self.send({'realtimeInput': {'video': {
+                'mimeType': 'image/jpeg', 'data': base64.b64encode(frame).decode('ascii'),
+            }}})
 
     def receive(self, raw):
         if not self.active:
@@ -216,7 +269,12 @@ class LiveVoice(QObject):
                     if data.get('mimeType', '').startswith('audio/pcm'):
                         self.queue_audio(base64.b64decode(data['data'], validate=True))
             if content.get('turnComplete'):
-                self.turn_finished.emit(*(line.strip() for line in self.transcript))
+                if self.readout:
+                    self.readout_finished = True
+                    self.connection_timer.stop()
+                    self.flush_audio()
+                else:
+                    self.turn_finished.emit(*(line.strip() for line in self.transcript))
                 self.transcript = ['', '']
                 self.ignore_reply = False
         except (AttributeError, KeyError, ValueError, TypeError, binascii.Error):
@@ -225,6 +283,9 @@ class LiveVoice(QObject):
     def queue_audio(self, raw):
         if self.output is None:
             return
+        self.speaker_tail.stop()
+        if self.readout:
+            self.connection_timer.start(12000)
         self.pending.extend(playback_pcm(raw, self.output_format.sampleRate(),
                                          self.output_format.channelCount()))
         if len(self.pending) > MAX_AUDIO_QUEUE:
@@ -245,13 +306,22 @@ class LiveVoice(QObject):
                     self.stop('Live Voice could not write to the speaker.')
                 else:
                     del self.pending[:written]
-        elif self.state == 'speaking' and self.player.state() == QAudio.State.IdleState:
-            self.set_state('listening')
+        elif self.readout:
+            if self.readout_finished and self.player.state() == QAudio.State.IdleState:
+                self.stop('Gemini finished reading aloud.')
+        elif (self.state == 'speaking' and self.player.state() == QAudio.State.IdleState
+              and not self.speaker_tail.isActive()):
+            # Windows can finish playback before the speaker echo has reached the mic.
+            self.speaker_tail.start()
 
     def interrupt(self):
         if self.state != 'speaking':
             return
+        if self.readout:
+            self.stop()
+            return
         self.ignore_reply = True
+        self.speaker_tail.stop()
         self.pending.clear()
         self.player.reset()
         self.output = self.player.start()
@@ -265,6 +335,8 @@ class LiveVoice(QObject):
             return
         self.connection_timer.stop()
         self.play_timer.stop()
+        self.video_timer.stop()
+        self.speaker_tail.stop()
         socket, self.socket = self.socket, None
         capture, self.capture = self.capture, None
         player, self.player = self.player, None
@@ -272,10 +344,13 @@ class LiveVoice(QObject):
         self.pending.clear()
         self.transcript = ['', '']
         self.ignore_reply = False
+        self.readout = ''
+        self.readout_finished = False
         socket.abort()
         socket.deleteLater()
-        capture.stop()
-        capture.deleteLater()
+        if capture is not None:
+            capture.stop()
+            capture.deleteLater()
         player.reset()
         player.deleteLater()
         self.audio_level.emit(0)

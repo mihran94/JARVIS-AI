@@ -6,7 +6,7 @@ import struct
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 from PySide6.QtWidgets import QApplication
-from PySide6.QtMultimedia import QAudioFormat
+from PySide6.QtMultimedia import QAudio, QAudioFormat
 
 from desktop.live_voice import LiveVoice, microphone_pcm, playback_pcm, setup_message
 
@@ -27,6 +27,43 @@ def test_mixed_live_mode_hints_both_languages_and_allows_a_pause_between_them():
     assert mixed['inputAudioTranscription']['languageCodes'] == ['ta-IN', 'en-IN']
     assert mixed['realtimeInputConfig']['automaticActivityDetection']['silenceDurationMs'] == 700
     assert 'within one sentence' in mixed['systemInstruction']['parts'][0]['text']
+
+
+def test_name_is_a_literal_transcription_hint():
+    name = 'மிஹ்ரான் பாஸ்'
+    config = setup_message('Friendly voice.', tamil_tanglish=True, preferred_name=name)['setup']
+    assert config['inputAudioTranscription']['customVocabulary'] == [name]
+
+
+def test_camera_stream_requires_a_live_session_and_current_frame(monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    live = LiveVoice()
+    packets = []
+    live.frame_provider = lambda: b'current image'
+    live.socket = type('Socket', (), {'bytesToWrite': lambda _: 0})()
+    monkeypatch.setattr(live, 'send', packets.append)
+    live.send_camera_frame()
+    assert packets == []
+    live.set_state('listening')
+    live.send_camera_frame()
+    assert base64.b64decode(packets[-1]['realtimeInput']['video']['data']) == b'current image'
+    live.frame_provider = lambda: b''
+    live.send_camera_frame()
+    assert len(packets) == 1
+
+
+def test_microphone_waits_after_the_speaker_finishes():
+    app = QApplication.instance() or QApplication([])
+    live = LiveVoice()
+    live.output = object()
+    live.player = type('IdleSpeaker', (), {'state': lambda self: QAudio.State.IdleState})()
+    live.set_state('speaking')
+    live.flush_audio()
+    assert live.state == 'speaking'
+    assert live.speaker_tail.isActive()
+    live.speaker_tail.stop()
+    live.speaker_tail.timeout.emit()
+    assert live.state == 'listening'
 
 
 def test_float_windows_headset_audio_is_converted_to_signed_mono():

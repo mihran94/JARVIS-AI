@@ -36,9 +36,9 @@ def test_primary_sections_and_one_main_window(tmp_path):
         assert win.pages.currentWidget() is win.prime_chat
         assert win.prime_chat.task_area.isVisibleTo(win.prime_chat)
         win.open_section("AI Providers")
-        assert win.settings_categories.currentText() == 'AI engines'
+        assert win.settings_categories.currentText() == 'AI Providers'
         assert win.settings_scroller.isAncestorOf(win.secret)
-        assert not win.prime_shell.drawer.isHidden()
+        assert win.prime_shell.settings_dialog.isVisible()
         win.open_section("JARVIS Chat")
         assert win.nav.currentRow() == 0
         assert win.pages.currentIndex() == 0

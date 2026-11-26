@@ -39,9 +39,9 @@ def test_main_toolbar_is_chat_island_settings_and_safety(tmp_path):
         window.omega.switch("Omega")
         shell.settings_button.click()
         app.processEvents()
-        assert window.settings_scroller.isVisibleTo(window)
+        assert window.settings_scroller.isVisibleTo(shell.settings_dialog)
         tabs = window.settings_categories
-        tabs.setCurrentIndex(tabs.findText('AI engines'))
+        tabs.setCurrentIndex(tabs.findText('AI Providers'))
         assert window.chat_provider.isVisible()
     finally:
         window.close()
