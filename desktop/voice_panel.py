@@ -413,6 +413,10 @@ class VoicePanel(QWidget):
         return self.speaker_worker is not None and self.speaker_worker.isRunning()
 
     @property
+    def microphone_muted(self):
+        return self.consent.muted
+
+    @property
     def listening(self):
         return (self.consent.listening and self.worker is not None and self.worker.isRunning()
                 and not self.worker.isInterruptionRequested())
@@ -566,6 +570,20 @@ class VoicePanel(QWidget):
             self.worker.requestInterruption()
             self.refresh()
 
+    def interrupt_reply(self):
+        """Cancel a queued reply or request only the current speaker to stop."""
+        worker = self.speaker_worker
+        playing = worker is not None and worker.isRunning()
+        if not self.pending_speech and not playing:
+            return False
+        self.pending_speech = ''
+        self.pending_sample = None
+        if playing:
+            worker.requestInterruption()
+        # Do not claim silence or restart recognition until the worker exits.
+        self.refresh()
+        return True
+
     def cancel_cloud_speech(self):
         self.pending_speech = ''
         self.pending_sample = None
@@ -611,6 +629,8 @@ class VoicePanel(QWidget):
             return 'Stopping the active listening session.'
         if self.consent.stopped:
             return 'Stopped: the microphone is closed until the owner allows it again.'
+        if self.microphone_muted:
+            return 'The microphone is muted for this session.'
         if self.listening:
             return 'A listening session is active.'
         if self.consent.granted:

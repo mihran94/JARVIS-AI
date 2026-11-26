@@ -73,6 +73,9 @@ class AudioTest(QGroupBox):
                 self.voice.worker is not None and self.voice.worker.isRunning()):
             self.status.setText('Stop the current voice session or audio test first.')
             return False
+        if mode == 'microphone' and self.voice.microphone_muted:
+            self.status.setText('Unmute the microphone before testing.')
+            return False
         if mode == 'microphone' and not self.voice.consent.listening:
             self.status.setText('Enable Allow the microphone in Voice before testing.')
             return False

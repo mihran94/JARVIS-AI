@@ -22,6 +22,7 @@ class VoiceConsent:
         self._lock = RLock()
         self._granted = False
         self._stopped = False
+        self._muted = False
         self._listener = None
 
     # ------------------------------------------------------------ properties
@@ -37,10 +38,20 @@ class VoiceConsent:
             return self._stopped
 
     @property
+    def muted(self) -> bool:
+        with self._lock:
+            return self._muted
+
+    def set_muted(self, muted: bool) -> None:
+        """Block input without granting or revoking owner consent."""
+        with self._lock:
+            self._muted = muted
+
+    @property
     def listening(self) -> bool:
         """True only when the microphone may be open."""
         with self._lock:
-            return self._granted and not self._stopped
+            return self._granted and not self._stopped and not self._muted
 
     @property
     def listener(self) -> str:
@@ -48,6 +59,8 @@ class VoiceConsent:
         with self._lock:
             if self._stopped:
                 return 'The microphone is closed by the stop control.'
+            if self._muted:
+                return 'The microphone is muted for this session.'
             if not self._granted:
                 return 'The microphone has not been allowed.'
             return 'The microphone is allowed for the voice feature.'
@@ -83,5 +96,7 @@ class VoiceConsent:
         with self._lock:
             if self._stopped:
                 raise VoiceError('The voice feature is stopped.')
+            if self._muted:
+                raise VoiceError('Unmute the microphone before listening.')
             if not self._granted:
                 raise VoiceError('Allow the microphone before using voice.')

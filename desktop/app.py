@@ -462,6 +462,13 @@ class Window(QMainWindow):
         self.system_timer.start()
         self.fullscreen_shortcut = QShortcut(QKeySequence('F11'), self)
         self.fullscreen_shortcut.activated.connect(self.toggle_fullscreen)
+        self.microphone_mute_shortcut = QShortcut(QKeySequence('F4'), self)
+        self.microphone_mute_shortcut.setAutoRepeat(False)
+        self.microphone_mute_shortcut.activated.connect(self.hud_toggle_microphone)
+        self.interrupt_reply_shortcut = QShortcut(QKeySequence('Escape'), self)
+        self.interrupt_reply_shortcut.setAutoRepeat(False)
+        self.interrupt_reply_shortcut.setEnabled(False)
+        self.interrupt_reply_shortcut.activated.connect(self.hud_interrupt_reply)
         self.refresh_system_metrics()
         self.refresh_history()
         self.render_chat()
@@ -542,12 +549,25 @@ class Window(QMainWindow):
         self.prime_chat = chat
         chat.adopt_task_panels()
         shell.content.addWidget(self.pages)
+        from desktop.mcore_cockpit import MCoreCockpit
+
+        self.mcore_cockpit = MCoreCockpit(self)
+        self.page_indices[MCoreCockpit.section] = self.pages.addWidget(self.mcore_cockpit)
+        self.pages.currentChanged.connect(self.update_cockpit_chrome)
         shell.activity.set_rows(self.store.tasks())
         shell.update_usage(self.hud_usage_data)
         self.render_chat()
 
         self.refresh_prime_state()
         return shell
+
+    def update_cockpit_chrome(self, _index):
+        cockpit = self.mcore_cockpit
+        on_cockpit = self.pages.currentWidget() is cockpit
+        self.prime_shell.show_cockpit_chrome(on_cockpit)
+        if on_cockpit:
+            cockpit.update_metrics(self.hud_usage_data)
+            cockpit.update_tasks(self.queue.rows())
 
     def prime_is_dark(self) -> bool:
         """The PRIME surface follows the theme the owner chose."""
@@ -574,7 +594,14 @@ class Window(QMainWindow):
             title = 'Request route' if self.worker is not None else 'Selected chat route'
             route = title + ': ' + self.brain_label.text().removeprefix('Active brain: ')
         shell.set_provider(route)
-        shell.set_microphone(self.hud_mic_state(), self.voice_panel.consent.listening)
+        mic_state = self.hud_mic_state()
+        shell.set_microphone(mic_state, self.voice_panel.consent.granted)
+        shortcut = getattr(self, 'interrupt_reply_shortcut', None)
+        if shortcut is not None:
+            shortcut.setEnabled(self.hud_can_interrupt_reply())
+        cockpit = getattr(self, 'mcore_cockpit', None)
+        if cockpit is not None:
+            cockpit.update_runtime(state, route, mic_state)
         chat = getattr(self, 'prime_chat', None)
         if chat is not None:
             chat.set_state(state)
@@ -954,6 +981,10 @@ class Window(QMainWindow):
     def hud_mic_state(self):
         """Report JARVIS microphone access without confusing it with reply mute."""
         voice = self.voice_panel
+        if voice.microphone_muted:
+            if voice.worker is not None and voice.worker.isRunning():
+                return 'Mic: closing'
+            return 'Mic: muted'
         if self.live_voice is not None and self.live_voice.active:
             return 'Mic: connecting' if self.live_voice.state == 'connecting' else 'Mic: Gemini Live'
         if self.audio_test.mode == 'microphone':
@@ -966,14 +997,38 @@ class Window(QMainWindow):
         """Revoke access immediately; reopening it is explicit in Voice settings."""
         if self.policy.stopped:
             return
-        if self.voice_panel.consent.listening:
+        if self.voice_panel.consent.granted:
             self.voice_panel.allow.setChecked(False)
         else:
             self.open_section('Voice / Hey Jarvis')
 
+    def hud_toggle_microphone(self):
+        """Mute session input without changing consent or starting a new capture."""
+        if self.policy.stopped or QApplication.activeModalWidget() or QApplication.activePopupWidget():
+            return
+        voice = self.voice_panel
+        voice.consent.set_muted(not voice.microphone_muted)
+        if voice.microphone_muted:
+            self.hands_free_voice.setChecked(False)
+            self.voice_rearm_timer.stop()
+            voice.stop_continuous()
+            voice.cancel_listening()
+            if self.audio_test.mode == 'microphone':
+                self.audio_test.stop()
+            if self.live_voice is not None and self.live_voice.active:
+                self.live_voice.stop('Microphone muted. Live Voice ended.')
+            voice.audio_level.emit(0)
+        voice.refresh()
+        self.statusBar().showMessage(
+            'Microphone muted.' if voice.microphone_muted else
+            'Microphone unmuted. Start listening explicitly.', 10000)
+
     def listen_to_user(self):
         """One click in Chat; microphone permission always belongs to Voice."""
         if self.policy.stopped:
+            return
+        if self.voice_panel.microphone_muted:
+            self.statusBar().showMessage('Unmute the microphone before listening.', 10000)
             return
         if not self.voice_panel.consent.listening:
             self.open_section('Voice / Hey Jarvis')
@@ -995,13 +1050,16 @@ class Window(QMainWindow):
             return
         if self.policy.stopped:
             return
+        if self.voice_panel.microphone_muted:
+            self.statusBar().showMessage('Unmute the microphone before opening Live Voice.', 10000)
+            return
         if not self.voice_panel.consent.listening:
             self.open_section('Voice / Hey Jarvis')
             self.statusBar().showMessage('Allow the microphone, then choose Live Voice in Chat.', 15000)
             return
         if (self.worker is not None or self.voice_panel.audio_test_active
                 or self.voice_panel.playback_busy or self.voice_panel.pending_speech
-                or self.voice_panel.listening):
+                or (self.voice_panel.worker is not None and self.voice_panel.worker.isRunning())):
             self.statusBar().showMessage('Finish the current chat or audio session first.', 10000)
             return
 
@@ -1043,7 +1101,7 @@ class Window(QMainWindow):
         self.refresh_prime_state()
 
     def save_live_voice_turn(self, spoken, reply):
-        if self.policy.stopped or not (spoken or reply):
+        if self.policy.stopped or self.voice_panel.microphone_muted or not (spoken or reply):
             return
         if spoken:
             from desktop.voice_tasks import local_voice_request
@@ -1064,6 +1122,22 @@ class Window(QMainWindow):
             self.store.message(self.session, 'assistant', reply)
         self.render_chat()
         self.refresh_archives()
+
+    def hud_can_interrupt_reply(self):
+        """Only speech output is interruptible here, not tasks or approvals."""
+        return not self.policy.stopped and bool(
+            (self.live_voice is not None and self.live_voice.state == 'speaking')
+            or self.voice_panel.playback_busy or self.voice_panel.pending_speech)
+
+    def hud_interrupt_reply(self):
+        """Interrupt active output using its existing worker/session control."""
+        if (not self.hud_can_interrupt_reply() or QApplication.activeModalWidget()
+                or QApplication.activePopupWidget()):
+            return False
+        if self.live_voice is not None and self.live_voice.state == 'speaking':
+            self.live_voice.interrupt()
+            return True
+        return self.voice_panel.interrupt_reply()
 
     def interrupt_live_voice(self):
         if self.live_voice is not None:
@@ -1172,6 +1246,10 @@ class Window(QMainWindow):
     def open_news_briefing(self):
         if self.news_panel is None:
             self.news_panel = NewsPanel(self)
+            cockpit = getattr(self, 'mcore_cockpit', None)
+            if cockpit is not None:
+                self.news_panel.output.textChanged.connect(
+                    lambda: cockpit.update_news(self.news_panel.output.toPlainText()))
         self.news_panel.show()
         self.news_panel.raise_()
         self.news_panel.activateWindow()
@@ -1217,6 +1295,9 @@ class Window(QMainWindow):
         shell = getattr(self, 'prime_shell', None)
         if shell is not None:
             shell.update_usage(data)
+        cockpit = getattr(self, 'mcore_cockpit', None)
+        if cockpit is not None:
+            cockpit.update_metrics(data)
         self.hud_clock.setText(datetime.now().strftime('%H:%M'))
         if self.omega is not None:
             self.omega.update_metrics(data)
@@ -1405,12 +1486,14 @@ class Window(QMainWindow):
             label = 'APPROVAL REQUIRED'
         self.orb_status.setText('JARVIS  /  ' + label)
         self.chat_mic.setText('Cancel mic' if self.voice_panel.listening else 'Speak')
-        self.chat_mic.setEnabled(not self.policy.stopped and not self.voice_panel.playback_busy)
+        self.chat_mic.setEnabled(not self.policy.stopped and not self.voice_panel.playback_busy
+                                 and not self.voice_panel.microphone_muted)
         self.hud_voice_status.setText(label)
         if self.omega is not None:
             self.omega.set_voice(state)
         self.hud_talk.setEnabled(state not in ('stopped', 'listening', 'speaking')
-                                 and not self.voice_panel.playback_busy)
+                                 and not self.voice_panel.playback_busy
+                                 and not self.voice_panel.microphone_muted)
         self.refresh_prime_state()
 
     def answer_spoken_system_command(self, command):
@@ -1806,6 +1889,9 @@ class Window(QMainWindow):
             '24 KiB per file / 48,000 characters total. '
             'Supported: UTF-8 text, Markdown, code, CSV, JSON, PDF and DOCX. '
             'A binary file cannot be read.')
+        cockpit = getattr(self, 'mcore_cockpit', None)
+        if cockpit is not None:
+            cockpit.update_attachments(self.attachments)
 
     def read_document_file(self):
         """Read one document the owner chose and show it here.
@@ -5643,6 +5729,9 @@ class Window(QMainWindow):
         chat = getattr(self, 'prime_chat', None)
         if chat is not None:
             chat.render(messages)
+        cockpit = getattr(self, 'mcore_cockpit', None)
+        if cockpit is not None:
+            cockpit.render(messages)
 
     def new_chat(self):
         if self.worker is not None:
@@ -6239,6 +6328,9 @@ class Window(QMainWindow):
         if current >= 0 and self.jobs_table.item(current, 0):
             selected = self.jobs_table.item(current, 0).data(Qt.ItemDataRole.UserRole)
         jobs = self.queue.rows()
+        cockpit = getattr(self, 'mcore_cockpit', None)
+        if cockpit is not None:
+            cockpit.update_tasks(jobs)
         self.jobs_table.setRowCount(len(jobs))
         for index, job in enumerate(jobs):
             for column, key in enumerate(('created', 'app', 'status', 'detail')):

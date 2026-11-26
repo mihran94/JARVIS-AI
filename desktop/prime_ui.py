@@ -766,14 +766,15 @@ class PrimeShell(QWidget):
         self.provider_label.setTextFormat(Qt.TextFormat.PlainText)
         self.mic_button = QPushButton()
         self.mic_button.clicked.connect(window.hud_mic_control)
-        status = QHBoxLayout()
+        self.route_strip = QWidget()
+        status = QHBoxLayout(self.route_strip)
         status.setContentsMargins(24, 8, 24, 6)
         status.setSpacing(14)
         status.addWidget(self.provider_label, 1)
         status.addWidget(self.mic_button)
         status.addWidget(self.build_label)
         status.addWidget(self.usage_button)
-        outer.addLayout(status)
+        outer.addWidget(self.route_strip)
 
         middle = QHBoxLayout()
         middle.setContentsMargins(0, 0, 0, 0)
@@ -796,6 +797,13 @@ class PrimeShell(QWidget):
         window.pages.currentChanged.connect(self.layout_overview)
         self.style_overview()
         self.style_mcore()
+
+    def show_cockpit_chrome(self, enabled):
+        """The cockpit provides its own header and footer; normal pages keep PRIME."""
+        for widget in (self.top_bar, self.rail, self.route_strip):
+            widget.setVisible(not enabled)
+        if enabled:
+            self.activity_button.setChecked(False)
 
     def style_mcore(self):
         palette = self.palette_
@@ -916,6 +924,10 @@ class PrimeShell(QWidget):
         brand.setStyleSheet(
             f'color: {palette.ink.name()}; font-size: 21px; font-weight: 700;')
         layout.addWidget(brand)
+        self.cockpit_button = QPushButton('M-CORE')
+        self.cockpit_button.setToolTip('Open the M-CORE cockpit')
+        self.cockpit_button.clicked.connect(lambda: self.open_section('M-CORE'))
+        layout.addWidget(self.cockpit_button)
 
         commit = build_commit()
         release = os.environ.get('JARVIS_SOURCE_RELEASE', '').strip()

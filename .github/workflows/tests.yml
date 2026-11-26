@@ -48,3 +48,44 @@ jobs:
       - name: Run the source CMD entry point
         shell: cmd
         run: call VERIFY_JARVIS.cmd --phase1
+
+
+  mcore-photo-cmd:
+    name: M-CORE screenshot and controls (Windows CMD)
+    if: >-
+      github.ref == 'refs/heads/dev/windows-cmd-mcore-photo-20261126' ||
+      (github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.head_ref == 'dev/windows-cmd-mcore-photo-20261126')
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Prepare source test environment
+        shell: cmd
+        run: |
+          python -m venv .venv || exit /b 1
+          .venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+      - name: Run Windows CMD source verification
+        shell: cmd
+        run: call VERIFY_JARVIS.cmd --phase1
+      - name: Check cockpit and controls
+        shell: cmd
+        run: |
+          set "JARVIS_MCORE_TEST_SCREENSHOT=%RUNNER_TEMP%\jarvis-mcore-hosted-windows.png"
+          .venv\Scripts\python.exe -m pytest -q tests/test_mcore_cockpit.py tests/test_mcore_controls.py
+      - name: Save synthetic cockpit preview
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcore-hosted-windows-preview
+          path: ${{ runner.temp }}/jarvis-mcore-hosted-windows.png
+          if-no-files-found: error
