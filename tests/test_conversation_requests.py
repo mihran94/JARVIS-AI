@@ -143,7 +143,7 @@ def test_auto_effort_recognizes_multilingual_analysis(text):
     assert effort_for(text, 'Fast') == 'fast'
 
 
-def test_suggestion_mode_keeps_action_requests_in_chat(tmp_path, monkeypatch):
+def test_automation_suggestions_preview_without_running_actions(tmp_path, monkeypatch):
     app = QApplication.instance() or QApplication([])
     win = Window(tmp_path)
     requests = []
@@ -163,32 +163,36 @@ def test_suggestion_mode_keeps_action_requests_in_chat(tmp_path, monkeypatch):
                         lambda *_: pytest.fail('Suggestion shared attachments'))
 
     try:
-        assert not win.suggestion_mode.isChecked()
-        assert win.prime_chat.composer.isAncestorOf(win.suggestion_mode)
-        win.suggestion_mode.click()
-        assert win.send_button.text() == 'Get suggestions'
+        win.open_section('PC Control')
+        panel = win.automation_panel
+        assert not panel.suggestion_mode.isChecked()
+        panel.suggestion_mode.click()
+        assert panel.work_button.text() == 'Get suggestions'
         win.attachments = [object()]
         win.files_share_once.setChecked(True)
         win.use_notes.setChecked(True)
         win.backup_consent.setChecked(True)
-        for text in ('Open Notepad', '/browser open https://example.com'):
-            win.prompt.setPlainText(text)
-            win.send()
+        win.prompt.setPlainText('Unsent chat draft')
+        for text in ('Plan how to write a report', '/browser open https://example.com'):
+            panel.goal.setText(text)
+            panel.work_button.click()
             messages, backup = requests[-1]
             assert messages[-1]['content'] == text
             assert 'Suggestion Mode is active' in messages[0]['content']
             assert backup is None
             assert win.desktop_pending is None
             assert win.chat_launch is None
-            assert win.prime_chat.conversation.bubbles[-1].body.text() == (
-                'First, decide what you want to write.')
+            assert win.suggestion_preview.text() == 'First, decide what you want to write.'
+            assert win.pages.currentIndex() == win.page_indices['PC Control']
+            assert win.prompt.toPlainText() == 'Unsent chat draft'
         assert len(requests) == 2
         win.attachments = []
         assert not win.files_share_once.isChecked()
         assert not win.use_notes.isChecked()
         assert not win.backup_consent.isChecked()
 
-        win.suggestion_mode.click()
+        panel.suggestion_mode.click()
+        win.open_section('JARVIS Chat')
         assert win.send_button.text() == 'Send'
         win.prompt.setPlainText('Jarvis, /suggest\tHow should I organize my notes?')
         win.send()

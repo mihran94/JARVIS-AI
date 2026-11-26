@@ -340,7 +340,7 @@ def test_prose_without_an_object_is_refused():
 def test_an_unknown_action_is_refused():
     decision, problem = parse_decision('{"action": "delete_everything"}')
     assert decision is None
-    assert 'must be "tool" or "answer"' in problem
+    assert 'must be "tool", "answer" or "skip"' in problem
 
 
 def test_an_empty_answer_is_refused():

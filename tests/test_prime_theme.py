@@ -142,7 +142,7 @@ def test_the_page_root_carries_the_premium_surface(app, tmp_path):
 
     window = Window(tmp_path)
     try:
-        page = window.pages.widget(window.page_indices['Settings & Safety'])
+        page = window.settings_scroller
         # The page is inside a scroll area, so the root is the scrolled page.
         root = page.widget() if hasattr(page, 'widget') else page
         assert root.objectName() == 'pageRoot'

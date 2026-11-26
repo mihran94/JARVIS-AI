@@ -49,6 +49,29 @@ class WindowsTextToSpeech:
                 continue
         return names
 
+    def voices_for(self, language: str) -> list[str]:
+        """The installed voices for one language.
+
+        The voices are filtered by the same hexadecimal language
+        attribute that `select_language` uses, so a language that has no
+        voice installed is reported as having none rather than silently
+        speaking with another language's voice.
+        """
+        names = []
+        for identifier in SAPI_LANGUAGES.get(language, ()):
+            try:
+                tokens = self._voice.GetVoices(f'Language={identifier}')
+                if tokens is None or tokens.Count < 1:
+                    continue
+                for token in tokens:
+                    try:
+                        names.append(token.GetDescription())
+                    except Exception:
+                        continue
+            except Exception:
+                continue
+        return names
+
     def select_language(self, language: str) -> bool:
         """Choose an installed voice for a language. False when none exists."""
         identifiers = SAPI_LANGUAGES.get(language, ())

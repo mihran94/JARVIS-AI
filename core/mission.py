@@ -166,6 +166,11 @@ def parse_decision(text):
         if not isinstance(answer, str) or not answer.strip():
             return None, 'The final answer was empty.'
         return {'action': 'answer', 'answer': answer.strip(), 'thought': thought}, None
+    if action == 'skip':
+        reason = data.get('reason')
+        if not isinstance(reason, str) or not reason.strip():
+            return None, 'The reason for skipping was empty.'
+        return {'action': 'skip', 'reason': reason.strip(), 'thought': thought}, None
     if action == 'tool':
         name = data.get('tool')
         if not isinstance(name, str) or not name.strip():
@@ -177,10 +182,10 @@ def parse_decision(text):
             return None, 'The arguments were not an object.'
         return {'action': 'tool', 'tool': name.strip(), 'arguments': arguments,
                 'thought': thought}, None
-    return None, 'The action must be "tool" or "answer".'
+    return None, 'The action must be "tool", "answer" or "skip".'
 
 
-def system_instructions(registry) -> str:
+def system_instructions(registry, *, compact=False) -> str:
     """The instructions the model is given for one mission.
 
     The rules are the same ones this module enforces. They are written
@@ -200,6 +205,10 @@ def system_instructions(registry) -> str:
         'To finish the mission:\n'
         '{"action": "answer", "answer": "<the final answer>", "thought": "<one sentence>"}\n'
         '\n'
+        'To record that a step could not be done, and carry on:\n'
+        '{"action": "skip", "reason": "<why this step cannot be done>", '
+        '"thought": "<one sentence>"}\n'
+        '\n'
         'The rules:\n'
         '* Use only the tools listed below. A tool that is not listed does not exist.\n'
         '* A tool that changes something is approved by the owner before it runs. '
@@ -210,7 +219,8 @@ def system_instructions(registry) -> str:
         '* If the goal needs no tool, answer straight away.\n'
         '\n'
         'The tools:\n'
-        + registry.describe()
+        + ('Argument names with ? are optional.\n' if compact else '')
+        + registry.describe(compact=compact)
     )
 
 
@@ -226,6 +236,48 @@ def failure_observation(tool_name: str, message: str) -> str:
             'Continue with the next decision, or answer and say what was not done.')
 
 
+def skipped_observation(reason: str) -> str:
+    """What the model is told when a step could not be done.
+
+    A blocked step is not a failure of the whole mission. The model is
+    told what was blocked and why, so the next decision can be made with
+    that in hand.
+    """
+    return (f'That step could not be done: {reason}\n\n'
+            'Continue with the next step you can do, or answer and say what was not done.')
+
+
+def coerce_edit(tool, arguments: dict) -> dict:
+    """Turn the owner's edited text back into the types the tool expects.
+
+    The owner edits in a text box, so an argument that is a number
+    arrives as text. It is converted here, using the tool's own schema,
+    and the argument is checked again afterwards. An edit that cannot be
+    converted is refused rather than guessed at.
+    """
+    properties = (tool.parameters or {}).get('properties', {})
+    converted = {}
+    for key, value in (arguments or {}).items():
+        expected = properties.get(key, {}).get('type')
+        if expected in ('integer', 'number') and isinstance(value, str):
+            try:
+                number = float(value) if expected == 'number' else int(value)
+            except ValueError:
+                raise ToolError(f'The argument {key} must be a number.') from None
+            converted[key] = int(number) if expected == 'integer' else number
+        elif expected == 'boolean' and isinstance(value, str):
+            lowered = value.strip().casefold()
+            if lowered in ('true', 'yes', '1'):
+                converted[key] = True
+            elif lowered in ('false', 'no', '0'):
+                converted[key] = False
+            else:
+                raise ToolError(f'The argument {key} must be true or false.')
+        else:
+            converted[key] = value
+    return converted
+
+
 class AgentRuntime:
     """Runs one mission: propose, check, run, observe, repeat.
 
@@ -237,13 +289,14 @@ class AgentRuntime:
     """
 
     def __init__(self, registry, gateway, planner, *, max_steps=MAX_STEPS,
-                 budget_seconds=BUDGET_SECONDS, on_event=None, check=None):
+                 budget_seconds=BUDGET_SECONDS, on_event=None, check=None, compact_tools=False):
         self.registry = registry
         self.gateway = gateway
         self.planner = planner
         self.max_steps = max(1, int(max_steps))
         self.budget_seconds = max(1, int(budget_seconds))
         self.on_event = on_event
+        self.compact_tools = compact_tools
         #: Raised by the caller's check when an emergency stop is active.
         self.check = check or (lambda: None)
 
@@ -287,7 +340,8 @@ class AgentRuntime:
         self._emit(mission, 'goal', 'Mission started', goal)
 
         messages = [
-            {'role': 'system', 'content': system_instructions(self.registry)},
+            {'role': 'system', 'content': system_instructions(
+                self.registry, compact=self.compact_tools)},
             {'role': 'user', 'content': goal},
         ]
         deadline = time.monotonic() + self.budget_seconds
@@ -342,6 +396,18 @@ class AgentRuntime:
                 self._emit(mission, 'answer', 'Mission complete', decision['answer'], step)
                 return mission
 
+            if decision['action'] == 'skip':
+                # The step could not be done. The mission carries on with
+                # the steps that can be done, and the blocked step is
+                # recorded so the owner sees what did not happen.
+                if decision['thought']:
+                    self._emit(mission, 'thought', 'JARVIS decided', decision['thought'], step)
+                self._emit(mission, 'skipped', 'Step blocked', decision['reason'], step)
+                messages.append({'role': 'assistant', 'content': raw})
+                messages.append({'role': 'user', 'content':
+                                 skipped_observation(decision['reason'])})
+                continue
+
             tool = self.registry.get(decision['tool'])
             if tool is None:
                 return self._fail(
@@ -379,9 +445,27 @@ class AgentRuntime:
                             'to ask the owner, so it did not run.')
                     self._emit(mission, 'approval', 'Approval needed',
                                f'{tool.name}: {summary}', step)
+                    # The owner may change the arguments before the call
+                    # runs. What they change is checked against the
+                    # schema again, so an edit cannot widen the call.
+                    edited = {}
+
+                    def ask(action):
+                        answer = confirm(action)
+                        if isinstance(answer, dict):
+                            edited.update(answer)
+                            return True
+                        return bool(answer)
+
+                    def run_approved():
+                        merged = {**arguments, **coerce_edit(tool, edited)}
+                        checked = self.registry.check_arguments(tool, merged)
+                        return self._call(tool, checked, checkpoint)
+
                     result = self.gateway.run(
-                        Action('mission_tool', summary), confirm,
-                        lambda: self._call(tool, arguments, checkpoint))
+                        Action('mission_tool', summary, arguments=json.dumps(
+                            arguments, ensure_ascii=False, default=str)),
+                        ask, run_approved)
             except MissionError as error:
                 return self._fail(mission, 'Mission stopped', str(error))
             except Denied:
@@ -424,5 +508,6 @@ class AgentRuntime:
 
 
 __all__ = ['BUDGET_SECONDS', 'MAX_EVENTS', 'MAX_RECOVERABLE_ERRORS', 'MAX_STEPS',
-           'AgentRuntime', 'Mission', 'MissionError', 'MissionEvent',
-           'failure_observation', 'observation', 'parse_decision', 'system_instructions']
+           'AgentRuntime', 'Mission', 'MissionError', 'MissionEvent', 'coerce_edit',
+           'failure_observation', 'observation', 'parse_decision', 'skipped_observation',
+           'system_instructions']

@@ -80,7 +80,7 @@ def probe_model_listing(model, *, transport=None):
 
 
 def stream_local(model, messages, check, emit, endpoint=DEFAULT_ENDPOINT, transport=None,
-                  metrics=None):
+                  metrics=None, *, planning=False):
     """Stream one answer from the local model."""
     if not model or not model.strip():
         raise ProviderError('Configure a model first.')
@@ -90,13 +90,17 @@ def stream_local(model, messages, check, emit, endpoint=DEFAULT_ENDPOINT, transp
         raise ProviderError('Conversation exceeds the 100,000-character limit. Start a new chat.')
 
     payload = {'model': model.strip(), 'messages': messages, 'stream': True}
+    if planning:
+        payload.update(response_format={'type': 'json_object'}, temperature=0,
+                       max_tokens=384, reasoning_effort='none')
     started = time.monotonic()
     total = 0
     finished = False
     parts = []
     try:
         check()
-        with _local_client(timeout=httpx.Timeout(30, connect=10), transport=transport) as client:
+        with _local_client(timeout=httpx.Timeout(90 if planning else 30, connect=10),
+                           transport=transport) as client:
             with client.stream('POST', endpoint, json=payload) as response:
                 if response.status_code in (502, 503, 504):
                     raise TransientProviderError(

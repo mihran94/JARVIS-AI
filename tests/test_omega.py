@@ -58,20 +58,15 @@ def test_dock_links_keyboard_and_order(tmp_path, monkeypatch):
     diagnostics = Mock()
     monkeypatch.setattr(window, 'open_network_diagnostics', diagnostics)
     try:
-        # The old application dock is retired from the interface: the
-        # PRIME rail is the navigation now, and it reaches the same
-        # pages. The dock is still there for the settings that remember
-        # its order, and it is not in the window.
-        for section, button in window.prime_shell.rail_buttons.items():
-            button.click()
+        for section in ('JARVIS Chat', 'PC Control'):
+            window.prime_shell.menu_items[section].click()
             app.processEvents()
-            if section == 'Cybersecurity':
-                diagnostics.assert_called_once_with()
-            elif section == 'Projects':
-                assert window.pages.currentIndex() == window.page_indices['Settings & Safety']
-                assert button.isChecked()
-            else:
-                assert window.pages.currentIndex() == window.page_indices[section]
+            assert window.pages.currentIndex() == window.page_indices[section]
+        window.automation_workspace_button.click()
+        window.automation_tools['Network'].click()
+        diagnostics.assert_called_once_with()
+        window.automation_tools['Projects'].click()
+        assert window.settings_scroller.isVisibleTo(window)
         assert not ui.dock.isVisible()
         ui.order_items.setCurrentText('AI Chat')
         ui.move_dock(-1)
@@ -87,7 +82,7 @@ def test_dock_links_keyboard_and_order(tmp_path, monkeypatch):
         assert window.composer_bar.isVisibleTo(window)
         ui.open_page('Omega Settings')
         app.processEvents()
-        assert window.pages.currentIndex() == window.page_indices['Settings & Safety']
+        assert window.settings_scroller.isVisibleTo(window)
     finally:
         window.close()
         window.deleteLater()
