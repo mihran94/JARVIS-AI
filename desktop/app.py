@@ -543,6 +543,9 @@ class Window(QMainWindow):
         self.system_timer.start()
         self.fullscreen_shortcut = QShortcut(QKeySequence('F11'), self)
         self.fullscreen_shortcut.activated.connect(self.toggle_fullscreen)
+        self.microphone_mute_shortcut = QShortcut(QKeySequence('F4'), self)
+        self.microphone_mute_shortcut.setAutoRepeat(False)
+        self.microphone_mute_shortcut.activated.connect(self.hud_toggle_microphone)
         self.refresh_system_metrics()
         self.refresh_history()
         self.render_chat()
@@ -799,6 +802,45 @@ class Window(QMainWindow):
         self.refresh_prime_state()
         return shell
 
+    def open_mcore_cockpit(self):
+        """Leave ordinary PRIME startup untouched until the cockpit is requested."""
+        cockpit = getattr(self, 'mcore_cockpit', None)
+        if cockpit is None:
+            from desktop.mcore_cockpit import MCoreCockpit
+
+            cockpit = self.mcore_cockpit = MCoreCockpit(self)
+            self.page_indices[MCoreCockpit.section] = self.pages.addWidget(cockpit)
+            self.pages.currentChanged.connect(self.update_cockpit_chrome)
+            output = self.news_panel.output
+            output.textChanged.connect(lambda: cockpit.update_news(output.toPlainText()))
+            cockpit.update_news(output.toPlainText())
+            cockpit.render(self.store.messages(self.session))
+            self.refresh_prime_state()
+        self.prime_shell.close_drawer()
+        self.pages.setCurrentWidget(cockpit)
+        self.prime_shell.refresh_mark()
+
+    def update_cockpit_chrome(self, _index):
+        on_cockpit = self.pages.currentWidget() is self.mcore_cockpit
+        self.prime_shell.show_cockpit_chrome(on_cockpit)
+        # Switching chrome changes the minimum width. Apply that change before
+        # Windows handles the next resize, not on a later layout event.
+        for widget in (self.prime_shell, self.centralWidget(), self):
+            layout = widget.layout()
+            if layout is not None:
+                layout.invalidate()
+                layout.activate()
+        if on_cockpit:
+            self.mcore_cockpit.update_metrics(self.cockpit_usage)
+            self.mcore_cockpit.update_tasks(self.queue.rows())
+
+    def return_from_cockpit(self):
+        """Expose the same PRIME workspace without resetting its current display."""
+        self.prime_shell.close_drawer()
+        self.pages.setCurrentWidget(self.prime_chat)
+        self.prime_shell.mark_active('JARVIS Chat')
+        self.prime_shell.refresh_mark()
+
     def prime_is_dark(self) -> bool:
         """The PRIME surface follows the theme the owner chose."""
         from desktop.prime_theme import _luminance
@@ -818,6 +860,9 @@ class Window(QMainWindow):
         shell.set_state(state)
         detail = self.current_desktop_activity(state)
         shell.set_provider(self.brain_label.text())
+        cockpit = getattr(self, 'mcore_cockpit', None)
+        if cockpit is not None:
+            cockpit.update_runtime(state, self.brain_label.text())
         chat = getattr(self, 'prime_chat', None)
         if chat is not None:
             summary = detail or {
@@ -929,6 +974,9 @@ class Window(QMainWindow):
 
     def open_section(self, name):
         name = {'Omega Home': 'JARVIS Chat', 'Omega Settings': 'Settings & Safety'}.get(name, name)
+        if name == 'M-CORE':
+            self.open_mcore_cockpit()
+            return
         shell = getattr(self, 'prime_shell', None)
         settings_category = {
             'Settings & Safety': 'Voice',
@@ -1315,6 +1363,11 @@ class Window(QMainWindow):
         self.video_status.setText('Review the brief and select Generate with Gemini.')
         return True
 
+    def hud_toggle_microphone(self):
+        """Use the existing mute control so keyboard and cockpit state stay in sync."""
+        if not self.policy.stopped:
+            self.prime_shell.mic_mute_button.click()
+
     def set_microphone_muted(self, muted):
         self.voice_panel.microphone_muted = muted
         if muted:
@@ -1583,6 +1636,38 @@ class Window(QMainWindow):
             return True
         return False
 
+    def hud_can_interrupt_reply(self):
+        return not self.policy.stopped and bool(
+            (self.live_voice is not None and self.live_voice.state == 'speaking')
+            or self.voice_panel.pending_speech or self.voice_panel.playback_busy)
+
+    def hud_interrupt_reply(self):
+        """Interrupt spoken output, not the microphone or a pending PC action."""
+        if not self.hud_can_interrupt_reply():
+            return False
+        if self.live_voice is not None and self.live_voice.state == 'speaking':
+            self.interrupt_live_voice()
+        else:
+            voice = self.voice_panel
+            voice.pending_speech = ''
+            voice.pending_sample = None
+            if voice.playback_busy:
+                voice.speaker_worker.requestInterruption()
+            # Existing worker completion controls any already opt-in mic rearm.
+            voice.refresh()
+        return True
+
+    def keyPressEvent(self, event):
+        # Let focused widgets, drawer shortcuts, and separate dialogs handle Esc
+        # first. Don't let a window-wide shortcut steal their normal dismiss key.
+        if (event.key() == Qt.Key.Key_Escape
+                and event.modifiers() == Qt.KeyboardModifier.NoModifier
+                and not event.isAutoRepeat() and not QApplication.activeModalWidget()
+                and not QApplication.activePopupWidget() and self.hud_interrupt_reply()):
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
     def interrupt_live_voice(self):
         if self.live_voice is not None:
             self.live_voice.interrupt()
@@ -1724,6 +1809,10 @@ class Window(QMainWindow):
         """Refresh the HUD and cache the same snapshot for local chat commands."""
         data = snapshot(self.root, self.cpu_sampler)
         data['network_status'] = format_network(self.network_sampler.sample())
+        self.cockpit_usage = data
+        cockpit = getattr(self, 'mcore_cockpit', None)
+        if cockpit is not None:
+            cockpit.update_metrics(data)
         self.system_summary = format_snapshot(data)
         self.system_metrics_label.setText(self.system_summary)
         self.dashboard_metrics.setText(self.system_summary)
@@ -2333,6 +2422,9 @@ class Window(QMainWindow):
             '24 KiB per file / 48,000 characters total. '
             'Supported: UTF-8 text, Markdown, code, CSV, JSON, PDF and DOCX. '
             'A binary file cannot be read.')
+        cockpit = getattr(self, 'mcore_cockpit', None)
+        if cockpit is not None:
+            cockpit.update_attachments(self.attachments)
 
     def read_document_file(self):
         """Read one document the owner chose and show it here.
@@ -6444,6 +6536,9 @@ class Window(QMainWindow):
         chat = getattr(self, 'prime_chat', None)
         if chat is not None:
             chat.render(messages)
+        cockpit = getattr(self, 'mcore_cockpit', None)
+        if cockpit is not None:
+            cockpit.render(messages)
 
     def new_chat(self):
         if self.worker is not None:
@@ -7058,6 +7153,9 @@ class Window(QMainWindow):
         if current >= 0 and self.jobs_table.item(current, 0):
             selected = self.jobs_table.item(current, 0).data(Qt.ItemDataRole.UserRole)
         jobs = self.queue.rows()
+        cockpit = getattr(self, 'mcore_cockpit', None)
+        if cockpit is not None:
+            cockpit.update_tasks(jobs)
         self.jobs_table.setRowCount(len(jobs))
         for index, job in enumerate(jobs):
             for column, key in enumerate(('created', 'app', 'status', 'detail')):

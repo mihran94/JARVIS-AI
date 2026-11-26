@@ -1080,6 +1080,10 @@ class PrimeShell(QWidget):
         outer.addLayout(footer)
         window.pages.currentChanged.connect(self.refresh_mark)
 
+    def show_cockpit_chrome(self, enabled):
+        """The cockpit has its own header; other pages retain the PRIME toolbar."""
+        self.top_bar.setVisible(not enabled)
+
     def pulse_wake(self):
         if self.window_ref.store.get('omega:reduced', False):
             return
@@ -1132,6 +1136,10 @@ class PrimeShell(QWidget):
             f'color: {palette.ink.name()}; font-family: {MONO_STACK};'
             ' font-size: 21px; font-weight: 700; letter-spacing: 2px;')
         layout.addWidget(brand)
+        self.cockpit_button = QPushButton('M-CORE')
+        self.cockpit_button.setToolTip('Open the optional M-CORE cockpit')
+        self.cockpit_button.clicked.connect(lambda: self.open_section('M-CORE'))
+        layout.addWidget(self.cockpit_button)
 
         commit = build_commit()
         release = os.environ.get('JARVIS_SOURCE_RELEASE', '').strip()
