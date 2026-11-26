@@ -4,7 +4,7 @@ from math import sin, tau
 from time import monotonic
 
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QTimer, Signal
-from PySide6.QtWidgets import QComboBox, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QProgressBar, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import QComboBox, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QProgressBar, QPushButton, QSizePolicy, QVBoxLayout
 
 try:
     from PySide6.QtMultimedia import QAudio, QAudioFormat, QAudioSink, QAudioSource, QMediaDevices
@@ -40,6 +40,9 @@ class AudioTest(QGroupBox):
         self.device_choices = {}
         for row, (mode, label) in enumerate((('microphone', 'Microphone'), ('speaker', 'Speaker'))):
             choice = QComboBox()
+            choice.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            choice.setMinimumContentsLength(10)
+            choice.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
             choice.setAccessibleName(label + ' device')
             selectors.addWidget(QLabel(label), row, 0)
             selectors.addWidget(choice, row, 1)

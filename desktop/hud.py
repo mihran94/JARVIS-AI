@@ -66,7 +66,8 @@ class HudDial(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setFont(_font(MONO_STACK, 8, 600))
         if self.height() >= 60:
-            ring = QRectF(5, 7, 46, 46)
+            tall = self.height() >= 78
+            ring = QRectF((self.width() - 46) / 2 if tall else 5, 7, 46, 46)
             painter.setPen(QPen(_alpha(CYAN, 62), 3))
             painter.drawArc(ring, 225 * 16, -270 * 16)
             if self.value is not None:
@@ -78,8 +79,10 @@ class HudDial(QWidget):
             painter.setPen(QColor(INK))
             painter.drawText(ring, Qt.AlignmentFlag.AlignCenter, self.text)
             painter.setPen(QColor(MUTED))
-            painter.drawText(QRectF(60, 7, self.width() - 60, 46),
-                             Qt.AlignmentFlag.AlignVCenter, self.caption)
+            painter.drawText(QRectF(0, 58, self.width(), 20) if tall else
+                             QRectF(60, 7, self.width() - 60, 46),
+                             Qt.AlignmentFlag.AlignCenter if tall else Qt.AlignmentFlag.AlignVCenter,
+                             self.caption)
             return
         painter.setPen(QColor(MUTED))
         painter.drawText(QRectF(0, 3, self.width(), 14), Qt.AlignmentFlag.AlignLeft, self.caption)

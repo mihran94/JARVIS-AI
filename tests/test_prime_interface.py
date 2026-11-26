@@ -239,16 +239,19 @@ def test_the_composer_uses_the_real_prompt_and_the_real_buttons(tmp_path):
     try:
         chat = window.prime_chat
         assert chat.chat_history.isAncestorOf(chat.conversation)
-        assert chat.chat_history.isAncestorOf(window.prompt)
+        assert chat.chat_column.isAncestorOf(window.prompt)
+        assert chat.command_panel.isAncestorOf(window.prompt)
         assert chat.chat_history.isAncestorOf(chat.assistant.heard)
-        assert chat.chat_history.layout().indexOf(chat.conversation) < chat.chat_history.layout().indexOf(chat.composer)
-        assert chat.composer.body.indexOf(window.prompt) >= 0
-        controls = chat.composer.body.itemAt(1).layout()
+        assert chat.chat_column.layout().indexOf(chat.chat_history) < chat.chat_column.layout().indexOf(chat.command_panel)
+        assert chat.composer.body.itemAt(0).widget() is window.attach_button
+        entry = chat.composer.body.itemAt(1).layout()
+        assert entry.itemAt(0).widget() is window.prompt
+        assert entry.itemAt(1).widget() is window.send_button
+        controls = chat.composer.controls
         found = [controls.itemAt(index).widget()
                  for index in range(controls.count())
                  if controls.itemAt(index).widget() is not None]
-        assert found == [window.prime_shell.mic_mute_button, window.camera_toggle,
-                         window.attach_button, window.send_button]
+        assert found == [window.prime_shell.mic_mute_button, window.camera_toggle]
         assert chat.voice_button.isHidden()
         assert chat.suggestions_button.isHidden()
         chat.populate_suggestions()
@@ -669,5 +672,43 @@ def test_slash_suggestion_goes_to_gemini_without_running_a_pc_action(tmp_path, m
         assert calls == [('help me edit a short video', {'suggestion': True, 'suggestions_online': True})]
         assert window.desktop_pending is None
         assert window.chat_launch is None
+    finally:
+        window.close()
+
+
+def test_reference_footer_shortcuts_mute_close_settings_and_stop(tmp_path):
+    app, window = make_window(tmp_path)
+    try:
+        QTest.keyClick(window, Qt.Key.Key_F4)
+        app.processEvents()
+        assert window.voice_panel.microphone_muted
+        window.prime_shell.refresh_clock()
+        assert 'MIC · MUTED' in window.prime_shell.footer_status.text()
+        window.open_section('Settings & Safety')
+        app.processEvents()
+        window.prime_shell.interrupt_or_close()
+        assert not window.prime_shell.settings_dialog.isVisible()
+        assert not window.policy.stopped
+        QTest.keyClick(window, Qt.Key.Key_Escape)
+        app.processEvents()
+        assert window.policy.stopped
+    finally:
+        window.close()
+
+
+def test_reference_panels_show_real_status_and_keep_upload_with_command(tmp_path):
+    app, window = make_window(tmp_path)
+    try:
+        chat = window.prime_chat
+        chat.refresh_reference_panels({'network_status': '12 KB/s',
+                                       'gpu_usage_percent': None, 'cpu_temperature_c': None})
+        assert '12 KB/s' in chat.status_detail.text()
+        assert chat.gpu_dial.text == 'N/A'
+        assert chat.temperature_dial.text == 'N/A'
+        assert 'Refresh' in chat.weather_detail.text()
+        assert chat.command_panel.isAncestorOf(window.attach_button)
+        assert chat.command_panel.isAncestorOf(window.send_button)
+        assert chat.chat_history.isAncestorOf(chat.conversation)
+        assert window.prime_shell.clock_label.text().count(':') == 2
     finally:
         window.close()

@@ -191,7 +191,7 @@ class AutomationPanel(QWidget):
     def _build_browser(self) -> QWidget:
         box = QGroupBox('Browser')
         layout = QVBoxLayout(box)
-        row = QHBoxLayout()
+        row = QVBoxLayout()
         self.browser_command = QLineEdit()
         self.browser_command.setPlaceholderText(
             'open https://…  ·  inspect  ·  fill Field label  ·  click Button name')
@@ -252,7 +252,7 @@ class AutomationPanel(QWidget):
         note.setStyleSheet(f'color: {MUTED};')
         layout.addWidget(note)
 
-        row = QHBoxLayout()
+        row = QVBoxLayout()
         self.windows = QPlainTextEdit()
         self.windows.setReadOnly(True)
         self.windows.setMaximumHeight(120)

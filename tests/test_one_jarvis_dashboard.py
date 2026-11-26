@@ -266,6 +266,9 @@ def test_hud_continuous_voice_waits_for_playback_before_listening_again(tmp_path
     monkeypatch.setattr(window, 'get_key', unexpected_provider)
     voice._recognizer_factory = recognizer_factory
     voice._speaker_factory = Speaker
+    # Exercise playback state deterministically without calling Gemini or
+    # opening the host speaker. Production readout uses Gemini exclusively.
+    monkeypatch.setattr(window, 'read_with_gemini', voice.speak_response)
     try:
         window.open_section('Command Center')
         voice.allow.setChecked(True)

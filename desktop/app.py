@@ -1731,6 +1731,9 @@ class Window(QMainWindow):
         self.dashboard_metrics.setText(self.system_summary)
         self.settings_usage.setText(self.system_summary)
         self.hud_clock.setText(datetime.now().strftime('%H:%M'))
+        chat = getattr(self, 'prime_chat', None)
+        if chat is not None:
+            chat.refresh_reference_panels(data)
         if self.omega is not None:
             self.omega.update_metrics(data)
         for key, (value, meter) in self.hud_meters.items():
@@ -1932,7 +1935,8 @@ class Window(QMainWindow):
         shell = getattr(self, 'prime_shell', None)
         if shell is not None:
             mic_action = 'Unmute mic' if muted else 'Mute mic'
-            shell.mic_mute_button.setText('🎙×' if muted else '🎙')
+            shell.mic_mute_button.setText('MIC MUTED' if muted else (
+                'MIC ACTIVE' if self.voice_panel.consent.listening else 'MIC OFF'))
             shell.mic_mute_button.setAccessibleName(mic_action)
             shell.mic_mute_button.setToolTip(mic_action)
             shell.output_mute_button.setChecked(output_muted)
