@@ -689,6 +689,9 @@ def test_reference_footer_shortcuts_mute_close_settings_and_stop(tmp_path):
         window.prime_shell.interrupt_or_close()
         assert not window.prime_shell.settings_dialog.isVisible()
         assert not window.policy.stopped
+        window.activateWindow()
+        window.setFocus()
+        app.processEvents()
         QTest.keyClick(window, Qt.Key.Key_Escape)
         app.processEvents()
         assert window.policy.stopped

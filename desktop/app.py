@@ -7206,6 +7206,10 @@ class Window(QMainWindow):
             self.statusBar().showMessage('Waiting for the current task to exit safely…')
             event.ignore()
         else:
+            self.prime_shell.close_drawer()
+            self.prime_shell.clock_timer.stop()
+            for timer in (self.timer, self.system_timer, self.maintenance_timer, self.voice_hud_timer):
+                timer.stop()
             if self.news_panel is not None:
                 self.news_panel.disable_schedule()
             self.voice_rearm_timer.stop()

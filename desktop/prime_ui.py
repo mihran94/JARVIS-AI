@@ -724,17 +724,29 @@ class PrimeChat(QWidget):
             button.setCheckable(True)
             button.setAutoExclusive(True)
             button.clicked.connect(lambda _checked=False, key=key: self.show_display(key))
-            display_tabs.addWidget(button)
+            button.setParent(display)
+            button.hide()
             self.display_buttons[key] = button
         self.display_buttons['hologram'].setChecked(True)
-        display_layout.addLayout(display_tabs)
-        display_layout.addWidget(self.displays, 1)
-        display_layout.addWidget(window.prime_shell.microphone_waveform)
+        self.voice_display = GlassCard(palette)
+        voice_layout = QVBoxLayout(self.voice_display)
+        voice_layout.setContentsMargins(12, 10, 12, 8)
+        voice_title = QLabel('VOICE INTERFACE')
+        voice_title.setObjectName('hudSectionTitle')
+        voice_layout.addWidget(voice_title)
+        voice_layout.addWidget(self.displays, 1)
+        voice_layout.addWidget(window.prime_shell.microphone_waveform)
+        display_layout.addWidget(self.voice_display, 1)
         self.terminal = GlassCard(palette)
         terminal_layout = QVBoxLayout(self.terminal)
         terminal_layout.setContentsMargins(10, 6, 10, 8)
         terminal_header = QHBoxLayout()
-        terminal_header.addWidget(QLabel('Terminal'), 1)
+        terminal_heading = QLabel('TERMINAL / NEWS')
+        terminal_heading.setObjectName('hudSectionTitle')
+        terminal_header.addWidget(terminal_heading, 1)
+        news_button = QPushButton('News')
+        news_button.clicked.connect(self.refresh_weather)
+        terminal_header.addWidget(news_button)
         history_button = QPushButton('Task history')
         history_button.setCheckable(True)
         history_button.toggled.connect(self.switch_terminal)
@@ -885,6 +897,11 @@ class PrimeChat(QWidget):
         ui = window.omega
         if ui is not None and ui.weather_value.text() not in ('—', ''):
             self.weather_detail.setText(ui.weather_value.text() + '\n' + ui.weather_detail.text())
+        if ui is not None:
+            headlines = ui.news_value.text()
+            if ('  ·  ' in headlines and headlines != getattr(self, '_last_feed_news', '')):
+                self._last_feed_news = headlines
+                self.terminal_output.appendPlainText('NEWS\n' + headlines)
 
     def _adopt_composer(self):
         """Move the real prompt and the real buttons into the new composer.
@@ -1085,6 +1102,7 @@ class PrimeChat(QWidget):
         self.chat_history.refresh()
         self.workspace.refresh()
         self.command_panel.refresh()
+        self.voice_display.refresh()
         for card in self.reference_cards:
             card.refresh()
         self.terminal.refresh()
