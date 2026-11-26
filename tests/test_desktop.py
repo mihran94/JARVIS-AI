@@ -164,7 +164,7 @@ def test_voice_drafts_text_without_network_or_automation(tmp_path):
         assert window.voice_panel.consent.granted is False
         window.listen_to_user()
         assert window.settings_categories.currentText() == 'Voice'
-        assert not window.prime_shell.drawer.isHidden()
+        assert window.prime_shell.settings_dialog.isVisible()
         assert window.store.messages(window.session) == []
 
         window.voice_panel.allow.setChecked(True)

@@ -38,7 +38,7 @@ def test_mark_lvii_chat_first_but_existing_pages_remain(tmp_path):
         assert not win.chat_provider.isVisible()
         shell.settings_button.click()
         app.processEvents()
-        assert win.settings_scroller.isVisibleTo(win)
+        assert win.settings_scroller.isVisibleTo(win.prime_shell.settings_dialog)
         assert not win.plugins_group.isVisible()
         win.open_plugins()
         app.processEvents()

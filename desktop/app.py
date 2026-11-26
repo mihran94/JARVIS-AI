@@ -2646,7 +2646,7 @@ class Window(QMainWindow):
             return
         self.clear_suggested_plan()
         self.automation_panel.suggestion_results.addWidget(self.suggestion_card)
-        self.send_chat_reply(goal, suggestion=True, suggestions_online=True)
+        self.request_suggestions(goal, explicit=True)
 
     def suggest_chat_draft(self):
         if (self.policy.stopped or self.worker is not None

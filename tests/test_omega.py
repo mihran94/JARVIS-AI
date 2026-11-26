@@ -66,7 +66,7 @@ def test_dock_links_keyboard_and_order(tmp_path, monkeypatch):
         window.automation_tools['Network'].click()
         diagnostics.assert_called_once_with()
         window.automation_tools['Projects'].click()
-        assert window.settings_scroller.isVisibleTo(window)
+        assert window.settings_scroller.isVisibleTo(window.prime_shell.settings_dialog)
         assert not ui.dock.isVisible()
         ui.order_items.setCurrentText('AI Chat')
         ui.move_dock(-1)
@@ -82,7 +82,7 @@ def test_dock_links_keyboard_and_order(tmp_path, monkeypatch):
         assert window.composer_bar.isVisibleTo(window)
         ui.open_page('Omega Settings')
         app.processEvents()
-        assert window.settings_scroller.isVisibleTo(window)
+        assert window.settings_scroller.isVisibleTo(window.prime_shell.settings_dialog)
     finally:
         window.close()
         window.deleteLater()
