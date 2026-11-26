@@ -1012,7 +1012,14 @@ class MicrophoneWaveform(QWidget):
         self.setAccessibleName('Microphone waveform')
         self.timer = QTimer(self, interval=60)
         self.timer.timeout.connect(self.advance)
+
+    def showEvent(self, event):
+        super().showEvent(event)
         self.timer.start()
+
+    def hideEvent(self, event):
+        self.timer.stop()
+        super().hideEvent(event)
 
     def set_level(self, value):
         self.level = max(0, min(100, value))
