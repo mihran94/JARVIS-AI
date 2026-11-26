@@ -5,6 +5,7 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 import pytest
 from PySide6.QtWidgets import QApplication, QPushButton
+from types import SimpleNamespace
 
 from core.mission_tools import ToolError, build_registry
 from desktop.app import Window
@@ -40,6 +41,25 @@ def test_take_control_routes_a_goal_and_release_cancels_the_session(window, monk
     assert window.route_interface_command('stop control')
     assert not window.desktop_control_active
     assert cancelled
+
+
+def test_news_uses_the_existing_gemini_session_and_not_weather(window, monkeypatch):
+    requests, sent = [], []
+    monkeypatch.setattr(window, 'start_news_briefing', requests.append)
+    button = next(b for b in window.prime_chat.terminal.findChildren(QPushButton)
+                  if b.text() == 'News')
+    button.click()
+    assert requests == [window.news_panel.region.currentData()]
+    assert window.news_panel.speech.isChecked()
+    assert window.route_interface_command('நியூஸ் சொல்லு')
+    assert len(requests) == 2
+    monkeypatch.setattr(window, 'live_voice', SimpleNamespace(active=True, send=sent.append))
+    assert window.read_news_briefing('Verified headline')
+    assert 'Verified headline' in sent[0]['realtimeInput']['text']
+    window.policy.stop()
+    assert not window.read_news_briefing('Must not speak')
+    assert len(sent) == 1
+    monkeypatch.setattr(window, 'live_voice', None)
 
 
 def test_control_grant_is_session_only_and_does_not_approve_send_or_save(window):

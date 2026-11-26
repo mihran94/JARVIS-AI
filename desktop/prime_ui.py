@@ -796,7 +796,7 @@ class PrimeChat(QWidget):
         terminal_heading.setObjectName('hudSectionTitle')
         terminal_header.addWidget(terminal_heading, 1)
         news_button = QPushButton('News')
-        news_button.clicked.connect(self.refresh_weather)
+        news_button.clicked.connect(window.request_news_briefing)
         terminal_header.addWidget(news_button)
         history_button = QPushButton('Task history')
         history_button.setCheckable(True)
@@ -854,8 +854,7 @@ class PrimeChat(QWidget):
         rail.setSpacing(12)
         rail.addWidget(self.workspace)
         self.reference_cards = []
-        for title, attr in (('STATUS', 'status_detail'), ('TASKS', 'task_detail'),
-                            ('WEATHER', 'weather_detail')):
+        for title, attr in (('STATUS', 'status_detail'), ('WEATHER', 'weather_detail')):
             card = GlassCard(palette)
             body = QVBoxLayout(card)
             body.setContentsMargins(12, 10, 12, 10)
@@ -947,9 +946,6 @@ class PrimeChat(QWidget):
         network = (data or {}).get('network_status', 'Not measured')
         self.status_detail.setText(f'UPTIME   {uptime}\nPROCESSES   {processes}\n'
                                    f'NETWORK   {network}\nPLATFORM   {platform.system()}\nENGINE   {engine}')
-        rows = window.store.tasks()[:2]
-        self.task_detail.setText('\n'.join(f"{row['kind']} · {row['status']}" for row in rows)
-                                 or 'No tasks running.')
         gpu, temperature = (data or {}).get('gpu_usage_percent'), (data or {}).get('cpu_temperature_c')
         self.gpu_dial.set_reading(None if gpu is None else gpu / 100, 'N/A' if gpu is None else f'{gpu:.0f}%')
         self.temperature_dial.set_reading(None if temperature is None else temperature / 100,
