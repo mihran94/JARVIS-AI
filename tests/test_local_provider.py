@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 from providers.chat import ProviderError
-from providers.ollama import is_loopback, stream_local
+from providers.ollama import TAGS_LIMIT, is_loopback, probe_model_listing, stream_local
 from providers.router import ProviderRouter
 
 
@@ -81,3 +81,74 @@ def test_offline_selection_never_picks_a_cloud_provider():
     spec = router.select('OpenAI', configured=('OpenAI', 'Ollama'), allow_fallback=True,
                           offline_only=True)
     assert spec.name == 'Ollama'
+
+
+@pytest.mark.parametrize('entry', [{'name': 'qwen3:8b'}, {'model': 'qwen3:8b'}])
+def test_model_listing_uses_one_read_only_loopback_request(entry):
+    def handler(request):
+        requests.append(request)
+        assert request.method == 'GET'
+        assert str(request.url) == 'http://127.0.0.1:11434/api/tags'
+        assert request.headers['accept-encoding'] == 'identity'
+        assert 'authorization' not in request.headers and request.content == b''
+        return httpx.Response(200, json={'models': [entry]})
+
+    requests = []
+    ok, detail = probe_model_listing('qwen3:8b', transport=httpx.MockTransport(handler))
+    assert ok and 'generation was not tested' in detail
+    assert len(requests) == 1
+
+
+@pytest.mark.parametrize('response,message', [
+    (httpx.Response(200, json={'models': []}), 'exact requested tag'),
+    (httpx.Response(200, json={'models': [{'name': 'qwen3:4b'}]}), 'exact requested tag'),
+    (httpx.Response(200, json={'models': [{'name': 'qwen3:8b'}, None]}), 'invalid model listing'),
+    (httpx.Response(200, json={'models': {}}), 'invalid model listing'),
+    (httpx.Response(200, content=b'not JSON'), 'invalid model listing'),
+    (httpx.Response(200, content=b' ' * (TAGS_LIMIT + 1)), 'size limit'),
+    (httpx.Response(200, headers={'Content-Encoding': 'private-unknown'}), 'encoding'),
+    (httpx.Response(302, headers={'Location': 'https://example.invalid/private'}), 'HTTP 302'),
+])
+def test_listing_failures_are_distinct_and_redirects_are_not_followed(response, message):
+    def handler(request):
+        requests.append(request)
+        return response
+
+    requests = []
+    ok, detail = probe_model_listing('qwen3:8b', transport=httpx.MockTransport(handler))
+    assert not ok and message in detail
+    assert 'private' not in detail and len(requests) == 1
+
+
+@pytest.mark.parametrize('error,message', [
+    (httpx.ConnectError, 'Could not reach'), (httpx.ReadTimeout, 'timed out'),
+])
+def test_listing_network_errors_are_not_leaked(error, message):
+    def handler(_):
+        raise error('private details')
+    ok, detail = probe_model_listing('qwen3:8b', transport=httpx.MockTransport(handler))
+    assert not ok and message in detail and 'private' not in detail
+
+
+def test_blank_model_does_not_make_request():
+    def handler(_):
+        pytest.fail('blank tag made a network request')
+    assert not probe_model_listing(' ', transport=httpx.MockTransport(handler))[0]
+
+
+def test_ollama_operations_disable_environment_proxies_and_redirects(monkeypatch):
+    calls = []
+    original = httpx.Client
+
+    def client(**kwargs):
+        calls.append(kwargs)
+        return original(**kwargs)
+
+    monkeypatch.setattr(httpx, 'Client', client)
+    probe_model_listing('local:tag', transport=httpx.MockTransport(
+        lambda _: httpx.Response(200, json={'models': []})))
+    stream_local('local:tag', [], lambda: None, lambda _: None,
+                 transport=httpx.MockTransport(
+                     lambda _: httpx.Response(200, text=openai_style_stream())))
+    assert len(calls) == 2
+    assert all(call['trust_env'] is False and call['follow_redirects'] is False for call in calls)
