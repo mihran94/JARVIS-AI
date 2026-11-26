@@ -131,22 +131,26 @@ async def cancellable_synthesis(config, text, language, cancelled):
         await asyncio.gather(task, return_exceptions=True)
 
 
-def play_wav(data, cancelled, playing):
-    """Play verified PCM on the Windows default audio output."""
+def play_wav(data, cancelled, playing, *, expected_rate=24000):
+    """Play a verified mono PCM WAV on the Windows default output device."""
     if sys.platform != 'win32':
-        raise VoiceUnavailable('Azure Speech playback requires Windows.')
+        raise VoiceUnavailable('Speech playback requires Windows.')
     import winsound
 
     try:
         with wave.open(BytesIO(data), 'rb') as audio:
-            if (audio.getnchannels(), audio.getsampwidth(), audio.getframerate()) != (1, 2, 24000):
+            rate = audio.getframerate()
+            if ((audio.getnchannels(), audio.getsampwidth()) != (1, 2)
+                    or not 8000 <= rate <= 48000
+                    or (expected_rate is not None and rate != expected_rate)):
                 raise ValueError('Unexpected WAV format')
             frames = audio.getnframes()
             if not frames or len(audio.readframes(frames)) != frames * 2:
                 raise ValueError('Missing PCM data')
-            duration = frames / 24000
+            duration = frames / rate
     except (EOFError, ValueError, wave.Error):
-        raise VoiceUnavailable('Azure Speech returned invalid WAV audio.') from None
+        source = 'Windows Tamil voice' if expected_rate is None else 'Azure Speech'
+        raise VoiceUnavailable(f'{source} returned invalid WAV audio.') from None
     with TemporaryDirectory(prefix='jarvis-speech-') as directory:
         path = Path(directory) / 'reply.wav'
         path.write_bytes(data)
@@ -159,6 +163,6 @@ def play_wav(data, cancelled, playing):
             while not cancelled() and monotonic() < end:
                 sleep(0.05)
         except RuntimeError:
-            raise VoiceUnavailable('Azure audio playback failed. Check the Windows output device.') from None
+            raise VoiceUnavailable('Speech playback failed. Check the Windows output device.') from None
         finally:
             winsound.PlaySound(None, 0)

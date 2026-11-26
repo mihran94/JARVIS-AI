@@ -468,7 +468,8 @@ class Window(QMainWindow):
         self.voice_panel.allow.toggled.connect(self.on_live_mic_consent)
         cloud_voice = QGroupBox('Gemini Live')
         live_voice_form = QFormLayout(cloud_voice)
-        live_voice_row = QHBoxLayout()
+        live_voice_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        live_voice_row = QVBoxLayout()
         self.live_voice_settings_button = self.button(live_voice_row, 'Live Voice', self.toggle_live_voice)
         self.live_speech_language = QComboBox()
         self.live_speech_language.setAccessibleName('Live speech language')
@@ -787,9 +788,7 @@ class Window(QMainWindow):
         self.prime_chat = chat
         chat.adopt_task_panels()
         shell.content.addWidget(self.pages)
-        existing_tasks = self.store.tasks()
-        shell.activity.set_rows(existing_tasks)
-        chat.timeline.set_rows(existing_tasks)
+        chat.timeline.set_rows(self.store.tasks())
         shell.refresh_mark()
         self.render_chat()
 
@@ -814,7 +813,6 @@ class Window(QMainWindow):
         state = self.prime_state()
         shell.set_state(state)
         detail = self.current_desktop_activity(state)
-        shell.activity.set_live_detail(detail)
         shell.set_provider(self.brain_label.text())
         chat = getattr(self, 'prime_chat', None)
         if chat is not None:
@@ -944,11 +942,12 @@ class Window(QMainWindow):
         chat = getattr(self, 'prime_chat', None)
         if chat is not None:
             chat.show_task(name)
-            if name == 'Quantum Visual Player':
-                chat.show_display('media')
-            if name in chat.task_panels:
+            if name in chat.task_panels or name == 'Quantum Visual Player':
                 self.pages.setCurrentIndex(self.page_indices['JARVIS Chat'])
-                self.prime_shell.mark_active(name)
+                if name == 'Quantum Visual Player':
+                    chat.show_display('media')
+                shell.mark_active(name)
+                shell.refresh_mark()
                 return
         index = self.page_indices[name]
         for row in range(self.nav.count()):
@@ -959,6 +958,14 @@ class Window(QMainWindow):
         if shell is not None:
             shell.mark_active(name)
             shell.refresh_mark()
+
+    def section_widget(self, name):
+        chat = getattr(self, 'prime_chat', None)
+        if chat is not None and name in chat.task_panels:
+            widget = chat.task_area.widget(chat.task_panels[name])
+        else:
+            widget = self.pages.widget(self.page_indices[name])
+        return widget.widget() if isinstance(widget, QScrollArea) else widget
 
     def open_island(self):
         """The only optional presentation mode on the main assistant toolbar."""
@@ -2055,12 +2062,14 @@ class Window(QMainWindow):
 
     def open_research_window(self):
         """Open the research window: the owner names a page and a question."""
-        from desktop.research_dialog import open_research
+        from desktop.research_dialog import ResearchDialog
 
         if self.research_dialog is None:
-            self.research_dialog = open_research(self)
-        self.research_dialog.show()
-        self.research_dialog.raise_()
+            self.research_dialog = ResearchDialog(self, embedded=True)
+            self.research_dialog.dismissed.connect(lambda: self.open_section('PC Control'))
+            self.prime_chat.task_panels['Research'] = self.prime_chat.task_area.addWidget(
+                self.scroll_page(self.research_dialog))
+        self.open_section('Research')
         return self.research_dialog
 
     def files_page(self):
@@ -2378,25 +2387,15 @@ class Window(QMainWindow):
         for index, (title, open_tool) in enumerate((
             ('Projects', self.open_saved_projects),
             ('Files & folders', lambda: self.open_section('Files & Folders')),
-            ('Voice controls', lambda: self.open_section('Voice / Hey Jarvis')),
-            ('Memory', lambda: self.open_section('Memory')),
-            ('Network', lambda: self.open_network_diagnostics()),
             ('PC usage', lambda: self.open_section('Command Center')),
             ('Task queue', lambda: self.open_section('Task Queue')),
             ('Workflows', lambda: self.open_section('Step Workflows')),
             ('Review changes', lambda: self.open_section('Review changes')),
-            ('Task history', lambda: self.open_section('Task History')),
-            ('Phone remote', lambda: self.open_section('Phone Remote')),
-            ('System & usage', lambda: self.open_section('System & Usage')),
         )):
             button = QPushButton(title)
             button.clicked.connect(open_tool)
             workspace_layout.addWidget(button, index // 3, index % 3)
             self.automation_tools[title] = button
-        self.automation_activity_button = QPushButton('Activity')
-        self.automation_activity_button.setCheckable(True)
-        row, column = divmod(len(self.automation_tools), 3)
-        workspace_layout.addWidget(self.automation_activity_button, row, column)
         workspace.hide()
         shortcuts.toggled.connect(workspace.setVisible)
         layout.addWidget(workspace)
@@ -3922,6 +3921,8 @@ class Window(QMainWindow):
         note = QLabel('Applies to Chat and new Live Voice sessions. You can switch languages in conversation.')
         note.setWordWrap(True)
         conversation_layout.addWidget(note)
+        self.flexible_button(conversation_layout, 'Memory',
+                             lambda: self.open_section('Memory'))
         remote = QGroupBox('Phone Remote')
         self.flexible_button(QHBoxLayout(remote), 'Open pairing and permissions',
                              lambda: self.open_section('Phone Remote'))
@@ -4035,7 +4036,11 @@ class Window(QMainWindow):
         usage = QGroupBox('Live PC usage')
         self.settings_usage = QLabel('Collecting PC usage…')
         self.settings_usage.setWordWrap(True)
-        QVBoxLayout(usage).addWidget(self.settings_usage)
+        usage_layout = QVBoxLayout(usage)
+        usage_layout.addWidget(self.settings_usage)
+        self.flexible_button(usage_layout, 'Network diagnostics', self.open_network_diagnostics)
+        self.flexible_button(usage_layout, 'AI usage history',
+                             lambda: self.open_section('System & Usage'))
         self.settings_categories = QComboBox()
         self.settings_categories.setAccessibleName('Settings category')
         layout.addWidget(self.settings_categories)
@@ -5765,9 +5770,7 @@ class Window(QMainWindow):
 
     def refresh_review(self):
         """Show the prepared changes again, after one of them changed."""
-        widget = self.pages.widget(self.page_indices['Review changes'])
-        if isinstance(widget, QScrollArea):
-            widget = widget.widget()
+        widget = self.section_widget('Review changes')
         if hasattr(widget, 'refresh'):
             widget.refresh()
 
@@ -5892,9 +5895,7 @@ class Window(QMainWindow):
         """A prepared change is ready to be looked at."""
         self.statusBar().showMessage(
             f'Revision {improvement.short} is prepared. Review it before it is used.', 20000)
-        review = self.pages.widget(self.page_indices['Review changes'])
-        if isinstance(review, QScrollArea):
-            review = review.widget()
+        review = self.section_widget('Review changes')
         if hasattr(review, 'refresh'):
             review.refresh()
 
@@ -6769,10 +6770,9 @@ class Window(QMainWindow):
 
     def refresh_history(self):
         rows = self.store.tasks()
-        shell = getattr(self, 'prime_shell', None)
-        if shell is not None:
-            shell.activity.set_rows(rows)
-            self.prime_chat.timeline.set_rows(rows)
+        chat = getattr(self, 'prime_chat', None)
+        if chat is not None:
+            chat.timeline.set_rows(rows)
         self.history.setRowCount(len(rows))
         for index, task in enumerate(rows):
             for column, key in enumerate(('created', 'kind', 'status', 'detail')):

@@ -264,6 +264,7 @@ class VoicePanel(QWidget):
 
         consent_box = QGroupBox('Microphone')
         consent_layout = QFormLayout(consent_box)
+        consent_layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         self.phrase = QLineEdit(self.matcher.canonical_phrase or DEFAULT_PHRASE)
         self.phrase.textChanged.connect(self.set_phrase)
         consent_layout.addRow('Wake phrase', self.phrase)
@@ -284,7 +285,7 @@ class VoicePanel(QWidget):
 
         talk_box = QGroupBox('Talk')
         talk_layout = QVBoxLayout(talk_box)
-        row = QHBoxLayout()
+        row = QVBoxLayout()
         self.listen_button = QPushButton('Talk once (draft only)')
         self.listen_button.clicked.connect(lambda: self.listen('once'))
         row.addWidget(self.listen_button)
@@ -312,6 +313,7 @@ class VoicePanel(QWidget):
 
         speak_box = QGroupBox('Speak')
         speak_layout = QFormLayout(speak_box)
+        speak_layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         self.speak_text = QLineEdit()
         self.speak_text.setPlaceholderText('Text for JARVIS to say')
         speak_layout.addRow('Text', self.speak_text)

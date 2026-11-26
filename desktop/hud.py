@@ -16,7 +16,7 @@ from desktop.prime_theme import MONO_STACK
 TAMIL_STACK = "'Nirmala UI', 'Noto Sans Tamil', 'Latha', 'Segoe UI', sans-serif"
 
 #: The colours of the HUD.
-GROUND = '#05080e'
+GROUND = '#000000'
 PANEL = '#0b1220'
 EDGE = '#1d3b57'
 CYAN = '#63dcff'

@@ -79,7 +79,10 @@ def test_the_automation_rail_groups_tools_and_previews_suggestions(tmp_path):
         assert window.suggested_steps[0].app == 'Calculator'
         assert window.chat_launch is None
         assert window.desktop_pending is None
-        assert window.pages.currentIndex() == window.page_indices['PC Control']
+        assert window.pages.currentWidget() is window.prime_chat
+        assert window.prime_chat.task_area.isAncestorOf(panel)
+        assert window.prime_chat.chat_history.isVisibleTo(window)
+        assert window.send_button.isVisibleTo(window)
         assert window.suggestion_card.isVisibleTo(window)
         assert panel.isAncestorOf(window.suggestion_card)
         assert window.suggestion_mode.isHidden()
@@ -122,7 +125,7 @@ def test_conversation_settings_change_the_chat_reply_and_survive_restart(tmp_pat
         window.reply_language.setCurrentIndex(window.reply_language.findData('tanglish'))
         window.reply_tone.setCurrentIndex(window.reply_tone.findData('direct'))
         window.open_section('JARVIS Chat')
-        assert window.prime_chat.assistant.title.text() == 'Enna help venum?'
+        assert window.prime_chat.assistant.title.text() == 'What can I help with?'
         window.prompt.setPlainText('தமிழ்ல சொல்லுங்க. இன்று என்ன பேசலாம்?')
         window.send()
         assert 'Use conversational Tamil in Latin script by default' in sent[-1][0]['content']
@@ -137,7 +140,7 @@ def test_conversation_settings_change_the_chat_reply_and_survive_restart(tmp_pat
     try:
         assert window.reply_language.currentData() == 'tanglish'
         assert window.reply_tone.currentData() == 'direct'
-        assert window.prime_chat.assistant.title.text() == 'Enna help venum?'
+        assert window.prime_chat.assistant.title.text() == 'What can I help with?'
     finally:
         window.close()
         window.deleteLater()
@@ -220,8 +223,8 @@ def test_the_top_bar_and_automation_have_the_destinations(tmp_path):
         shell = window.prime_shell
         bar = shell.top_bar.layout()
         assert bar.indexOf(shell.menu_button) == bar.indexOf(shell.settings_button) + 1
-        assert set(shell.menu_items) == {'JARVIS Chat', 'PC Control', 'Phone Remote', 'AI Providers'}
-        assert {'Projects', 'Files & folders', 'Voice controls', 'Network', 'Memory'} <= set(
+        assert set(shell.menu_items) == {'JARVIS Chat', 'PC Control'}
+        assert {'Projects', 'Files & folders', 'Task queue', 'Workflows', 'Review changes'} <= set(
             window.automation_tools)
     finally:
         window.close()
@@ -365,7 +368,7 @@ def test_the_menu_replaces_the_toolbar(tmp_path):
         shell.menu_button.click()
         assert shell.drawer.isVisibleTo(window)
         assert [button.text() for button in shell.menu_items.values()] == [
-            'Chat', 'Automation', 'Phone Remote', 'API keys']
+            'Chat', 'Automation']
         assert shell.mini_view_button.text() == 'Mini view'
     finally:
         window.close()
@@ -375,28 +378,27 @@ def test_activity_panel_shows_live_state_and_persisted_action_result(tmp_path):
     app, window = make_window(tmp_path)
     try:
         shell = window.prime_shell
-        shell.menu_items['PC Control'].click()
-        window.automation_workspace_button.click()
-        shell.activity_button.click()
-        assert shell.activity.isVisibleTo(window)
-        assert shell.activity.empty.isVisibleTo(window)
+        window.prime_chat.show_display('timeline')
+        timeline = window.prime_chat.timeline
+        assert timeline.isVisibleTo(window)
+        assert timeline.empty.isVisibleTo(window)
 
         ident = window.store.task('open_app', 'Awaiting approval')
         window.refresh_history()
-        assert shell.activity.records.currentItem().text() == 'Open app\nPending'
-        assert 'Awaiting approval' in shell.activity.details.toPlainText()
+        assert timeline.records.currentItem().text() == 'Open app\nPending'
+        assert 'Awaiting approval' in timeline.details.toPlainText()
 
         window.store.finish(ident, 'dispatched', 'Started process. Window unverified.')
         window.refresh_history()
-        assert shell.activity.records.currentItem().text() == 'Open app\nDispatched'
-        assert 'Window unverified.' in shell.activity.details.toPlainText()
+        assert timeline.records.currentItem().text() == 'Open app\nDispatched'
+        assert 'Window unverified.' in timeline.details.toPlainText()
 
         window.stop()
-        assert shell.activity.state.text() == 'Stopped'
+        assert timeline.state.text() == 'Stopped'
         assert shell.state_chip.text() == 'STOPPED'
         shell.open_task_history()
         app.processEvents()
-        assert shell.activity.isHidden()
+        assert not timeline.isVisibleTo(window)
         assert window.pages.currentIndex() == window.page_indices['Task History']
     finally:
         window.close()
@@ -453,12 +455,11 @@ def test_wake_summons_the_window_and_animates_the_m_after_consent(tmp_path, monk
 def test_hud_links_voice_feedback_and_keyboard_emergency_stop(tmp_path):
     app, window = make_window(tmp_path)
     try:
-        window.prime_chat.pc_activity_button.click()
+        window.prime_chat.show_display('timeline')
         assert window.prime_chat.timeline.isVisibleTo(window)
         window.open_news_briefing()
         assert window.news_panel.isVisibleTo(window)
         assert not window.news_panel.isWindow()
-        assert not window.prime_shell.activity.isVisibleTo(window)
         window.prime_shell.close_drawer()
         window.open_section('Quantum Visual Player')
         assert window.prime_chat.displays.isAncestorOf(window.player_panel)

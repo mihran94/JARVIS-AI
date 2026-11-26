@@ -61,7 +61,7 @@ def prepare(root, *, status='passed'):
 
 
 def review_panel(window):
-    widget = window.pages.widget(window.page_indices['Review changes'])
+    widget = window.section_widget('Review changes')
     from PySide6.QtWidgets import QScrollArea
     return widget.widget() if isinstance(widget, QScrollArea) else widget
 

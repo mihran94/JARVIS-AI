@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import math
 import os
-from datetime import datetime
 from pathlib import Path
 import re
 import subprocess
@@ -40,7 +39,7 @@ import sys
 from core.runtime_profile import APP_NAME
 
 from PySide6.QtCore import (
-    QEasingCurve, QPoint, QPointF, QPropertyAnimation, QRectF, QSize, Qt, QTimer, Signal,
+    QEasingCurve, QEvent, QPoint, QPointF, QPropertyAnimation, QRectF, QSize, Qt, QTimer, Signal,
 )
 from PySide6.QtGui import (
     QBrush, QColor, QFontMetrics, QKeySequence, QLinearGradient, QPainter, QPainterPath,
@@ -500,7 +499,6 @@ class PrimeAssistant(QWidget):
         super().__init__(parent)
         self.palette_ = palette
         self.window_ref = window
-        self._busy = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
@@ -534,7 +532,6 @@ class PrimeAssistant(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         for child in (self.title, self.hint):
             child.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        window.reply_language.currentIndexChanged.connect(self.refresh_greeting)
         self.refresh_greeting()
         self.refresh_hologram()
 
@@ -556,12 +553,7 @@ class PrimeAssistant(QWidget):
         painter.fillRect(self.rect(), glow)
 
     def refresh_greeting(self):
-        language = self.window_ref.reply_language.currentData()
-        self.title.setText({
-            'ta': 'என்ன உதவி வேணும்?',
-            'tanglish': 'Enna help venum?',
-            'fr': 'Comment puis-je vous aider ?',
-        }.get(language, 'What are we working on?'))
+        self.title.setText('What can I help with?')
 
     def refresh_theme(self):
         palette = self.palette_
@@ -570,16 +562,9 @@ class PrimeAssistant(QWidget):
         self.hint.setStyleSheet(f'color: {palette.muted.name()}; font-size: 13px;')
         self.orb.update()
 
-    def set_busy(self, busy: bool):
-        """Give an open chat tool the space used by the welcome view."""
-        self._busy = busy
-        self.refresh_hologram()
-        self.title.setVisible(not busy)
-        self.hint.setVisible(not busy)
-
     def refresh_hologram(self):
         visible = bool(self.window_ref.store.get('appearance:hologram', True))
-        self.orb.setVisible(visible and not self._busy)
+        self.orb.setVisible(visible)
 
     def set_state(self, state: str):
         self.orb.set_state(state)
@@ -700,10 +685,11 @@ class PrimeChat(QWidget):
             button.setText(title)
             archive_actions.addWidget(button)
         history.addLayout(archive_actions)
-        safety = QHBoxLayout()
-        safety.setSpacing(6)
-        self.safety_controls = safety
-        history.insertLayout(1, safety)
+        self.safety_controls = QGridLayout()
+        self.safety_controls.setSpacing(6)
+        self._safety_buttons = ()
+        self.right_panel.installEventFilter(self)
+        history.insertLayout(1, self.safety_controls)
         self.chat_history.setMinimumWidth(150)
         self.chat_history.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
         self.right_layout.addWidget(self.chat_history, 1)
@@ -754,9 +740,6 @@ class PrimeChat(QWidget):
         workspace.addWidget(self.work_state)
         window.mission_mode.show()
         workspace.addWidget(window.mission_mode)
-        self.pc_activity_button = QPushButton('View activity')
-        self.pc_activity_button.clicked.connect(window.prime_shell.open_pc_activity)
-        workspace.addWidget(self.pc_activity_button)
         workspace.addStretch(1)
         for meter in (window.hud.strip.cpu, window.hud.strip.ram):
             meter.setFixedHeight(30)
@@ -773,12 +756,8 @@ class PrimeChat(QWidget):
         layout.addWidget(self.dashboard, 1)
         self.task_panels = {}
         self.task_area = QStackedWidget()
-        self.task_area.hide()
-        self.dismiss_task = QPushButton('Close task details')
-        self.dismiss_task.clicked.connect(lambda: window.open_section('JARVIS Chat'))
-        self.dismiss_task.hide()
-        layout.addWidget(self.dismiss_task)
-        layout.addWidget(self.task_area, 2)
+        self.task_area.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+        self.displays.addWidget(self.task_area)
 
         # The approval the owner has to answer, the card of a running
         # job, and the plan of a job with more than one step come with
@@ -826,8 +805,9 @@ class PrimeChat(QWidget):
 
     def adopt_task_panels(self):
         window = self.window_ref
-        names = ('Coding Assistant', 'Video Editor', 'Business', 'Step Workflows',
-                 'Task Queue', 'Command Center')
+        names = ('PC Control', 'Files & Folders', 'Coding Assistant', 'Video Editor',
+                 'Business', 'Step Workflows', 'Task Queue', 'Command Center',
+                 'Mission Control', 'Task History', 'Review changes', 'System & Usage')
         # Move existing reviewed controls into the conversation. Keep compatibility
         # indices for shortcuts and settings without leaving another reachable page.
         widgets = {name: window.pages.widget(index) for name, index in window.page_indices.items()}
@@ -835,39 +815,69 @@ class PrimeChat(QWidget):
             scroller = widgets[name]
             window.pages.removeWidget(scroller)
             self.task_panels[name] = self.task_area.addWidget(scroller)
-        player = widgets['Quantum Visual Player']
-        window.pages.removeWidget(player)
-        self.displays.addWidget(player)
+        self.player = widgets['Quantum Visual Player']
+        window.pages.removeWidget(self.player)
+        self.displays.addWidget(self.player)
         settings_routes = ('Voice / Hey Jarvis', 'AI Providers')
         for name in settings_routes:
             window.pages.removeWidget(widgets[name])
             widgets[name].deleteLater()
         for name, widget in widgets.items():
             window.page_indices[name] = window.pages.indexOf(
-                self if name in names or name in settings_routes or widget is player else widget)
+                self if name in names or name in settings_routes or widget is self.player else widget)
         for index in range(window.nav.count()):
             item = window.nav.item(index)
             item.setData(Qt.ItemDataRole.UserRole, window.page_indices[item.text()])
 
     def show_display(self, name):
-        index = ('hologram', 'timeline', 'media').index(name)
-        self.displays.setCurrentIndex(index)
+        widget = {'hologram': self.assistant, 'timeline': self.timeline, 'media': self.player}[name]
+        self.displays.setCurrentWidget(widget)
         self.display_buttons[name].setChecked(True)
-        self.window_ref.prime_shell.refresh_mark()
+        self.window_ref.prime_shell.mark_active('JARVIS Chat')
+        self.update_workspace_visibility()
 
     def show_task(self, name):
-        active = name in self.task_panels
-        if active:
+        if name in self.task_panels:
             self.task_area.setCurrentIndex(self.task_panels[name])
-        composer_layout = self.layout() if active else self.right_layout
-        if composer_layout.indexOf(self.composer) < 0:
-            composer_layout.addWidget(self.composer)
-            self.composer.show()
-        self.task_area.setVisible(active)
-        self.dismiss_task.setVisible(active)
-        self.dashboard.setVisible(not active)
-        self.assistant.set_busy(active)
-        self.window_ref.prime_shell.refresh_mark()
+            self.displays.setCurrentWidget(self.task_area)
+            for button in self.display_buttons.values():
+                button.setAutoExclusive(False)
+                button.setChecked(False)
+                button.setAutoExclusive(True)
+            self.update_workspace_visibility()
+        elif name == 'JARVIS Chat':
+            self.show_display('hologram')
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.update_workspace_visibility()
+
+    def update_workspace_visibility(self):
+        task_open = self.displays.currentWidget() is self.task_area
+        show_workspace = not task_open or self.width() >= 1120
+        self.workspace.setVisible(show_workspace)
+        self.dashboard.layout().setColumnStretch(0, 2 if show_workspace else 0)
+        self.window_ref.mission_mode.setVisible(not task_open)
+
+    def eventFilter(self, watched, event):
+        if watched is self.right_panel and event.type() == QEvent.Type.Resize:
+            self.layout_safety_controls(event.size().width())
+        return super().eventFilter(watched, event)
+
+    def place_safety_controls(self, buttons):
+        self._safety_buttons = buttons
+        self.layout_safety_controls(self.right_panel.width())
+
+    def layout_safety_controls(self, width):
+        if not self._safety_buttons or not self._safety_buttons[0].parentWidget():
+            return
+        compact = width < 350
+        for index, button in enumerate(self._safety_buttons):
+            if compact and index == 2:
+                self.safety_controls.addWidget(button, 1, 0, 1, 2)
+            else:
+                self.safety_controls.addWidget(button, 0, index)
+            button.show()
 
     def refresh_theme(self):
         self.assistant.refresh_theme()
@@ -910,12 +920,6 @@ class PrimeShell(QWidget):
         self.content.setContentsMargins(0, 0, 0, 0)
         self.content.setSpacing(0)
         middle.addLayout(self.content, 1)
-        self.activity = ActivityPanel(palette, self.open_task_history)
-        self.activity.hide()
-        self.activity_button = window.automation_activity_button
-        self.activity.closed.connect(lambda: self.activity_button.setChecked(False))
-        self.activity_button.toggled.connect(self.activity.setVisible)
-        middle.addWidget(self.activity)
         self.build_drawer()
         middle.addWidget(self.drawer)
         outer.addLayout(middle, 1)
@@ -939,12 +943,15 @@ class PrimeShell(QWidget):
     def refresh_mark(self, _index=None):
         chat = getattr(self.window_ref, 'prime_chat', None)
         if chat is not None:
-            in_chat = self.window_ref.pages.currentWidget() is chat and chat.task_area.isHidden()
-            target = chat.safety_controls if in_chat else self.safety_controls
-            for button in (self.mic_mute_button, self.output_mute_button, self.stop_button):
-                if target.indexOf(button) < 0:
-                    target.addWidget(button)
-                    button.show()
+            buttons = (self.mic_mute_button, self.output_mute_button, self.stop_button)
+            if self.window_ref.pages.currentWidget() is chat:
+                chat.place_safety_controls(buttons)
+            else:
+                chat.place_safety_controls(())
+                for button in buttons:
+                    if self.safety_controls.indexOf(button) < 0:
+                        self.safety_controls.addWidget(button)
+                        button.show()
 
     # -- the top bar ---------------------------------------------------
 
@@ -998,9 +1005,7 @@ class PrimeShell(QWidget):
         self.mic_mute_button = QPushButton('Mute mic')
         self.mic_mute_button.setCheckable(True)
         self.mic_mute_button.toggled.connect(self.window_ref.set_microphone_muted)
-        self.output_mute_button = QPushButton('Mute replies')
-        self.output_mute_button.setCheckable(True)
-        self.output_mute_button.toggled.connect(self.window_ref.voice_panel.mute_button.setChecked)
+        self.output_mute_button = self.window_ref.voice_panel.mute_button
         self.state_chip = QLabel('READY')
         self.state_chip.setStyleSheet(
             f'color: {palette.good.name()}; font-size: 11px; font-weight: 600;'
@@ -1009,15 +1014,6 @@ class PrimeShell(QWidget):
             f' padding: 4px 12px;')
         layout.addWidget(self.state_chip)
         layout.addStretch(1)
-        self.clock_label = QLabel()
-        self.clock_label.setToolTip('Local time')
-        self.clock_label.hide()
-        self.clock_label.setParent(bar)
-        self.clock_timer = QTimer(self)
-        self.clock_timer.setInterval(1000)
-        self.clock_timer.timeout.connect(self.update_clock)
-        self.update_clock()
-        self.clock_timer.start()
         layout.addWidget(self.window_ref.resume_button)
         self.safety_controls = QHBoxLayout()
         self.safety_controls.setSpacing(6)
@@ -1073,8 +1069,6 @@ class PrimeShell(QWidget):
         for title, section in (
             ('Chat', 'JARVIS Chat'),
             ('Automation', 'PC Control'),
-            ('Phone Remote', 'Phone Remote'),
-            ('API keys', 'AI Providers'),
         ):
             button = QPushButton(title)
             button.setAccessibleName(title)
@@ -1085,12 +1079,8 @@ class PrimeShell(QWidget):
             self.menu_items[section] = button
         controls = QGridLayout()
         for index, (title, action) in enumerate((
-            ('Plugins', self.window_ref.open_plugins),
-            ('Fullscreen', self.window_ref.toggle_fullscreen),
-            ('Tamil news', self.window_ref.open_news_briefing),
-            ('Hands-free', self.open_voice_settings),
             ('Talk once', self.talk_once),
-            ('Hologram', self.open_hologram_settings),
+            ('Fullscreen', self.window_ref.toggle_fullscreen),
         )):
             button = QPushButton(title)
             button.clicked.connect(action)
@@ -1111,7 +1101,6 @@ class PrimeShell(QWidget):
         self.style_drawer()
 
     def show_drawer(self, name):
-        self.activity_button.setChecked(False)
         title, index = {
             'menu': ('JARVIS Menu', 0),
             'settings': ('Settings & Safety', 1),
@@ -1124,14 +1113,6 @@ class PrimeShell(QWidget):
         self.resize_drawer()
         self.drawer.show()
         self.drawer_close.setFocus()
-
-    def open_voice_settings(self):
-        self.open_section('Settings & Safety')
-        self.window_ref.show_settings_panel('Voice')
-
-    def open_hologram_settings(self):
-        self.open_section('Settings & Safety')
-        self.window_ref.show_settings_panel('Appearance')
 
     def talk_once(self):
         self.close_drawer()
@@ -1167,11 +1148,6 @@ class PrimeShell(QWidget):
             f' border-left: 2px solid {palette.accent.name()}; }}'
             'QFrame#primeDrawer QWidget#pageRoot { background: transparent; }')
 
-    def update_clock(self):
-        now = datetime.now()
-        self.clock_label.setText(now.strftime('%H:%M'))
-        self.clock_label.setAccessibleName(now.strftime('%A, %d %B, %H:%M'))
-
     def style_core_logo(self, mark):
         palette = self.palette_
         mark.setStyleSheet(
@@ -1192,18 +1168,12 @@ class PrimeShell(QWidget):
         self.build_label.setStyleSheet(f'color: {palette.muted.name()}; font-size: 11px;')
         self.style_core_logo(self.mark)
         self.set_state(self.window_ref.prime_state())
-        self.activity.refresh_theme()
         self.style_drawer()
 
     def open_section(self, name: str):
         self.window_ref.open_section(name)
 
-    def open_pc_activity(self):
-        self.close_drawer()
-        self.window_ref.prime_chat.show_display('timeline')
-
     def open_task_history(self):
-        self.activity_button.setChecked(False)
         self.window_ref.open_section('Task History')
 
     def mark_active(self, name: str):
@@ -1215,7 +1185,6 @@ class PrimeShell(QWidget):
         palette = self.palette_
         label, tone = STATES[state]
         colour = getattr(palette, tone)
-        self.activity.set_state(state)
         label = label.upper()
         self.state_chip.setText(label)
         self.state_chip.setStyleSheet(

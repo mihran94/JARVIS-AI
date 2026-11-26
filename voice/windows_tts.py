@@ -80,7 +80,7 @@ def speak_tamil_winrt(text, cancelled, playing):
     except OSError as error:
         raise VoiceUnavailable('Windows could not start the installed Tamil voice.') from error
     if not cancelled():
-        play_wav(audio, cancelled, playing)
+        play_wav(audio, cancelled, playing, expected_rate=None)
 
 
 class WindowsTextToSpeech:
