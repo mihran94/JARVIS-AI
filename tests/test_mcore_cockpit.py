@@ -7,7 +7,8 @@ import pytest
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
-from PySide6.QtCore import QMimeData, QUrl
+from PySide6.QtCore import QCoreApplication, QEvent, QMimeData, QUrl
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from desktop.app import Window
@@ -23,12 +24,15 @@ def opened_cockpit(tmp_path):
         app.processEvents()
         assert window.pages.currentWidget() is window.prime_chat
         assert 'M-CORE' not in {window.nav.item(i).text() for i in range(window.nav.count())}
+        assert 'M-CORE' not in window.page_indices
+        assert getattr(window, 'mcore_cockpit', None) is None
         window.prime_shell.cockpit_button.click()
         app.processEvents()
         yield window, window.mcore_cockpit, app
     finally:
         window.close()
         window.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         app.processEvents()
 
 
@@ -80,13 +84,20 @@ def test_cockpit_uses_reference_columns_and_keeps_settings_reachable(opened_cock
 def test_cockpit_narrow_layout_is_vertical_not_clipped(opened_cockpit):
     window, cockpit, app = opened_cockpit
     window.resize(740, 720)
-    app.processEvents()
-    assert cockpit._compact
+    # Allow delivery of the native resize and the viewport's scrollbar reflow.
+    QTest.qWait(50)
+    geometry = (window.size(), window.minimumSize(), cockpit.size(), cockpit.viewport().size())
+    assert cockpit.viewport().width() < 960, geometry
+    assert cockpit._compact, geometry
     assert cockpit.voice.x() == cockpit.command.x() == cockpit.comms.x()
     assert cockpit.voice.y() < cockpit.command.y() < cockpit.comms.y()
     assert cockpit.prompt.width() > 120
     assert cockpit.verticalScrollBar().maximum() > 0
     assert cockpit.horizontalScrollBar().maximum() == 0
+    window.resize(1227, 912)
+    QTest.qWait(50)
+    assert not cockpit._compact
+    assert cockpit.systems.x() < cockpit.voice.x() < cockpit.comms.x()
 
 
 def test_cockpit_command_reuses_local_reply_without_provider(opened_cockpit, monkeypatch):

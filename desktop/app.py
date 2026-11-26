@@ -795,19 +795,30 @@ class Window(QMainWindow):
         self.prime_chat = chat
         chat.adopt_task_panels()
         shell.content.addWidget(self.pages)
-        from desktop.mcore_cockpit import MCoreCockpit
-
-        self.mcore_cockpit = MCoreCockpit(self)
-        self.page_indices[MCoreCockpit.section] = self.pages.addWidget(self.mcore_cockpit)
-        self.pages.currentChanged.connect(self.update_cockpit_chrome)
-        self.news_panel.output.textChanged.connect(
-            lambda: self.mcore_cockpit.update_news(self.news_panel.output.toPlainText()))
         chat.timeline.set_rows(self.store.tasks())
         shell.refresh_mark()
         self.render_chat()
 
         self.refresh_prime_state()
         return shell
+
+    def open_mcore_cockpit(self):
+        """Leave ordinary PRIME startup untouched until the cockpit is requested."""
+        cockpit = getattr(self, 'mcore_cockpit', None)
+        if cockpit is None:
+            from desktop.mcore_cockpit import MCoreCockpit
+
+            cockpit = self.mcore_cockpit = MCoreCockpit(self)
+            self.page_indices[MCoreCockpit.section] = self.pages.addWidget(cockpit)
+            self.pages.currentChanged.connect(self.update_cockpit_chrome)
+            output = self.news_panel.output
+            output.textChanged.connect(lambda: cockpit.update_news(output.toPlainText()))
+            cockpit.update_news(output.toPlainText())
+            cockpit.render(self.store.messages(self.session))
+            self.refresh_prime_state()
+        self.prime_shell.close_drawer()
+        self.pages.setCurrentWidget(cockpit)
+        self.prime_shell.refresh_mark()
 
     def update_cockpit_chrome(self, _index):
         on_cockpit = self.pages.currentWidget() is self.mcore_cockpit
@@ -956,6 +967,9 @@ class Window(QMainWindow):
 
     def open_section(self, name):
         name = {'Omega Home': 'JARVIS Chat', 'Omega Settings': 'Settings & Safety'}.get(name, name)
+        if name == 'M-CORE':
+            self.open_mcore_cockpit()
+            return
         shell = getattr(self, 'prime_shell', None)
         settings_category = {
             'Settings & Safety': 'Voice',

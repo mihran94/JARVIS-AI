@@ -281,6 +281,8 @@ class MCoreCockpit(QScrollArea):
         self.setObjectName('mcoreCockpit')
         self.setAccessibleName('JARVIS M-CORE cockpit')
         self.setWidgetResizable(True)
+        # A wide desktop view is a preference, not a window minimum.
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.surface = QWidget()
@@ -482,12 +484,16 @@ class MCoreCockpit(QScrollArea):
         super().hideEvent(event)
 
     def resizeEvent(self, event):
-        super().resizeEvent(event)
+        # QAbstractScrollArea delivers the viewport's Resize event here.
+        # Use its new size before QScrollArea recalculates child/scrollbar
+        # geometry against the old wide layout's minimum-size hint.
         if hasattr(self, 'grid'):
-            self.reflow()
+            self.reflow(event.size().width())
+        super().resizeEvent(event)
 
-    def reflow(self):
-        compact = self.viewport().width() < 960
+    def reflow(self, viewport_width=None):
+        width = self.viewport().width() if viewport_width is None else viewport_width
+        compact = width < 960
         if self._compact == compact:
             return
         self._compact = compact
@@ -530,6 +536,7 @@ class MCoreCockpit(QScrollArea):
             self.header_grid.addWidget(self.fullscreen_button, 0, 4)
         for column in range(5):
             self.header_grid.setColumnStretch(column, int(column == (1 if compact else 2)))
+        self.surface.updateGeometry()
 
     def update_clock(self):
         now = datetime.now()
