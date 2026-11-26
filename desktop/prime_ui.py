@@ -37,6 +37,7 @@ import re
 import subprocess
 import sys
 from core.runtime_profile import APP_NAME
+from shiboken6 import isValid
 
 from PySide6.QtCore import (
     QEasingCurve, QEvent, QPoint, QPointF, QPropertyAnimation, QRectF, QSize, Qt, QTimer, Signal,
@@ -1273,11 +1274,13 @@ class PrimeShell(QWidget):
         layout.setContentsMargins(14, 14, 14, 14)
         layout.addWidget(self.window_ref.settings_scroller)
         self.settings_dialog.setStyleSheet(self.drawer.styleSheet())
-        QApplication.instance().installEventFilter(self)
+        self.settings_dialog.finished.connect(
+            lambda: QApplication.instance().removeEventFilter(self))
 
     def eventFilter(self, watched, event):
         dialog = getattr(self, 'settings_dialog', None)
-        if dialog is not None and dialog.isVisible() and event.type() == QEvent.Type.MouseButtonPress:
+        if (event.type() == QEvent.Type.MouseButtonPress and dialog is not None
+                and isValid(dialog) and dialog.isVisible()):
             popup = QApplication.activePopupWidget()
             inside_popup = popup is not None and isinstance(watched, QWidget) and (
                 popup is watched or popup.isAncestorOf(watched))
@@ -1290,6 +1293,7 @@ class PrimeShell(QWidget):
             self.close_drawer()
             self.settings_button.setChecked(True)
             self.settings_dialog.show()
+            QApplication.instance().installEventFilter(self)
             self.settings_dialog.raise_()
             self.settings_dialog.activateWindow()
             return
