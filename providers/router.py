@@ -65,7 +65,7 @@ class ProviderRouter:
     # -------------------------------------------------------------- dispatch
 
     def stream(self, spec: ProviderSpec, model: str, key: str, messages, check, emit,
-               transport=None, metrics=None) -> str:
+               transport=None, metrics=None, *, planning=False) -> str:
         """Stream one answer using the adapter that matches the provider."""
         transport = transport if transport is not None else self._transport
         if spec.auth == 'anthropic':
@@ -74,7 +74,7 @@ class ProviderRouter:
         if spec.local:
             # A local provider never receives a key, even when one is supplied.
             return ollama.stream_local(model, messages, check, emit,
-                                       transport=transport, metrics=metrics)
+                                       transport=transport, metrics=metrics, planning=planning)
         return chat.stream_chat(spec.name, model, key, messages, check, emit,
                                 transport=transport, metrics=metrics)
 

@@ -48,12 +48,18 @@ def test_the_probe_is_honest_on_a_computer_that_is_not_windows():
     assert all('Windows only' in model.detail for model in found)
 
 
-def test_the_summary_says_how_many_models_are_ready():
-    found = voice_models.probe()
-    summary = voice_models.summary(found)
-    assert 'voice model' in summary
-    ready = voice_models.ready_languages(found)
-    assert ready == set()
+def test_the_summary_says_when_no_models_are_ready():
+    found = [VoiceModel(RECOGNITION, 'ta', 'Tamil recognition', False, 'Model missing.')]
+    assert voice_models.summary(found) == 'No offline voice model is ready on this computer yet.'
+    assert voice_models.ready_languages(found) == set()
+
+
+def test_tamil_and_tanglish_are_ready_without_windows_speech(monkeypatch):
+    monkeypatch.setattr(voice_models.sys, 'platform', 'win32')
+    monkeypatch.setattr(voice_models, '_installed_recognisers', lambda: {})
+    monkeypatch.setattr(voice_models.local_stt, 'ready', lambda: True)
+    ready = voice_models.ready_languages(voice_models._recognition_models())
+    assert ready == {'ta', TANGLISH}
 
 
 def test_a_model_that_is_ready_is_named_in_the_summary():

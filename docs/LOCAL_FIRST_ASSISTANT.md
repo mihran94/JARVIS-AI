@@ -69,7 +69,7 @@ action is a tool call: it never consults a model at all.
 | --- | --- | --- |
 | Understanding and planning | Ollama `qwen3:8b` | this computer, `127.0.0.1:11434` |
 | Understanding and planning (fallback) | Gemini `gemini-3.5-flash-lite` | Google's endpoint, only for one step |
-| Speech recognition | Windows System.Speech `en-US` and `ta-IN` | this computer, offline |
+| Speech recognition | Multilingual Whisper for Tamil and Tanglish, Windows System.Speech for other configured languages | this computer, offline |
 | Speech | Windows SAPI voices, LANGID `409` (English), `449`/`849` (Tamil) | this computer, offline |
 
 The engine chip in the HUD says **Local** or **Gemini**, and under it the
@@ -83,21 +83,28 @@ sentence that says why Gemini was used.
 
 | Piece | Where |
 | --- | --- |
-| Tanglish detection, transliteration and script splitting | `voice/tanglish.py` |
+| Microphone capture and multilingual transcription | `voice/local_stt.py` |
 | Which local voice models are ready | `voice/models.py` |
 | The readiness display | Settings → AI engines, and the Voice page |
 
-The Windows offline recogniser only understands the Tamil script, so a
-Tanglish sentence is turned into the Tamil script before the recogniser
-hears it. `voice/tanglish.py` does that with a word list for the words that
-matter and a phonetic rule for the rest. A word the owner wrote in English
-is left exactly as it was: turning "report" into Tamil in the middle of an
-English sentence changes what the sentence says.
+The multilingual Whisper model transcribes microphone audio locally. Both
+modes set Tamil as the primary language for short utterances. Tamil + Tanglish
+also gives the model context for Tamil speech that includes English words. The microphone opens
+after the existing consent check and audio stays in memory.
 
-A sentence that mixes Tamil and English is split into its parts, and each
-part is handled by the model that understands it. `language_for` routes a
-Tanglish sentence to the Tamil recogniser and an English sentence to the
-English one.
+Install the optional local voice runtime and download the multilingual
+weights once in the JARVIS Python environment. On Windows the runtime
+requires the Microsoft Visual C++ Redistributable for the Python architecture.
+
+```cmd
+python -m pip install -r requirements-local-voice.txt
+python -c "from huggingface_hub import snapshot_download; from voice.local_stt import model_path; snapshot_download('Systran/faster-whisper-base', revision='ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66', local_dir=model_path(), allow_patterns=['config.json','model.bin','tokenizer.json','vocabulary.txt'])"
+```
+
+An already downloaded CTranslate2 multilingual Whisper model can also be
+selected with the `JARVIS_LOCAL_STT_MODEL` environment variable. In Voice,
+choose **Tamil + Tanglish (offline)**. Tamil playback uses the existing
+Windows Tamil voice and has its own readiness status.
 
 `voice/models.py` reads what is installed — the Windows recognisers for each
 culture and the SAPI voices for each language — and says which are ready

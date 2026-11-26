@@ -16,7 +16,7 @@ import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 import pytest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 from desktop.hud import TAMIL_STACK, HudDial, HudFrame, HudStrip
 
@@ -113,10 +113,6 @@ def test_the_tamil_font_of_windows_is_named():
     assert 'Nirmala UI' in TAMIL_STACK
 
 
-def test_the_motion_can_be_turned_off(app):
+def test_the_status_strip_uses_no_legacy_reactor(app):
     frame = HudFrame()
-    frame.set_motion(False)
-    assert frame.motion is False
-    assert frame.strip.core.motion is False
-    frame.set_motion(True)
-    assert frame.strip.core.motion is True
+    assert frame.findChild(QWidget, 'hudCore') is None

@@ -159,8 +159,10 @@ class AutomationPanel(QWidget):
     action_dismissed = Signal(object)
     #: The owner wants the browser section.
     browser_requested = Signal(str)
+    research_requested = Signal()
     #: The owner wants a mission started.
     mission_requested = Signal(str)
+    suggestion_requested = Signal(str)
     #: The owner wants the list of open applications.
     refresh_requested = Signal()
     #: The owner wants the controls of the selected application.
@@ -176,10 +178,12 @@ class AutomationPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(14)
 
-        layout.addWidget(self._build_browser())
         layout.addWidget(self._build_modes())
-        layout.addWidget(self._build_app_control())
+        self.suggestion_results = QVBoxLayout()
+        layout.addLayout(self.suggestion_results)
         layout.addWidget(self._build_proposals())
+        layout.addWidget(self._build_browser())
+        layout.addWidget(self._build_app_control())
         layout.addWidget(self._build_activity())
 
     # ------------------------------------------------------------------
@@ -198,9 +202,13 @@ class AutomationPanel(QWidget):
         self.browser_button.setAccessibleName('Run the browser command')
         self.browser_button.clicked.connect(self._request_browser)
         row.addWidget(self.browser_button)
+        self.research_button = QPushButton('Read page with AI')
+        self.research_button.clicked.connect(self.research_requested.emit)
+        row.addWidget(self.research_button)
         layout.addLayout(row)
         self.browser_status = QLabel('The browser is closed. A draft stays here until you approve it, '
                                      'and nothing is submitted for you.')
+        self.browser_status.setTextFormat(Qt.TextFormat.PlainText)
         self.browser_status.setWordWrap(True)
         self.browser_status.setStyleSheet(f'color: {MUTED};')
         layout.addWidget(self.browser_status)
@@ -212,7 +220,7 @@ class AutomationPanel(QWidget):
             self.browser_requested.emit(command)
 
     def _build_modes(self) -> QWidget:
-        box = QGroupBox('Suggestion Mode and Work on this')
+        box = QGroupBox('Task')
         layout = QVBoxLayout(box)
         self.suggestion_mode = QCheckBox('Suggestion Mode')
         self.suggestion_mode.setAccessibleName('Suggestion Mode')
@@ -229,6 +237,8 @@ class AutomationPanel(QWidget):
         self.work_button.setObjectName('primary')
         self.work_button.setAccessibleName('Work on this')
         self.work_button.clicked.connect(self._request_mission)
+        self.suggestion_mode.toggled.connect(lambda enabled: self.work_button.setText(
+            'Get suggestions' if enabled else 'Work on this'))
         row.addWidget(self.work_button)
         layout.addLayout(row)
         return box
@@ -274,10 +284,8 @@ class AutomationPanel(QWidget):
         self.proposals = QGroupBox('Proposed actions')
         self.proposal_layout = QVBoxLayout(self.proposals)
         self.proposal_layout.setSpacing(10)
-        self.empty_note = QLabel('Nothing is waiting for your approval.')
-        self.empty_note.setStyleSheet(f'color: {MUTED};')
-        self.proposal_layout.addWidget(self.empty_note)
         self.proposal_layout.addStretch()
+        self.proposals.hide()
         return self.proposals
 
     def _build_activity(self) -> QWidget:
@@ -296,7 +304,10 @@ class AutomationPanel(QWidget):
     def _request_mission(self):
         goal = self.goal.text().strip()
         if goal:
-            self.mission_requested.emit(goal)
+            if self.suggestion_mode.isChecked():
+                self.suggestion_requested.emit(goal)
+            else:
+                self.mission_requested.emit(goal)
 
     def set_runner(self, runner):
         """Give the panel the way to run an action."""
@@ -320,9 +331,7 @@ class AutomationPanel(QWidget):
 
     def set_suggestion_mode(self, enabled: bool):
         """Show the state of Suggestion Mode."""
-        self.suggestion_mode.blockSignals(True)
         self.suggestion_mode.setChecked(bool(enabled))
-        self.suggestion_mode.blockSignals(False)
 
     # ------------------------------------------------------------------
 
@@ -333,7 +342,7 @@ class AutomationPanel(QWidget):
         card.dismiss_requested.connect(self._dismiss)
         self.proposal_layout.insertWidget(self.proposal_layout.count() - 1, card)
         self._cards[action.ident] = card
-        self.empty_note.setVisible(False)
+        self.proposals.show()
         return card
 
     def cards(self) -> list:
@@ -353,7 +362,7 @@ class AutomationPanel(QWidget):
         self.action_dismissed.emit(card.action)
         card.setParent(None)
         card.deleteLater()
-        self.empty_note.setVisible(not self._cards)
+        self.proposals.setVisible(bool(self._cards))
 
     def remove(self, ident: str):
         """Take one card away, without recording a dismissal."""
@@ -362,7 +371,7 @@ class AutomationPanel(QWidget):
             return
         card.setParent(None)
         card.deleteLater()
-        self.empty_note.setVisible(not self._cards)
+        self.proposals.setVisible(bool(self._cards))
 
     def clear_proposals(self):
         """Nothing is waiting any more."""

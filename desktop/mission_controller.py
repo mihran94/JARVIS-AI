@@ -135,6 +135,7 @@ class MissionController(QObject):
             budget_seconds=budget_seconds,
             on_event=self.on_event,
             check=lambda: window.policy.check(ticket),
+            compact_tools=True,
         )
         worker = MissionWorker(runtime, goal, confirm=self._confirm, parent=self)
         worker.event.connect(self.on_event)

@@ -132,6 +132,28 @@ def test_the_step_context_keeps_the_instructions_the_goal_and_the_recent_steps()
         'the instructions', 'the goal', '{"action": "tool"}', 'a newer observation']
 
 
+def test_the_tool_catalogue_does_not_require_screen_sharing_approval():
+    from core.mission import system_instructions
+    from core.mission_tools import build_registry
+
+    engine, calls = router(gemini_enabled=True, validate=lambda text: False,
+                           approve_share=lambda *_: pytest.fail('No screen was read'))
+    messages = [
+        {'role': 'system', 'content': system_instructions(build_registry())},
+        {'role': 'user', 'content': 'What is 19 times 29?'},
+    ]
+    assert 'observe_screen' in messages[0]['content']
+    engine.plan_step(messages)
+    assert calls['gemini']
+
+
+def test_protected_data_stays_local_without_an_approval_handler():
+    engine, calls = router(gemini_enabled=True, validate=lambda text: False)
+    with pytest.raises(EngineUnavailable, match='not allowed'):
+        engine.plan_step([{'role': 'user', 'content': 'A spoken phrase'}], voice=True)
+    assert calls['gemini'] == []
+
+
 def test_screen_content_is_named_before_it_is_shared():
     messages = [{'role': 'user',
                  'content': 'The result of observe_screen:\nThere is a password on screen.'}]

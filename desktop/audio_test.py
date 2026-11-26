@@ -4,7 +4,7 @@ from math import sin, tau
 from time import monotonic
 
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QTimer, Signal
-from PySide6.QtWidgets import QGridLayout, QGroupBox, QLabel, QProgressBar, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import QGridLayout, QGroupBox, QHBoxLayout, QLabel, QProgressBar, QPushButton, QVBoxLayout
 
 try:
     from PySide6.QtMultimedia import QAudio, QAudioFormat, QAudioSink, QAudioSource, QMediaDevices
@@ -44,8 +44,15 @@ class AudioTest(QGroupBox):
         layout.addLayout(controls)
         self.level = QProgressBar()
         self.level.setRange(0, 100)
+        self.level.setValue(0)
         self.level.setTextVisible(False)
         self.level.setAccessibleName('Microphone level')
+        meter_labels = QHBoxLayout()
+        meter_labels.addWidget(QLabel('Microphone level'), 1)
+        percent = QLabel('0%')
+        self.level.valueChanged.connect(lambda value: percent.setText(f'{value}%'))
+        meter_labels.addWidget(percent)
+        layout.addLayout(meter_labels)
         layout.addWidget(self.level)
         self.status = QLabel('Microphone test needs permission in Voice. Tests stay on this PC.')
         self.status.setWordWrap(True)
@@ -72,6 +79,9 @@ class AudioTest(QGroupBox):
         if self.mode or self.voice.live_voice_active or self.voice.playback_busy or self.voice.pending_speech or (
                 self.voice.worker is not None and self.voice.worker.isRunning()):
             self.status.setText('Stop the current voice session or audio test first.')
+            return False
+        if mode == 'microphone' and self.voice.microphone_muted:
+            self.status.setText('Unmute the microphone before testing it.')
             return False
         if mode == 'microphone' and not self.voice.consent.listening:
             self.status.setText('Enable Allow the microphone in Voice before testing.')

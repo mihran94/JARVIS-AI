@@ -185,7 +185,7 @@ def parse_decision(text):
     return None, 'The action must be "tool", "answer" or "skip".'
 
 
-def system_instructions(registry) -> str:
+def system_instructions(registry, *, compact=False) -> str:
     """The instructions the model is given for one mission.
 
     The rules are the same ones this module enforces. They are written
@@ -219,7 +219,8 @@ def system_instructions(registry) -> str:
         '* If the goal needs no tool, answer straight away.\n'
         '\n'
         'The tools:\n'
-        + registry.describe()
+        + ('Argument names with ? are optional.\n' if compact else '')
+        + registry.describe(compact=compact)
     )
 
 
@@ -288,13 +289,14 @@ class AgentRuntime:
     """
 
     def __init__(self, registry, gateway, planner, *, max_steps=MAX_STEPS,
-                 budget_seconds=BUDGET_SECONDS, on_event=None, check=None):
+                 budget_seconds=BUDGET_SECONDS, on_event=None, check=None, compact_tools=False):
         self.registry = registry
         self.gateway = gateway
         self.planner = planner
         self.max_steps = max(1, int(max_steps))
         self.budget_seconds = max(1, int(budget_seconds))
         self.on_event = on_event
+        self.compact_tools = compact_tools
         #: Raised by the caller's check when an emergency stop is active.
         self.check = check or (lambda: None)
 
@@ -338,7 +340,8 @@ class AgentRuntime:
         self._emit(mission, 'goal', 'Mission started', goal)
 
         messages = [
-            {'role': 'system', 'content': system_instructions(self.registry)},
+            {'role': 'system', 'content': system_instructions(
+                self.registry, compact=self.compact_tools)},
             {'role': 'user', 'content': goal},
         ]
         deadline = time.monotonic() + self.budget_seconds

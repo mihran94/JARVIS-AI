@@ -151,15 +151,20 @@ def classify_context(messages, *, voice: bool = False,
     kinds = []
     if not isinstance(messages, list):
         return ()
-    text = '\n'.join(str(m.get('content', '')) for m in messages if isinstance(m, dict))
-    if 'observe_screen' in text:
+    observations = [
+        str(message.get('content', '')) for message in messages
+        if isinstance(message, dict) and message.get('role') == 'user'
+    ]
+    screen_tools = ('observe_screen', 'inspect_window', 'inspect_app_controls')
+    if any(text.startswith(tuple(f'The result of {tool}:\n' for tool in screen_tools))
+           for text in observations):
         kinds.append(SHARED_SCREEN)
     if voice:
         kinds.append(SHARED_MICROPHONE)
-    for path in protected_paths or ():
-        if path and str(path) in text:
-            kinds.append(SHARED_FILE)
-            break
+    if any(text.startswith('The result of read_text_file:\n')
+           or any(path and str(path) in text for path in (protected_paths or ()))
+           for text in observations):
+        kinds.append(SHARED_FILE)
     return tuple(kinds)
 
 
@@ -243,24 +248,23 @@ class EngineRouter:
                 'The on-device model could not answer: ' + str(error),
                 reason=REASON_LOCAL_UNAVAILABLE) from None
 
-    def _gemini(self, messages, reason: str, step: int, shared=()):
+    def _gemini(self, messages, reason: str, step: int, *, voice=False):
         """Ask Gemini for one step, and only what that step needs."""
         if not self.gemini_configured:
             raise EngineUnavailable(
                 'Gemini is not available: no Gemini model or key is configured. '
                 'The rest of this work stays on this computer.',
                 reason=reason, blocked=True)
-        kinds = classify_context(messages, voice=False,
+        context = step_context(messages)
+        kinds = classify_context(messages, voice=voice,
                                  protected_paths=self.protected_paths)
-        if kinds and self.approve_share is not None:
+        if kinds:
             note = shared_note(kinds)
-            if not self.approve_share(kinds, note):
+            if self.approve_share is None or not self.approve_share(kinds, note):
                 raise EngineUnavailable(
                     'Sharing ' + note + ' with Gemini was not allowed, so this step '
                     'is blocked and the rest stays on this computer.',
                     reason=reason, blocked=True)
-            shared = tuple(kinds)
-        context = step_context(messages)
         try:
             text = self.gemini_stream(self.gemini_model, self.gemini_key, context,
                                       self.check, lambda _chunk: None)
@@ -272,7 +276,7 @@ class EngineRouter:
                 reason=reason, blocked=True) from None
         return text, EngineStep(GEMINI, reason=reason,
                                 detail=REASON_WORDS.get(reason, ''),
-                                step=step, shared=shared)
+                                step=step, shared=kinds)
 
     # ------------------------------------------------------------------
 
@@ -314,7 +318,7 @@ class EngineRouter:
                 reason=reason, blocked=False)
 
         try:
-            answer, record = self._gemini(messages, reason, step)
+            answer, record = self._gemini(messages, reason, step, voice=voice)
         except EngineUnavailable as error:
             raise EngineUnavailable(str(error), reason=reason,
                                     blocked=unusable) from None

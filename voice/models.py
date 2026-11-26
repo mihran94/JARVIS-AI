@@ -19,7 +19,10 @@ WHAT THIS IS NOT
 from __future__ import annotations
 
 from dataclasses import dataclass
+from locale import windows_locale
 import sys
+
+from voice import local_stt
 
 #: The two things a voice model can be.
 RECOGNITION = 'recognition'
@@ -66,19 +69,31 @@ def _windows_only(capability: str) -> list:
 
 
 def _installed_recognisers() -> dict:
-    """The cultures Windows has a recogniser for, or an empty mapping."""
-    try:
-        from voice.windows_stt import load_system_speech
-        load_system_speech()
-        from System.Speech.Recognition import SpeechRecognitionEngine
-        found = {}
-        for recogniser in SpeechRecognitionEngine.InstalledRecognizers():
-            culture = str(getattr(recogniser, 'Culture', ''))
-            if culture:
-                found[culture] = str(getattr(recogniser, 'Id', '') or culture)
-        return found
-    except Exception:
-        return {}
+    """Read classic SAPI recognition tokens without loading COM on the GUI thread."""
+    import winreg
+
+    path = r'SOFTWARE\Microsoft\Speech\Recognizers\Tokens'
+    found = {}
+    for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        try:
+            with winreg.OpenKey(hive, path) as tokens:
+                for index in range(winreg.QueryInfoKey(tokens)[0]):
+                    name = winreg.EnumKey(tokens, index)
+                    try:
+                        with winreg.OpenKey(tokens, name + r'\Attributes') as attributes:
+                            languages, _ = winreg.QueryValueEx(attributes, 'Language')
+                    except OSError:
+                        continue
+                    for language in str(languages).split(';'):
+                        try:
+                            culture = windows_locale.get(int(language, 16), '')
+                        except ValueError:
+                            continue
+                        if culture:
+                            found[culture.replace('_', '-')] = name
+        except OSError:
+            continue
+    return found
 
 
 def _recognition_models() -> list:
@@ -86,18 +101,13 @@ def _recognition_models() -> list:
     if sys.platform != 'win32':
         return _windows_only(RECOGNITION)
     installed = _installed_recognisers()
-    if not installed:
-        reason = ('The Windows speech recognition runtime could not be read, so the '
-                  'installed recognisers are unknown. Install the optional '
-                  'pythonnet package and the Windows language pack for Tamil.')
-        return [
-            VoiceModel(RECOGNITION, 'en', 'English recognition', False, reason),
-            VoiceModel(RECOGNITION, 'ta', 'Tamil recognition', False, reason),
-            VoiceModel(RECOGNITION, TANGLISH, 'Tamil + Tanglish', False, reason),
-        ]
     cultures = {culture.casefold(): identifier for culture, identifier in installed.items()}
     english = cultures.get('en-us')
     tamil = cultures.get('ta-in')
+    whisper = local_stt.ready()
+    local_detail = ('Local multilingual Whisper is installed.'
+                    if whisper else local_stt.SETUP_HINT)
+    local_identifier = local_stt.model_path().name if whisper else ''
     models = [
         VoiceModel(RECOGNITION, 'en', 'English recognition', bool(english),
                    'The Windows English recogniser is installed and works offline.'
@@ -105,21 +115,13 @@ def _recognition_models() -> list:
                    'The Windows English recogniser is not installed. Add the English '
                    'speech language in Windows Settings.',
                    english or ''),
-        VoiceModel(RECOGNITION, 'ta', 'Tamil recognition', bool(tamil),
-                   'The Windows Tamil recogniser is installed and works offline.'
-                   if tamil else
-                   'The Windows Tamil recogniser is not installed. Add the Tamil '
-                   'speech language in Windows Settings.',
-                   tamil or ''),
+        VoiceModel(RECOGNITION, 'ta', 'Tamil recognition', bool(whisper or tamil),
+                   local_detail if whisper or not tamil else
+                   'The Windows Tamil recogniser is installed and works offline.',
+                   local_identifier or tamil or ''),
     ]
     models.append(VoiceModel(
-        RECOGNITION, TANGLISH, 'Tamil + Tanglish', bool(tamil),
-        'Tamil written in Latin letters is converted to the Tamil script before the '
-        'recogniser hears it, so Tanglish works with the Tamil model.'
-        if tamil else
-        'Tanglish needs the Windows Tamil recogniser. Add the Tamil speech language '
-        'in Windows Settings.',
-        tamil or ''))
+        RECOGNITION, TANGLISH, 'Tamil + Tanglish', whisper, local_detail, local_identifier))
     return models
 
 

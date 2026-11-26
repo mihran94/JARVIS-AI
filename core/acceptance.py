@@ -154,9 +154,9 @@ def check_voice_on_windows() -> Check:
                      'language pack and run it again.',
                      windows_only=True)
     return Check('The offline recogniser hears Tamil and English in one sentence',
-                 'Offline Tamil and Tanglish voice', PASS,
-                 '; '.join(f'{model.label} ({model.identifier or "installed"})'
-                           for model in ready),
+                 'Offline Tamil and Tanglish voice', NOT_RUN,
+                 'Installed voice models were checked. A live microphone recording '
+                 'and transcript are required to verify this check.',
                  evidence='; '.join(model.label for model in ready),
                  windows_only=True)
 
