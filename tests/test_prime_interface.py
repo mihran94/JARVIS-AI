@@ -643,6 +643,22 @@ def test_settings_close_outside_without_resizing_chat(tmp_path):
         window.close()
 
 
+def test_typed_chat_joins_the_running_voice_conversation(tmp_path):
+    from types import SimpleNamespace
+    app, window = make_window(tmp_path)
+    packets = []
+    try:
+        window.live_voice = SimpleNamespace(active=True, send=packets.append)
+        window.prompt.setPlainText('இன்னைக்கு ஒரு quick break எடுக்கலாம்')
+        window.send()
+        assert packets == [{'realtimeInput': {'text': 'இன்னைக்கு ஒரு quick break எடுக்கலாம்'}}]
+        assert window.store.messages(window.session)[-1]['role'] == 'user'
+        assert not window.prompt.toPlainText()
+    finally:
+        window.live_voice = None
+        window.close()
+
+
 def test_slash_suggestion_goes_to_gemini_without_running_a_pc_action(tmp_path, monkeypatch):
     app, window = make_window(tmp_path)
     calls = []

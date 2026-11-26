@@ -1528,7 +1528,9 @@ class Window(QMainWindow):
         if camera:
             off = camera[1] in ('off', 'ஆஃப்', 'ஆப்', 'நிறுத்து', 'மூடு')
             self.camera_toggle.setChecked(not off)
-            self.show_local_system_reply(spoken, 'Camera off.' if off else 'Camera on.')
+            message = 'Camera off.' if off else (
+                'Camera on.' if self.camera_toggle.isChecked() else 'Camera is unavailable.')
+            self.show_local_system_reply(spoken, message)
             return True
         if re.fullmatch(r'(?:mic(?:rophone)? )?(?:mute|மியூட்)(?: பண்ணு| pannu| பண்ணுங்க| பண்ணு இப்ப)?', text):
             self.prime_shell.mic_mute_button.setChecked(True)
@@ -6553,9 +6555,17 @@ class Window(QMainWindow):
             return
         if self.policy.stopped or self.worker is not None or not text:
             return
-        if self.live_voice is not None and self.live_voice.active:
-            self.statusBar().showMessage('Stop Live Voice before sending a typed chat message.', 10000)
+        if self.route_interface_command(text):
+            self.prompt.clear()
             return
+        if self.live_voice is not None and self.live_voice.active:
+            if not text.startswith('/'):
+                self.store.message(self.session, 'user', text)
+                self.prompt.clear()
+                self.render_chat()
+                self.live_voice.send({'realtimeInput': {'text': text}})
+                return
+            self.live_voice.stop('Running the Chat command.')
         if self.route_youtube(text):
             self.prompt.clear()
             return
@@ -6931,6 +6941,8 @@ class Window(QMainWindow):
     def on_finished(self):
         self.worker.deleteLater()
         self.worker = None
+        if self.store.get('voice:auto_gemini', False):
+            QTimer.singleShot(0, self.start_automatic_voice)
         self.refresh_brain_label()
         self.video_cancel_render.hide()
         self.video_brief.setReadOnly(False)
