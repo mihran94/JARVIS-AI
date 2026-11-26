@@ -33,6 +33,10 @@ def test_take_control_routes_a_goal_and_release_cancels_the_session(window, monk
     assert 'CONTROL ACTIVE' in window.prime_shell.footer_status.text()
     assert window.route_interface_command('open Notepad and write hello')
     assert goals == [('open Notepad and write hello', {'from_chat': True})]
+    assert window.route_interface_command('Notepad open pannu')
+    assert len(goals) == 2
+    assert not window.route_interface_command('open Notepad வேண்டாம்')
+    assert len(goals) == 2
     assert window.route_interface_command('stop control')
     assert not window.desktop_control_active
     assert cancelled
@@ -90,3 +94,14 @@ def test_main_alignment_groups_time_weather_and_hides_the_separate_wave(window):
         point = widget.mapTo(window, widget.rect().bottomRight())
         assert point.x() < window.width()
         assert point.y() < window.height()
+
+
+def test_colloquial_settings_command_opens_menu_settings_without_a_provider(window):
+    assert window.route_interface_command('உன்ன செட்டிங்ஸ் ஓபன் பண்ண சொன்னேன்')
+    assert window.prime_shell.settings_dialog.isVisible()
+    window.prime_shell.settings_dialog.close()
+    assert not window.route_interface_command('செட்டிங்ஸ் ஓபன் பண்ணாதே')
+    assert window.route_interface_command('டேக் கண்ட்ரோல்')
+    assert window.desktop_control_active
+    window.on_live_heard('ஸ்டாப் கண்ட்ரோல்')
+    assert not window.desktop_control_active

@@ -142,6 +142,15 @@ from voice import models as voice_models
 #: stylesheet was previously only ever applied by the tests, so the shipping
 #: JARVIS rendered in the default light Qt theme.
 STYLE = prime_theme.PRIME_DARK
+CONTROL_START_COMMANDS = {
+    'take control', 'take full control', 'take desktop control', 'டேக் கண்ட்ரோல்',
+    'pc control எடு', 'கண்ட்ரோல் எடு', 'கண்ட்ரோல் எடுத்துக்கோ',
+    'கட்டுப்பாட்டை எடு', 'முழு கண்ட்ரோல் எடு', 'முழு கட்டுப்பாட்டை எடு',
+}
+CONTROL_STOP_COMMANDS = {
+    'stop control', 'release control', 'ஸ்டாப் கண்ட்ரோல்', 'control நிறுத்து',
+    'கண்ட்ரோல் நிறுத்து', 'கண்ட்ரோலை நிறுத்து', 'கட்டுப்பாட்டை நிறுத்து',
+}
 
 #: The worker that starts the on-device model. It lives here and not in
 #: the window, because a thread that is still running when the window
@@ -1438,6 +1447,10 @@ class Window(QMainWindow):
         guide += (' This is a spoken conversation. Keep replies brief. The desktop handles '
                   'explicit local commands separately. For a requested PC action, tell the '
                   'user to check for an approval in the app. Never claim the action ran. '
+                  'The desktop can control supported apps with mouse and keyboard. '
+                  'For "take control", acknowledge readiness and ask what task to do; '
+                  'for "stop control", acknowledge release. Do not say these commands '
+                  'are impossible. Report completion only from verified app results. '
                   'For saved projects, tell the user to check the result in Chat. When asked '
                   'to look through the camera, wait for the app to send a current image and '
                   'never claim to see anything before an image arrives.')
@@ -1465,8 +1478,7 @@ class Window(QMainWindow):
         self.prime_chat.assistant.show_heard(text)
         if self.is_emergency_stop(addressed_request(text)):
             self.stop()
-        elif addressed_request(text).casefold().strip(' .!?') in {
-                'stop control', 'release control', 'control நிறுத்து', 'கட்டுப்பாட்டை நிறுத்து'}:
+        elif addressed_request(text).casefold().strip(' .!?') in CONTROL_STOP_COMMANDS:
             self.set_desktop_control(False)
 
     def read_with_gemini(self, text):
@@ -1550,19 +1562,18 @@ class Window(QMainWindow):
     def route_interface_command(self, spoken):
         text = addressed_request(spoken).casefold().strip(' .!?')
         text = re.sub(r'\s+', ' ', text)
-        if text in {'stop control', 'release control', 'control நிறுத்து', 'கட்டுப்பாட்டை நிறுத்து'}:
+        if text in CONTROL_STOP_COMMANDS:
             self.set_desktop_control(False)
             self.show_local_system_reply(spoken, 'Desktop control released.')
             return True
         if not self.store.get('automation:self_control', True):
             return False
-        if text in {'take control', 'take desktop control', 'pc control எடு', 'கண்ட்ரோல் எடு',
-                    'கட்டுப்பாட்டை எடு', 'முழு கண்ட்ரோல் எடு'}:
+        if text in CONTROL_START_COMMANDS:
             self.set_desktop_control(True)
             self.show_local_system_reply(spoken, 'Desktop control is active for this session. Tell me the task.')
             return True
         text = re.sub(r'^(?:உன்|உன்ன|உன்னுடைய|your)\s+', '', text)
-        if re.fullmatch(r'(?:settings|செட்டிங்ஸ்|அமைப்புகள்)(?:ஐ)?\s+(?:open|ஓபன்|திற)(?:\s+(?:pannu|பண்ணு|பண்ணுங்க|செய்))?', text):
+        if re.fullmatch(r'(?:settings|செட்டிங்|செட்டிங்ஸ்|அமைப்புகள்)(?:ஐ)?\s+(?:open|ஓபன்|திற)(?:\s+(?:pannu|பண்ண|பண்ணு|பண்ணுங்க|செய்))?(?:\s+(?:சொன்னேன்|சொன்னனே|முடியுமா))?', text):
             self.open_section('Settings & Safety')
             return True
         camera = re.fullmatch(r'(?:camera|கேமரா)(?:வை|வ)?\s+(off|on|ஆஃப்|ஆப்|ஆன்|நிறுத்து|மூடு|திற)(?:\s+(?:pannu|பண்ணு|பண்ணுங்க|செய்))?', text)
@@ -1573,7 +1584,7 @@ class Window(QMainWindow):
                 'Camera on.' if self.camera_toggle.isChecked() else 'Camera is unavailable.')
             self.show_local_system_reply(spoken, message)
             return True
-        if re.fullmatch(r'(?:mic(?:rophone)? )?(?:mute|மியூட்)(?: பண்ணு| pannu| பண்ணுங்க| பண்ணு இப்ப)?', text):
+        if re.fullmatch(r'(?:(?:mic(?:rophone)?|மைக்|மைக்ரோஃபோன்) )?(?:mute|மியூட்)(?: பண்ணு| pannu| பண்ணுங்க| பண்ணு இப்ப)?', text):
             self.prime_shell.mic_mute_button.setChecked(True)
             self.show_local_system_reply(spoken, 'Microphone muted.')
             return True
@@ -1586,8 +1597,13 @@ class Window(QMainWindow):
         if destination:
             self.open_plugins() if destination == 'plugins' else self.open_section(destination)
             return True
-        if self.desktop_control_active and re.match(
-                r'^(?:open|launch|click|type|write|press|scroll|focus|inspect|ஓபன்|திற|கிளிக்|டைப்|எழுது|அழுத்து)\b', text):
+        action_words = r'open|launch|click|type|write|press|scroll|focus|inspect|close|ஓபன்|திற|கிளிக்|டைப்|எழுது|அழுத்து|மூடு'
+        desktop_request = re.match(r'^(?:(?:can|could|would) you (?:please )?)?(?:' + action_words + r')\b', text)
+        desktop_request = desktop_request or re.search(r'(?:' + action_words + r')\s+(?:pannu|பண்ணு|பண்ணுங்க|செய்)$', text)
+        negative = re.search(r"don't|do not|வேண்டாம்|பண்ணாதே|திறக்காதே|\b(?:venam|vendam)\b", text)
+        if self.desktop_control_active and desktop_request and not negative:
+            self.store.message(self.session, 'user', spoken)
+            self.render_chat()
             self.open_section('Mission Control')
             self.mission_controller.start(spoken, from_chat=True)
             return True
