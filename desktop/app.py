@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 import sys
@@ -13,14 +14,14 @@ from PySide6.QtWidgets import (
     QPushButton, QListWidget, QStackedWidget, QPlainTextEdit, QLineEdit,
     QComboBox, QMessageBox, QFormLayout, QGridLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QCheckBox, QDialog, QFileDialog, QScrollArea, QLayout,
-    QProgressBar, QGroupBox, QTabBar, QInputDialog,
+    QProgressBar, QGroupBox, QInputDialog,
 )
 from dataclasses import replace
 
 from core.store import Store
 from core.conversation import (REPLY_LANGUAGES, REPLY_TONES, SUGGESTION_GUIDANCE,
                                addressed_request, assistant_guidance, mission_argument,
-                               suggestion_argument)
+                               self_update_argument, suggestion_argument)
 from desktop.conversation_plan import (ConversationPlan, Step, extract_suggested_plan,
                                        parse_plan as parse_conversation_plan)
 from desktop.browser_control import BrowserControl
@@ -491,8 +492,9 @@ class Window(QMainWindow):
         self.voice_panel.utterance_detected.connect(self.on_voice_transcript)
         self.voice_panel.cycle_finished.connect(self.schedule_local_voice_rearm)
         self.voice_panel.speech_finished.connect(self.schedule_local_voice_rearm)
-        self.add_page('Voice / Hey Jarvis', self.voice_panel)
+        self.add_page('Voice / Hey Jarvis', QWidget())
         self.add_page('Phone Remote', self.bridge_page())
+        self.provider_settings = self.provider_page()
         self.settings_scroller = self.scroll_page(self.permissions_page())
         self.add_page('Video Editor', self.video_page())
         self.add_page('Business', self.business_page())
@@ -504,13 +506,14 @@ class Window(QMainWindow):
         self.add_page('Quantum Visual Player', self.player_panel, primary=False)
         self.add_page('Command Center', self.dashboard(), primary=False)
         self.voice_panel.activity_changed.connect(self.refresh_voice_hud)
+        self.voice_panel.audio_level.connect(self.hud.strip.set_mic_level)
         self.voice_panel.recognition_failed.connect(lambda: self.hands_free_voice.setChecked(False))
         self.voice_panel.feedback.connect(lambda message: self.statusBar().showMessage(message, 10000))
         self.refresh_voice_hud()
         self.add_page('Task Queue', self.queue_page(), primary=False)
         self.add_page('Step Workflows', self.workflow_page(), primary=False)
         self.add_page('Task History', self.history_page(), primary=False)
-        self.add_page('AI Providers', self.provider_page(), primary=False)
+        self.add_page('AI Providers', QWidget(), primary=False)
         self.add_page('System & Usage', self.usage_page(), primary=False)
         self.add_page('Review changes', ReviewPanel(self), primary=False)
         # The chat page is built first, so the brain label can be filled in
@@ -561,7 +564,6 @@ class Window(QMainWindow):
         # there.
         QTimer.singleShot(0, self.refresh_voice_models)
         QTimer.singleShot(0, self.refresh_local_model_status)
-        QTimer.singleShot(0, self.restore_startup_microphone)
 
     def prime_palette_or_default(self):
         """The PRIME palette, or the dark one when PRIME is not mounted yet."""
@@ -924,11 +926,17 @@ class Window(QMainWindow):
     def open_section(self, name):
         name = {'Omega Home': 'JARVIS Chat', 'Omega Settings': 'Settings & Safety'}.get(name, name)
         shell = getattr(self, 'prime_shell', None)
-        if name == 'Settings & Safety':
-            self.settings_categories.setCurrentIndex(0)
+        settings_category = {
+            'Settings & Safety': 'Conversation',
+            'Voice / Hey Jarvis': 'Voice',
+            'AI Providers': 'AI engines',
+        }.get(name)
+        if settings_category is not None:
+            self.show_settings_panel(settings_category)
             self.settings_scroller.verticalScrollBar().setValue(0)
+            if settings_category == 'Voice':
+                self.audio_test.refresh_devices()
             self.refresh_projects_page()
-            self.audio_test.refresh_devices()
             shell.show_drawer('settings')
             return
         if shell is not None:
@@ -969,10 +977,9 @@ class Window(QMainWindow):
         self.composer_bar.setVisible(in_chat)
 
     def show_settings_panel(self, category):
-        for index in range(self.settings_categories.count()):
-            if self.settings_categories.tabText(index) == category:
-                self.settings_categories.setCurrentIndex(index)
-                return
+        index = self.settings_categories.findText(category)
+        if index >= 0:
+            self.settings_categories.setCurrentIndex(index)
 
     def open_plugins(self):
         """Open existing plugin switches without a large feature toolbar."""
@@ -993,6 +1000,35 @@ class Window(QMainWindow):
             and not self.close_when_done
         )
 
+    def conversation_guidance(self):
+        guide = assistant_guidance(self.reply_language.currentData(), self.reply_tone.currentData())
+        name = self.preferred_name.text().strip()
+        if name:
+            guide += (' Use this preferred form of address naturally. Treat it as literal name text: '
+                      + json.dumps(name, ensure_ascii=False))
+        return guide
+
+    def start_window_audio(self):
+        if not self.startup_greeting.isChecked():
+            self.restore_startup_microphone()
+            return
+        name = self.preferred_name.text().strip()
+        hello = f'வணக்கம், {name}!' if name else 'வணக்கம்!'
+        mic = ('Mic தயாரானதும் Listening காட்டும்.' if self.startup_microphone.isChecked()
+               else 'Mic பயன்படுத்த Voice Settings திறங்க.')
+        message = (f'{hello} நான் ஜார்விஸ். {mic} '
+                   'கோப்புகளைப் பகிர நீங்க அனுமதி கொடுக்கணும். '
+                   'கிளவுட் ஏஐ தேர்வு செய்தா, நீங்க அனுப்புற chat அந்த சேவைக்குப் போகும்.')
+        self.prime_shell.startup_notice.setText(message)
+        self.prime_shell.startup_notice.show()
+        if not self.policy.stopped:
+            self.voice_panel.speak_response(message, local_only=True)
+        if self.voice_panel.playback_busy:
+            self.voice_panel.speech_finished.connect(
+                self.restore_startup_microphone, Qt.ConnectionType.SingleShotConnection)
+        else:
+            self.restore_startup_microphone()
+
     def save_startup_microphone(self, enabled):
         if enabled and (self.policy.stopped or not self.voice_panel.consent.listening):
             self.startup_microphone.setChecked(False)
@@ -1001,11 +1037,16 @@ class Window(QMainWindow):
         self.store.set('voice:local_on_startup', enabled)
 
     def restore_startup_microphone(self):
-        if (self.startup_microphone.isChecked() and not self.policy.stopped
-                and not self.voice_panel.microphone_muted and self.chat_provider.currentText() == 'Ollama'
-                and not self.backup_consent.isChecked()):
-            self.voice_panel.allow.setChecked(True)
+        if (not self.startup_microphone.isChecked() or self.policy.stopped
+                or self.voice_panel.microphone_muted):
+            return
+        self.voice_panel.allow.setChecked(True)
+        if self.chat_provider.currentText() == 'Ollama' and not self.backup_consent.isChecked():
             self.hands_free_voice.setChecked(True)
+        else:
+            # Wake-word recognition stays on-device. Sending a chat draft to a
+            # provider remains a separate user action.
+            self.voice_panel.listen('continuous')
 
     def set_local_hands_free(self, enabled):
         """An explicit, session-only microphone and local-provider opt-in."""
@@ -1143,7 +1184,21 @@ class Window(QMainWindow):
         self.statusBar().showMessage(
             'I heard you. Please review and press Ask JARVIS. No action ran.', 15000)
 
+    def route_self_update(self, text):
+        goal = self_update_argument(text)
+        if goal is None:
+            return False
+        if not goal:
+            self.show_local_system_reply(text, 'ஜார்விஸில் என்ன மாற்றணும் என்று சொல்லுங்க.')
+            return True
+        self.open_section('Coding Assistant')
+        self.improvement_goal.setText(goal[:8000])
+        self.start_improvement(show_review=True)
+        return True
+
     def route_task(self, text):
+        if self.route_self_update(text):
+            return True
         command, separator, path = text.partition(':')
         if separator and command.strip().casefold() == 'save notepad with mouse':
             from automation.editor import save_notepad_with_mouse
@@ -1307,11 +1362,12 @@ class Window(QMainWindow):
                 self.live_voice.status.connect(lambda text: self.statusBar().showMessage(text, 20000))
                 self.live_voice.state_changed.connect(self.on_live_voice_state)
                 self.live_voice.turn_finished.connect(self.save_live_voice_turn)
+                self.live_voice.heard_changed.connect(self.prime_chat.assistant.show_heard)
                 self.live_voice.audio_level.connect(self.voice_panel.audio_level.emit)
             self.hands_free_voice.setChecked(False)
             self.voice_panel.stop_continuous()
             self.open_section('JARVIS Chat')
-            guide = assistant_guidance(self.reply_language.currentData(), self.reply_tone.currentData())
+            guide = self.conversation_guidance()
             guide += (' This is a spoken conversation. Keep replies brief. The desktop handles '
                       'explicit local commands separately. For a requested PC action, tell the '
                       'user to check for an approval in the app. Never claim the action ran. '
@@ -1322,7 +1378,6 @@ class Window(QMainWindow):
     def on_live_voice_state(self, state):
         self.voice_panel.live_voice_active = state != 'idle'
         title = 'Stop Live Voice' if state != 'idle' else 'Live Voice'
-        self.live_voice_button.setText(title)
         self.live_voice_settings_button.setText(title)
         self.live_speech_language.setEnabled(state == 'idle')
         self.voice_panel.refresh()
@@ -1333,6 +1388,8 @@ class Window(QMainWindow):
             return
         if spoken:
             self.prime_chat.assistant.show_heard(spoken)
+            if self.route_self_update(spoken):
+                return
             from desktop.voice_tasks import local_voice_request
             request = local_voice_request(spoken, load_projects(self.store))
             if request is not None:
@@ -1692,13 +1749,16 @@ class Window(QMainWindow):
         if self.chat_launch is not None and not self.policy.stopped:
             label = 'APPROVAL REQUIRED'
         self.orb_status.setText('JARVIS  /  ' + label)
-        self.chat_mic.setText('Cancel mic' if self.voice_panel.listening else 'Speak')
         muted = self.voice_panel.microphone_muted
-        self.chat_mic.setEnabled(not muted and not self.policy.stopped and not self.voice_panel.playback_busy)
+        output_muted = self.voice_panel.muted
+        if self.live_voice is not None:
+            self.live_voice.set_muted(output_muted)
         shell = getattr(self, 'prime_shell', None)
         if shell is not None:
             shell.mic_mute_button.setText('Unmute mic' if muted else 'Mute mic')
             shell.mic_mute_button.setAccessibleName(shell.mic_mute_button.text())
+            shell.output_mute_button.setChecked(output_muted)
+            shell.output_mute_button.setText('Unmute replies' if output_muted else 'Mute replies')
         self.hud_voice_status.setText(label)
         if self.omega is not None:
             self.omega.set_voice(state)
@@ -1706,9 +1766,11 @@ class Window(QMainWindow):
                                  and not self.voice_panel.playback_busy)
         hud = getattr(self, 'hud', None)
         if hud is not None:
-            mic_state = ('The microphone is listening.' if self.voice_panel.listening else
+            live_listening = self.live_voice is not None and self.live_voice.state == 'listening'
+            microphone_open = self.voice_panel.listening or live_listening
+            mic_state = ('The microphone is listening.' if microphone_open else
                          self.voice_panel.consent.listener)
-            hud.strip.set_mic('The microphone is muted.' if muted else mic_state, self.voice_panel.muted)
+            hud.strip.set_mic('The microphone is muted.' if muted else mic_state, output_muted)
         self.refresh_prime_state()
 
     def answer_spoken_system_command(self, command):
@@ -1965,10 +2027,6 @@ class Window(QMainWindow):
         composer_actions = QHBoxLayout()
         self.composer_actions = composer_actions
         composer_layout.addLayout(composer_actions)
-        self.chat_mic = self.button(composer_actions, 'Speak', self.listen_to_user)
-        self.chat_mic.setObjectName('quiet')
-        self.live_voice_button = self.button(composer_actions, 'Live Voice', self.toggle_live_voice)
-        self.live_voice_button.setToolTip('Have a spoken conversation through Gemini Live.')
         self.attach_button = self.button(
             composer_actions, 'Attach', lambda: self.open_section('Files & Folders'))
         self.attach_button.setObjectName('quiet')
@@ -3841,6 +3899,12 @@ class Window(QMainWindow):
         reply_form = QFormLayout()
         reply_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         reply_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
+        self.preferred_name = QLineEdit(self.store.get('chat:preferred_name', ''))
+        self.preferred_name.setMaxLength(48)
+        self.preferred_name.setPlaceholderText('How JARVIS should address you')
+        self.preferred_name.editingFinished.connect(
+            lambda: self.store.set('chat:preferred_name', self.preferred_name.text().strip()))
+        reply_form.addRow('Your name', self.preferred_name)
         self.reply_language = QComboBox()
         self.reply_tone = QComboBox()
         for label, key, choices, box in (
@@ -3858,39 +3922,25 @@ class Window(QMainWindow):
         note = QLabel('Applies to Chat and new Live Voice sessions. You can switch languages in conversation.')
         note.setWordWrap(True)
         conversation_layout.addWidget(note)
-        quick_settings = QGroupBox('Setup')
-        setup = QGridLayout(quick_settings)
-        for index, (label, action) in enumerate((
-            ('Phone Remote', lambda: self.open_section('Phone Remote')),
-            ('Audio Devices', lambda: self.show_settings_panel('Voice')),
-            ('Memory', lambda: self.open_section('Memory')),
-            ('Plugins', self.open_plugins),
-            ('Engines and Providers', lambda: self.show_settings_panel('AI engines')),
-            ('Appearance and Startup', lambda: self.show_settings_panel('Appearance')),
-        )):
-            button = QPushButton(label)
-            button.clicked.connect(action)
-            setup.addWidget(button, *divmod(index, 2))
-
         remote = QGroupBox('Phone Remote')
         self.flexible_button(QHBoxLayout(remote), 'Open pairing and permissions',
                              lambda: self.open_section('Phone Remote'))
 
-        ai_service = QGroupBox('Provider setup')
-        ai_links = QHBoxLayout(ai_service)
-        self.flexible_button(ai_links, 'AI providers', lambda: self.open_section('AI Providers'))
-        ai_links.addStretch(1)
         voice_service = QGroupBox('Microphone and playback')
         voice_controls = QVBoxLayout(voice_service)
         voice_controls.addWidget(self.hands_free_voice)
         voice_controls.addWidget(self.read_replies)
-        self.startup_microphone = QCheckBox('Listen after opening JARVIS (local Ollama)')
+        self.startup_greeting = QCheckBox('Speak the Tamil welcome when JARVIS opens')
+        self.startup_greeting.setChecked(bool(self.store.get('voice:startup_greeting', False)))
+        self.startup_greeting.toggled.connect(
+            lambda enabled: self.store.set('voice:startup_greeting', enabled))
+        voice_controls.addWidget(self.startup_greeting)
+        self.startup_microphone = QCheckBox('Listen for Hey Jarvis when JARVIS opens')
+        self.startup_microphone.setToolTip('Wake-word recognition stays on this PC.')
         self.startup_microphone.setChecked(bool(self.store.get('voice:local_on_startup', False)))
         self.startup_microphone.toggled.connect(self.save_startup_microphone)
         voice_controls.addWidget(self.startup_microphone)
         voice_links = QHBoxLayout()
-        self.flexible_button(voice_links, 'Open Voice controls',
-                             lambda: self.open_section('Voice / Hey Jarvis'))
         if sys.platform == 'win32':
             self.flexible_button(voice_links, 'Windows sound volume',
                                  lambda: QDesktopServices.openUrl(QUrl('ms-settings:sound')))
@@ -3986,30 +4036,27 @@ class Window(QMainWindow):
         self.settings_usage = QLabel('Collecting PC usage…')
         self.settings_usage.setWordWrap(True)
         QVBoxLayout(usage).addWidget(self.settings_usage)
-        self.settings_categories = QTabBar()
-        self.settings_categories.setAccessibleName('Settings categories')
-        self.settings_categories.setExpanding(False)
-        self.settings_categories.setUsesScrollButtons(True)
-        self.settings_categories.setDrawBase(False)
+        self.settings_categories = QComboBox()
+        self.settings_categories.setAccessibleName('Settings category')
         layout.addWidget(self.settings_categories)
         categories = (
-            ('Essentials', (quick_settings, conversation)),
+            ('Conversation', (conversation,)),
+            ('Voice', (voice_service, self.voice_panel, voice_models, self.audio_test)),
+            ('AI engines', (engines, self.provider_settings, assistant_group)),
             ('Approvals', (approvals, safety)),
-            ('AI engines', (engines, ai_service, assistant_group)),
-            ('Voice', (voice_service, voice_models, self.audio_test)),
             ('Appearance', (preferences,)),
             ('Projects & plugins', (self.saved_projects_group, plugins)),
             ('System', (usage, updates, backup, remote)),
         )
         self.settings_category_sections = []
         for index, (label, sections) in enumerate(categories):
-            self.settings_categories.addTab(label)
+            self.settings_categories.addItem(label)
             self.settings_category_sections.append(sections)
             for section in sections:
                 layout.addWidget(section)
                 section.setVisible(index == 0)
         layout.addStretch(1)
-        self.settings_categories.currentChanged.connect(self.show_setting_category)
+        self.settings_categories.currentIndexChanged.connect(self.show_setting_category)
         return page
 
     def set_hologram_visible(self, enabled):
@@ -5796,7 +5843,7 @@ class Window(QMainWindow):
         self.store.set('last_maintenance_goal', [state['active'], goal])
         self.run_improvement(goal, provider, automatic=True)
 
-    def start_improvement(self):
+    def start_improvement(self, *, show_review=False):
         """Ask a coding provider to prepare an improvement, in the background."""
         if self.improvement_worker is not None:
             self.statusBar().showMessage('A change is already being prepared.', 10000)
@@ -5811,7 +5858,7 @@ class Window(QMainWindow):
 
         def operation():
             self.improvement_goal.clear()
-            self.run_improvement(goal, provider)
+            self.run_improvement(goal, provider, show_review=show_review)
 
         self.notify(lambda: self.gateway.run(action, self.confirm, operation))
 
@@ -5827,7 +5874,7 @@ class Window(QMainWindow):
         self.notify(lambda: self.gateway.run(action, self.confirm,
                     lambda: self.run_improvement(task.goal, provider, task=task)))
 
-    def run_improvement(self, goal, provider, *, automatic=False, task=None):
+    def run_improvement(self, goal, provider, *, automatic=False, task=None, show_review=False):
         """Start the background work for one improvement."""
         if self.improvement_worker is not None:
             self.statusBar().showMessage('A change is already being prepared.', 10000)
@@ -5835,6 +5882,8 @@ class Window(QMainWindow):
         worker = ImprovementWorker(self, goal, provider, parent=self, automatic=automatic, task=task)
         self.improvement_worker = worker
         worker.prepared.connect(self.on_improvement_prepared)
+        if show_review:
+            worker.prepared.connect(lambda _revision: self.open_section('Review changes'))
         worker.message.connect(lambda text: self.statusBar().showMessage(text, 20000))
         worker.finished.connect(self.finish_improvement_worker)
         worker.start()
@@ -6451,8 +6500,7 @@ class Window(QMainWindow):
             self.transcript.appendPlainText('\nJARVIS\n')
             if not (suggestion and self.automation_panel.isAncestorOf(self.suggestion_card)):
                 self.prompt.clear()
-            guidance = assistant_guidance(self.reply_language.currentData(),
-                                          self.reply_tone.currentData())
+            guidance = self.conversation_guidance()
             if suggestion:
                 guidance += SUGGESTION_GUIDANCE
             else:
@@ -6960,8 +7008,10 @@ def main():
     activation.newConnection.connect(show_existing)
     activation.listen(endpoint)
     window.enable_omega(smoke=smoke)
-    if not smoke and restart_supported():
-        QTimer.singleShot(0, window.summon_from_hotkey)
+    if not smoke:
+        if restart_supported():
+            QTimer.singleShot(0, window.summon_from_hotkey)
+        QTimer.singleShot(0, window.start_window_audio)
     if smoke:
         # Offline native smoke test: no provider calls or remote listener.
         def finish_smoke():

@@ -72,6 +72,7 @@ class LiveVoice(QObject):
     state_changed = Signal(str)
     status = Signal(str)
     turn_finished = Signal(str, str)
+    heard_changed = Signal(str)
     audio_level = Signal(int)
 
     def __init__(self, parent=None):
@@ -83,6 +84,7 @@ class LiveVoice(QObject):
         self.pending = bytearray()
         self.transcript = ['', '']
         self.ignore_reply = False
+        self.muted = False
         self.connection_timer = QTimer(self, singleShot=True, interval=12000)
         self.connection_timer.timeout.connect(
             lambda: self.stop('Gemini Live did not connect. Check your provider and network.'))
@@ -97,6 +99,12 @@ class LiveVoice(QObject):
         if value != self.state:
             self.state = value
             self.state_changed.emit(value)
+
+    def set_muted(self, muted):
+        if muted != self.muted:
+            self.muted = muted
+            if self.player is not None:
+                self.player.setVolume(0.0 if muted else 1.0)
 
     def start(self, key, guidance, *, tamil_tanglish=False):
         if self.active:
@@ -114,6 +122,7 @@ class LiveVoice(QObject):
             return
         self.capture = QAudioSource(mic, self.input_format, self)
         self.player = QAudioSink(speaker, self.output_format, self)
+        self.player.setVolume(0.0 if self.muted else 1.0)
         self.capture.stateChanged.connect(self.audio_state_changed)
         self.player.stateChanged.connect(self.audio_state_changed)
         socket = self.socket = QWebSocket(parent=self)
@@ -197,8 +206,10 @@ class LiveVoice(QObject):
                 self.interrupt()
             for index, field in enumerate(('inputTranscription', 'outputTranscription')):
                 if index == 0 or not self.ignore_reply:
-                    self.transcript[index] = (
-                        self.transcript[index] + content.get(field, {}).get('text', ''))[:16000]
+                    fragment = content.get(field, {}).get('text', '')
+                    self.transcript[index] = (self.transcript[index] + fragment)[:16000]
+                    if index == 0 and fragment:
+                        self.heard_changed.emit(self.transcript[0].strip())
             if not self.ignore_reply:
                 for part in content.get('modelTurn', {}).get('parts', []):
                     data = part.get('inlineData', {})

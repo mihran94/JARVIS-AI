@@ -9,7 +9,8 @@ def test_desktop_navigation_stop_and_editor(tmp_path):
     window = Window(tmp_path)
     window.show()
     app.processEvents()
-    assert window.pages.count() == 13
+    assert window.settings_scroller.isAncestorOf(window.voice_panel)
+    assert window.settings_scroller.isAncestorOf(window.provider_settings)
     window.open_section('Files & Folders')
     assert window.pages.currentIndex() == window.page_indices['Files & Folders']
     window.open_section('Coding Assistant')
@@ -162,7 +163,8 @@ def test_voice_drafts_text_without_network_or_automation(tmp_path):
         assert window.pages.currentIndex() == window.page_indices['JARVIS Chat']
         assert window.voice_panel.consent.granted is False
         window.listen_to_user()
-        assert window.pages.currentIndex() == window.page_indices['Voice / Hey Jarvis']
+        assert window.settings_categories.currentText() == 'Voice'
+        assert not window.prime_shell.drawer.isHidden()
         assert window.store.messages(window.session) == []
 
         window.voice_panel.allow.setChecked(True)

@@ -104,6 +104,8 @@ class HudStrip(QWidget):
         self.total = 0
         self.approval_text = ''
         self.mic_text = 'Microphone closed'
+        self.mic_listening = False
+        self.mic_level = 0
         self.muted = False
 
         layout = QHBoxLayout(self)
@@ -233,13 +235,22 @@ class HudStrip(QWidget):
         self.muted = bool(muted)
         state = self.mic_text.lower()
         allowed = 'allowed' in state and 'not been allowed' not in state
-        summary = 'Mic listening' if 'listening' in state else (
-            'Mic muted' if 'muted' in state else 'Mic allowed' if allowed else 'Mic closed')
-        self.mic.setText(summary)
+        self.mic_listening = 'listening' in state
+        if self.mic_listening:
+            self.set_mic_level(self.mic_level)
+        else:
+            self.mic_level = 0
+            summary = 'Mic muted' if 'muted' in state else 'Mic allowed' if allowed else 'Mic closed'
+            self.mic.setText(summary)
         self.mic.setToolTip(self.mic_text)
         self.mic.setStyleSheet(f'color: {GOOD if allowed or "listening" in state else MUTED};')
         self.mute.setText('Replies muted' if self.muted else 'Replies on')
         self.mute.setStyleSheet(f'color: {GOLD if self.muted else MUTED};')
+
+    def set_mic_level(self, level):
+        if self.mic_listening:
+            self.mic_level = max(0, min(100, level))
+            self.mic.setText(f'Mic listening · {self.mic_level}%')
 
     def summary(self) -> str:
         """One line about the HUD, for a test or a log."""

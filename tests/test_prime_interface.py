@@ -101,7 +101,7 @@ def test_conversation_settings_change_the_chat_reply_and_survive_restart(tmp_pat
         assert window.reply_language.currentData() == 'auto'
         assert window.reply_tone.currentData() == 'friendly'
         tabs = window.settings_categories
-        system_tab = next(index for index in range(tabs.count()) if tabs.tabText(index) == 'System')
+        system_tab = tabs.findText('System')
         tabs.setCurrentIndex(system_tab)
         app.processEvents()
         assert not window.reply_language.isVisibleTo(window)
@@ -236,7 +236,7 @@ def test_the_composer_uses_the_real_prompt_and_the_real_buttons(tmp_path):
         found = [controls.itemAt(index).widget()
                  for index in range(controls.count())
                  if controls.itemAt(index).widget() is not None]
-        assert found == [window.chat_mic, window.attach_button, window.send_button]
+        assert found == [window.attach_button, window.send_button]
         assert chat.safety_controls.indexOf(window.prime_shell.stop_button) >= 0
     finally:
         window.close()
@@ -316,7 +316,8 @@ def test_the_state_reaches_the_shell_and_the_island(tmp_path):
         window.prime_state = lambda: 'listening'
         window.refresh_prime_state()
         assert window.prime_shell.state_chip.text() == 'LISTENING'
-        assert window.prime_shell.mark.state == 'listening'
+        assert window.prime_shell.mark.text() == 'M'
+        assert window.prime_chat.assistant.orb.state == 'listening'
         window.prime_state = lambda: 'working'
         window.refresh_prime_state()
         assert window.prime_shell.state_chip.text() == 'WORKING'
@@ -473,6 +474,11 @@ def test_hud_links_voice_feedback_and_keyboard_emergency_stop(tmp_path):
         assert not window.voice_panel.listen_button.isEnabled()
         window.prime_shell.mic_mute_button.click()
         assert not window.voice_panel.microphone_muted
+        window.prime_shell.output_mute_button.click()
+        assert window.voice_panel.muted
+        assert window.voice_panel.consent.listening
+        window.voice_panel.mute_button.click()
+        assert not window.prime_shell.output_mute_button.isChecked()
 
         window.prompt.setPlainText('/stop')
         window.prompt.moveCursor(QTextCursor.MoveOperation.End)
@@ -501,5 +507,31 @@ def test_provider_key_autosaves_without_contacting_provider(tmp_path, monkeypatc
         assert saved == [('Gemini', 'test-credential')]
         assert not window.secret.text()
         assert 'Stored' in window.key_status.text()
+    finally:
+        window.close()
+
+
+def test_welcome_and_spoken_update_use_the_existing_local_routes(tmp_path, monkeypatch):
+    app, window = make_window(tmp_path)
+    try:
+        spoken = []
+        window.preferred_name.setText('தமிழ் பயனர்')
+        window.preferred_name.editingFinished.emit()
+        assert window.store.get('chat:preferred_name') == 'தமிழ் பயனர்'
+        window.startup_greeting.setChecked(True)
+        monkeypatch.setattr(window.voice_panel, 'speak_response',
+                            lambda text, **options: spoken.append((text, options)))
+        window.start_window_audio()
+        assert 'தமிழ் பயனர்' in window.prime_shell.startup_notice.text()
+        assert spoken == [(window.prime_shell.startup_notice.text(), {'local_only': True})]
+
+        opened = []
+        monkeypatch.setattr(window, 'start_improvement',
+                            lambda *, show_review: opened.append(
+                                (window.improvement_goal.text(), show_review)))
+        window.voice_panel.allow.setChecked(True)
+        window.on_voice_transcript('Jarvis update pannu improve the mic indicator')
+        assert opened == [('improve the mic indicator', True)]
+        assert not window.route_self_update('I was asking about how update pannu works')
     finally:
         window.close()

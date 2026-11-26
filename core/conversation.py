@@ -19,6 +19,17 @@ def addressed_request(text):
     return _PLEASE.sub('', value, count=1) if addressed else value
 
 
+_SELF_UPDATE = re.compile(
+    r'^(?:/update|update (?:yourself|jarvis)|update (?:pannu|பண்ணு)|'
+    r'(?:உன்னை\s+)?அப்டேட் பண்ணு)(?:[\s:,.]+(.*))?$', re.IGNORECASE | re.DOTALL)
+
+
+def self_update_argument(text):
+    """Return the change requested from JARVIS itself, or None for ordinary chat."""
+    match = _SELF_UPDATE.fullmatch(addressed_request(text))
+    return (match[1] or '').strip() if match else None
+
+
 def suggestion_argument(text):
     """Return the goal for /suggest, or None for an ordinary message."""
     words = addressed_request(text).split(maxsplit=1)
@@ -71,7 +82,8 @@ REPLY_LANGUAGES = {
              'Use Tamil script for written Tamil, Latin script for Tanglish, '
              'English for English and French for French. For mixed messages, '
              'follow the user’s main language and keep familiar technical terms.'),
-    'ta': ('தமிழ்', 'Use conversational Tamil in Tamil script by default.'),
+    'ta': ('தமிழ்', 'Use friendly, conversational Tamil in Tamil script by default. '
+                       'Keep familiar English technical words where they sound natural.'),
     'tanglish': ('Tanglish', 'Use conversational Tamil in Latin script by default.'),
     'en': ('English', 'Use English by default.'),
     'fr': ('Français', 'Use French by default.'),

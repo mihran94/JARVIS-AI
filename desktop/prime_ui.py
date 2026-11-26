@@ -493,40 +493,6 @@ class PrimeConversation(QScrollArea):
             bar.setValue(position)
 
 
-class VoiceMeter(PrimeOrb):
-    """Render a quiet signal when idle and follow the mic level when listening."""
-
-    def __init__(self, palette):
-        super().__init__(palette)
-        self.level = 0
-        self.setAccessibleName('Voice activity')
-
-    def set_level(self, level):
-        self.level = min(100, max(0, level))
-        self.update()
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(Qt.PenStyle.NoPen)
-        width = self.width() / 15
-        unit = self.width() / 11
-        if self.state == 'listening':
-            energy = self.level / 100
-        elif self.state in ('thinking', 'responding', 'speaking') or self._wake_timer.isActive():
-            energy = (math.sin(self._phase * 30) + 1) * 0.35
-        else:
-            energy = 0.12
-        colour, secondary = self._colours()
-        for index in range(9):
-            weight = 1 - abs(4 - index) / 5
-            height = self.height() * (0.06 + weight * (0.2 + energy * 0.55))
-            painter.setBrush(colour if index < 5 else secondary)
-            painter.drawRoundedRect(QRectF(unit * (index + 1.5) - width / 2,
-                                           (self.height() - height) / 2, width, height),
-                                    width / 2, width / 2)
-
-
 class PrimeAssistant(QWidget):
     """The central hologram and its live interaction status."""
 
@@ -707,7 +673,7 @@ class PrimeChat(QWidget):
         dashboard.setHorizontalSpacing(16)
 
         self.right_panel = QWidget()
-        self.right_panel.setMinimumWidth(220)
+        self.right_panel.setMinimumWidth(266)
         self.right_panel.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
         self.right_layout = QVBoxLayout(self.right_panel)
         self.right_layout.setContentsMargins(0, 0, 0, 0)
@@ -841,7 +807,7 @@ class PrimeChat(QWidget):
         self.composer.body.addWidget(window.prompt)
 
         window.suggestion_mode.hide()
-        buttons = (window.chat_mic, window.attach_button, window.send_button)
+        buttons = (window.attach_button, window.send_button)
         for button in buttons:
             window.composer_actions.removeWidget(button)
             button.setStyleSheet('padding: 7px 7px;')
@@ -872,9 +838,13 @@ class PrimeChat(QWidget):
         player = widgets['Quantum Visual Player']
         window.pages.removeWidget(player)
         self.displays.addWidget(player)
+        settings_routes = ('Voice / Hey Jarvis', 'AI Providers')
+        for name in settings_routes:
+            window.pages.removeWidget(widgets[name])
+            widgets[name].deleteLater()
         for name, widget in widgets.items():
             window.page_indices[name] = window.pages.indexOf(
-                self if name in names or widget is player else widget)
+                self if name in names or name in settings_routes or widget is player else widget)
         for index in range(window.nav.count()):
             item = window.nav.item(index)
             item.setData(Qt.ItemDataRole.UserRole, window.page_indices[item.text()])
@@ -949,21 +919,29 @@ class PrimeShell(QWidget):
         self.build_drawer()
         middle.addWidget(self.drawer)
         outer.addLayout(middle, 1)
+        self.startup_notice = QLabel()
+        self.startup_notice.setObjectName('startupNotice')
+        self.startup_notice.setAccessibleName('JARVIS welcome and sharing notice')
+        self.startup_notice.setTextFormat(Qt.TextFormat.PlainText)
+        self.startup_notice.setWordWrap(True)
+        self.startup_notice.setContentsMargins(16, 4, 16, 6)
+        self.startup_notice.hide()
+        outer.addWidget(self.startup_notice)
         window.pages.currentChanged.connect(self.refresh_mark)
 
     def pulse_wake(self):
         if self.window_ref.store.get('omega:reduced', False):
             return
         chat = self.window_ref.prime_chat
-        orb = chat.assistant.orb if chat.assistant.isVisible() else self.mark
-        orb.pulse_wake()
+        if chat.assistant.orb.isVisible():
+            chat.assistant.orb.pulse_wake()
 
     def refresh_mark(self, _index=None):
         chat = getattr(self.window_ref, 'prime_chat', None)
         if chat is not None:
             in_chat = self.window_ref.pages.currentWidget() is chat and chat.task_area.isHidden()
             target = chat.safety_controls if in_chat else self.safety_controls
-            for button in (self.mic_mute_button, self.stop_button):
+            for button in (self.mic_mute_button, self.output_mute_button, self.stop_button):
                 if target.indexOf(button) < 0:
                     target.addWidget(button)
                     button.show()
@@ -985,13 +963,12 @@ class PrimeShell(QWidget):
         layout.setContentsMargins(20, 8, 20, 8)
         layout.setSpacing(14)
 
-        mark = VoiceMeter(palette)
-        mark.setFixedSize(38, 30)
-        self.window_ref.voice_panel.audio_level.connect(mark.set_level)
-        mark.set_motion(False)
-        policy = mark.sizePolicy()
-        policy.setRetainSizeWhenHidden(True)
-        mark.setSizePolicy(policy)
+        mark = QLabel('M')
+        mark.setObjectName('mCoreLogo')
+        mark.setAccessibleName('M Core logo')
+        mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        mark.setFixedSize(34, 32)
+        self.style_core_logo(mark)
         layout.addWidget(mark)
         self.mark = mark
 
@@ -1018,21 +995,20 @@ class PrimeShell(QWidget):
         brand.setToolTip(label)
 
         layout.addStretch(1)
-        self.window_ref.composer_actions.removeWidget(self.window_ref.live_voice_button)
-        self.window_ref.live_voice_button.setObjectName('primary')
-        layout.addWidget(self.window_ref.live_voice_button)
         self.mic_mute_button = QPushButton('Mute mic')
         self.mic_mute_button.setCheckable(True)
         self.mic_mute_button.toggled.connect(self.window_ref.set_microphone_muted)
+        self.output_mute_button = QPushButton('Mute replies')
+        self.output_mute_button.setCheckable(True)
+        self.output_mute_button.toggled.connect(self.window_ref.voice_panel.mute_button.setChecked)
         self.state_chip = QLabel('READY')
         self.state_chip.setStyleSheet(
             f'color: {palette.good.name()}; font-size: 11px; font-weight: 600;'
             f' letter-spacing: 1.6px; border: 1px solid rgba({palette.good.red()}, '
             f'{palette.good.green()}, {palette.good.blue()}, 90); border-radius: 11px;'
             f' padding: 4px 12px;')
-        status_index = layout.indexOf(self.window_ref.live_voice_button)
-        layout.insertWidget(status_index, self.state_chip)
-        layout.insertStretch(status_index + 1, 1)
+        layout.addWidget(self.state_chip)
+        layout.addStretch(1)
         self.clock_label = QLabel()
         self.clock_label.setToolTip('Local time')
         self.clock_label.hide()
@@ -1046,6 +1022,7 @@ class PrimeShell(QWidget):
         self.safety_controls = QHBoxLayout()
         self.safety_controls.setSpacing(6)
         self.safety_controls.addWidget(self.mic_mute_button)
+        self.safety_controls.addWidget(self.output_mute_button)
         self.stop_button = self.window_ref.hud.strip.stop_button
         self.stop_button.setStyleSheet(
             f'QPushButton {{ color: {palette.danger.name()}; font-size: 12px;'
@@ -1195,6 +1172,13 @@ class PrimeShell(QWidget):
         self.clock_label.setText(now.strftime('%H:%M'))
         self.clock_label.setAccessibleName(now.strftime('%A, %d %B, %H:%M'))
 
+    def style_core_logo(self, mark):
+        palette = self.palette_
+        mark.setStyleSheet(
+            f'QLabel#mCoreLogo {{ color: {palette.accent.name()};'
+            f' background: {palette.ground.name()}; border: 1px solid {palette.glass_edge.name()};'
+            f' border-radius: 6px; font-family: {MONO_STACK}; font-size: 19px; font-weight: 700; }}')
+
     def refresh_theme(self):
         """Apply the selected theme to the top bar."""
         palette = self.palette_
@@ -1206,7 +1190,8 @@ class PrimeShell(QWidget):
         self.brand.setStyleSheet(
             f'color: {palette.ink.name()}; font-size: 21px; font-weight: 700;')
         self.build_label.setStyleSheet(f'color: {palette.muted.name()}; font-size: 11px;')
-        self.set_state(self.mark.state)
+        self.style_core_logo(self.mark)
+        self.set_state(self.window_ref.prime_state())
         self.activity.refresh_theme()
         self.style_drawer()
 
@@ -1226,7 +1211,7 @@ class PrimeShell(QWidget):
             button.setEnabled(section != name)
 
     def set_state(self, state: str):
-        """The state chip and the mark follow what JARVIS is doing."""
+        """Show what JARVIS is doing in the title bar and Activity."""
         palette = self.palette_
         label, tone = STATES[state]
         colour = getattr(palette, tone)
@@ -1238,7 +1223,6 @@ class PrimeShell(QWidget):
             f' letter-spacing: 1.6px; border: 1px solid rgba({colour.red()}, '
             f'{colour.green()}, {colour.blue()}, 90); border-radius: 11px;'
             f' padding: 4px 12px;')
-        self.mark.set_state(state)
 
     def set_provider(self, text):
         provider = 'Chat · ' + text.removeprefix('Active brain: ')
