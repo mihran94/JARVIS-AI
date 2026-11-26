@@ -94,18 +94,18 @@ class PrimePalette:
     def __init__(self, dark: bool = True, theme=None):
         self.dark = dark
         if dark:
-            self.ground = QColor('#141218')
-            self.ground_far = QColor('#201b26')
-            self.glass = QColor('#292230')
-            self.glass_edge = QColor('#554859')
-            self.ink = QColor('#fff5ee')
-            self.muted = QColor('#c5b5c5')
-            self.accent = QColor('#ffbd93')
-            self.accent_deep = QColor('#b883d5')
+            self.ground = QColor('#02070d')
+            self.ground_far = QColor('#061321')
+            self.glass = QColor('#081b2b')
+            self.glass_edge = QColor('#23475b')
+            self.ink = QColor('#e4f5ff')
+            self.muted = QColor('#90b1c6')
+            self.accent = QColor('#28e3ee')
+            self.accent_deep = QColor('#168cbd')
             self.good = QColor('#5df2b0')
             self.warn = QColor('#ffcf6b')
             self.danger = QColor('#ff6b81')
-            self.bubble_you = QColor(184, 131, 213, 52)
+            self.bubble_you = QColor(22, 140, 189, 52)
             self.bubble_jarvis = QColor(255, 255, 255, 16)
         else:
             self.ground = QColor('#f4f6fb')
@@ -166,21 +166,16 @@ class GlassCard(QFrame):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         palette = self.palette_
         width, height = self.width() - 1.5, self.height() - 1.5
-        bevel = 9
-        panel = QPainterPath(QPointF(0.5, bevel))
-        for x, y in ((bevel, 0.5), (width, 0.5), (width, height - bevel),
-                     (width - bevel, height), (0.5, height)):
-            panel.lineTo(x, y)
-        panel.closeSubpath()
+        panel = QPainterPath()
+        panel.addRoundedRect(QRectF(0.5, 0.5, width, height), 10, 10)
         fill = QLinearGradient(0, 0, width, height)
         fill.setColorAt(0, palette.glass)
         fill.setColorAt(1, palette.ground)
         painter.fillPath(panel, QBrush(fill))
-        painter.setPen(QPen(_alpha(palette.muted.name(), 105), 1))
+        painter.setPen(QPen(palette.glass_edge, 1))
         painter.drawPath(panel)
-        painter.setPen(QPen(palette.accent, 2))
-        painter.drawLine(QPointF(0.5, bevel), QPointF(bevel, 0.5))
-        painter.drawLine(QPointF(bevel, 0.5), QPointF(40, 0.5))
+        painter.setPen(QPen(_alpha(palette.accent.name(), 135), 1))
+        painter.drawLine(QPointF(12, 1), QPointF(min(64, width - 12), 1))
 
 
 class PrimeOrb(QWidget):
@@ -1342,10 +1337,10 @@ class PrimeShell(QWidget):
     def style_drawer(self):
         palette = self.palette_
         self.drawer.setStyleSheet(
-            f'QFrame#primeDrawer {{ background: qlineargradient(x1:0,y1:0,x2:1,y2:1,'
+            f'QFrame#primeDrawer, QDialog#primeDrawer {{ background: qlineargradient(x1:0,y1:0,x2:1,y2:1,'
             f' stop:0 {palette.glass.name()}, stop:1 {palette.ground.name()});'
             f' border: 1px solid {palette.glass_edge.name()};'
-            f' border-left: 2px solid {palette.accent.name()}; }}'
+            f' border-radius: 10px; border-top: 2px solid {palette.accent.name()}; }}'
             'QFrame#primeDrawer QWidget#pageRoot { background: transparent; }')
 
     def style_core_logo(self, mark):

@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QWidget
 
 DEFAULT_THEME = 'M-Core'
 THEMES = {
-    DEFAULT_THEME: ('#000000', '#101519', '#283b45', '#e9f7ff', '#a3b9cb', '#50dff4', '#3b82f6'),
+    DEFAULT_THEME: ('#02070d', '#081b2b', '#23475b', '#e4f5ff', '#90b1c6', '#28e3ee', '#168cbd'),
     'Warm Graphite': ('#141218', '#292230', '#554859', '#fff5ee', '#c5b5c5', '#ffbd93', '#b883d5'),
     'Midnight Blue': ('#060d1a', '#10253d', '#203f57', '#eef9ff', '#9db9cd', '#6ae6ff', '#ffae68'),
     'Apple Silver': ('#dfeaf4', '#f3f8fd', '#a0b9cb', '#132939', '#426176', '#006fa3', '#a6470f'),

@@ -456,7 +456,7 @@ QToolButton[active="true"], QPushButton#omegaPrimary {{
 
 
 #: The two palettes the owner can choose between by name.
-DARK_PALETTE = ('#05080e', '#111a26', '#7ec4ec', '#e9f3fc', '#8ba3bd', '#63dcff', '#efae67')
+DARK_PALETTE = ('#02070d', '#081b2b', '#23475b', '#e4f5ff', '#90b1c6', '#28e3ee', '#168cbd')
 LIGHT_PALETTE = ('#eef2f7', '#ffffff', '#1c4a74', '#0f1c29', '#4a5f75', '#0d7fb8', '#b06a2c')
 
 PRIME_DARK = stylesheet(DARK_PALETTE)
