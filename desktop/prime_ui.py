@@ -397,6 +397,9 @@ class PrimeBubble(QFrame):
 
     def fit_to_text(self, cap: int = 660):
         """The bubble is as wide as the words need and no wider."""
+        self.ensurePolished()
+        self.body.ensurePolished()
+        self.who.ensurePolished()
         metrics = QFontMetrics(self.body.font())
         width = max(1, min(cap, max(135, metrics.horizontalAdvance(self.body.text()) + 34)))
         layout = self.layout()
@@ -1202,12 +1205,11 @@ class PrimeShell(QWidget):
         self.footer_status = QLabel()
         self.footer_status.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.footer_status.setStyleSheet(f'color: {palette.accent.name()}; font-size: 10px;')
-        footer.addWidget(self.footer_status)
-        footer.addStretch(1)
+        footer.addWidget(self.footer_status, 1)
         self.footer_shortcuts = QLabel('F4  MUTE   ·   F11  FULLSCREEN   ·   ESC  INTERRUPT')
         self.footer_shortcuts.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.footer_shortcuts.setAlignment(Qt.AlignmentFlag.AlignRight)
-        footer.addWidget(self.footer_shortcuts)
+        footer.addWidget(self.footer_shortcuts, 1)
         window.hud.strip.mic.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         window.hud.strip.mic.setMinimumWidth(110)
         window.hud.strip.mic.hide()
@@ -1278,7 +1280,7 @@ class PrimeShell(QWidget):
         brand.setStyleSheet(
             f'color: {palette.ink.name()}; font-family: {MONO_STACK};'
             ' font-size: 21px; font-weight: 700; letter-spacing: 2px;')
-        layout.addWidget(brand)
+        layout.addWidget(brand, 2)
 
         commit = build_commit()
         release = os.environ.get('JARVIS_SOURCE_RELEASE', '').strip()
@@ -1314,7 +1316,7 @@ class PrimeShell(QWidget):
         self.clock_label.setMaximumWidth(190)
         self.clock_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.clock_label.setStyleSheet(f'color: {palette.accent.name()}; font-family: {MONO_STACK}; font-size: 15px;')
-        layout.addWidget(self.clock_label)
+        layout.addWidget(self.clock_label, 1)
         layout.addWidget(self.window_ref.resume_button)
         self.safety_controls = QHBoxLayout()
         self.safety_controls.setSpacing(6)
