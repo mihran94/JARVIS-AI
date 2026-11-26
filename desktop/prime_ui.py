@@ -765,7 +765,10 @@ class PrimeChat(QWidget):
         self.camera_preview.setMaximumHeight(16777215)
         self.camera_preview.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.displays.addWidget(self.camera_preview)
-        window.camera_toggle.toggled.connect(self.show_camera_preview)
+        window.camera_toggle.toggled.connect(
+            lambda enabled: self.show_camera_preview(enabled and window.camera_preview_choice.isChecked()))
+        window.camera_preview_choice.toggled.connect(
+            lambda visible: self.show_camera_preview(visible and window.camera_toggle.isChecked()))
         from desktop.youtube_panel import YouTubePanel
         self.youtube = YouTubePanel()
         self.displays.addWidget(self.youtube)
@@ -973,7 +976,6 @@ class PrimeChat(QWidget):
         old_layout = window.composer_bar.layout()
         old_layout.removeWidget(window.prompt)
         self.composer.body.addWidget(window.attach_button)
-        window.attach_button.setText('+  UPLOAD FILE')
         window.attach_button.setMinimumHeight(42)
         window.attach_button.setStyleSheet('border: 1px dashed #28e3ee; padding: 8px;')
         entry = QHBoxLayout()

@@ -217,8 +217,8 @@ export class BridgeClient {
   }
 
   /** Ask the desktop to answer a message. */
-  async chat(message, { consent = false } = {}) {
-    return this.request('POST', '/api/chat', JSON.stringify({ message, consent }));
+  async chat(message, { consent = false, images } = {}) {
+    return this.request('POST', '/api/chat', JSON.stringify({ message, consent, images }));
   }
 
   /** The memory the desktop is willing to share. */

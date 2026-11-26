@@ -2,7 +2,7 @@
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QFileDialog
+from PySide6.QtWidgets import QApplication, QFileDialog, QPushButton
 
 from desktop.app import Window
 from desktop.attachments import stage_files
@@ -30,17 +30,26 @@ def test_file_and_folder_sections_reachable_without_another_main_menu(tmp_path, 
         monkeypatch.setattr(
             QFileDialog, "getExistingDirectory",
             lambda *_args, **_kwargs: str(folder))
+        display = window.prime_chat.displays.currentWidget()
         window.attach_button.click()
-        assert window.pages.currentIndex() == window.page_indices["Files & Folders"]
+        assert window.upload_popup.isVisible()
+        assert window.prime_chat.displays.currentWidget() is display
         window.choose_attachment_files()
         assert len(window.attachments) == 1
-        assert window.attach_button.text() == "Attach (1)"
-        window.files_share_once.setChecked(True)
+        assert window.upload_list.item(0).text() == "example.txt"
+        assert window.attach_button.text() == "+  UPLOAD FILE (1)"
+        window.upload_share_once.setChecked(True)
+        assert window.files_share_once.isChecked()
+        close = next(button for button in window.upload_popup.findChildren(QPushButton)
+                     if button.text() == "Close")
+        close.click()
+        assert not window.upload_popup.isVisible()
+        assert window.prime_chat.displays.currentWidget() is display
+        window.open_section("Files & Folders")
         window.choose_attachment_folder()
         assert len(window.attachments) == 2
-        assert window.attach_button.text() == "Attach (2)"
+        assert window.attach_button.text() == "+  UPLOAD FILE (2)"
         assert not window.files_share_once.isChecked()  # new content needs new consent
-        assert not window.files_share_once.isChecked()
         assert window.attachment_list.count() == 2
         window.open_section("JARVIS Chat")
         assert window.prime_chat.composer.isVisibleTo(window)
@@ -113,7 +122,7 @@ def test_deleting_chat_discards_queued_file_content(tmp_path, monkeypatch):
         window.clear_chat()
         assert not window.attachments
         assert not window.files_share_once.isChecked()
-        assert window.attach_button.text() == "Attach"
+        assert window.attach_button.text() == "+  UPLOAD FILE"
     finally:
         window.close()
         app.processEvents()

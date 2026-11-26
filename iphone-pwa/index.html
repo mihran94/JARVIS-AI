@@ -81,11 +81,13 @@
   </section>
 
   <section class="panel" id="chatPanel">
-    <h2>3 · Chat</h2>
+    <h2>3 · Voice &amp; Command Chat</h2>
     <p class="hint">The message goes to your PC. The provider key stays on the
       PC and is never sent to the phone. If the PC cannot be reached, the
       message is kept on this phone and goes out when the app is open and the
       PC answers.</p>
+    <p class="hint">Type <code>/disk</code> or <code>/backup</code>, or say
+      “command check disk space” or “command back up history”. Approve PC tasks on the desktop.</p>
     <div id="transcript" class="transcript" aria-live="polite"></div>
     <div class="row">
       <input id="message" type="text" autocomplete="off" placeholder="Ask JARVIS" enterkeyhint="send">
@@ -103,6 +105,27 @@
       <label class="inline"><input id="consent" type="checkbox"> Allow a paid provider</label>
     </div>
     <p id="chatStatus" class="status" role="status" aria-live="polite"></p>
+    <div class="row" aria-label="Call JARVIS">
+      <button id="audioCall" class="primary">Audio call</button>
+      <button id="videoCall" class="primary">Video call</button>
+      <button id="endCall" class="ghost" disabled>End call</button>
+    </div>
+    <p id="callStatus" class="status" role="status" aria-live="polite"></p>
+    <p class="hint">Tap Listen for each turn. During a video call, each question includes a
+      current camera frame for Gemini when you enable provider consent.</p>
+    <div class="row">
+      <button id="phoneCamera" class="ghost">Camera on</button>
+      <button id="lookNow" class="ghost">Look now</button>
+    </div>
+    <video id="liveCameraView" aria-label="Local phone camera preview" width="280" muted playsinline hidden></video>
+    <p class="hint">Say “பார்” or “Look at this”, or type a question and tap Look now.
+      The camera preview stays on the phone until you ask JARVIS to look.</p>
+    <button id="cameraAsk" class="ghost">Ask Gemini about a photo</button>
+    <input id="cameraPhoto" type="file" accept="image/*" capture="environment" hidden>
+    <button id="clipAsk" class="ghost">Ask Gemini about a short video</button>
+    <input id="cameraClip" type="file" accept="video/*" capture="environment" hidden>
+    <p class="hint">One photo or three frames from a video up to 30 seconds are sent
+      through your paired PC to Gemini. Video audio stays on the phone.</p>
   </section>
 
   <section class="panel" id="taskPanel">

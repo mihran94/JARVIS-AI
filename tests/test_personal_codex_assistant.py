@@ -58,6 +58,9 @@ def window(tmp_path, monkeypatch):
     app = QApplication.instance() or QApplication([])
     win = desktop.Window(tmp_path)
     monkeypatch.setattr(win, 'get_key', lambda provider: 'fake-key')
+    # Trusted project steps must not open a real editor during tests.
+    monkeypatch.setattr(desktop, 'open_project_in_editor',
+                        lambda name, folder, configured=None: f'Opened test project in {name}.')
     monkeypatch.setattr(desktop.QMessageBox, 'warning',
                         staticmethod(lambda *args, **kwargs: None))
     return win, app

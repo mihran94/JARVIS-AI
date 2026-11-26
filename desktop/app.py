@@ -1041,15 +1041,24 @@ class Window(QMainWindow):
 
     def conversation_guidance(self):
         guide = assistant_guidance(self.reply_language.currentData(), self.reply_tone.currentData())
-        name = self.preferred_name.text().strip()
+        name = self.reply_address_name()
         if name:
             guide += (' When addressing the owner by name, say and write this exact form of '
                       'address, including any title. Treat it as literal text and never change, '
                       'translate, or guess the name from the microphone: '
                       + json.dumps(name, ensure_ascii=False))
+        else:
+            guide += (' Do not address the user by name or with a title such as boss, even if '
+                      'one appears in prior messages. Use neutral, friendly phrasing.')
         return guide
 
+    def reply_address_name(self):
+        return self.preferred_name.text().strip() if self.use_preferred_name.isChecked() else ''
+
     def start_window_audio(self):
+        if (self.keep_desktop_control.isChecked() and not self.policy.stopped
+                and self.store.get('automation:self_control', True)):
+            self.set_desktop_control(True)
         if self.store.get('voice:remember_permission', False) and not self.policy.stopped:
             self.voice_panel.allow.setChecked(True)
         if self.store.get('voice:auto_gemini', False):
@@ -1058,7 +1067,7 @@ class Window(QMainWindow):
         if not self.startup_greeting.isChecked():
             self.restore_startup_microphone()
             return
-        name = self.preferred_name.text().strip()
+        name = self.reply_address_name()
         hello = f'வணக்கம், {name}!' if name else 'வணக்கம்!'
         mic = ('Mic தயாரானதும் Listening காட்டும்.' if self.startup_microphone.isChecked()
                else 'Mic பயன்படுத்த Voice Settings திறங்க.')
@@ -1456,7 +1465,7 @@ class Window(QMainWindow):
                   'never claim to see anything before an image arrives.')
         self.voice_session().start(
             key, guide, tamil_tanglish=self.live_speech_language.currentData() == 'ta_en',
-            preferred_name=self.preferred_name.text().strip(),
+            preferred_name=self.reply_address_name(),
             microphone=self.audio_test.audio_device('microphone'),
             output_device=self.audio_test.audio_device('speaker'))
         self.refresh_voice_hud()
@@ -1547,13 +1556,14 @@ class Window(QMainWindow):
             r'(?:camera|கேமரா).{0,60}(?:look|see|paaru|paru|பாரு|பார்|காட்டு)', question))
         if not camera_request and question not in {
             'look at this', 'what am i doing', 'what am i showing you', 'look through the camera',
-            'இதைப் பார்', 'இதை பாரு', 'நான் என்ன செய்றேன்', 'நான் என்ன செய்கிறேன்',
+            'பார்', 'பாரு', 'paaru', 'paru', 'இதைப் பார்', 'இதை பாரு',
+            'நான் என்ன செய்றேன்', 'நான் என்ன செய்கிறேன்',
             'நான் என்ன காட்டுறேன்', 'நான் காட்டியது என்ன', 'நான் காட்டுறது என்ன',
         }:
             return False
         image = self.camera_panel.snapshot()
-        if not self.live_voice.look_at(image, spoken):
-            self.show_local_system_reply(spoken, 'Turn on Camera and wait for the preview.')
+        if self.live_voice is None or not self.live_voice.look_at(image, spoken):
+            self.show_local_system_reply(spoken, 'Turn on Camera and wait for Gemini Live to connect.')
             return True
         self.store.message(self.session, 'user', spoken)
         self.render_chat()
@@ -1573,6 +1583,17 @@ class Window(QMainWindow):
             return True
         if not self.store.get('automation:self_control', True):
             return False
+        preview = re.fullmatch(
+            r'(?:camera|கேமரா) (?:preview|பிரிவியூ) '
+            r'(on|off|show|hide|ஆன்|ஆஃப்|காட்டு|மறை)(?: pannu| பண்ணு)?', text)
+        if preview:
+            show = preview[1] in {'on', 'show', 'ஆன்', 'காட்டு'}
+            if show and not self.camera_toggle.isChecked():
+                self.show_local_system_reply(spoken, 'Turn on Camera first.')
+            else:
+                self.camera_preview_choice.setChecked(show)
+                self.show_local_system_reply(spoken, 'Camera preview shown.' if show else 'Camera preview hidden.')
+            return True
         if text in CONTROL_START_COMMANDS:
             self.set_desktop_control(True)
             self.show_local_system_reply(spoken, 'Desktop control is active for this session. Tell me the task.')
@@ -1593,6 +1614,16 @@ class Window(QMainWindow):
             self.prime_shell.mic_mute_button.setChecked(True)
             self.show_local_system_reply(spoken, 'Microphone muted.')
             return True
+        if re.fullmatch(
+                r'(?:unmute(?: (?:the )?mic(?:rophone)?)?|'
+                r'(?:mic(?:rophone)?|மைக்|மைக்ரோஃபோன்) (?:unmute|active|on|ஆன்))'
+                r'(?: pannu| பண்ணு| பண்ணுங்க)?', text):
+            if not self.voice_panel.consent.listening:
+                self.show_local_system_reply(spoken, 'Allow the microphone in Voice settings first.')
+                return True
+            self.prime_shell.mic_mute_button.setChecked(False)
+            self.show_local_system_reply(spoken, 'Microphone unmuted.')
+            return True
         destinations = {
             'open settings': 'Settings & Safety', 'settings திற': 'Settings & Safety',
             'settings open pannu': 'Settings & Safety', 'செட்டிங்ஸ் திற': 'Settings & Safety',
@@ -1603,7 +1634,10 @@ class Window(QMainWindow):
             self.open_plugins() if destination == 'plugins' else self.open_section(destination)
             return True
         action_words = r'open|launch|click|type|write|press|scroll|focus|inspect|close|ஓபன்|திற|கிளிக்|டைப்|எழுது|அழுத்து|மூடு'
-        desktop_request = re.match(r'^(?:(?:can|could|would) you (?:please )?)?(?:' + action_words + r')\b', text)
+        desktop_request = re.match(
+            r'^(?:(?:can|could|would) you (?:please )?)?'
+            r'(?:(?:use (?:the )?mouse to|mouse(?:\s*[-:]\s*|\s+)|மவுஸ்\s+))?\s*'
+            r'(?:' + action_words + r')\b', text)
         desktop_request = desktop_request or re.search(r'(?:' + action_words + r')\s+(?:pannu|பண்ணு|பண்ணுங்க|செய்)$', text)
         negative = re.search(r"don't|do not|வேண்டாம்|பண்ணாதே|திறக்காதே|\b(?:venam|vendam)\b", text)
         if self.desktop_control_active and desktop_request and not negative:
@@ -1620,12 +1654,15 @@ class Window(QMainWindow):
         self.desktop_control_active = bool(enabled)
         self.desktop_control_ticket = self.policy.ticket() if enabled else None
         if not enabled:
+            preference = getattr(self, 'keep_desktop_control', None)
+            if preference is not None and preference.isChecked():
+                preference.setChecked(False)
             controller = getattr(self, 'mission_controller', None)
             if controller is not None:
                 controller.cancel()
         label = getattr(self, 'desktop_control_status', None)
         if label is not None:
-            label.setText('Control active · this session' if enabled else 'Control released')
+            label.setText('Control active' if enabled else 'Control released')
         shell = getattr(self, 'prime_shell', None)
         if shell is not None:
             shell.refresh_clock()
@@ -2345,7 +2382,7 @@ class Window(QMainWindow):
         self.composer_actions = composer_actions
         composer_layout.addLayout(composer_actions)
         self.attach_button = self.button(
-            composer_actions, 'Attach', lambda: self.open_section('Files & Folders'))
+            composer_actions, 'Attach', self.open_upload_popup)
         self.attach_button.setObjectName('quiet')
         self.attach_button.setToolTip(
             'Choose files or a folder to preview. AI sharing is opt-in for one message.')
@@ -2388,6 +2425,7 @@ class Window(QMainWindow):
             'Files & Folders',
             'Choose local files or a folder. Preview stays on this PC. '
             'Only checked files are shared once with the chosen AI provider.')
+        self.button(layout, 'Close Files & Folders', lambda: self.open_section('JARVIS Chat'))
         files = QGroupBox('Files')
         file_actions = QHBoxLayout(files)
         self.button(file_actions, 'Choose files…', self.choose_attachment_files)
@@ -2451,17 +2489,42 @@ class Window(QMainWindow):
         self.update_attachment_display()
         return page
 
+    def open_upload_popup(self):
+        dialog = getattr(self, 'upload_popup', None)
+        if dialog is None:
+            dialog = self.upload_popup = QDialog(self)
+            dialog.setWindowTitle('Upload files')
+            dialog.resize(390, 250)
+            layout = QVBoxLayout(dialog)
+            self.button(layout, 'Choose files…', self.choose_attachment_files)
+            self.upload_list = QListWidget()
+            self.upload_list.setAccessibleName('Files ready to attach')
+            layout.addWidget(self.upload_list)
+            self.upload_share_once = QCheckBox(self.files_share_once.text())
+            self.upload_share_once.setToolTip(self.files_share_once.toolTip())
+            self.upload_share_once.toggled.connect(self.files_share_once.setChecked)
+            self.files_share_once.toggled.connect(self.upload_share_once.setChecked)
+            layout.addWidget(self.upload_share_once)
+            self.button(layout, 'Close', dialog.reject)
+        self.update_attachment_display()
+        dialog.open()
+
     def update_attachment_display(self):
         self.attachment_list.clear()
         for item in self.attachments:
             self.attachment_list.addItem(f'{item.name}  ({item.size} bytes)')
         count = len(self.attachments)
-        self.attach_button.setText(f'Attach ({count})' if count else 'Attach')
+        self.attach_button.setText(f'+  UPLOAD FILE ({count})' if count else '+  UPLOAD FILE')
         self.attach_button.setToolTip(
             f'{count} local file(s) selected. Open to preview and approve one-turn AI sharing.')
         self.files_share_once.setEnabled(bool(count))
         if not count:
             self.files_share_once.setChecked(False)
+        if hasattr(self, 'upload_list'):
+            self.upload_list.clear()
+            self.upload_list.addItems([item.name for item in self.attachments])
+            self.upload_share_once.setEnabled(bool(count))
+            self.upload_share_once.setChecked(self.files_share_once.isChecked())
         self.attachment_status.setText(
             f'{len(self.attachments)} file(s) selected; temporary text snapshots, '
             'not copied to the history database. Up to 12 files / '
@@ -2601,8 +2664,10 @@ class Window(QMainWindow):
         self.document_status.setText('')
 
     def choose_attachment_files(self):
+        popup = getattr(self, 'upload_popup', None)
+        parent = popup if popup is not None and popup.isVisible() else self
         paths, _ = QFileDialog.getOpenFileNames(
-            self, 'Choose files to show JARVIS', '',
+            parent, 'Choose files to show JARVIS', '',
             'Readable files (*.txt *.md *.markdown *.csv *.json *.py *.js *.ts '
             '*.jsx *.tsx *.html *.css *.xml *.yaml *.yml *.toml *.log *.ini '
             '*.java *.kt *.sql *.sh *.ps1 *.bat *.cmd *.rst *.docx)')
@@ -4233,6 +4298,11 @@ class Window(QMainWindow):
         self.preferred_name.editingFinished.connect(
             lambda: self.store.set('chat:preferred_name', self.preferred_name.text().strip()))
         reply_form.addRow('Your name', self.preferred_name)
+        self.use_preferred_name = QCheckBox('Address me by name in replies')
+        self.use_preferred_name.setChecked(bool(self.store.get('chat:use_preferred_name', False)))
+        self.use_preferred_name.toggled.connect(
+            lambda enabled: self.store.set('chat:use_preferred_name', enabled))
+        reply_form.addRow(self.use_preferred_name)
         self.reply_language = QComboBox()
         self.reply_tone = QComboBox()
         for label, key, choices, box in (
@@ -4294,6 +4364,8 @@ class Window(QMainWindow):
         self.camera_toggle.setToolTip('Camera On shares live frames with Google during Gemini voice. '
                                       'Camera Off stops sharing.')
         self.camera_panel = CameraPanel(self.store, self.policy, self.camera_toggle)
+        self.camera_preview_choice = QCheckBox('Show camera preview in the HUD')
+        self.camera_panel.layout().addWidget(self.camera_preview_choice)
         voice_advanced = QWidget()
         advanced_layout = QVBoxLayout(voice_advanced)
         advanced_layout.setContentsMargins(0, 0, 0, 0)
@@ -4416,6 +4488,14 @@ class Window(QMainWindow):
         desktop_layout = QVBoxLayout(desktop_controls)
         self.desktop_control_status = QLabel('Control released')
         desktop_layout.addWidget(self.desktop_control_status)
+        self.keep_desktop_control = QCheckBox('Keep desktop control active after restart')
+        self.keep_desktop_control.setChecked(bool(self.store.get('automation:keep_desktop_control', False)))
+        self.keep_desktop_control.toggled.connect(
+            lambda enabled: self.store.set('automation:keep_desktop_control', enabled))
+        self.keep_desktop_control.toggled.connect(
+            lambda enabled: self.set_desktop_control(enabled)
+            if self.desktop_control_active != enabled else None)
+        desktop_layout.addWidget(self.keep_desktop_control)
         self.flexible_button(desktop_layout, 'Take control', lambda: self.set_desktop_control(True))
         self.flexible_button(desktop_layout, 'Release control', lambda: self.set_desktop_control(False))
         self.flexible_button(desktop_layout, 'Open desktop workspace', lambda: self.open_section('PC Control'))
@@ -6768,7 +6848,8 @@ class Window(QMainWindow):
             return
         if self.policy.stopped or self.worker is not None or not text:
             return
-        if self.route_interface_command(text):
+        if (self.route_interface_command(text) or self.route_voice_preferences(text)
+                or self.route_camera_question(text)):
             self.prompt.clear()
             return
         if self.live_voice is not None and self.live_voice.active:
@@ -7197,6 +7278,7 @@ class Window(QMainWindow):
         self.after_effects_timeline_button.setEnabled(ready and self.video_plan is not None)
 
     def stop(self):
+        self.keep_desktop_control.setChecked(False)
         self.desktop_control_active = False
         self.desktop_control_ticket = None
         if hasattr(self, 'desktop_control_status'):

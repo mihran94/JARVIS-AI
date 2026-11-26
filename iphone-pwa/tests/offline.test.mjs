@@ -382,7 +382,13 @@ test('the page keeps the work that cannot be sent and sends it later', async () 
       }
       return elements.get(id);
     },
-    createElement(tag) { return fakeElement(tag); },
+    createElement(tag) {
+      if (tag === 'canvas') {
+        return { getContext: () => ({ drawImage() {} }),
+          toDataURL: () => 'data:image/jpeg;base64,frame' };
+      }
+      return fakeElement(tag);
+    },
     querySelector() { return null; },
     addEventListener() {},
   };
@@ -398,7 +404,7 @@ test('the page keeps the work that cannot be sent and sends it later', async () 
   const requests = [];
   let networkDown = true;
   globalThis.fetch = async (url, options) => {
-    requests.push({ url, method: options.method, down: networkDown });
+    requests.push({ url, method: options.method, down: networkDown, body: options.body });
     if (networkDown) {
       throw new Error('the network is down');
     }
@@ -457,6 +463,31 @@ test('the page keeps the work that cannot be sent and sends it later', async () 
   assert.equal(posted.length, 2, 'the chat and the task go out once each');
   assert.ok(posted.some((request) => request.url.endsWith('/api/chat')));
   assert.ok(posted.some((request) => request.url.endsWith('/api/jobs')));
+  let stopped = false;
+  const stream = { getTracks: () => [{ stop() { stopped = true; } }] };
+  Object.defineProperty(globalThis.navigator, 'mediaDevices', {
+    configurable: true, value: { getUserMedia: async () => stream },
+  });
+  const view = element('liveCameraView');
+  view.videoWidth = 400;
+  view.videoHeight = 300;
+  view.play = async () => {};
+  element('consent').checked = true;
+  element('videoCall').press();
+  await waitFor(() => view.srcObject === stream, 'started a video call');
+  assert.match(element('callStatus').textContent, /Video call/);
+  element('message').value = 'What is that object?';
+  element('send').press();
+  await waitFor(() => requests.some((request) => request.body?.includes('"images":["frame"]')),
+    'sent the frame with the question');
+  element('message').value = '/disk';
+  element('send').press();
+  await waitFor(() => requests.some((request) => request.url.endsWith('/api/jobs')
+    && request.body?.includes('check_disk_space')), 'sent the command as a desktop job');
+  element('endCall').press();
+  assert.equal(stopped, true);
+  assert.equal(view.srcObject, null);
+  assert.match(element('callStatus').textContent, /Call ended/);
   // Let the page finish the work it started, so nothing is left running when
   // the test ends.
   await settle();
