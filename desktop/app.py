@@ -371,6 +371,8 @@ class Window(QMainWindow):
         self.setWindowTitle(APP_NAME)
         self.resize(1360, 790)
         self.root = Path(data_root)
+        self.desktop_control_active = False
+        self.desktop_control_ticket = None
         self.store = Store(self.root / 'history.sqlite3')
         saved_theme = self.store.get('omega:theme')
         self.interface_theme = saved_theme if isinstance(saved_theme, str) and saved_theme in OMEGA_THEMES else DEFAULT_THEME
@@ -994,6 +996,21 @@ class Window(QMainWindow):
         if index >= 0:
             self.settings_categories.setCurrentIndex(index)
 
+    def open_setting_category(self, category):
+        self.open_section('Settings & Safety')
+        self.show_settings_panel(category)
+
+    def open_windows_setting(self, page):
+        allowed = {'network-status', 'bluetooth', 'mousetouchpad', 'typing',
+                   'mobile-devices-addphone-direct'}
+        if page not in allowed or sys.platform != 'win32':
+            self.statusBar().showMessage('This control is available on Windows.', 10000)
+            return False
+        opened = QDesktopServices.openUrl(QUrl('ms-settings:' + page))
+        if not opened:
+            self.statusBar().showMessage('Windows could not open that settings page.', 10000)
+        return opened
+
     def open_plugins(self):
         """Open existing plugin switches without a large feature toolbar."""
         self.open_section('Settings & Safety')
@@ -1439,9 +1456,18 @@ class Window(QMainWindow):
             self.live_voice.status.connect(lambda text: self.statusBar().showMessage(text, 20000))
             self.live_voice.state_changed.connect(self.on_live_voice_state)
             self.live_voice.turn_finished.connect(self.save_live_voice_turn)
-            self.live_voice.heard_changed.connect(self.prime_chat.assistant.show_heard)
+            self.live_voice.heard_changed.connect(self.on_live_heard)
             self.live_voice.audio_level.connect(self.voice_panel.audio_level.emit)
+            self.live_voice.output_level.connect(self.prime_chat.assistant.set_output_level)
         return self.live_voice
+
+    def on_live_heard(self, text):
+        self.prime_chat.assistant.show_heard(text)
+        if self.is_emergency_stop(addressed_request(text)):
+            self.stop()
+        elif addressed_request(text).casefold().strip(' .!?') in {
+                'stop control', 'release control', 'control நிறுத்து', 'கட்டுப்பாட்டை நிறுத்து'}:
+            self.set_desktop_control(False)
 
     def read_with_gemini(self, text):
         if (not self.store.get('voice:gemini_readout', False) or self.policy.stopped
@@ -1524,6 +1550,21 @@ class Window(QMainWindow):
     def route_interface_command(self, spoken):
         text = addressed_request(spoken).casefold().strip(' .!?')
         text = re.sub(r'\s+', ' ', text)
+        if text in {'stop control', 'release control', 'control நிறுத்து', 'கட்டுப்பாட்டை நிறுத்து'}:
+            self.set_desktop_control(False)
+            self.show_local_system_reply(spoken, 'Desktop control released.')
+            return True
+        if not self.store.get('automation:self_control', True):
+            return False
+        if text in {'take control', 'take desktop control', 'pc control எடு', 'கண்ட்ரோல் எடு',
+                    'கட்டுப்பாட்டை எடு', 'முழு கண்ட்ரோல் எடு'}:
+            self.set_desktop_control(True)
+            self.show_local_system_reply(spoken, 'Desktop control is active for this session. Tell me the task.')
+            return True
+        text = re.sub(r'^(?:உன்|உன்ன|உன்னுடைய|your)\s+', '', text)
+        if re.fullmatch(r'(?:settings|செட்டிங்ஸ்|அமைப்புகள்)(?:ஐ)?\s+(?:open|ஓபன்|திற)(?:\s+(?:pannu|பண்ணு|பண்ணுங்க|செய்))?', text):
+            self.open_section('Settings & Safety')
+            return True
         camera = re.fullmatch(r'(?:camera|கேமரா)(?:வை|வ)?\s+(off|on|ஆஃப்|ஆப்|ஆன்|நிறுத்து|மூடு|திற)(?:\s+(?:pannu|பண்ணு|பண்ணுங்க|செய்))?', text)
         if camera:
             off = camera[1] in ('off', 'ஆஃப்', 'ஆப்', 'நிறுத்து', 'மூடு')
@@ -1545,7 +1586,57 @@ class Window(QMainWindow):
         if destination:
             self.open_plugins() if destination == 'plugins' else self.open_section(destination)
             return True
+        if self.desktop_control_active and re.match(
+                r'^(?:open|launch|click|type|write|press|scroll|focus|inspect|ஓபன்|திற|கிளிக்|டைப்|எழுது|அழுத்து)\b', text):
+            self.open_section('Mission Control')
+            self.mission_controller.start(spoken, from_chat=True)
+            return True
         return False
+
+    def set_desktop_control(self, enabled):
+        if enabled and self.policy.stopped:
+            self.resume()
+        self.desktop_control_active = bool(enabled)
+        self.desktop_control_ticket = self.policy.ticket() if enabled else None
+        if not enabled:
+            controller = getattr(self, 'mission_controller', None)
+            if controller is not None:
+                controller.cancel()
+        label = getattr(self, 'desktop_control_status', None)
+        if label is not None:
+            label.setText('Control active · this session' if enabled else 'Control released')
+        shell = getattr(self, 'prime_shell', None)
+        if shell is not None:
+            shell.refresh_clock()
+
+    def desktop_control_allows(self, action):
+        """Session-only consent for app input; sensitive actions still review."""
+        if (not self.desktop_control_active or self.policy.stopped
+                or not self.store.get('automation:self_control', True)):
+            return False
+        try:
+            self.policy.check(self.desktop_control_ticket)
+        except (Stopped, Denied):
+            return False
+        if action.kind != 'mission_tool':
+            return False
+        tool = action.target.partition('(')[0]
+        allowed = {'list_app_windows', 'inspect_app_controls', 'activate_window', 'launch_app',
+                   'click_app_control', 'mouse_click_app_control', 'set_app_field',
+                   'type_app_text', 'press_app_navigation_key'}
+        if tool not in allowed:
+            return False
+        try:
+            arguments = json.loads(action.arguments or '{}')
+            if not isinstance(arguments, dict):
+                return False
+        except (ValueError, TypeError):
+            return False
+        name = str(arguments.get('name', '')).casefold()
+        if re.search(r'send|submit|publish|pay|buy|delete|remove|save|confirm|approve|install|password|secret|sign.?in', name):
+            return False
+        kind = 'keyboard' if tool in {'set_app_field', 'type_app_text', 'press_app_navigation_key'} else 'mouse'
+        return bool(self.store.get('input:' + kind, True))
 
     def route_voice_preferences(self, spoken):
         command = addressed_request(spoken).strip(' .!?')
@@ -4149,6 +4240,10 @@ class Window(QMainWindow):
         auto_voice.setToolTip('Streams microphone audio to Google while unmuted. Provider charges may apply.')
         auto_voice.toggled.connect(lambda enabled: self.store.set('voice:auto_gemini', enabled))
         voice_controls.addWidget(auto_voice)
+        wake_group = QGroupBox('Wake and startup')
+        wake_layout = QVBoxLayout(wake_group)
+        wake_layout.addWidget(self.startup_microphone)
+        wake_layout.addWidget(auto_voice)
         voice_links = QHBoxLayout()
         if sys.platform == 'win32':
             self.flexible_button(voice_links, 'Windows sound volume',
@@ -4220,6 +4315,8 @@ class Window(QMainWindow):
         self.tray_note = QLabel(self.tray_note_text())
         self.tray_note.setWordWrap(True)
         preference_layout.addWidget(self.tray_note)
+        for widget in (self.keep_in_tray, self.start_at_signin, self.tray_note):
+            wake_layout.addWidget(widget)
 
         updates = QGroupBox('Updates and recovery')
         update_layout = QVBoxLayout(updates)
@@ -4275,9 +4372,70 @@ class Window(QMainWindow):
         self.settings_usage.setWordWrap(True)
         usage_layout = QVBoxLayout(usage)
         usage_layout.addWidget(self.settings_usage)
-        self.flexible_button(usage_layout, 'Network diagnostics', self.open_network_diagnostics)
         self.flexible_button(usage_layout, 'AI usage history',
                              lambda: self.open_section('System & Usage'))
+        desktop_controls = QGroupBox('Desktop control')
+        desktop_layout = QVBoxLayout(desktop_controls)
+        self.desktop_control_status = QLabel('Control released')
+        desktop_layout.addWidget(self.desktop_control_status)
+        self.flexible_button(desktop_layout, 'Take control', lambda: self.set_desktop_control(True))
+        self.flexible_button(desktop_layout, 'Release control', lambda: self.set_desktop_control(False))
+        self.flexible_button(desktop_layout, 'Open desktop workspace', lambda: self.open_section('PC Control'))
+        self.flexible_button(desktop_layout, 'Review visible windows', self.inspect_visible_windows)
+
+        input_group = QGroupBox('Mouse and keyboard')
+        input_layout = QVBoxLayout(input_group)
+        self.input_choices = {}
+        for kind in ('mouse', 'keyboard'):
+            choice = QCheckBox('Allow ' + kind + ' in automation missions')
+            choice.setChecked(bool(self.store.get('input:' + kind, True)))
+            choice.toggled.connect(lambda enabled, kind=kind: self.store.set('input:' + kind, enabled))
+            self.input_choices[kind] = choice
+            input_layout.addWidget(choice)
+        self.keyboard_test = QLineEdit()
+        self.keyboard_test.setAccessibleName('Keyboard test field')
+        self.keyboard_test.setPlaceholderText('Type here to test your keyboard · stays on this PC')
+        input_layout.addWidget(self.keyboard_test)
+        self.mouse_test_count = 0
+        self.mouse_test_status = QLabel('Mouse test: no clicks yet')
+        input_layout.addWidget(self.mouse_test_status)
+        self.flexible_button(input_layout, 'Test mouse click', self.test_mouse_click)
+        for label, setting_uri in (('Windows mouse settings', 'mousetouchpad'), ('Windows typing settings', 'typing')):
+            self.flexible_button(input_layout, label, lambda _checked=False, uri=setting_uri: self.open_windows_setting(uri))
+
+        self_control = QGroupBox('JARVIS self control')
+        self_layout = QVBoxLayout(self_control)
+        self.self_control_enabled = QCheckBox('Allow voice commands to control JARVIS')
+        self.self_control_enabled.setChecked(bool(self.store.get('automation:self_control', True)))
+        self.self_control_enabled.toggled.connect(lambda enabled: self.store.set('automation:self_control', enabled))
+        self.self_control_enabled.toggled.connect(lambda enabled: None if enabled else self.set_desktop_control(False))
+        self_layout.addWidget(self.self_control_enabled)
+        self.flexible_button(self_layout, 'Mute / unmute microphone', lambda: self.set_microphone_muted(
+            not self.voice_panel.microphone_muted))
+        self.flexible_button(self_layout, 'Camera on / off', self.camera_toggle.toggle)
+        self.flexible_button(self_layout, 'Emergency stop', self.stop)
+        self.flexible_button(self_layout, 'Resume work', self.resume)
+
+        network = QGroupBox('Network and Bluetooth')
+        network_layout = QVBoxLayout(network)
+        for label, setting_uri in (('Windows network settings', 'network-status'), ('Windows Bluetooth settings', 'bluetooth')):
+            self.flexible_button(network_layout, label, lambda _checked=False, uri=setting_uri: self.open_windows_setting(uri))
+        self.flexible_button(network_layout, 'Network diagnostics', self.open_network_diagnostics)
+        calls = QGroupBox('Calls')
+        calls_layout = QVBoxLayout(calls)
+        note = QLabel('JARVIS calling is not connected. Pair your phone with Windows Phone Link to manage calls there.')
+        note.setWordWrap(True)
+        calls_layout.addWidget(note)
+        self.flexible_button(calls_layout, 'Open Phone Link',
+                             lambda: self.open_windows_setting('mobile-devices-addphone-direct'))
+        development = QGroupBox('Development')
+        development_layout = QVBoxLayout(development)
+        from desktop.prime_ui import build_commit
+        revision = QLabel(APP_NAME + '\nSource revision: ' + (build_commit() or 'unavailable'))
+        revision.setWordWrap(True)
+        update_layout.insertWidget(0, revision)
+        development_layout.addWidget(self.auto_maintenance)
+        self.flexible_button(development_layout, 'Review pending changes', lambda: self.open_section('Review changes'))
         self.settings_categories = QComboBox()
         self.settings_categories.setAccessibleName('Settings category')
         layout.addWidget(self.settings_categories)
@@ -4285,10 +4443,19 @@ class Window(QMainWindow):
             ('Voice', (voice_service, self.audio_test, advanced_toggle, voice_advanced)),
             ('Camera', (self.camera_panel,)),
             ('AI Providers', (self.provider_settings,)),
+            ('Desktop Control', (desktop_controls,)),
+            ('Mouse & Keyboard', (input_group,)),
+            ('JARVIS Self Control', (self_control,)),
+            ('Remote Control', (remote,)),
+            ('Wake & Startup', (wake_group,)),
+            ('Network & Bluetooth', (network,)),
+            ('Calls', (calls,)),
             ('Approvals', (approvals, safety)),
             ('Appearance', (preferences,)),
             ('Projects & plugins', (self.saved_projects_group, plugins)),
-            ('System', (usage, updates, backup, remote)),
+            ('Version & Updates', (updates,)),
+            ('Development', (development,)),
+            ('System', (usage, backup)),
         )
         self.settings_category_sections = []
         for advanced_ai in (engines, assistant_group):
@@ -4303,6 +4470,10 @@ class Window(QMainWindow):
         layout.addStretch(1)
         self.settings_categories.currentIndexChanged.connect(self.show_setting_category)
         return page
+
+    def test_mouse_click(self):
+        self.mouse_test_count += 1
+        self.mouse_test_status.setText(f'Mouse test: {self.mouse_test_count} click(s) received')
 
     def set_hologram_visible(self, enabled):
         self.store.set('appearance:hologram', enabled)
@@ -6988,6 +7159,10 @@ class Window(QMainWindow):
         self.after_effects_timeline_button.setEnabled(ready and self.video_plan is not None)
 
     def stop(self):
+        self.desktop_control_active = False
+        self.desktop_control_ticket = None
+        if hasattr(self, 'desktop_control_status'):
+            self.desktop_control_status.setText('Control released')
         self.camera_toggle.setChecked(False)
         self.prime_chat.youtube.stop()
         self.policy.stop()

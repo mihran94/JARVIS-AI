@@ -188,6 +188,33 @@ class GlassCard(QFrame):
         painter.drawLine(QPointF(width - bevel, height), QPointF(width, height - bevel))
 
 
+class CoreMark(QLabel):
+    """A vector M monogram using the active HUD palette."""
+
+    def __init__(self, palette, parent=None):
+        super().__init__('M', parent)
+        self.palette_ = palette
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.scale(self.width() / 40, self.height() / 40)
+        frame = QPainterPath(QPointF(1, 9))
+        for x, y in ((9, 1), (39, 1), (39, 31), (31, 39), (1, 39)):
+            frame.lineTo(x, y)
+        frame.closeSubpath()
+        p.fillPath(frame, self.palette_.glass)
+        p.setPen(QPen(_alpha(self.palette_.accent.name(), 150), 1))
+        p.drawPath(frame)
+        mark = QPainterPath(QPointF(10, 29))
+        for x, y in ((10, 11), (20, 23), (30, 11), (30, 29)):
+            mark.lineTo(x, y)
+        p.setPen(QPen(_alpha(self.palette_.accent.name(), 45), 6))
+        p.drawPath(mark)
+        p.setPen(QPen(self.palette_.accent, 2))
+        p.drawPath(mark)
+
+
 class PrimeOrb(QWidget):
     """The assistant, painted rather than assembled.
 
@@ -247,7 +274,7 @@ class PrimeOrb(QWidget):
 
     def set_level(self, level):
         self._level = max(0, min(100, level))
-        if self.state == 'listening':
+        if self.state in ('listening', 'speaking'):
             self.update()
 
     def _tick(self):
@@ -284,7 +311,7 @@ class PrimeOrb(QWidget):
         bright, deep = self._colours()
 
         glow = QRadialGradient(centre, radius)
-        signal = self._level / 100 if self.state == 'listening' else 0
+        signal = self._level / 100 if self.state in ('listening', 'speaking') else 0
         pulse = signal if not self._motion else max(signal, 0.12 * math.sin(self._phase))
         glow.setColorAt(0.0, _alpha(bright.name(), round(90 + 100 * pulse)))
         glow.setColorAt(0.45, _alpha(deep.name(), 34))
@@ -330,7 +357,7 @@ class PrimeOrb(QWidget):
         if self.state in ('listening', 'speaking'):
             for index in range(9):
                 offset = abs(index - 4)
-                level = pulse if self.state == 'listening' else abs(math.sin(self._phase + index * 0.7))
+                level = signal * (0.65 + 0.35 * abs(math.sin(self._phase + index * 0.7)))
                 length = 0.025 + 0.105 * level * (1 - offset / 6)
                 x = (index - 4) * 0.07
                 painter.setPen(QPen(_alpha(bright.name(), 190), 0.016))
@@ -441,6 +468,16 @@ class PrimeConversation(QScrollArea):
         self.setWidget(self._holder)
         self._rows = []
         self._messages = []
+        self._follow_latest = True
+        self.verticalScrollBar().valueChanged.connect(self.track_scroll_position)
+        self.verticalScrollBar().rangeChanged.connect(self.follow_new_range)
+
+    def track_scroll_position(self, value):
+        self._follow_latest = value >= self.verticalScrollBar().maximum() - 8
+
+    def follow_new_range(self, _minimum, maximum):
+        if self._follow_latest:
+            self.verticalScrollBar().setValue(maximum)
 
     @property
     def bubbles(self):
@@ -460,6 +497,7 @@ class PrimeConversation(QScrollArea):
     def resizeEvent(self, event):
         bar = self.verticalScrollBar()
         follow_latest = bar.value() >= bar.maximum() - 8
+        self._follow_latest = follow_latest
         super().resizeEvent(event)
         for bubble in self.bubbles:
             bubble.fit_to_text(self.bubble_width())
@@ -476,6 +514,7 @@ class PrimeConversation(QScrollArea):
         position = bar.value()
         append_only = messages[:len(self._messages)] == self._messages
         follow_latest = position >= bar.maximum() - 8 or not append_only
+        self._follow_latest = follow_latest
         if not append_only:
             for row in self._rows:
                 self._layout.removeItem(row)
@@ -521,7 +560,7 @@ class PrimeAssistant(QWidget):
         layout.setSpacing(12)
         layout.addStretch(1)
         self.orb = PrimeOrb(palette)
-        window.voice_panel.audio_level.connect(self.orb.set_level)
+        window.voice_panel.audio_level.connect(self.set_microphone_level)
         self.orb.set_motion(not window.store.get('omega:reduced', False))
         self.orb.setFixedSize(200, 200)
         row = QHBoxLayout()
@@ -557,6 +596,14 @@ class PrimeAssistant(QWidget):
             child.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.refresh_greeting()
         self.refresh_hologram()
+
+    def set_microphone_level(self, level):
+        if self.orb.state == 'listening':
+            self.orb.set_level(level)
+
+    def set_output_level(self, level):
+        if self.orb.state == 'speaking':
+            self.orb.set_level(level)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -739,7 +786,7 @@ class PrimeChat(QWidget):
         voice_title.setObjectName('hudSectionTitle')
         voice_layout.addWidget(voice_title)
         voice_layout.addWidget(self.displays, 1)
-        voice_layout.addWidget(window.prime_shell.microphone_waveform)
+        window.prime_shell.microphone_waveform.hide()
         display_layout.addWidget(self.voice_display, 1)
         self.terminal = GlassCard(palette)
         terminal_layout = QVBoxLayout(self.terminal)
@@ -781,7 +828,7 @@ class PrimeChat(QWidget):
 
         self.workspace = GlassCard(palette)
         self.workspace.setMinimumWidth(150)
-        self.workspace.setMaximumWidth(190)
+        self.workspace.setMaximumWidth(230)
         self.workspace.setMaximumHeight(245)
         self.workspace.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
         workspace = QVBoxLayout(self.workspace)
@@ -822,6 +869,15 @@ class PrimeChat(QWidget):
             setattr(self, attr, detail)
             body.addWidget(detail)
             if title == 'WEATHER':
+                heading.setText('TIME / WEATHER')
+                clock = window.prime_shell.clock_label
+                date = window.prime_shell.date_label
+                clock.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+                clock.setAlignment(Qt.AlignmentFlag.AlignLeft)
+                body.insertWidget(1, clock)
+                body.insertWidget(2, date)
+                clock.show()
+                date.show()
                 self.weather_refresh = QPushButton('Refresh weather')
                 self.weather_refresh.clicked.connect(self.refresh_weather)
                 body.addWidget(self.weather_refresh)
@@ -891,7 +947,7 @@ class PrimeChat(QWidget):
         network = (data or {}).get('network_status', 'Not measured')
         self.status_detail.setText(f'UPTIME   {uptime}\nPROCESSES   {processes}\n'
                                    f'NETWORK   {network}\nPLATFORM   {platform.system()}\nENGINE   {engine}')
-        rows = window.store.tasks()[:3]
+        rows = window.store.tasks()[:2]
         self.task_detail.setText('\n'.join(f"{row['kind']} · {row['status']}" for row in rows)
                                  or 'No tasks running.')
         gpu, temperature = (data or {}).get('gpu_usage_percent'), (data or {}).get('cpu_temperature_c')
@@ -1199,7 +1255,6 @@ class PrimeShell(QWidget):
         self.startup_notice.setContentsMargins(16, 4, 16, 6)
         self.startup_notice.hide()
         self.microphone_waveform = MicrophoneWaveform(palette, self)
-        window.voice_panel.audio_level.connect(self.microphone_waveform.set_level)
         footer = QHBoxLayout()
         footer.setContentsMargins(16, 0, 16, 5)
         self.footer_status = QLabel()
@@ -1264,11 +1319,11 @@ class PrimeShell(QWidget):
         layout.setContentsMargins(20, 8, 20, 8)
         layout.setSpacing(14)
 
-        mark = QLabel('M')
+        mark = CoreMark(palette)
         mark.setObjectName('mCoreLogo')
         mark.setAccessibleName('M Core logo')
         mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        mark.setFixedSize(34, 32)
+        mark.setFixedSize(40, 40)
         self.style_core_logo(mark)
         layout.addWidget(mark)
         self.mark = mark
@@ -1315,8 +1370,13 @@ class PrimeShell(QWidget):
         self.clock_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.clock_label.setMaximumWidth(190)
         self.clock_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.clock_label.setStyleSheet(f'color: {palette.accent.name()}; font-family: {MONO_STACK}; font-size: 15px;')
-        layout.addWidget(self.clock_label, 1)
+        self.clock_label.setStyleSheet(f'color: {palette.accent.name()}; font-family: {MONO_STACK}; font-size: 22px;')
+        self.clock_label.setParent(bar)
+        self.clock_label.hide()
+        self.date_label = QLabel(bar)
+        self.date_label.setAccessibleName('Current date')
+        self.date_label.setStyleSheet(f'color: {palette.muted.name()}; font-size: 11px;')
+        self.date_label.hide()
         layout.addWidget(self.window_ref.resume_button)
         self.safety_controls = QHBoxLayout()
         self.safety_controls.setSpacing(6)
@@ -1339,6 +1399,7 @@ class PrimeShell(QWidget):
         self.settings_button.clicked.connect(lambda checked: (
             self.open_section('Settings & Safety') if checked else self.settings_dialog.close()))
         layout.addWidget(self.settings_button)
+        self.settings_button.hide()
 
         self.menu_button = QPushButton('☷')
         self.menu_button.setFixedWidth(42)
@@ -1365,12 +1426,15 @@ class PrimeShell(QWidget):
             self.window_ref.stop()
 
     def refresh_clock(self):
-        self.clock_label.setText(datetime.now().astimezone().strftime('%H:%M:%S\n%a %d %b %Y'))
+        now = datetime.now().astimezone()
+        self.clock_label.setText(now.strftime('%H:%M:%S'))
+        self.date_label.setText(now.strftime('%A, %d %b %Y'))
         live = getattr(self.window_ref, 'live_voice', None)
         engine = 'GEMINI LIVE' if live is not None else self.window_ref.provider.currentText().upper()
         mic = 'MUTED' if self.window_ref.voice_panel.microphone_muted else (
             'LIVE' if live is not None else 'READY')
-        self.footer_status.setText(f'● ENGINE · {engine}     ● MIC · {mic}     ● M-CORE')
+        control = 'CONTROL ACTIVE' if self.window_ref.desktop_control_active else 'M-CORE'
+        self.footer_status.setText(f'● ENGINE · {engine}     ● MIC · {mic}     ● {control}')
 
     def build_drawer(self):
         self.drawer = QFrame(self)
@@ -1394,6 +1458,9 @@ class PrimeShell(QWidget):
         menu_layout.setContentsMargins(0, 6, 0, 0)
         menu_layout.setSpacing(12)
         self.menu_items = {}
+        self.menu_settings_button = QPushButton('Settings')
+        self.menu_settings_button.clicked.connect(lambda: self.open_section('Settings & Safety'))
+        menu_layout.addWidget(self.menu_settings_button)
         for title, section in (
             ('Chat', 'JARVIS Chat'),
             ('Automation', 'PC Control'),
@@ -1409,6 +1476,20 @@ class PrimeShell(QWidget):
         plugins = QPushButton('Plugins')
         plugins.clicked.connect(self.window_ref.open_plugins)
         menu_layout.addWidget(plugins)
+        for title, action in (
+            ('Desktop Control', lambda: self.window_ref.open_setting_category('Desktop Control')),
+            ('Files & Folders', lambda: self.open_section('Files & Folders')),
+            ('Remote Control', lambda: self.window_ref.open_setting_category('Remote Control')),
+            ('Saved Projects', self.window_ref.open_saved_projects),
+            ('Task History', self.open_task_history),
+            ('Help', lambda: self.window_ref.show_local_system_reply('Help',
+                'Speak in Tamil or Tanglish, or type and press Enter. Use /suggest for ideas. '
+                'F4 toggles the mic; F11 toggles fullscreen; Esc interrupts.')),
+        ):
+            button = QPushButton(title)
+            button.clicked.connect(self.close_drawer)
+            button.clicked.connect(action)
+            menu_layout.addWidget(button)
         archives = self.window_ref.archives
         archives.setSizeAdjustPolicy(archives.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         archives.setMinimumContentsLength(10)
@@ -1423,17 +1504,9 @@ class PrimeShell(QWidget):
         for button in (self.window_ref.archive_button, self.window_ref.new_chat_button):
             button.setParent(menu)
             button.hide()
-        controls = QGridLayout()
-        for index, (title, action) in enumerate((
-            ('Fullscreen', self.window_ref.toggle_fullscreen),
-        )):
-            button = QPushButton(title)
-            button.clicked.connect(action)
-            controls.addWidget(button, *divmod(index, 2))
-        menu_layout.addLayout(controls)
-        self.mini_view_button = QPushButton('Mini view')
+        self.mini_view_button = QPushButton('Mini view', menu)
         self.mini_view_button.clicked.connect(self.open_mini_view)
-        menu_layout.addWidget(self.mini_view_button)
+        self.mini_view_button.hide()
         menu_layout.addStretch(1)
         self.drawer_content.addWidget(menu)
         self.drawer_content.addWidget(self.window_ref.news_panel)
@@ -1527,7 +1600,7 @@ class PrimeShell(QWidget):
     def resize_drawer(self):
         news = self.drawer_content.currentIndex() == 1
         width = min(540 if news else 360, max(280, self.width() - 24))
-        height = min(560 if news else 270, max(240, self.height() - self.top_bar.height() - 24))
+        height = min(560 if news else 520, max(240, self.height() - self.top_bar.height() - 24))
         self.drawer.setGeometry(max(12, self.width() - width - 16), self.top_bar.height() + 8, width, height)
 
     def style_drawer(self):

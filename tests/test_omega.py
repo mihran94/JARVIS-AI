@@ -64,7 +64,7 @@ def test_dock_links_keyboard_and_order(tmp_path, monkeypatch):
             assert window.pages.currentIndex() == window.page_indices[section]
         window.automation_workspace_button.click()
         window.open_section('Settings & Safety')
-        window.show_settings_panel('System')
+        window.show_settings_panel('Network & Bluetooth')
         network_button = next(button for button in window.settings_scroller.findChildren(QPushButton)
                               if button.text() == 'Network diagnostics')
         network_button.click()

@@ -250,8 +250,10 @@ QPushButton {{
     background: {t['glass']};
     color: {t['text']};
     border: 1px solid {t['edge']};
-    border-radius: 11px;
-    padding: 8px 15px;
+    border-radius: 5px;
+    padding: 7px 12px;
+    font-family: {MONO_STACK};
+    font-size: 12px;
     font-weight: 600;
 }}
 QPushButton:hover {{ border-color: {t['edge_strong']}; background: {t['surface']}; }}
@@ -259,10 +261,9 @@ QPushButton:pressed {{ background: {t['ground_alt']}; }}
 QPushButton:focus {{ border-color: {t['accent']}; }}
 QPushButton:disabled {{ color: {t['dim']}; background: {t['glass']}; border-color: {t['edge']}; }}
 QPushButton#primary {{
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                stop:0 {t['accent']}, stop:1 {t['accent_deep']});
-    color: {t['accent_ink']};
-    border: 1px solid {t['accent_deep']};
+    background: {t['glass_solid']};
+    color: {t['accent']};
+    border: 1px solid {t['accent']};
     font-weight: 700;
 }}
 QPushButton#primary:hover {{ border-color: {t['accent']}; }}
