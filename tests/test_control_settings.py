@@ -36,11 +36,57 @@ def test_take_control_routes_a_goal_and_release_cancels_the_session(window, monk
     assert goals == [('open Notepad and write hello', {'from_chat': True})]
     assert window.route_interface_command('Notepad open pannu')
     assert len(goals) == 2
+    assert window.route_interface_command('Use the mouse to click View in Notepad')
+    assert goals[-1][0] == 'Use the mouse to click View in Notepad'
     assert not window.route_interface_command('open Notepad வேண்டாம்')
-    assert len(goals) == 2
+    assert not window.route_interface_command('Mouse control')
+    assert len(goals) == 3
     assert window.route_interface_command('stop control')
     assert not window.desktop_control_active
     assert cancelled
+
+
+def test_typed_mic_active_requires_existing_consent(window, monkeypatch):
+    monkeypatch.setattr(window, 'start_automatic_voice', lambda: None)
+    window.prime_shell.mic_mute_button.setChecked(True)
+    window.voice_panel.allow.setChecked(False)
+    window.prompt.setPlainText('mic active pannu')
+    window.send()
+    assert window.voice_panel.microphone_muted
+
+    window.voice_panel.allow.setChecked(True)
+    window.prompt.setPlainText('mic active pannu')
+    window.send()
+    assert not window.voice_panel.microphone_muted
+    assert not window.prime_shell.mic_mute_button.isChecked()
+
+
+def test_typed_remember_stays_local(window, monkeypatch):
+    def unexpected_provider(*args, **kwargs):
+        pytest.fail('A typed remember command must be handled locally')
+
+    monkeypatch.setattr(window, 'get_key', unexpected_provider)
+    window.prompt.setPlainText('நினைவில் வை: I prefer morning meetings')
+    window.send()
+    assert [note.body for note in window.memory_service.search('meetings')] == [
+        'I prefer morning meetings']
+    assert not window.prompt.toPlainText()
+
+
+def test_spoken_take_control_waits_for_a_task_even_with_project_context(window, monkeypatch):
+    def unexpected_launch(*args, **kwargs):
+        pytest.fail('Taking control must not start a task or open an app')
+
+    window.memory.remember(project='example', editor='VS Code')
+    monkeypatch.setattr(window.mission_controller, 'start', unexpected_launch)
+    monkeypatch.setattr(window, 'queue_chat_launch', unexpected_launch)
+    monkeypatch.setattr(window, 'handle_developer_command', unexpected_launch)
+    monkeypatch.setattr('desktop.app.open_project_in_editor', unexpected_launch)
+
+    window.save_live_voice_turn('Take control', '')
+
+    assert window.desktop_control_active
+    assert 'CONTROL ACTIVE' in window.prime_shell.footer_status.text()
 
 
 def test_news_uses_the_existing_gemini_session_and_not_weather(window, monkeypatch):
@@ -77,6 +123,20 @@ def test_control_grant_is_session_only_and_does_not_approve_send_or_save(window)
     window.stop()
     assert not window.desktop_control_allows(action('View'))
     assert not window.desktop_control_active
+
+
+def test_saved_desktop_control_is_restored_and_emergency_stop_revokes_it(window):
+    window.store.set('automation:keep_desktop_control', True)
+    reopened = Window(window.root)
+    try:
+        assert not reopened.desktop_control_active
+        reopened.start_window_audio()
+        assert reopened.desktop_control_active
+        reopened.stop()
+        assert not reopened.desktop_control_active
+        assert not reopened.store.get('automation:keep_desktop_control')
+    finally:
+        reopened.close()
 
 
 def test_settings_are_grouped_and_menu_owns_the_settings_entry(window):

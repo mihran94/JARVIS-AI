@@ -559,8 +559,13 @@ def test_welcome_and_spoken_update_use_the_existing_local_routes(tmp_path, monke
         window.startup_greeting.setChecked(True)
         monkeypatch.setattr(window, 'read_with_gemini', spoken.append)
         window.start_window_audio()
-        assert 'தமிழ் பயனர்' in window.prime_shell.startup_notice.text()
+        assert 'தமிழ் பயனர்' not in window.prime_shell.startup_notice.text()
+        assert 'தமிழ் பயனர்' not in window.conversation_guidance()
         assert spoken == [window.prime_shell.startup_notice.text()]
+        window.use_preferred_name.setChecked(True)
+        window.start_window_audio()
+        assert 'தமிழ் பயனர்' in window.prime_shell.startup_notice.text()
+        assert window.store.get('chat:preferred_name') == 'தமிழ் பயனர்'
 
         opened = []
         monkeypatch.setattr(window, 'start_improvement',
@@ -617,6 +622,18 @@ def test_live_mixed_speech_is_saved_and_camera_requests_route(tmp_path, monkeypa
         window.live_voice = SimpleNamespace(look_at=lambda image, text: sent.append((image, text)) or True)
         assert window.route_camera_question('கேமரா விப் பண்ணி பாரு')
         assert sent == [(b'jpeg', 'கேமரா விப் பண்ணி பாரு')]
+        assert window.route_camera_question('பார்')
+        assert sent[-1] == (b'jpeg', 'பார்')
+        display = window.prime_chat.displays.currentWidget()
+        window.camera_toggle.blockSignals(True)
+        window.camera_toggle.setChecked(True)
+        window.camera_toggle.blockSignals(False)
+        assert window.prime_chat.displays.currentWidget() is display
+        assert window.route_interface_command('camera preview on')
+        assert window.prime_chat.displays.currentWidget() is window.prime_chat.camera_preview
+        assert window.route_interface_command('camera preview off')
+        assert window.prime_chat.displays.currentWidget() is display
+        window.camera_toggle.setChecked(False)
         window.live_voice = None
         spoken = 'இன்னைக்கு meeting முடிஞ்சதும் ஒரு quick break எடுக்கலாமா?'
         window.save_live_voice_turn(spoken, 'எடுக்கலாம் மிஹ்ரான் பாஸ்.')

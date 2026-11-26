@@ -74,13 +74,15 @@ class BridgeChatService:
 
     # ----------------------------------------------------------------- answer
 
-    def answer(self, message: str, consent: bool) -> dict:
+    def answer(self, message: str, consent: bool, *, images: list[str] | None = None) -> dict:
         """Answer one message, or explain why it cannot be answered."""
         if self._policy is not None and self._policy.stopped:
             raise BridgeHandlerError(503, 'The Windows desktop is stopped. Resume it first.')
         provider = self.provider
         if not provider:
             raise BridgeHandlerError(503, 'The Windows desktop has not chosen a provider for paired devices.')
+        if images and provider != 'Gemini':
+            raise BridgeHandlerError(403, 'Choose Gemini on the PC to use phone camera photos.')
         try:
             spec = self._router.spec(provider)
         except KeyError:
@@ -95,6 +97,13 @@ class BridgeChatService:
         if not spec.local and not key:
             raise BridgeHandlerError(403, 'The Windows desktop has no key for that provider.')
         messages = self._messages(message)
+        if images:
+            messages = [messages[0], messages[-1]]
+            messages[-1]['content'] = [
+                {'type': 'text', 'text': message},
+                *({'type': 'image_url', 'image_url': {'url': 'data:image/jpeg;base64,' + image}}
+                  for image in images),
+            ]
         started = time.monotonic()
         # The emergency stop can happen while the provider is working, so the
         # ticket is taken once, before the request, and checked between the
@@ -116,7 +125,8 @@ class BridgeChatService:
             raise BridgeHandlerError(502, 'The provider call failed. No credentials were logged.') from None
         finally:
             key = ''
-        self._remember(message, text)
+        if not images:
+            self._remember(message, text)
         return {
             'text': text,
             'provider': provider,

@@ -4,6 +4,7 @@ The handler is exercised without a socket, exactly the way the Android
 client and the iPhone PWA reach it.
 """
 import json
+import base64
 
 import pytest
 
@@ -85,6 +86,21 @@ def test_chat_returns_the_desktop_answer():
     assert response.status == 200
     assert response.payload['text'] == 'answer for hello'
     assert response.payload['provider'] == 'ollama'
+
+
+def test_paired_camera_request_validates_each_frame_before_dispatch():
+    calls = []
+    server = make_server(chat=lambda message, consent, *, images: (
+        calls.append((message, consent, images)) or {'text': 'Camera answer'}))
+    frame = base64.b64encode(b'\xff\xd8\xffsample\xff\xd9').decode()
+    route = '/api/chat'
+    response = server.handle(signed_request(server, 'POST', route, json.dumps({
+        'message': 'What happened?', 'consent': True, 'images': [frame, frame, frame]})))
+    assert response.status == 200
+    rejected = server.handle(signed_request(server, 'POST', route, json.dumps({
+        'message': 'What happened?', 'consent': True, 'images': [frame, 'not base64']}), nonce='n2'))
+    assert rejected.status == 400
+    assert calls == [('What happened?', True, [frame, frame, frame])]
 
 
 def test_chat_needs_a_message():

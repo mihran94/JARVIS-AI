@@ -72,7 +72,7 @@ class FakeRouter:
         self.calls = []
 
     def spec(self, name):
-        if name not in ('ollama', 'openai'):
+        if name not in ('ollama', 'openai', 'Gemini'):
             raise KeyError('Unknown provider.')
         class Spec:
             def __init__(self, local):
@@ -129,6 +129,20 @@ def test_a_paid_provider_needs_the_consent_of_the_request():
         service.answer('hello', False)
     assert error.value.status == 403
     assert 'consent' in error.value.message
+
+
+def test_camera_frames_require_consent_and_stay_out_of_chat_history():
+    router = FakeRouter()
+    store = FakeStore({PROVIDER_KEY: 'Gemini', CONSENT_KEY: True})
+    service = make_service(router=router, store=store, vault=FakeVault({'Gemini': 'test-key'}))
+    with pytest.raises(BridgeHandlerError) as error:
+        service.answer('Look at this', False, images=['frame'])
+    assert error.value.status == 403
+    assert not router.calls
+    service.answer('Look at this', True, images=['frame'])
+    assert router.calls[0]['messages'][-1]['content'][1]['image_url']['url'].endswith(',frame')
+    service.answer('Next question', True)
+    assert 'frame' not in repr(router.calls[1]['messages'])
 
 
 def test_a_paid_provider_answers_when_both_consents_are_given():

@@ -7,7 +7,7 @@
 
 // The version changes whenever the shell changes, so an installed app
 // stops serving the old files from its cache.
-const CACHE = 'jarvis-iphone-shell-v5';
+const CACHE = 'jarvis-iphone-shell-v6';
 
 const SHELL = [
   './',
@@ -17,6 +17,7 @@ const SHELL = [
   './manifest.webmanifest',
   './js/bridge.js',
   './js/chat.js',
+  './js/history.js',
   './js/offline.js',
   './js/pairing.js',
   './js/qr.js',

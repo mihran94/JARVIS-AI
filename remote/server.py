@@ -28,6 +28,8 @@ numbers come from the machine the desktop runs on. Both are injected, so the
 bridge stays free of provider keys and of platform code.
 """
 from dataclasses import dataclass, field
+import base64
+import binascii
 import json
 import platform
 import socket
@@ -261,8 +263,21 @@ class BridgeServer:
             raise BridgeHandlerError(400, 'That chat message is too long.')
         if type(consent) is not bool:
             raise BridgeHandlerError(400, 'The Windows bridge received an invalid consent flag.')
+        images = body.get('images')
+        if images is not None and (not isinstance(images, list) or not 1 <= len(images) <= 3):
+            raise BridgeHandlerError(400, 'Send between one and three camera frames.')
+        for image in images or ():
+            if not isinstance(image, str) or len(image) > 26_000:
+                raise BridgeHandlerError(400, 'A camera frame is too large or unreadable.')
+            try:
+                jpeg = base64.b64decode(image, validate=True)
+            except (ValueError, binascii.Error):
+                raise BridgeHandlerError(400, 'The camera photo is unreadable.') from None
+            if not jpeg.startswith(b'\xff\xd8\xff') or not jpeg.endswith(b'\xff\xd9'):
+                raise BridgeHandlerError(400, 'A JPEG camera photo is required.')
         try:
-            answer = self._chat(message.strip(), consent)
+            answer = (self._chat(message.strip(), consent, images=images) if images is not None
+                      else self._chat(message.strip(), consent))
         except BridgeHandlerError as error:
             raise error
         except Exception:

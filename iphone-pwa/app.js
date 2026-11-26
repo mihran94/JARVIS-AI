@@ -29,12 +29,22 @@ const $ = (id) => document.getElementById(id);
  * `online` event never came.
  */
 const FLUSH_INTERVAL_MS = 30000;
+const CHAT_COMMANDS = new Map([
+  ['/disk', diskSpaceTask],
+  ['command check disk space', diskSpaceTask],
+  ['கமாண்ட் டிஸ்க் ஸ்பேஸ்', diskSpaceTask],
+  ['/backup', backupTask],
+  ['command back up history', backupTask],
+]);
 
 const state = {
   client: null,
   transcript: new ChatTranscript(),
   outbox: new Outbox(),
   listening: null,
+  call: null,
+  camera: null,
+  cameraRequest: null,
   speakAnswers: false,
   timer: null,
   flushTimer: null,
@@ -102,6 +112,7 @@ async function connect() {
 }
 
 function forgetSecret() {
+  endPhoneCall();
   state.client = null;
   $('secret').value = '';
   setStatus('pairStatus', 'The secret was cleared from this page.');
@@ -191,7 +202,7 @@ function drawChat() {
   renderTranscript(state.transcript, transcriptElement);
 }
 
-async function sendMessage(text) {
+async function sendMessage(text, { images } = {}) {
   const message = (text || '').trim();
   if (!message) {
     return;
@@ -200,28 +211,221 @@ async function sendMessage(text) {
     setStatus('chatStatus', 'Connect to the PC first.', 'error');
     return;
   }
+  const call = state.call;
+  const command = message.toLowerCase().replace(/[.!?]+$/, '');
+  const asksToLook = /^(?:look|look at this|look through the camera|what is this|what do you see|பார்|பாரு|இதைப் பார்|இதை பாரு|இது என்ன|நான் என்ன காட்டுறேன்|camera paaru|கேமராவில் பார்)[.!?]*$/iu.test(message);
+  if (!images && (asksToLook || (call?.mode === 'video' && !CHAT_COMMANDS.has(command)))) {
+    const view = $('liveCameraView');
+    if (!state.camera || !view.videoWidth) {
+      setStatus('chatStatus', 'Turn on the phone camera and wait for the preview.', 'error');
+      return;
+    }
+    if (!$('consent').checked) {
+      setStatus('chatStatus', 'Allow Gemini for this camera question first.', 'error');
+      return;
+    }
+    try {
+      images = [cameraFrame(view, view.videoWidth, view.videoHeight)];
+    } catch {
+      setStatus('chatStatus', 'Could not read the current camera frame. Try again.', 'error');
+      return;
+    }
+  }
   state.transcript.add('person', message);
   drawChat();
+  const task = images ? undefined : CHAT_COMMANDS.get(command);
+  if (task) {
+    await submitTaskRequest(task());
+    return;
+  }
   setStatus('chatStatus', 'Thinking…');
   const consent = $('consent').checked;
   try {
-    const answer = await state.client.chat(message, { consent });
+    const answer = await state.client.chat(message, { consent, images });
     state.transcript.add('jarvis', answer.text || '(no answer)');
     drawChat();
     setStatus('chatStatus', `Answered by ${answer.provider || 'the PC'}.`, 'ok');
-    if (state.speakAnswers) {
+    if (state.speakAnswers || (call && state.call === call)) {
       speak(answer.text || '', {
         lang: chooseLanguage(answer.text || '', { current: chosenVoiceLanguage() }),
       });
     }
     // The work is done, so a copy that waits in the queue must not be sent
     // a second time.
-    await state.outbox.discard(KINDS.CHAT, { message, consent });
+    if (!images) await state.outbox.discard(KINDS.CHAT, { message, consent });
   } catch (error) {
-    const kept = await keepForLater(error, KINDS.CHAT, { message, consent });
+    const kept = !images && await keepForLater(error, KINDS.CHAT, { message, consent });
     handleFailure(error, 'chat', { kept });
     state.transcript.add('system', error.message);
     drawChat();
+  }
+}
+
+function cameraFrame(source, width, height) {
+  const canvas = document.createElement('canvas');
+  const scale = Math.min(1, 400 / Math.max(width, height));
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
+  canvas.getContext('2d').drawImage(source, 0, 0, canvas.width, canvas.height);
+  const image = canvas.toDataURL('image/jpeg', 0.5).split(',')[1];
+  if (!image || image.length > 26_000) throw new Error('Camera frame is too large');
+  return image;
+}
+
+function stopPhoneCamera() {
+  state.cameraRequest = null;
+  if (state.camera) {
+    for (const track of state.camera.getTracks()) track.stop();
+  }
+  state.camera = null;
+  const view = $('liveCameraView');
+  view.srcObject = null;
+  view.hidden = true;
+  $('phoneCamera').textContent = 'Camera on';
+}
+
+async function togglePhoneCamera() {
+  if (state.camera || state.cameraRequest) {
+    stopPhoneCamera();
+    return;
+  }
+  const request = {};
+  let stream;
+  state.cameraRequest = request;
+  $('phoneCamera').textContent = 'Cancel camera';
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' } }, audio: false,
+    });
+    if (state.cameraRequest !== request) {
+      for (const track of stream.getTracks()) track.stop();
+      return;
+    }
+    state.cameraRequest = null;
+    state.camera = stream;
+    const view = $('liveCameraView');
+    view.srcObject = stream;
+    view.hidden = false;
+    $('phoneCamera').textContent = 'Camera off';
+    await view.play();
+  } catch {
+    if (state.cameraRequest === request || (stream && state.camera === stream)) {
+      stopPhoneCamera();
+      setStatus('chatStatus', 'The phone camera could not start. Check browser permission.', 'error');
+    }
+  }
+}
+
+function showCallStatus() {
+  const mode = state.call?.mode;
+  $('callStatus').textContent = mode === 'video' ? 'Video call · tap Listen to speak'
+    : mode === 'audio' ? 'Audio call · tap Listen to speak' : 'Call ended';
+  $('audioCall').disabled = !!mode;
+  $('videoCall').disabled = !!mode;
+  $('endCall').disabled = !mode;
+}
+
+function endPhoneCall() {
+  state.call = null;
+  const listening = state.listening;
+  state.listening = null;
+  if (listening) listening.stop();
+  $('listen').textContent = 'Listen';
+  stopPhoneCamera();
+  globalThis.speechSynthesis?.cancel();
+  showCallStatus();
+}
+
+async function startPhoneCall(mode) {
+  if (!state.client) {
+    setStatus('callStatus', 'Pair and connect to the PC first.', 'error');
+    return;
+  }
+  const call = { mode };
+  state.call = call;
+  showCallStatus();
+  if (mode === 'audio') {
+    if (!state.listening && recognitionSupported()) toggleListening();
+    return;
+  }
+  if (!state.camera) await togglePhoneCamera();
+  if (state.call === call && !state.camera) {
+    endPhoneCall();
+    setStatus('callStatus', 'The video call needs phone camera access.', 'error');
+  }
+}
+
+function videoEvent(video, name) {
+  return new Promise((resolve, reject) => {
+    const finish = (error) => {
+      clearTimeout(timer);
+      video.removeEventListener(name, ready);
+      video.removeEventListener('error', failed);
+      if (error) reject(error); else resolve();
+    };
+    const ready = () => finish();
+    const failed = () => finish(new Error('The video could not be opened.'));
+    const timer = setTimeout(failed, 5000);
+    video.addEventListener(name, ready);
+    video.addEventListener('error', failed);
+  });
+}
+
+async function clipFrames(url) {
+  const video = document.createElement('video');
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = 'auto';
+  try {
+    const loaded = videoEvent(video, 'loadedmetadata');
+    video.src = url;
+    await loaded;
+    if (!Number.isFinite(video.duration) || video.duration <= 0 || video.duration > 30) {
+      throw new Error('Choose a video up to 30 seconds long.');
+    }
+    const frames = [];
+    for (const portion of [0.15, 0.5, 0.85]) {
+      const ready = videoEvent(video, 'seeked');
+      video.currentTime = video.duration * portion;
+      await ready;
+      frames.push(cameraFrame(video, video.videoWidth, video.videoHeight));
+    }
+    return frames;
+  } finally {
+    video.removeAttribute('src');
+    video.load();
+  }
+}
+
+async function askAboutCamera(file, isClip) {
+  if (!state.client || !$('consent').checked) {
+    setStatus('chatStatus', 'Connect to the PC and allow Gemini for this camera request first.', 'error');
+    return;
+  }
+  if (file.size > 20 * 1024 * 1024) {
+    setStatus('chatStatus', 'Choose a camera file smaller than 20 MB.', 'error');
+    return;
+  }
+  const url = URL.createObjectURL(file);
+  try {
+    let images;
+    if (isClip) {
+      images = await clipFrames(url);
+    } else {
+      const source = new Image();
+      source.src = url;
+      await source.decode();
+      images = [cameraFrame(source, source.naturalWidth, source.naturalHeight)];
+    }
+    const question = $('message').value.trim() || (isClip
+      ? 'இந்த வீடியோவின் மூன்று படங்களில் என்ன நடக்கிறது? தமிழில் சொல்லு.'
+      : 'இந்தப் படத்தில் என்ன தெரிகிறது? தமிழில் சொல்லு.');
+    await sendMessage(question, { images });
+  } catch {
+    setStatus('chatStatus', isClip ? 'Try a shorter video under 30 seconds.'
+      : 'Could not read this photo. Try a JPEG photo.', 'error');
+  } finally {
+    URL.revokeObjectURL(url);
   }
 }
 
@@ -244,12 +448,13 @@ function toggleListening() {
     return;
   }
   try {
+    const call = state.call;
     state.listening = startListening({
       lang: chosenVoiceLanguage(),
       onResult: (text) => {
         state.listening = null;
         $('listen').textContent = 'Listen';
-        if (text) {
+        if (text && (!call || state.call === call)) {
           $('message').value = text;
           sendMessage(text);
         }
@@ -318,28 +523,36 @@ async function refreshJobs() {
   }
 }
 
-async function submitTask() {
-  if (!state.client) {
-    return;
-  }
-  const title = $('taskTitle').value.trim();
-  const payload = $('taskPayload').value;
-  const task = { kind: 'CUSTOM', title, payload, requireApproval: true };
+function diskSpaceTask() {
+  return { kind: 'CUSTOM', title: 'Check PC disk space',
+    payload: JSON.stringify({ action: 'check_disk_space' }), requireApproval: true };
+}
+
+async function submitTaskRequest(task) {
+  if (!state.client) return false;
   try {
     await state.client.submitJob(task);
-    $('taskTitle').value = '';
-    $('taskPayload').value = '';
     setStatus('chatStatus', 'The task was sent. Approve it on the PC.', 'ok');
     // The task is on the PC now, so a copy that waits in the queue must not
     // be sent a second time.
     await state.outbox.discard(KINDS.TASK, task);
     await refreshJobs();
+    return true;
   } catch (error) {
     const kept = await keepForLater(error, KINDS.TASK, task);
     handleFailure(error, 'tasks', { kept });
+    return false;
   }
 }
 
+async function submitTask() {
+  const title = $('taskTitle').value.trim();
+  const payload = $('taskPayload').value;
+  if (await submitTaskRequest({ kind: 'CUSTOM', title, payload, requireApproval: true })) {
+    $('taskTitle').value = '';
+    $('taskPayload').value = '';
+  }
+}
 /**
  * Ask the PC to back up the conversation history.
  *
@@ -716,6 +929,38 @@ function installListeners() {
     }
   });
   $('listen').addEventListener('click', toggleListening);
+  $('audioCall').addEventListener('click', () => startPhoneCall('audio'));
+  $('videoCall').addEventListener('click', () => startPhoneCall('video'));
+  $('endCall').addEventListener('click', endPhoneCall);
+  $('phoneCamera').addEventListener('click', togglePhoneCamera);
+  $('lookNow').addEventListener('click', () => {
+    const question = $('message').value.trim();
+    if (!question) {
+      sendMessage('பார்');
+      return;
+    }
+    const view = $('liveCameraView');
+    if (!state.camera || !view.videoWidth || !$('consent').checked) {
+      setStatus('chatStatus', 'Turn on the camera and allow Gemini to ask about this view.', 'error');
+      return;
+    }
+    try {
+      sendMessage(question, { images: [cameraFrame(view, view.videoWidth, view.videoHeight)] });
+    } catch {
+      setStatus('chatStatus', 'Could not read the current camera frame. Try again.', 'error');
+    }
+  });
+  window.addEventListener('pagehide', endPhoneCall);
+  for (const [button, input, isClip] of [
+    ['cameraAsk', 'cameraPhoto', false], ['clipAsk', 'cameraClip', true],
+  ]) {
+    $(button).addEventListener('click', () => $(input).click());
+    $(input).addEventListener('change', (event) => {
+      const file = event.target.files[0];
+      if (file) askAboutCamera(file, isClip);
+      event.target.value = '';
+    });
+  }
   $('speak').addEventListener('click', () => {
     state.speakAnswers = !state.speakAnswers;
     $('speak').textContent = state.speakAnswers ? 'Speaking on' : 'Speak answers';

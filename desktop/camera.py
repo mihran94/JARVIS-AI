@@ -22,8 +22,8 @@ class CameraPanel(QGroupBox):
         self.choice.setAccessibleName('Camera device')
         self.choice.currentIndexChanged.connect(self.select_device)
         layout.addWidget(self.choice)
-        note = QLabel('Camera On shows a preview. During Gemini voice, one frame per second '
-                      'is shared with Google to understand what you show. Camera Off stops sharing.')
+        note = QLabel('During Gemini voice, Camera On shares one frame per second with Google. '
+                      'The HUD preview is optional. Camera Off stops sharing.')
         note.setWordWrap(True)
         layout.addWidget(note)
         self.preview = QLabel()
@@ -72,7 +72,6 @@ class CameraPanel(QGroupBox):
                 self.camera = None
             self.frame = QImage()
             self.preview.clear()
-            self.preview.hide()
             self.toggle.setText('Camera off')
             return
         if QCamera is None or self.policy.stopped:
@@ -91,7 +90,6 @@ class CameraPanel(QGroupBox):
         self.camera.errorOccurred.connect(lambda *_: self.toggle.setChecked(False))
         self.capture.setCamera(self.camera)
         self.preview.setText('Starting camera…')
-        self.preview.show()
         self.toggle.setText('Camera on')
         self.camera.start()
 
@@ -99,9 +97,10 @@ class CameraPanel(QGroupBox):
         if self.camera is not None and frame.isValid():
             self.frame = frame.toImage().scaled(QSize(640, 480), Qt.AspectRatioMode.KeepAspectRatio,
                                                 Qt.TransformationMode.SmoothTransformation)
-            self.preview.setPixmap(QPixmap.fromImage(self.frame).scaled(
-                self.preview.size(), Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation))
+            if self.preview.isVisible():
+                self.preview.setPixmap(QPixmap.fromImage(self.frame).scaled(
+                    self.preview.size(), Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation))
 
     def snapshot(self):
         if self.camera is None or not self.camera.isActive() or self.frame.isNull():

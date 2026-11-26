@@ -104,6 +104,9 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             length = int(self.headers.get('Content-Length') or 0)
         except ValueError:
             length = 0
+        if not 0 <= length <= 128 * 1024:
+            self.send_error(413, 'Bridge request is too large')
+            return
         body = self.rfile.read(length).decode('utf-8', 'replace') if length > 0 else ''
         headers = normalize_headers({key: value for key, value in self.headers.items()})
         request = BridgeRequest(method=self.command, path=self.path, headers=headers,

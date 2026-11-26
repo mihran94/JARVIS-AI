@@ -17,6 +17,7 @@ import platform
 from datetime import datetime
 from pathlib import Path
 import json
+import secrets
 import shutil
 
 from PySide6.QtCore import QRectF, Qt
@@ -211,7 +212,7 @@ class BridgePanel(QWidget):
         self.phone_key = QLineEdit(IPHONE_KEY_ID)
         code_layout.addRow('Device key id', self.phone_key)
         code_row = QHBoxLayout()
-        self.pair_iphone_button = QPushButton('Pair this iPhone')
+        self.pair_iphone_button = QPushButton('Pair phone & show QR')
         self.pair_iphone_button.clicked.connect(self.pair_iphone)
         # Two buttons side by side set a wide minimum on the whole row. On a
         # machine whose default font is wider, that minimum was larger than
@@ -388,10 +389,19 @@ class BridgePanel(QWidget):
         """Pair an iPhone under its own key id and show its pairing code."""
         def operation():
             key_id = self.phone_key.text().strip() or IPHONE_KEY_ID
-            pairing = self.pairing.pair(key_id=key_id, label='iphone',
-                                        expires_epoch_ms=self._pairing_deadline())
+            address = self.phone_address.text().strip()
+            deadline = self._pairing_deadline()
+            number = f'{secrets.randbelow(10**40):040d}'
+            payload = (pairing_payload(address, key_id, number, deadline // 1000,
+                                       fingerprint=self.certificate_fingerprint()) if address else '')
+            pairing = self.pairing.pair(key_id=key_id, label='iphone', secret=number,
+                                        expires_epoch_ms=deadline)
             self.secret_display.setPlainText(pairing.secret)
             self.refresh()
+            if payload:
+                self.code_text.setPlainText(payload)
+                self._draw_qr(payload)
+                return 'Scan the QR in Phone Remote, or enter the HTTPS address, key id and pairing number.'
             return ('iPhone paired as ' + key_id + '. Show the pairing code and '
                     'scan it with the phone.')
         self.notify(operation)
