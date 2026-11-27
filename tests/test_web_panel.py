@@ -19,7 +19,7 @@ def test_browser_defaults_to_https():
     assert web_address('example.com/path?q=test').toString() == 'https://example.com/path?q=test'
 
 
-def test_browser_uses_existing_display_and_keeps_chat(tmp_path, monkeypatch):
+def test_browser_opens_separate_panel_and_keeps_hologram(tmp_path, monkeypatch):
     from PySide6.QtWidgets import QApplication, QPushButton
     from desktop.app import Window
     app = QApplication.instance() or QApplication([])
@@ -32,15 +32,14 @@ def test_browser_uses_existing_display_and_keeps_chat(tmp_path, monkeypatch):
         window.prompt.setPlainText('/web https://example.com')
         window.send()
         assert opened == ['https://example.com']
-        assert chat.displays.currentWidget() is panel
+        assert chat.displays.currentWidget() is chat.assistant
+        assert panel.isWindow()
         assert chat.conversation.parent() is not None
         assert window.prompt.toPlainText() == ''
-        panel.home.click()
-        assert chat.displays.currentWidget() is chat.assistant
         browser = next(button for button in window.prime_shell.drawer.findChildren(QPushButton)
                        if button.text() == 'Browser')
         browser.click()
-        assert chat.displays.currentWidget() is panel
+        assert chat.displays.currentWidget() is chat.assistant
         assert opened == ['https://example.com', '']
         assert not window.prime_shell.drawer.isVisible()
     finally:
@@ -55,6 +54,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import threading, time
 from PySide6.QtWidgets import QApplication
 from desktop.web_panel import WebPanel
+from desktop.web_panel import BrowserWindow
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -90,6 +90,29 @@ panel.closed.connect(lambda: closed.append(True))
 panel.home.click()
 until(lambda: panel.view.url().toString() == 'about:blank')
 assert closed == [True]
+browser = BrowserWindow()
+first = browser.add_tab('http://127.0.0.1:%s/first' % server.server_port)
+second = browser.add_tab('http://127.0.0.1:%s/second' % server.server_port)
+until(lambda: first.view.title() == second.view.title() == 'JARVIS browser test')
+assert first.profile is second.profile
+assert browser.tabs.count() == 2
+assert first.view.url().path() == '/first' and second.view.url().path() == '/second'
+browser.tabs.tabBar().moveTab(0, 1)
+browser.update_title(first, 'First page')
+assert browser.tabs.tabText(1) == 'First page'
+browser.close_tab(0)
+assert browser.tabs.count() == 1 and browser.tabs.widget(0) is first
+browser.close_tab(0)
+assert browser.tabs.count() == 1 and browser.tabs.widget(0).view is None
+browser.add_button.click()
+assert browser.tabs.count() == 2
+browser.close()
+assert browser.tabs.count() == 0
+browser.open_url()
+assert browser.tabs.count() == 1
+browser.reject()
+assert browser.tabs.count() == 0 and not browser.isVisible()
+browser.deleteLater()
 panel.deleteLater()
 app.sendPostedEvents(None, 52)
 app.processEvents()

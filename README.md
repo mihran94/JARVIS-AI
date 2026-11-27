@@ -20,14 +20,18 @@ older distributions.
 ### Built-in browser
 
 Choose **Menu → Browser**, say “open browser”, or type `/web https://example.com`
-in Chat. The browser opens in the central display while Chat and Terminal stay
-available. Enter a website address and press Enter or Go; use Back, Forward and
-Reload to navigate. **Back to hologram** stops the page and restores M.
+in Chat. A separate resizable **JARVIS Browser** panel opens; the main hologram,
+Chat and Terminal stay in place. Use **+** or **Ctrl+T** to add tabs, **Ctrl+W**
+to close the current tab, and **Ctrl+L** to select its address. Tabs can be
+reordered, and each keeps its own address and Back/Forward history. Enter a
+website address and press Enter or Go; use Back, Forward and Reload to navigate.
+Closing the browser panel stops and closes its tabs.
 
 The web engine starts only when a website is opened. Its private session does
 not persist cookies or history across app restarts, and pages have no bridge to
 JARVIS credentials, chat memory or automation. Website device permissions,
-downloads, file selection and pop-up windows are disabled in this first version.
+downloads, file selection and automatic pop-up windows are disabled. User-clicked
+links that request another window open in a browser tab.
 Some sites require a full external browser. `/browser` retains the existing
 separate reviewed browser-automation workflow.
 

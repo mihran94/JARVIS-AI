@@ -772,10 +772,8 @@ class PrimeChat(QWidget):
         from desktop.youtube_panel import YouTubePanel
         self.youtube = YouTubePanel()
         self.displays.addWidget(self.youtube)
-        from desktop.web_panel import WebPanel
-        self.web_panel = WebPanel()
-        self.web_panel.closed.connect(lambda: self.show_display('hologram'))
-        self.displays.addWidget(self.web_panel)
+        from desktop.web_panel import BrowserWindow
+        self.web_panel = BrowserWindow(window)
         self.display_buttons = {}
         for key, label in (('hologram', 'Hologram'), ('media', 'Media')):
             button = QPushButton(label)
@@ -1107,8 +1105,6 @@ class PrimeChat(QWidget):
     def open_browser(self, url=''):
         self.window_ref.prime_shell.close_drawer()
         self.window_ref.open_section('JARVIS Chat')
-        self.displays.setCurrentWidget(self.web_panel)
-        self.update_workspace_visibility()
         self.web_panel.open_url(url)
 
     def play_youtube(self, url):

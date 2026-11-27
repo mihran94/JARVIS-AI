@@ -7607,6 +7607,7 @@ class Window(QMainWindow):
             event.ignore()
         else:
             self.voice_exit_timer.stop()
+            self.prime_chat.web_panel.close()
             self.prime_shell.close_drawer()
             self.prime_shell.clock_timer.stop()
             self.prime_chat.weather_timer.stop()
