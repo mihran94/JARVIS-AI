@@ -78,13 +78,40 @@ class Page:
     status: int = 200
     truncated: bool = False
 
-    def as_context(self, max_characters: int = 12000) -> str:
+    def as_context(self, max_characters: int = 12000, question: str = '') -> str:
         """The page as text for a prompt."""
         head = f'# {self.title}\nSource: {self.url}\n\n' if self.title else f'Source: {self.url}\n\n'
         body = self.text[:max_characters]
+        if question and len(self.text) > max_characters:
+            body = relevant_passages(self.text, question, max_characters)
         if self.truncated:
             body += '\n\n[the page was cut short]'
         return head + body
+
+
+def relevant_passages(text: str, question: str, budget: int) -> str:
+    """Keep the opening and the passages covering the most distinct query terms."""
+    if budget <= 0:
+        return ''
+    def terms(value):
+        return set(re.sub(r'[^\w\u0b80-\u0bff]+', ' ', value.casefold()).split())
+
+    wanted = terms(question) - {'a', 'an', 'the', 'is', 'of', 'to', 'what', 'how', 'in'}
+    if not wanted:
+        return text[:budget]
+    width = max(1, min(1200, budget // 4))
+    blocks = [text[i:i + width] for i in range(0, len(text), width)]
+    scores = [len(wanted & terms(block)) for block in blocks]
+    if not any(scores):
+        return text[:budget]
+    selected = {0}
+    remaining = budget - len(blocks[0])
+    for i in sorted(range(1, len(blocks)), key=scores.__getitem__, reverse=True):
+        cost = len(blocks[i]) + 5
+        if cost <= remaining:
+            selected.add(i)
+            remaining -= cost
+    return '\n[…]\n'.join(blocks[i] for i in sorted(selected))
 
 
 @dataclass
@@ -290,7 +317,7 @@ def fetch(url: str, *, client=None, timeout: float = DEFAULT_TIMEOUT,
 
 def build_prompt(question: str, page: Page, max_characters: int = 12000) -> list:
     """The messages for the provider."""
-    context = page.as_context(max_characters)
+    context = page.as_context(max_characters, question)
     system = (
         'You are JARVIS. You answer only from the page the owner gave you. '
         'If the page does not hold the answer, say so plainly. Do not invent '

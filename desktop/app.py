@@ -1666,6 +1666,28 @@ class Window(QMainWindow):
         return True
 
     def route_interface_command(self, spoken):
+        from core.conversation import web_search_argument
+        from urllib.parse import urlencode
+        query = web_search_argument(spoken)
+        if query is not None:
+            if not query:
+                detail = 'What would you like to search for? Try /search followed by your question.'
+            elif not self.store.get('automation:self_control', True):
+                detail = 'Enable PC control in Settings to open search results in your browser.'
+            else:
+                url = 'https://www.google.com/search?' + urlencode({'q': query})
+                def open_results():
+                    if not QDesktopServices.openUrl(QUrl(url)):
+                        raise RuntimeError('Could not open the browser.')
+                    return 'Opened Google results for ' + query
+
+                try:
+                    detail = self.gateway.run(Action('web_search', 'Google Search · ' + query),
+                                              self.confirm, open_results)
+                except RuntimeError as error:
+                    detail = str(error)
+            self.show_local_system_reply(spoken, detail, speak=False)
+            return True
         from automation import named_apps
         request = named_apps.parse(spoken, has_selection=self.selected_app_window is not None)
         if request is not None:
