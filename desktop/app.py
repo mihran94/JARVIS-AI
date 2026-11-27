@@ -1635,6 +1635,18 @@ class Window(QMainWindow):
         return True
 
     def route_interface_command(self, spoken):
+        from automation import named_apps
+        request = named_apps.parse(spoken)
+        if request is not None:
+            try:
+                if not self.store.get('automation:self_control', True):
+                    raise Denied('Enable PC control in Settings first.')
+                ticket = self.policy.ticket()
+                detail = named_apps.run(request, self.gateway, self.confirm, lambda: self.policy.check(ticket))
+            except Exception as error:
+                detail = str(error)
+            self.show_local_system_reply(spoken, detail, speak=False)
+            return True
         text = addressed_request(spoken).casefold().strip(' .!?')
         text = re.sub(r'\s+', ' ', text)
         if text in {'news update', 'news sollu', 'news update sollu', 'செய்தி சொல்லு',
@@ -2201,13 +2213,13 @@ class Window(QMainWindow):
         self.show_local_system_reply(command, reply)
         return True
 
-    def show_local_system_reply(self, command, reply):
+    def show_local_system_reply(self, command, reply, *, speak=True):
         self.store.message(self.session, 'local command', command)
         self.store.message(self.session, 'system', reply)
         self.render_chat()
         self.refresh_archives()
         self.show_hud_text(reply)
-        if self.read_replies.isChecked():
+        if speak and self.read_replies.isChecked():
             self.read_with_gemini(reply)
 
     def show_hud_text(self, text):
@@ -2988,6 +3000,7 @@ class Window(QMainWindow):
                 'Refresh the list of windows and choose one of them first.')
             return
         try:
+            app_control.focus_selected(pid, title)
             text = app_control.see_controls(pid, title)
         except Exception as error:
             text = 'The controls could not be read: ' + str(error)
@@ -3002,8 +3015,13 @@ class Window(QMainWindow):
             head, _, tail = line.partition('): ')
             pid_text = head.split('pid=')[-1].strip()
             title = tail.strip()
-            if len(title) >= 2 and title[0] == "'" and title[-1] == "'":
-                title = title[1:-1]
+            from ast import literal_eval
+            try:
+                title = literal_eval(title)
+            except (ValueError, SyntaxError):
+                continue
+            if not isinstance(title, str):
+                continue
             try:
                 return int(pid_text), title
             except ValueError:
