@@ -73,6 +73,28 @@ def test_typed_remember_stays_local(window, monkeypatch):
     assert not window.prompt.toPlainText()
 
 
+def test_voice_reconnect_is_bounded_and_mute_cancels_it(window, monkeypatch):
+    monkeypatch.setattr(window, 'start_automatic_voice', lambda: None)
+    window.voice_panel.allow.setChecked(True)
+    window.store.set('voice:auto_gemini', True)
+    window.voice_panel.microphone_muted = False
+    for delay in (2000, 4000, 8000):
+        window.schedule_live_reconnect()
+        assert window.live_reconnect_timer.interval() == delay
+        window.schedule_live_reconnect()
+        assert window.live_reconnect_timer.interval() == delay
+        window.live_reconnect_timer.stop()
+    window.schedule_live_reconnect()
+    assert not window.live_reconnect_timer.isActive()
+    window.on_live_voice_state('listening')
+    window.schedule_live_reconnect()
+    assert window.live_reconnect_timer.isActive()
+    window.set_microphone_muted(True)
+    assert not window.live_reconnect_timer.isActive()
+    window.schedule_live_reconnect()
+    assert not window.live_reconnect_timer.isActive()
+
+
 def test_spoken_take_control_waits_for_a_task_even_with_project_context(window, monkeypatch):
     def unexpected_launch(*args, **kwargs):
         pytest.fail('Taking control must not start a task or open an app')

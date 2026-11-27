@@ -77,6 +77,7 @@ def microphone_pcm(raw, channels, sample_format):
 
 
 class LiveVoice(QObject):
+    reconnect_requested = Signal()
     state_changed = Signal(str)
     status = Signal(str)
     turn_finished = Signal(str, str)
@@ -98,11 +99,14 @@ class LiveVoice(QObject):
         self.readout = ''
         self.readout_finished = False
         self.frame_provider = None
+        self.look_request = None
+        self.look_timer = QTimer(self, singleShot=True, interval=200)
+        self.look_timer.timeout.connect(self.finish_look)
         self.video_timer = QTimer(self, interval=1000)
         self.video_timer.timeout.connect(self.send_camera_frame)
         self.connection_timer = QTimer(self, singleShot=True, interval=12000)
         self.connection_timer.timeout.connect(
-            lambda: self.stop('Gemini Live did not connect. Check your provider and network.'))
+            self.connection_timed_out)
         self.play_timer = QTimer(self, interval=20)
         self.play_timer.timeout.connect(self.flush_audio)
         self.speaker_tail = QTimer(self, singleShot=True, interval=SPEAKER_TAIL_MS)
@@ -169,18 +173,43 @@ class LiveVoice(QObject):
         socket = self.socket
         if not self.active or socket is None or self.readout or not image:
             return False
-        self.send({'realtimeInput': {'video': {
-            'mimeType': 'image/jpeg', 'data': base64.b64encode(image).decode('ascii'),
-        }}})
-        # Gemini processes the realtime video and text streams independently.
-        # Give the frame time to enter context before asking about it.
-        QTimer.singleShot(1000, self, lambda: self.send({'realtimeInput': {'text': question}})
-                          if self.socket is socket else None)
+        self.look_request = (socket, image, question)
+        self.look_timer.start()
+        self.status.emit('Looking at the current camera view…')
         return True
+
+    def finish_look(self):
+        request, self.look_request = self.look_request, None
+        if request is None:
+            return
+        socket, image, question = request
+        if self.socket is not socket or not self.active or self.readout:
+            return
+        if self.frame_provider is not None:
+            image = self.frame_provider()
+        if not image:
+            self.status.emit('Camera view is unavailable. Turn on Camera and wait for a fresh frame.')
+            return
+        # Bind the question to this exact frame; realtime modality streams
+        # do not guarantee ordering between video and text.
+        self.send({'clientContent': {'turns': [{'role': 'user', 'parts': [
+            {'inlineData': {'mimeType': 'image/jpeg',
+                            'data': base64.b64encode(image).decode('ascii')}},
+            {'text': question},
+        ]}], 'turnComplete': True}})
 
     def connection_lost(self, *_):
         if self.sender() is self.socket:
+            reconnect = not self.readout
             self.stop('Gemini Live disconnected. Check Gemini access or start Live Voice again.')
+            if reconnect:
+                self.reconnect_requested.emit()
+
+    def connection_timed_out(self):
+        reconnect = not self.readout and self.state == 'connecting'
+        self.stop('Gemini Live did not connect. Check your provider and network.')
+        if reconnect:
+            self.reconnect_requested.emit()
 
     def audio_state_changed(self, state):
         if (state == QAudio.State.StoppedState and self.active
@@ -252,6 +281,9 @@ class LiveVoice(QObject):
             return
         try:
             packet = json.loads(raw)
+            if packet.get('error'):
+                self.stop('Gemini Live could not complete the request. Check the model and connection in AI Providers.')
+                return
             if 'setupComplete' in packet and self.state == 'connecting':
                 self.open_audio()
                 return
@@ -354,6 +386,8 @@ class LiveVoice(QObject):
 
 
     def stop(self, message='Live Voice stopped. The microphone is closed.'):
+        self.look_timer.stop()
+        self.look_request = None
         if not self.active:
             return
         self.connection_timer.stop()

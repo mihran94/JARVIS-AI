@@ -12,10 +12,13 @@ class Vault:
         self.service = f'{self.SERVICE}-development-{profile}' if profile else self.SERVICE
 
     def _backend(self):
-        if sys.platform != 'win32':
-            raise RuntimeError('Credential storage requires Windows Credential Manager.')
-        from keyring.backends.Windows import WinVaultKeyring
-        return WinVaultKeyring()
+        if sys.platform == 'win32':
+            from keyring.backends.Windows import WinVaultKeyring
+            return WinVaultKeyring()
+        if sys.platform == 'darwin':
+            from keyring.backends.macOS import Keyring
+            return Keyring()
+        raise RuntimeError('Credential storage requires Windows Credential Manager or macOS Keychain.')
 
     def get(self, provider):
         return self._backend().get_password(self.service, provider) or ''

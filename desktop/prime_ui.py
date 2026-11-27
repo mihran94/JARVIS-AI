@@ -652,7 +652,7 @@ class PrimeAssistant(QWidget):
     def refresh_caption(self):
         window = self.window_ref
         self.caption.setVisible(bool(self.caption.text()) and not window.voice_panel.microphone_muted
-                                and bool(window.store.get('appearance:hologram_captions', False)))
+                                and window.hologram_captions.isChecked())
 
 
 class PrimeComposer(QWidget):
@@ -1173,7 +1173,6 @@ class PrimeChat(QWidget):
         self.conversation.render(messages)
 
     def set_state(self, state: str):
-        self.assistant.orb.set_motion(not self.window_ref.store.get('omega:reduced', False))
         self.assistant.set_state(state)
         self.timeline.set_state(state)
 

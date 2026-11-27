@@ -52,6 +52,35 @@ def test_camera_stream_requires_a_live_session_and_current_frame(monkeypatch):
     assert len(packets) == 1
 
 
+def test_camera_question_uses_latest_frame_and_cancels_when_camera_is_off(monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    live = LiveVoice()
+    packets = []
+    monkeypatch.setattr(live, 'send', packets.append)
+    live.socket = object()
+    live.set_state('listening')
+    live.frame_provider = lambda: b'latest image'
+    assert live.look_at(b'old image', 'first question')
+    assert live.look_at(b'old image', 'latest question')
+    live.look_timer.stop()
+    live.finish_look()
+    content = packets[0]['clientContent']
+    parts = content['turns'][0]['parts']
+    assert base64.b64decode(parts[0]['inlineData']['data']) == b'latest image'
+    assert parts[1]['text'] == 'latest question'
+    assert content['turnComplete']
+    assert live.look_at(b'old image', 'must not send')
+    live.frame_provider = lambda: b''
+    live.look_timer.stop()
+    live.finish_look()
+    assert len(packets) == 1
+    assert live.look_at(b'old image', 'old session')
+    live.socket = object()
+    live.look_timer.stop()
+    live.finish_look()
+    assert len(packets) == 1
+
+
 def test_microphone_waits_after_the_speaker_finishes():
     app = QApplication.instance() or QApplication([])
     live = LiveVoice()
@@ -64,6 +93,18 @@ def test_microphone_waits_after_the_speaker_finishes():
     live.speaker_tail.stop()
     live.speaker_tail.timeout.emit()
     assert live.state == 'listening'
+
+
+def test_provider_errors_end_the_session_without_echoing_provider_details(monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    live = LiveVoice()
+    live.set_state('listening')
+    messages = []
+    monkeypatch.setattr(live, 'stop', messages.append)
+    live.receive(json.dumps({'error': {'message': 'private provider debug details'}}))
+    assert len(messages) == 1
+    assert 'AI Providers' in messages[0]
+    assert 'private provider' not in messages[0]
 
 
 def test_float_windows_headset_audio_is_converted_to_signed_mono():

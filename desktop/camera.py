@@ -1,4 +1,5 @@
 """Session-only camera preview and on-request snapshots."""
+from time import monotonic
 from PySide6.QtCore import QBuffer, QIODevice, QSize, Qt
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QComboBox, QGroupBox, QLabel, QVBoxLayout
@@ -16,6 +17,7 @@ class CameraPanel(QGroupBox):
         self.policy = policy
         self.toggle = toggle
         self.frame = QImage()
+        self.frame_updated_at = 0.0
         self.camera = None
         layout = QVBoxLayout(self)
         self.choice = QComboBox()
@@ -71,6 +73,7 @@ class CameraPanel(QGroupBox):
                 self.camera.deleteLater()
                 self.camera = None
             self.frame = QImage()
+            self.frame_updated_at = 0.0
             self.preview.clear()
             self.toggle.setText('Camera off')
             return
@@ -97,13 +100,15 @@ class CameraPanel(QGroupBox):
         if self.camera is not None and frame.isValid():
             self.frame = frame.toImage().scaled(QSize(640, 480), Qt.AspectRatioMode.KeepAspectRatio,
                                                 Qt.TransformationMode.SmoothTransformation)
+            self.frame_updated_at = monotonic()
             if self.preview.isVisible():
                 self.preview.setPixmap(QPixmap.fromImage(self.frame).scaled(
                     self.preview.size(), Qt.AspectRatioMode.KeepAspectRatio,
                     Qt.TransformationMode.SmoothTransformation))
 
     def snapshot(self):
-        if self.camera is None or not self.camera.isActive() or self.frame.isNull():
+        if (self.camera is None or not self.camera.isActive() or self.frame.isNull()
+                or monotonic() - self.frame_updated_at > 2.0):
             return b''
         buffer = QBuffer()
         buffer.open(QIODevice.OpenModeFlag.WriteOnly)

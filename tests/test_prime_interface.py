@@ -420,11 +420,15 @@ def test_activity_panel_shows_live_state_and_persisted_action_result(tmp_path):
         window.refresh_history()
         assert timeline.records.currentItem().text() == 'Open app\nPending'
         assert 'Awaiting approval' in timeline.details.toPlainText()
+        status_cell = window.history.item(0, 2)
+        window.refresh_history()
+        assert window.history.item(0, 2) is status_cell
 
         window.store.finish(ident, 'dispatched', 'Started process. Window unverified.')
         window.refresh_history()
         assert timeline.records.currentItem().text() == 'Open app\nDispatched'
         assert 'Window unverified.' in timeline.details.toPlainText()
+        assert window.history.item(0, 2).text() == 'dispatched'
 
         window.stop()
         assert timeline.state.text() == 'Stopped'
@@ -433,6 +437,40 @@ def test_activity_panel_shows_live_state_and_persisted_action_result(tmp_path):
         app.processEvents()
         assert not timeline.isVisibleTo(window)
         assert window.pages.currentIndex() == window.page_indices['Task History']
+    finally:
+        window.close()
+
+
+def test_voice_hud_uses_current_motion_and_caption_controls_without_polling_settings(tmp_path, monkeypatch):
+    app, window = make_window(tmp_path)
+    try:
+        assistant = window.prime_chat.assistant
+        original_get = window.store.get
+        reads = []
+
+        def read(key, default=None):
+            if key in ('omega:reduced', 'appearance:hologram_captions'):
+                reads.append(key)
+            return original_get(key, default)
+
+        monkeypatch.setattr(window.store, 'get', read)
+        assistant.show_heard('Hello')
+        window.hologram_captions.setChecked(True)
+        assert assistant.caption.isVisibleTo(assistant)
+        window.reduce_motion.setChecked(True)
+        assert not assistant.orb._motion
+        reads.clear()
+
+        for _ in range(5):
+            window.refresh_voice_hud()
+        assert not reads
+        assert assistant.caption.isVisibleTo(assistant)
+        assert not assistant.orb._motion
+
+        window.voice_panel.microphone_muted = True
+        window.refresh_voice_hud()
+        assert not assistant.caption.isVisibleTo(assistant)
+        assert not reads
     finally:
         window.close()
 
