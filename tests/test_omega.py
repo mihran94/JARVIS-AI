@@ -173,6 +173,42 @@ def test_feeds_report_partial_and_missing_data_explicitly(tmp_path, monkeypatch)
         window.deleteLater()
 
 
+def test_live_weather_refresh_updates_animation_without_fetching_news(tmp_path, monkeypatch):
+    import json
+    _app, window, ui = launch(tmp_path)
+    urls = []
+    try:
+        def weather(url, limit, callback):
+            urls.append(url)
+            callback(json.dumps({
+                'current': {'temperature_2m': 9, 'time': '2026-11-27T08:15',
+                            'weather_code': 95, 'is_day': 1},
+                'current_units': {'temperature_2m': '°C'},
+            }).encode())
+        monkeypatch.setattr(ui.feeds, 'request', weather)
+        window.prime_chat.refresh_weather()
+        window.prime_chat.refresh_reference_panels()
+        assert len(urls) == 1 and 'open-meteo' in urls[0]
+        assert 'weather_code' in urls[0]
+        visual = window.prime_chat.weather_visual
+        assert visual.accessibleDescription() == 'Thunderstorm'
+        assert '9 °C' in window.prime_chat.weather_detail.text()
+        visual.grab()
+        window.reduce_motion.setChecked(True)
+        assert not visual.timer.isActive()
+        monkeypatch.setattr(ui.feeds, 'request', lambda url, limit, callback: callback(b''))
+        window.prime_chat.refresh_weather()
+        window.prime_chat.refresh_reference_panels()
+        assert visual.accessibleDescription() == 'Unavailable'
+        assert not visual.timer.isActive()
+        window.stop()
+        window.prime_chat.refresh_weather()
+        assert len(urls) == 1
+    finally:
+        window.close()
+        window.deleteLater()
+
+
 def test_floating_mic_shows_permissions_and_returns_voice_draft_to_chat(tmp_path):
     _app, window, ui = launch(tmp_path)
     try:

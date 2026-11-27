@@ -1107,6 +1107,7 @@ class Window(QMainWindow):
                 if dialog.exec() != QDialog.DialogCode.Accepted:
                     return
                 self.chat_provider.setCurrentText(self.stored_chat_provider())
+        self.prime_chat.refresh_weather()
         self.start_window_audio()
 
     def save_startup_microphone(self, enabled):
@@ -7580,6 +7581,8 @@ class Window(QMainWindow):
         else:
             self.prime_shell.close_drawer()
             self.prime_shell.clock_timer.stop()
+            self.prime_chat.weather_timer.stop()
+            self.prime_chat.weather_visual.timer.stop()
             for timer in (self.timer, self.system_timer, self.maintenance_timer, self.voice_hud_timer):
                 timer.stop()
             if self.news_panel is not None:
@@ -7644,8 +7647,11 @@ def main():
     args, smoke = launch_arguments(sys.argv)
     if '--check-voice-runtime' in args[1:]:
         return voice_runtime_smoke_test()
+    from desktop.app_identity import application_icon, set_process_identity
+    set_process_identity()
     app = QApplication(args)
     app.setApplicationName(APP_NAME)
+    app.setWindowIcon(application_icon())
     base = data_directory()
     base.mkdir(parents=True, exist_ok=True)
     lock = QLockFile(str(base / 'application.lock'))

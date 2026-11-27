@@ -25,6 +25,23 @@ ICON_PATCH = ROOT / 'patches' / 'windows-app-icon.patch'
 GREEN_PATCH = ROOT / 'patches' / 'github-actions-green.patch'
 
 
+def test_source_launch_icon_is_inherited_by_native_windows():
+    from PySide6.QtWidgets import QApplication, QWidget
+    from desktop.app_identity import application_icon
+
+    app = QApplication.instance() or QApplication([])
+    previous = app.windowIcon()
+    try:
+        icon = application_icon()
+        assert {size.width() for size in icon.availableSizes()} == set(SIZES)
+        app.setWindowIcon(icon)
+        window = QWidget()
+        assert not window.windowIcon().pixmap(32, 32).isNull()
+        window.close()
+    finally:
+        app.setWindowIcon(previous)
+
+
 def read_entries(data):
     """The pictures inside an icon file."""
     reserved, kind, count = struct.unpack('<HHH', data[:6])
