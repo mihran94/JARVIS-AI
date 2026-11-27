@@ -5,6 +5,7 @@ import re
 
 RESTART_EXIT_CODE = 75
 APP_NAME = 'JARVIS M'
+APP_VERSION = '0.3.0'
 DATA_FOLDER = 'JarvisM'
 
 

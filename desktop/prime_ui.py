@@ -39,7 +39,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-from core.runtime_profile import APP_NAME
+from core.runtime_profile import APP_NAME, APP_VERSION
 from shiboken6 import isValid
 
 from PySide6.QtCore import (
@@ -1454,7 +1454,7 @@ class PrimeShell(QWidget):
         menu = QWidget()
         menu_layout = QVBoxLayout(menu)
         menu_layout.setContentsMargins(0, 6, 0, 0)
-        menu_layout.setSpacing(12)
+        menu_layout.setSpacing(8)
         self.menu_items = {}
         self.menu_settings_button = QPushButton('Settings')
         self.menu_settings_button.clicked.connect(lambda: self.open_section('Settings & Safety'))
@@ -1480,6 +1480,7 @@ class PrimeShell(QWidget):
             ('Remote Control', lambda: self.window_ref.open_setting_category('Remote Control')),
             ('Saved Projects', self.window_ref.open_saved_projects),
             ('Task History', self.open_task_history),
+            ('Version & Updates', lambda: self.window_ref.open_setting_category('Version & Updates')),
             ('Help', lambda: self.window_ref.show_local_system_reply('Help',
                 'Speak in Tamil or Tanglish, or type and press Enter. Use /suggest for ideas. '
                 'F4 toggles the mic; F11 toggles fullscreen; Esc interrupts.')),
@@ -1506,7 +1507,16 @@ class PrimeShell(QWidget):
         self.mini_view_button.clicked.connect(self.open_mini_view)
         self.mini_view_button.hide()
         menu_layout.addStretch(1)
-        self.drawer_content.addWidget(menu)
+        version = QLabel(f'{APP_NAME} {APP_VERSION}')
+        version.setToolTip(self.build_label.text())
+        menu_layout.addWidget(version)
+        self.menu_scroller = QScrollArea()
+        self.menu_scroller.setAccessibleName('JARVIS menu options')
+        self.menu_scroller.setFrameShape(QFrame.Shape.NoFrame)
+        self.menu_scroller.setWidgetResizable(True)
+        self.menu_scroller.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.menu_scroller.setWidget(menu)
+        self.drawer_content.addWidget(self.menu_scroller)
         self.drawer_content.addWidget(self.window_ref.news_panel)
         layout.addWidget(self.drawer_content, 1)
         close = QShortcut(QKeySequence('Escape'), self.drawer)
@@ -1519,8 +1529,9 @@ class PrimeShell(QWidget):
         self.settings_dialog = QDialog(self, Qt.WindowType.Tool)
         self.settings_dialog.setWindowTitle('Settings & Safety')
         self.settings_dialog.setObjectName('primeDrawer')
-        available = self.screen().availableGeometry().height()
-        self.settings_dialog.resize(620, min(690, max(400, available - 80)))
+        available = self.screen().availableGeometry()
+        self.settings_dialog.resize(min(820, max(360, available.width() - 12)),
+                                    min(690, max(400, available.height() - 80)))
         self.settings_dialog.setMinimumSize(360, 400)
         self.settings_dialog.finished.connect(lambda: self.settings_button.setChecked(False))
         layout = QVBoxLayout(self.settings_dialog)
@@ -1564,6 +1575,8 @@ class PrimeShell(QWidget):
         self.settings_dialog.close()
         self.drawer_title.setText(title)
         self.drawer_content.setCurrentIndex(index)
+        if name == 'menu':
+            self.menu_scroller.verticalScrollBar().setValue(0)
         self.menu_button.setChecked(name == 'menu')
         self.resize_drawer()
         self.drawer.show()

@@ -273,10 +273,72 @@ def test_the_pairing_code_carries_the_certificate_fingerprint(tmp_path):
         pytest.skip('OpenSSL is not available on this machine')
     app, panel = make_panel(tmp_path)
     panel.create_certificate()
-    panel.pair_iphone()
     panel.phone_address.setText('https://pc.example.lan:8765')
+    panel.pair_browser_device()
     panel.show_pairing_code()
     assert not panel.errors, panel.errors
     code = panel.code_text.toPlainText()
     assert 'fp=' + panel.certificate_fingerprint() in code
+    panel.close()
+
+
+def test_browser_pairing_issues_a_separate_key_for_each_device(tmp_path):
+    app, panel = make_panel(tmp_path)
+    panel.phone_address.setText('https://pc.example.lan:8765')
+    panel.pair_browser_device()
+    first_key = panel.phone_key.text()
+    first_secret = panel.pairing.secret_for(first_key)
+
+    panel.pair_browser_device()
+    second_key = panel.phone_key.text()
+    assert not panel.errors, panel.errors
+    assert len(first_key) == 6 and first_key.isdecimal()
+    assert len(second_key) == 6 and second_key.isdecimal()
+    assert first_key != second_key
+    assert first_secret
+    assert panel.pairing.secret_for(first_key) == first_secret
+    panel.close()
+
+
+def test_browser_qr_rotates_only_after_a_signed_request(tmp_path):
+    app, panel = make_panel(tmp_path)
+    panel.phone_address.setText('https://pc.example.lan:8765')
+    panel.pair_browser_device()
+    first_key = panel.phone_key.text()
+    first_code = panel.code_text.toPlainText()
+    secret = panel.pairing.secret_for(first_key)
+
+    assert panel.pairing_timer.isActive()
+    panel._rotate_confirmed_pairing()
+    assert panel.code_text.toPlainText() == first_code
+
+    request = signed_request(panel.bridge, 'GET', '/api/status',
+                             secret=secret, key_id=first_key)
+    assert panel.bridge.handle(request).status == 200
+    panel._rotate_confirmed_pairing()
+
+    second_key = panel.phone_key.text()
+    assert second_key != first_key
+    assert panel.code_text.toPlainText() != first_code
+    assert panel.pairing.secret_for(first_key) == secret
+    assert not panel.errors
+    panel.close()
+
+
+def test_qr_pixmap_has_every_module_and_its_quiet_zone(tmp_path):
+    from PySide6.QtGui import QColor
+    from desktop.bridge_pairing import pairing_matrix
+
+    app, panel = make_panel(tmp_path)
+    payload = 'https://pc.example.lan:8765/#pair=sample'
+    panel._draw_qr(payload)
+    image = panel.code_qr.pixmap().toImage()
+    matrix = pairing_matrix(payload, border=4)
+    module_size = image.width() // len(matrix)
+    assert module_size > 0
+    assert image.width() == image.height() == len(matrix) * module_size
+    for y, row in enumerate(matrix):
+        for x, dark in enumerate(row):
+            expected = QColor('black' if dark else 'white')
+            assert image.pixelColor(x * module_size, y * module_size) == expected
     panel.close()

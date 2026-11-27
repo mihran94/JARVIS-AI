@@ -88,6 +88,23 @@ def test_an_unsigned_request_is_rejected():
         listener.stop()
 
 
+def test_phone_shell_and_signed_api_share_one_origin(tmp_path):
+    (tmp_path / 'index.html').write_text('Phone Remote', encoding='utf-8')
+    (tmp_path / 'private.txt').write_text('Private data', encoding='utf-8')
+    listener = BridgeListener(make_bridge(), ListenerConfig(
+        port=0, allow_plaintext=True, phone_web_root=tmp_path))
+    address = listener.start()
+    try:
+        shell = httpx.get(address + '/')
+        assert shell.status_code == 200 and shell.text == 'Phone Remote'
+        assert httpx.get(address + '/private.txt').status_code == 403
+        assert httpx.get(address + '/api/status').status_code == 403
+        assert httpx.get(address + '/api/status',
+                         headers=signed_headers('GET', '/api/status')).status_code == 200
+    finally:
+        listener.stop()
+
+
 def test_a_tampered_body_is_rejected():
     listener = BridgeListener(make_bridge(), ListenerConfig(port=0, allow_plaintext=True))
     address = listener.start()

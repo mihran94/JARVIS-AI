@@ -3,11 +3,22 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  PAIRING_FORMAT, buildPairingPayload, isPairingValid, parsePairingPayload,
+  PAIRING_FORMAT, buildPairingPayload, isPairingValid, parsePairingLink, parsePairingPayload,
 } from '../js/pairing.js';
 
 const SECRET = 'shared-secret-for-tests-0123456789abcdef';
 const NOW = 1700000000;
+
+test('a browser pairing link keeps the secret in the fragment and binds it to the origin', () => {
+  const origin = 'https://pc.example.lan:8765';
+  const payload = buildPairingPayload({
+    bridgeUrl: origin, keyId: 'phone', secret: SECRET, expiresAt: NOW + 600,
+  });
+  const link = origin + '/#pair=' + encodeURIComponent(payload);
+  assert.equal(parsePairingLink(link, { now: NOW }).secret, SECRET);
+  assert.throws(() => parsePairingLink(link.replace('https://pc.', 'https://other.'),
+    { now: NOW }), /does not match/);
+});
 
 test('a code that is written can be read back', () => {
   const payload = buildPairingPayload({

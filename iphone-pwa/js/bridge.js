@@ -117,7 +117,7 @@ export class BridgeClient {
     baseUrl,
     keyId,
     secret,
-    fetchImpl = globalThis.fetch,
+    fetchImpl = globalThis.fetch.bind(globalThis),
     now = Date.now,
     randomBytes = (bytes) => crypto.getRandomValues(bytes),
     allowLoopbackHttp = false,
@@ -162,7 +162,7 @@ export class BridgeClient {
         headers,
         body: body || undefined,
         cache: 'no-store',
-        credentials: 'omit',
+        credentials: 'same-origin',
         redirect: 'error',
       });
     } catch (error) {

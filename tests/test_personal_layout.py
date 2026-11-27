@@ -56,10 +56,13 @@ def test_chat_and_phone_stay_readable_at_narrow_desktop_size(tmp_path):
         app.processEvents()
         assert not window.backup_provider.isVisible()
 
+        main_page = window.pages.currentWidget()
         window.open_section("Phone Remote")
+        assert window.phone_remote_popup.isVisible()
+        assert window.pages.currentWidget() is main_page
         tabs = window.bridge.findChild(QTabWidget)
         assert [tabs.tabText(index) for index in range(tabs.count())] == [
-            "Set up iPhone", "Set up Android", "Advanced connection", "Job approvals",
+            "Pair a device", "Paired devices", "Advanced connection", "Job approvals",
         ]
         for index in range(tabs.count()):
             tabs.setCurrentIndex(index)
@@ -67,6 +70,8 @@ def test_chat_and_phone_stay_readable_at_narrow_desktop_size(tmp_path):
             assert tabs.currentWidget().horizontalScrollBar().maximum() == 0
         assert window.bridge.host.height() >= 30
         assert not window.bridge.listener.running
+        window.phone_remote_popup.reject()
+        assert not window.phone_remote_popup.isVisible()
     finally:
         window.close()
         # The window is destroyed, not just closed: a closed window keeps its

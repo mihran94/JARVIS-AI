@@ -7,7 +7,7 @@
 
 // The version changes whenever the shell changes, so an installed app
 // stops serving the old files from its cache.
-const CACHE = 'jarvis-iphone-shell-v6';
+const CACHE = 'jarvis-iphone-shell-v11';
 
 const SHELL = [
   './',
@@ -22,6 +22,7 @@ const SHELL = [
   './js/pairing.js',
   './js/qr.js',
   './js/speech.js',
+  './vendor/jsQR.js',
   './icons/icon-180.png',
   './icons/icon-192.png',
   './icons/icon-512.png',

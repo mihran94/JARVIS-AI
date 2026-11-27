@@ -18,6 +18,7 @@ two are checked against each other by the test suite.
 """
 import re
 import time
+from urllib.parse import quote, urlsplit, urlunsplit
 
 #: The first line of every pairing code.
 PAIRING_FORMAT = 'JARVIS-BRIDGE-v1'
@@ -31,6 +32,20 @@ MINIMUM_SECRET_LENGTH = 32
 
 class PairingCodeError(ValueError):
     """A pairing code could not be built."""
+
+
+def pairing_browser_link(address: str, payload: str) -> str:
+    """Keep the pairing secret in a fragment, outside HTTP requests."""
+    try:
+        url = urlsplit(address.strip())
+        if (url.scheme != 'https' or not url.hostname or url.username is not None
+                or url.password is not None or url.path not in ('', '/')
+                or url.query or url.fragment):
+            raise ValueError
+        _ = url.port
+    except ValueError:
+        raise PairingCodeError('Enter the private HTTPS origin without a path or login details.') from None
+    return urlunsplit((url.scheme, url.netloc, '/', '', 'pair=' + quote(payload, safe='')))
 
 
 def expires_at(now=None, lifetime_seconds: int = DEFAULT_LIFETIME_SECONDS) -> int:
@@ -95,7 +110,7 @@ def pairing_svg(payload: str) -> str:
     return picture
 
 
-def pairing_matrix(payload: str) -> list[list[bool]]:
+def pairing_matrix(payload: str, *, border: int = 2) -> list[list[bool]]:
     """The pairing code as a matrix of dark and light cells.
 
     The tests use it to draw the code into a picture and read it back with
@@ -103,7 +118,7 @@ def pairing_matrix(payload: str) -> list[list[bool]]:
     """
     import qrcode
 
-    code = qrcode.QRCode(border=2, box_size=1)
+    code = qrcode.QRCode(border=border, box_size=1)
     code.add_data(payload)
     code.make(fit=True)
     return [[bool(cell) for cell in row] for row in code.get_matrix()]

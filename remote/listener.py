@@ -19,6 +19,8 @@ method, the path, the status and the peer address only.
 from dataclasses import dataclass, field
 import http.server
 import logging
+import mimetypes
+from pathlib import Path
 import socket
 import ssl
 import threading
@@ -28,6 +30,12 @@ from remote.protocol import normalize_headers
 from remote.server import BridgeRequest, BridgeResponse
 
 LOGGER = logging.getLogger('jarvis.bridge')
+PHONE_ASSETS = {
+    'index.html', 'app.js', 'style.css', 'manifest.webmanifest', 'sw.js',
+    'js/bridge.js', 'js/chat.js', 'js/history.js', 'js/offline.js', 'js/pairing.js',
+    'js/qr.js', 'js/speech.js', 'vendor/jsQR.js',
+    'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
+}
 
 
 class ListenerError(RuntimeError):
@@ -52,6 +60,7 @@ class ListenerConfig:
     allowed_hosts: tuple = ('127.0.0.1', '::1')
     #: Seconds of inactivity allowed on a connection.
     request_timeout_seconds: float = 30.0
+    phone_web_root: Path | None = None
 
     @property
     def tls_enabled(self) -> bool:
@@ -94,10 +103,33 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self.connection.settimeout(timeout)
 
     def do_GET(self):  # noqa: N802 - the base class names these
-        self._respond()
+        if not self._serve_phone_asset():
+            self._respond()
 
     def do_POST(self):  # noqa: N802
         self._respond()
+
+    def _serve_phone_asset(self):
+        root = self.server.config.phone_web_root
+        path = self.path.partition('?')[0]
+        asset = 'index.html' if path == '/' else path.removeprefix('/')
+        if root is None or asset not in PHONE_ASSETS:
+            return False
+        try:
+            payload = (root / asset).read_bytes()
+        except OSError:
+            self.send_error(404)
+            return True
+        mime = 'text/javascript' if asset.endswith('.js') else mimetypes.guess_type(asset)[0]
+        self.send_response(200)
+        self.send_header('Content-Type', mime or 'application/octet-stream')
+        self.send_header('Content-Length', str(len(payload)))
+        self.send_header('Cache-Control', 'no-cache')
+        self.send_header('Referrer-Policy', 'no-referrer')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.end_headers()
+        self.wfile.write(payload)
+        return True
 
     def _respond(self):
         try:

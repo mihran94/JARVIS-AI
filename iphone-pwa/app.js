@@ -11,7 +11,7 @@
 import { BridgeClient, BridgeError } from './js/bridge.js';
 import { ChatTranscript, renderTranscript } from './js/chat.js';
 import { KINDS, Outbox, createIndexedDbStore } from './js/offline.js';
-import { parsePairingPayload } from './js/pairing.js';
+import { parsePairingLink, parsePairingPayload } from './js/pairing.js';
 import { decodeQrFromFile } from './js/qr.js';
 import { backupTask } from './js/history.js';
 import {
@@ -121,7 +121,8 @@ function forgetSecret() {
 
 function applyPairing(text) {
   try {
-    const pairing = parsePairingPayload(text);
+    const pairing = text.trim().startsWith('https://')
+      ? parsePairingLink(text.trim()) : parsePairingPayload(text);
     $('url').value = pairing.bridgeUrl;
     $('key').value = pairing.keyId;
     $('secret').value = pairing.secret;
@@ -1013,6 +1014,9 @@ function registerServiceWorker() {
 }
 
 async function start() {
+  const location = globalThis.location;
+  const pairingLink = location?.hash.startsWith('#pair=') && location.href;
+  if (pairingLink) globalThis.history.replaceState(null, '', location.pathname);
   drawChat();
   installListeners();
   registerServiceWorker();
@@ -1020,6 +1024,7 @@ async function start() {
   // sends it while the app is open is started, and whatever can be sent now
   // is sent now.
   await restoreOutbox();
+  if (pairingLink && applyPairing(pairingLink)) await connect();
   await flushOutbox();
   startFlushing();
   if ($('autoRefresh').checked) {

@@ -104,10 +104,10 @@ test('every request carries the four protocol headers', async () => {
   assert.match(headers['X-Jarvis-Signature'], /^[0-9a-f]{64}$/);
 });
 
-test('a request never sends cookies and never follows a redirect', async () => {
+test('a request allows same-origin cookies and never follows a redirect', async () => {
   const { client, calls } = makeClient();
   await client.status();
-  assert.equal(calls[0].options.credentials, 'omit');
+  assert.equal(calls[0].options.credentials, 'same-origin');
   assert.equal(calls[0].options.redirect, 'error');
   assert.equal(calls[0].options.cache, 'no-store');
 });

@@ -8,11 +8,11 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="JARVIS">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="description" content="Secure JARVIS companion for the iPhone: PC status, chat, tasks and memory.">
+<meta name="description" content="Secure JARVIS companion for your browser: PC status, chat, tasks and memory.">
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="stylesheet" href="./style.css">
 <link rel="apple-touch-icon" href="./icons/icon-180.png">
-<title>JARVIS iPhone</title>
+<title>JARVIS Phone Remote</title>
 </head>
 <body>
 <main>
@@ -20,7 +20,7 @@
     <div class="logo" aria-hidden="true">J</div>
     <div class="titles">
       <h1>JARVIS</h1>
-      <small>iPhone companion</small>
+      <small>Phone Remote</small>
     </div>
     <button id="install" class="ghost" hidden>Add to Home Screen</button>
   </header>
@@ -38,7 +38,7 @@
              placeholder="https://pc.example.lan">
     </label>
     <label>Device key id
-      <input id="key" autocomplete="off" spellcheck="false" placeholder="iphone-mihran-01">
+      <input id="key" autocomplete="off" spellcheck="false" placeholder="123456">
     </label>
     <label>Pairing secret
       <input id="secret" type="password" autocomplete="off" spellcheck="false"
@@ -182,6 +182,7 @@
       iOS does not let a web app deliver it while the app is closed.</p>
   </footer>
 </main>
+<script defer src="./vendor/jsQR.js"></script>
 <script type="module" src="./app.js"></script>
 </body>
 </html>

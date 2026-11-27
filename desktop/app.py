@@ -79,7 +79,7 @@ from video_studio.after_effects import after_effects_render
 from video_studio.after_effects_timeline import timeline_executable, timeline_script
 from video_studio.capcut import export_capcut
 from automation.capcut_export import capcut_launcher, new_mp4, save_open_capcut_export
-from core.runtime_profile import APP_NAME, RESTART_EXIT_CODE, restart_supported
+from core.runtime_profile import APP_NAME, APP_VERSION, RESTART_EXIT_CODE, restart_supported
 from video_studio.preview import media_tools, render_preview
 from security.policy import Action, ApprovalMode, ApprovalScope, Denied, Policy, Stopped
 from security.vault import Vault
@@ -941,6 +941,13 @@ class Window(QMainWindow):
     def open_section(self, name):
         name = {'Omega Home': 'JARVIS Chat', 'Omega Settings': 'Settings & Safety'}.get(name, name)
         shell = getattr(self, 'prime_shell', None)
+        if name == 'Phone Remote':
+            if shell is not None:
+                shell.close_drawer()
+            self.phone_remote_popup.show()
+            self.phone_remote_popup.raise_()
+            self.phone_remote_popup.activateWindow()
+            return
         settings_category = {
             'Settings & Safety': 'Voice',
             'Voice / Hey Jarvis': 'Voice',
@@ -2746,7 +2753,14 @@ class Window(QMainWindow):
         self.bridge = BridgePanel(self.policy, self.store, self.vault, self.confirm, self.notify,
                                   router=self.router,
                                   history_path=self.root / 'history.sqlite3')
-        return self.bridge
+        self.phone_remote_popup = QDialog(self)
+        self.phone_remote_popup.setWindowTitle('Phone Remote')
+        screen = self.screen().availableGeometry()
+        self.phone_remote_popup.resize(min(740, screen.width() - 40), min(640, screen.height() - 80))
+        layout = QVBoxLayout(self.phone_remote_popup)
+        layout.addWidget(self.bridge, 1)
+        self.button(layout, 'Close', self.phone_remote_popup.reject)
+        return QWidget()
 
     def automation_page(self):
         page, layout = self.page('Automation',
@@ -4549,7 +4563,7 @@ class Window(QMainWindow):
         development = QGroupBox('Development')
         development_layout = QVBoxLayout(development)
         from desktop.prime_ui import build_commit
-        revision = QLabel(APP_NAME + '\nSource revision: ' + (build_commit() or 'unavailable'))
+        revision = QLabel(f"{APP_NAME} {APP_VERSION}\nSource revision: {build_commit() or 'unavailable'}")
         revision.setWordWrap(True)
         update_layout.insertWidget(0, revision)
         development_layout.addWidget(self.auto_maintenance)

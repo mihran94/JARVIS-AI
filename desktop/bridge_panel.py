@@ -20,9 +20,8 @@ import json
 import secrets
 import shutil
 
-from PySide6.QtCore import QRectF, Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QPainter, QPixmap
-from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
     QLineEdit, QPlainTextEdit, QPushButton, QScrollArea, QLayout, QSizePolicy,
@@ -32,7 +31,8 @@ from PySide6.QtWidgets import (
 from agents.gateway import Gateway
 from desktop.bridge_chat import BridgeChatService
 from desktop.bridge_pairing import (
-    DEFAULT_LIFETIME_SECONDS, PairingCodeError, expires_at, pairing_payload, pairing_svg,
+    DEFAULT_LIFETIME_SECONDS, expires_at, pairing_browser_link,
+    pairing_matrix, pairing_payload,
 )
 from desktop.bridge_status import PlatformMetrics
 from providers.registry import specs
@@ -48,9 +48,7 @@ from remote.secrets import VaultSecrets
 from remote.server import BridgeServer
 from security.policy import Action, Stopped
 
-#: The key id an iPhone uses. It is different from the Android one, so that
 #: revoking one phone does not affect the other.
-IPHONE_KEY_ID = 'jarvis-iphone-v1'
 
 
 def _requested_backup(job) -> str:
@@ -96,6 +94,9 @@ class BridgePanel(QWidget):
             self.bridge.set_chat(self.chat.answer)
             self.bridge.set_memory_allowed(lambda: self.chat.memory_sync)
         self._build()
+        self.pairing_timer = QTimer(self)
+        self.pairing_timer.setInterval(750)
+        self.pairing_timer.timeout.connect(self._rotate_confirmed_pairing)
         self.refresh()
 
     # ------------------------------------------------------------------ build
@@ -106,7 +107,7 @@ class BridgePanel(QWidget):
         title = QLabel('Phone Remote')
         title.setStyleSheet('font-size:24px;font-weight:600')
         layout.addWidget(title)
-        note = QLabel('Choose iPhone or Android. Use Advanced connection to start the private listener.')
+        note = QLabel('Scan the QR to open Phone Remote in a browser. Use Advanced connection to start the private listener.')
         note.setWordWrap(True)
         layout.addWidget(note)
         tabs = QTabWidget()
@@ -170,16 +171,14 @@ class BridgePanel(QWidget):
         self.listener_status.setWordWrap(True)
         listener_layout.addRow('Status', self.listener_status)
 
-        pairing_box = QGroupBox('Android pairing and paired devices')
+        pairing_box = QGroupBox('Paired devices')
         pairing_layout = QVBoxLayout(pairing_box)
         pairing_row = QHBoxLayout()
-        android_help = QLabel('Enter your private HTTPS address and the pairing secret in the Android app, then tap Pair and Refresh.')
-        android_help.setWordWrap(True)
-        pairing_layout.addWidget(android_help)
         self.pair_button = QPushButton('Pair Android')
         self.pair_button.clicked.connect(self.pair_device)
         pairing_row.addWidget(self.pair_button)
         pairing_layout.addLayout(pairing_row)
+        self.pair_button.hide()
         self.secret_display = QPlainTextEdit()
         self.secret_display.setReadOnly(True)
         self.secret_display.setMaximumHeight(80)
@@ -199,28 +198,31 @@ class BridgePanel(QWidget):
         self.revoke_button.clicked.connect(self.revoke_device)
         pairing_layout.addWidget(self.revoke_button)
 
-        code_box = QGroupBox('Pairing code for the iPhone')
+        code_box = QGroupBox('Browser pairing')
         code_layout = QFormLayout(code_box)
-        iphone_help = QLabel('Open your private HTTPS remote URL in Safari. Use the code below to pair, then refresh PC status.')
-        iphone_help.setWordWrap(True)
-        code_layout.addRow(iphone_help)
-        self.phone_address = QLineEdit()
+        browser_help = QLabel('Scan the QR with your device camera. It opens the private HTTPS page and starts pairing.')
+        browser_help.setWordWrap(True)
+        code_layout.addRow(browser_help)
+        self.phone_address = QLineEdit(self.store.get('bridge:phone_origin', ''))
+        self.phone_address.editingFinished.connect(self._save_phone_origin)
         self.phone_address.setPlaceholderText(
             'The HTTPS address the phone reaches this PC on, for example '
             'https://pc.example.lan:8765')
         code_layout.addRow('Address for the phone', self.phone_address)
-        self.phone_key = QLineEdit(IPHONE_KEY_ID)
+        self.phone_key = QLineEdit()
+        self.phone_key.setReadOnly(True)
+        self.phone_key.setPlaceholderText('6 digits generated for each device')
         code_layout.addRow('Device key id', self.phone_key)
         code_row = QHBoxLayout()
-        self.pair_iphone_button = QPushButton('Pair phone & show QR')
-        self.pair_iphone_button.clicked.connect(self.pair_iphone)
+        self.pair_browser_device_button = QPushButton('Pair phone & show QR')
+        self.pair_browser_device_button.clicked.connect(self.pair_browser_device)
         # Two buttons side by side set a wide minimum on the whole row. On a
         # machine whose default font is wider, that minimum was larger than
         # the tab, so the tab asked for sideways scrolling. The buttons keep
         # their natural width whenever there is room and shrink only when
         # there is not.
-        self.pair_iphone_button.setMinimumWidth(60)
-        code_row.addWidget(self.pair_iphone_button)
+        self.pair_browser_device_button.setMinimumWidth(60)
+        code_row.addWidget(self.pair_browser_device_button)
         self.code_button = QPushButton('Show the pairing code')
         self.code_button.clicked.connect(self.show_pairing_code)
         self.code_button.setMinimumWidth(60)
@@ -281,8 +283,8 @@ class BridgePanel(QWidget):
         job_row.addWidget(self.reject_button)
         jobs_layout.addLayout(job_row)
         for label, panels in (
-            ('Set up iPhone', (code_box,)),
-            ('Set up Android', (pairing_box,)),
+            ('Pair a device', (code_box,)),
+            ('Paired devices', (pairing_box,)),
             ('Advanced connection', (listener_box, chat_box)),
             ('Job approvals', (jobs_box,)),
         ):
@@ -358,6 +360,7 @@ class BridgePanel(QWidget):
                 tls_key=self.key.text().strip(),
                 allow_plaintext=self.plaintext.isChecked(),
                 allowed_hosts=self._allowed_peers(),
+                phone_web_root=Path(__file__).resolve().parents[1] / 'iphone-pwa',
             )
             self.listener._config = config
             # The peer list lives on the bridge, so a request from an
@@ -385,26 +388,56 @@ class BridgePanel(QWidget):
                     'It is shown once and stored only in the Windows vault.')
         self.notify(operation)
 
-    def pair_iphone(self):
-        """Pair an iPhone under its own key id and show its pairing code."""
+    def _save_phone_origin(self):
+        address = self.phone_address.text().strip()
+        if address:
+            try:
+                pairing_browser_link(address, '')
+            except ValueError:
+                return
+        self.store.set('bridge:phone_origin', address)
+
+    def pair_browser_device(self):
+        """Create a separate browser pairing for each device."""
         def operation():
-            key_id = self.phone_key.text().strip() or IPHONE_KEY_ID
             address = self.phone_address.text().strip()
+            if not address:
+                raise ValueError('Enter the private HTTPS address before pairing a device.')
+            key_id = str(100_000 + secrets.randbelow(900_000))
+            while self.pairing.device(key_id) is not None:
+                key_id = str(100_000 + secrets.randbelow(900_000))
             deadline = self._pairing_deadline()
             number = f'{secrets.randbelow(10**40):040d}'
-            payload = (pairing_payload(address, key_id, number, deadline // 1000,
-                                       fingerprint=self.certificate_fingerprint()) if address else '')
-            pairing = self.pairing.pair(key_id=key_id, label='iphone', secret=number,
+            payload = pairing_payload(address, key_id, number, deadline // 1000,
+                                      fingerprint=self.certificate_fingerprint())
+            link = pairing_browser_link(address, payload)
+            pairing = self.pairing.pair(key_id=key_id, label='browser', secret=number,
                                         expires_epoch_ms=deadline)
             self.secret_display.setPlainText(pairing.secret)
             self.refresh()
-            if payload:
-                self.code_text.setPlainText(payload)
-                self._draw_qr(payload)
-                return 'Scan the QR in Phone Remote, or enter the HTTPS address, key id and pairing number.'
-            return ('iPhone paired as ' + key_id + '. Show the pairing code and '
-                    'scan it with the phone.')
+            self.phone_key.setText(key_id)
+            self.code_text.setPlainText(payload)
+            self._draw_qr(link)
+            self.pairing_timer.start()
+            return 'Scan the QR to open Phone Remote in your browser.'
         self.notify(operation)
+
+    def _rotate_confirmed_pairing(self):
+        """Keep the displayed QR until that device proves it has the key."""
+        key_id = self.phone_key.text()
+        device = next((item for item in self.pairing.devices()
+                       if item.key_id == key_id), None)
+        if device is not None and not device.revoked and not device.confirmed:
+            return
+
+        self.pairing_timer.stop()
+        self.phone_key.clear()
+        self.secret_display.clear()
+        self.code_text.clear()
+        self.code_qr.clear()
+        self.code_qr.hide()
+        if device is not None and device.confirmed and not device.revoked:
+            self.pair_browser_device()
 
     def _pairing_deadline(self) -> int:
         """The moment a pairing code stops being usable, in milliseconds."""
@@ -414,7 +447,9 @@ class BridgePanel(QWidget):
         """Build the pairing code and draw it as a QR code."""
         def operation():
             address = self.phone_address.text().strip()
-            key_id = self.phone_key.text().strip() or IPHONE_KEY_ID
+            key_id = self.phone_key.text().strip()
+            if not key_id:
+                raise ValueError('Generate a pairing QR first.')
             # Asking for the code again means the owner is about to put it
             # on the phone, so the deadline moves with it, and the record
             # and the code carry the same moment.
@@ -425,13 +460,14 @@ class BridgePanel(QWidget):
             payload = pairing_payload(address, key_id, secret,
                                       expires_ms // 1000,
                                       fingerprint=self.certificate_fingerprint())
+            link = pairing_browser_link(address, payload)
             self.code_text.setPlainText(payload)
-            self._draw_qr(payload)
+            self._draw_qr(link)
             if self.chat is not None:
                 self.chat.configure(self.chat_provider.currentData(),
                                     paid_consent=self.chat_paid.isChecked(),
                                     memory_sync=self.chat_memory.isChecked())
-            return ('Pairing code ready. Scan it with the iPhone, or copy the '
+            return ('Pairing code ready. Scan it with your device, or copy the '
                     'text. If the phone has not paired with it in '
                     f'{DEFAULT_LIFETIME_SECONDS // 60} minutes, the secret in it '
                     'stops working.')
@@ -453,26 +489,24 @@ class BridgePanel(QWidget):
             return ''
 
     def _draw_qr(self, payload):
-        """Draw the pairing code as a picture."""
+        """Paint each QR module on whole pixels with a four-module quiet zone."""
         self.code_qr.show()
         try:
-            svg = pairing_svg(payload)
+            matrix = pairing_matrix(payload, border=4)
         except Exception as error:
             self.code_qr.setText('The pairing code could not be drawn: ' + str(error))
             return
-        renderer = QSvgRenderer(bytearray(svg.encode('utf-8')))
-        if not renderer.isValid():
-            self.code_qr.setText('The pairing code could not be drawn: '
-                                  'the picture was not understood.')
-            return
-        picture = QPixmap(240, 240)
-        picture.fill()
-        # Qt draws an SVG through a painter. Rendering straight into a
-        # pixmap was removed from PySide6, so the pairing code never
-        # reached the phone because the drawing raised instead.
+        module_size = max(1, 240 // len(matrix))
+        side = len(matrix) * module_size
+        picture = QPixmap(side, side)
+        picture.fill(Qt.GlobalColor.white)
         painter = QPainter(picture)
         try:
-            renderer.render(painter, QRectF(0, 0, 240, 240))
+            for y, row in enumerate(matrix):
+                for x, dark in enumerate(row):
+                    if dark:
+                        painter.fillRect(x * module_size, y * module_size,
+                                         module_size, module_size, Qt.GlobalColor.black)
         finally:
             painter.end()
         self.code_qr.setPixmap(picture)

@@ -117,6 +117,20 @@ export function parsePairingPayload(text, { now = Math.floor(Date.now() / 1000) 
   return { bridgeUrl: address, keyId, secret, expiresAt, fingerprint };
 }
 
+export function parsePairingLink(link, options) {
+  const url = new URL(link);
+  if (url.protocol !== 'https:' || url.username || url.password || url.search
+      || url.pathname !== '/' || !url.hash.startsWith('#pair=')) {
+    throw new Error('That is not a JARVIS browser pairing link.');
+  }
+  const payload = decodeURIComponent(url.hash.slice(6));
+  const pairing = parsePairingPayload(payload, options);
+  if (new URL(pairing.bridgeUrl).origin !== url.origin) {
+    throw new Error('The pairing link does not match this PC address.');
+  }
+  return pairing;
+}
+
 /** Whether a pairing code is still usable. */
 export function isPairingValid(pairing, { now = Math.floor(Date.now() / 1000) } = {}) {
   if (!pairing || typeof pairing.expiresAt !== 'number') {
