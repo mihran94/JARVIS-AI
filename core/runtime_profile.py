@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 import re
+import sys
 
 RESTART_EXIT_CODE = 75
 APP_NAME = 'JARVIS M'
@@ -25,7 +26,9 @@ def development_profile():
 
 
 def data_directory():
-    local = Path(os.environ.get('LOCALAPPDATA', str(Path.home() / '.local' / 'share')))
+    default = Path.home() / ('Library/Application Support' if sys.platform == 'darwin'
+                             else '.local/share')
+    local = Path(os.environ.get('LOCALAPPDATA', str(default)))
     profile = development_profile()
     if profile:
         return local / (DATA_FOLDER + '-Development') / profile

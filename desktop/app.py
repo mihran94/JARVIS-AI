@@ -820,7 +820,7 @@ class Window(QMainWindow):
             return True
         return _luminance(palette[0]) < 0.5
 
-    def refresh_prime_state(self):
+    def refresh_prime_state(self, *, refresh_motion=True):
         """The PRIME surface follows what JARVIS is doing."""
         shell = getattr(self, 'prime_shell', None)
         if shell is None:
@@ -839,6 +839,8 @@ class Window(QMainWindow):
             chat.work_state.setText(summary)
             chat.work_state.setVisible(bool(summary))
             chat.timeline.set_live_detail(detail)
+            if refresh_motion:
+                chat.assistant.orb.set_motion(not self.store.get('omega:reduced', False))
             chat.set_state(state)
 
     def current_desktop_activity(self, state):
@@ -1084,6 +1086,28 @@ class Window(QMainWindow):
         self.prime_shell.startup_notice.setText(message)
         if not self.read_with_gemini(message):
             self.restore_startup_microphone()
+
+    def begin_first_run(self):
+        if not self.store.get('setup:complete', False):
+            from keyring.errors import KeyringError
+            from providers.registry import specs
+            configured = False
+            for provider, spec in specs().items():
+                if spec.local:
+                    continue
+                try:
+                    if self.vault.get(provider):
+                        configured = True
+                        break
+                except (RuntimeError, ValueError, OSError, KeyringError):
+                    pass
+            if not configured or self.store.get('setup:started', False):
+                from desktop.first_run import FirstRunDialog
+                dialog = FirstRunDialog(self.store, self.vault, self)
+                if dialog.exec() != QDialog.DialogCode.Accepted:
+                    return
+                self.chat_provider.setCurrentText(self.stored_chat_provider())
+        self.start_window_audio()
 
     def save_startup_microphone(self, enabled):
         if enabled and (self.policy.stopped or not self.voice_panel.consent.listening):
@@ -1358,6 +1382,8 @@ class Window(QMainWindow):
         return True
 
     def set_microphone_muted(self, muted):
+        if muted and hasattr(self, 'live_reconnect_timer'):
+            self.live_reconnect_timer.stop()
         self.voice_panel.microphone_muted = muted
         if muted:
             self.hands_free_voice.setChecked(False)
@@ -1461,6 +1487,11 @@ class Window(QMainWindow):
         self.open_section('JARVIS Chat')
         guide = self.conversation_guidance()
         guide += (' This is a spoken conversation. Keep replies brief. The desktop handles '
+                  'Listen to the complete Tamil/Tanglish request including corrections. '
+                  'Answer in friendly conversational Tamil with useful English terms. '
+                  'Avoid repeating greetings or asking how to help after every turn. '
+                  'Ask one short clarification only when an essential detail is missing. '
+                  'Describe only visible camera evidence and say when the view is unclear. '
                   'explicit local commands separately. For a requested PC action, tell the '
                   'user to check for an approval in the app. Never claim the action ran. '
                   'The desktop can control supported apps with mouse and keyboard. '
@@ -1481,6 +1512,7 @@ class Window(QMainWindow):
         if self.live_voice is None:
             from desktop.live_voice import LiveVoice
             self.live_voice = LiveVoice(self)
+            self.live_voice.reconnect_requested.connect(self.schedule_live_reconnect)
             self.live_voice.frame_provider = self.camera_panel.snapshot
             self.live_voice.status.connect(lambda text: self.statusBar().showMessage(text, 20000))
             self.live_voice.state_changed.connect(self.on_live_voice_state)
@@ -1515,7 +1547,29 @@ class Window(QMainWindow):
                     output_device=self.audio_test.audio_device('speaker'))
         return voice.active
 
+    def schedule_live_reconnect(self):
+        if (self.policy.stopped or self.close_when_done or self.voice_panel.microphone_muted
+                or not self.voice_panel.consent.listening
+                or not self.store.get('voice:auto_gemini', False)):
+            return
+        if not hasattr(self, 'live_reconnect_timer'):
+            self.live_reconnect_attempts = 0
+            self.live_reconnect_timer = QTimer(self, singleShot=True)
+            self.live_reconnect_timer.timeout.connect(self.start_automatic_voice)
+        if self.live_reconnect_timer.isActive():
+            return
+        if self.live_reconnect_attempts >= 3:
+            self.statusBar().showMessage('Voice reconnection paused. Check the network and unmute to retry.', 15000)
+            return
+        self.live_reconnect_attempts += 1
+        delay = 2000 * 2 ** (self.live_reconnect_attempts - 1)
+        self.live_reconnect_timer.start(delay)
+        self.statusBar().showMessage(f'Voice disconnected. Reconnecting in {delay // 1000} seconds…', 15000)
+
     def on_live_voice_state(self, state):
+        if state == 'listening' and hasattr(self, 'live_reconnect_timer'):
+            self.live_reconnect_timer.stop()
+            self.live_reconnect_attempts = 0
         self.voice_panel.live_voice_active = state != 'idle'
         title = 'Stop Live Voice' if state != 'idle' else 'Live Voice'
         self.live_voice_settings_button.setText(title)
@@ -2132,7 +2186,7 @@ class Window(QMainWindow):
             mic_state = ('The microphone is listening.' if microphone_open else
                          self.voice_panel.consent.listener)
             hud.strip.set_mic('The microphone is muted.' if muted else mic_state, output_muted)
-        self.refresh_prime_state()
+        self.refresh_prime_state(refresh_motion=False)
 
     def answer_spoken_system_command(self, command):
         if self.worker is not None:
@@ -3649,7 +3703,7 @@ class Window(QMainWindow):
         self.button(provider_row, 'MiniMax API settings', self.open_minimax_settings)
         layout.addLayout(provider_row)
         routing_note = QLabel(
-            'Only MiniMax and Codex may write or fix source code. Gemini answers you, '
+            'OpenAI, MiniMax and Codex can write or fix source code. Gemini answers you, '
             'reads the proposed change and explains it; it never edits a file.')
         routing_note.setWordWrap(True)
         layout.addWidget(routing_note)
@@ -3715,7 +3769,7 @@ class Window(QMainWindow):
     def selected_coding_provider(self):
         """The provider that writes code.
 
-        Only MiniMax and Codex may do this. The chat provider is never used
+        OpenAI, MiniMax and Codex may do this. The chat provider is never used
         for code, whatever it is set to.
         """
         return routing.require_coding_provider(routing.coding_provider(self.store))
@@ -4413,10 +4467,10 @@ class Window(QMainWindow):
         self.show_hologram.setChecked(bool(self.store.get('appearance:hologram', True)))
         self.show_hologram.toggled.connect(self.set_hologram_visible)
         appearance.addRow(self.show_hologram)
-        hologram_captions = QCheckBox('Show heard words under the hologram')
-        hologram_captions.setChecked(bool(self.store.get('appearance:hologram_captions', False)))
-        hologram_captions.toggled.connect(self.set_hologram_captions)
-        appearance.addRow(hologram_captions)
+        self.hologram_captions = QCheckBox('Show heard words under the hologram')
+        self.hologram_captions.setChecked(bool(self.store.get('appearance:hologram_captions', False)))
+        self.hologram_captions.toggled.connect(self.set_hologram_captions)
+        appearance.addRow(self.hologram_captions)
         self.show_terminal = QCheckBox('Show Terminal under the main display')
         self.show_terminal.setChecked(bool(self.store.get('appearance:terminal', True)))
         self.show_terminal.toggled.connect(self.set_terminal_visible)
@@ -7292,6 +7346,8 @@ class Window(QMainWindow):
         self.after_effects_timeline_button.setEnabled(ready and self.video_plan is not None)
 
     def stop(self):
+        if hasattr(self, 'live_reconnect_timer'):
+            self.live_reconnect_timer.stop()
         self.keep_desktop_control.setChecked(False)
         self.desktop_control_active = False
         self.desktop_control_ticket = None
@@ -7371,6 +7427,13 @@ class Window(QMainWindow):
         chat = getattr(self, 'prime_chat', None)
         if chat is not None:
             chat.timeline.set_rows(rows)
+        jobs = self.queue.rows()
+        workflows = self.workflows.rows()
+        attempts = self.store.usage_rows()
+        contents = (rows, jobs, workflows, attempts)
+        if contents == getattr(self, '_displayed_history', None):
+            return
+
         self.history.setRowCount(len(rows))
         for index, task in enumerate(rows):
             for column, key in enumerate(('created', 'kind', 'status', 'detail')):
@@ -7380,7 +7443,6 @@ class Window(QMainWindow):
         current = self.jobs_table.currentRow()
         if current >= 0 and self.jobs_table.item(current, 0):
             selected = self.jobs_table.item(current, 0).data(Qt.ItemDataRole.UserRole)
-        jobs = self.queue.rows()
         self.jobs_table.setRowCount(len(jobs))
         for index, job in enumerate(jobs):
             for column, key in enumerate(('created', 'app', 'status', 'detail')):
@@ -7394,7 +7456,6 @@ class Window(QMainWindow):
         current = self.workflow_table.currentRow()
         if current >= 0 and self.workflow_table.item(current, 0):
             workflow_selected = self.workflow_table.item(current, 0).data(Qt.ItemDataRole.UserRole)
-        workflows = self.workflows.rows()
         self.workflow_table.setRowCount(len(workflows))
         for index, workflow in enumerate(workflows):
             for column, key in enumerate(('created', 'summary', 'status', 'detail')):
@@ -7404,7 +7465,6 @@ class Window(QMainWindow):
                 self.workflow_table.setItem(index, column, item)
             if workflow['id'] == workflow_selected:
                 self.workflow_table.selectRow(index)
-        attempts = self.store.usage_rows()
         self.usage_table.setRowCount(len(attempts))
         estimated_total = 0.0
         priced = 0
@@ -7432,6 +7492,7 @@ class Window(QMainWindow):
                 f'({priced} priced, {unknown} without a known price). '
                 'The estimate uses the list price of the model; only the provider dashboard '
                 'can say what was really charged.')
+        self._displayed_history = contents
 
     def apply_hotkey(self, text, *, save=True):
         """Take the key that brings JARVIS up, or say why it cannot be taken.
@@ -7475,6 +7536,8 @@ class Window(QMainWindow):
         self.request_exit()
 
     def closeEvent(self, event):
+        if hasattr(self, 'live_reconnect_timer'):
+            self.live_reconnect_timer.stop()
         self.camera_toggle.setChecked(False)
         if self.live_voice is not None:
             self.live_voice.stop()
@@ -7614,7 +7677,7 @@ def main():
     if not smoke:
         if restart_supported():
             QTimer.singleShot(0, window.summon_from_hotkey)
-        QTimer.singleShot(0, window.start_window_audio)
+        QTimer.singleShot(0, window.begin_first_run)
     if smoke:
         # Offline native smoke test: no provider calls or remote listener.
         def finish_smoke():

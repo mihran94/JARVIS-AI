@@ -12,7 +12,7 @@ import subprocess
 import pytest
 
 from desktop.bridge_pairing import (
-    PAIRING_FORMAT, PairingCodeError, expires_at, pairing_matrix, pairing_payload,
+    PAIRING_FORMAT, PairingCodeError, expires_at, pairing_browser_link, pairing_matrix, pairing_payload,
     pairing_svg,
 )
 
@@ -66,13 +66,16 @@ def test_the_code_is_drawn_as_a_picture():
     assert 'svg' in svg
 
 
-def test_the_phone_reads_the_code_the_desktop_drew():
+@pytest.mark.parametrize('browser_link', [False, True])
+def test_the_phone_reads_the_code_the_desktop_drew(browser_link):
     """The desktop encoder and the phone decoder have to agree."""
     node = shutil.which('node')
     if node is None:
         pytest.skip('node is not installed on this machine')
-    payload = pairing_payload('https://pc.example.lan:8765', 'jarvis-iphone-v1', SECRET,
-                               expires_at(now=1700000000))
+    address = 'https://pc.example.lan:8765'
+    payload = pairing_payload(address, 'jarvis-iphone-v1', SECRET, expires_at(now=1700000000))
+    if browser_link:
+        payload = pairing_browser_link(address, payload)
     matrix = pairing_matrix(payload)
     completed = subprocess.run(
         [node, os.path.join(PWA, 'tools', 'decode-matrix.mjs')],

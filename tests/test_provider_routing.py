@@ -47,11 +47,11 @@ def test_minimax_writes_code_until_the_owner_chooses_otherwise(store):
     assert routing.coding_provider(store) == 'Codex'
 
 
-def test_only_minimax_and_codex_may_write_code(store):
-    for provider in ('MiniMax', 'Codex'):
+def test_the_configured_coding_providers_may_write_code(store):
+    for provider in ('MiniMax', 'Codex', 'OpenAI'):
         assert routing.is_coding_provider(provider)
         assert routing.require_coding_provider(provider) == provider
-    for provider in ('Gemini', 'OpenAI', 'Claude', 'Groq', 'DeepSeek', 'OpenRouter', 'Ollama'):
+    for provider in ('Gemini', 'Claude', 'Groq', 'DeepSeek', 'OpenRouter', 'Ollama'):
         assert not routing.is_coding_provider(provider)
         with pytest.raises(routing.CodingRouteRefused):
             routing.require_coding_provider(provider)
@@ -72,7 +72,7 @@ def test_the_routing_is_described_for_the_interface(store):
     described = routing.describe(store)
     assert described['person'] == 'Gemini'
     assert described['coding'] == 'MiniMax'
-    assert described['coding_options'] == ['MiniMax', 'Codex']
+    assert described['coding_options'] == ['MiniMax', 'Codex', 'OpenAI']
 
 
 def test_the_application_offers_only_the_coding_providers(tmp_path, monkeypatch):
@@ -82,7 +82,7 @@ def test_the_application_offers_only_the_coding_providers(tmp_path, monkeypatch)
     window = Window(tmp_path)
     try:
         assert [window.coding_provider.itemText(index)
-                for index in range(window.coding_provider.count())] == ['MiniMax', 'Codex']
+                for index in range(window.coding_provider.count())] == ['MiniMax', 'Codex', 'OpenAI']
         assert window.selected_coding_provider() == 'MiniMax'
         # The chat provider cannot become the coding provider.
         window.chat_provider.setCurrentText('Gemini')

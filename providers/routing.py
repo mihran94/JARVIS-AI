@@ -10,7 +10,7 @@ WHAT THIS IS FOR
       people want a different model for their own conversations.
 
     * Source-code work — editing, fixing and preparing a change to a
-      repository — goes to MiniMax or Codex and to nothing else. No other
+      repository — goes to OpenAI, MiniMax or Codex. No other
       provider may be used to write code, whatever the chat provider is set
       to. That is a rule about the work, not about the preference.
 
@@ -28,7 +28,7 @@ from providers.registry import provider_names
 PERSON_FACING_DEFAULT = 'Gemini'
 
 #: The only providers allowed to read, write or fix source code.
-CODING_PROVIDERS = ('MiniMax', 'Codex')
+CODING_PROVIDERS = ('MiniMax', 'Codex', 'OpenAI')
 
 #: The coding provider used until the owner chooses another one.
 CODING_DEFAULT = 'MiniMax'
@@ -68,7 +68,7 @@ def coding_provider(store) -> str:
 def set_coding_provider(store, name: str) -> str:
     """Remember the provider that edits code.
 
-    Only MiniMax and Codex may be chosen. A caller that offers a provider
+    OpenAI, MiniMax and Codex may be chosen. A caller that offers a provider
     that may not write code is refused here rather than at the call site.
     """
     if name not in CODING_PROVIDERS:
