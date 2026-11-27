@@ -2,6 +2,7 @@ import base64
 import json
 import os
 import struct
+import time
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
@@ -105,6 +106,58 @@ def test_provider_errors_end_the_session_without_echoing_provider_details(monkey
     assert len(messages) == 1
     assert 'AI Providers' in messages[0]
     assert 'private provider' not in messages[0]
+
+
+def test_real_websocket_disconnect_requests_a_new_connection():
+    from PySide6.QtCore import QUrl
+    from PySide6.QtNetwork import QHostAddress
+    from PySide6.QtWebSockets import QWebSocket, QWebSocketServer
+    app = QApplication.instance() or QApplication([])
+    server = QWebSocketServer('Local reconnect test', QWebSocketServer.SslMode.NonSecureMode)
+    assert server.listen(QHostAddress.SpecialAddress.LocalHost, 0)
+    live = LiveVoice()
+    peers, recoveries = [], []
+
+    class SilentPlayer:
+        def reset(self):
+            pass
+
+        def deleteLater(self):
+            pass
+
+    def connect():
+        live.player = SilentPlayer()
+        live.socket = QWebSocket(parent=live)
+        live.socket.disconnected.connect(live.connection_lost)
+        live.socket.errorOccurred.connect(live.connection_lost)
+        live.socket.connected.connect(lambda: live.set_state('listening'))
+        live.set_state('connecting')
+        live.socket.open(QUrl(f'ws://127.0.0.1:{server.serverPort()}'))
+
+    def recover():
+        recoveries.append(True)
+        connect()
+
+    def wait_for(condition):
+        deadline = time.monotonic() + 5
+        while not condition() and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(0.005)
+        assert condition()
+
+    server.newConnection.connect(lambda: peers.append(server.nextPendingConnection()))
+    live.reconnect_requested.connect(recover)
+    try:
+        connect()
+        wait_for(lambda: len(peers) == 1 and live.state == 'listening')
+        peers[0].abort()
+        wait_for(lambda: len(peers) == 2 and live.state == 'listening')
+        assert recoveries == [True]
+    finally:
+        live.stop()
+        for peer in peers:
+            peer.abort()
+        server.close()
 
 
 def test_float_windows_headset_audio_is_converted_to_signed_mono():
