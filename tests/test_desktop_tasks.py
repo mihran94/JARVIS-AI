@@ -250,7 +250,7 @@ def test_capcut_shortcut_uses_one_native_keyboard_batch(monkeypatch):
     ]
 
 
-@pytest.mark.parametrize('outcome', ['verified', 'unverified', 'collision', 'cancel'])
+@pytest.mark.parametrize('outcome', ['verified', 'unverified', 'collision', 'cancel', 'chat_cancel', 'restart'])
 def test_calculation_note_handoff(tmp_path, monkeypatch, outcome):
     from automation.desktop_tasks import VerifiedEdit
     from desktop.voice_tasks import local_voice_request
@@ -282,11 +282,27 @@ def test_calculation_note_handoff(tmp_path, monkeypatch, outcome):
         window.finish_chat_launch(True)
         window.complete_desktop_task()
         assert launches == ['Calculator', 'Notepad']
+        progress_id = window.desktop_pending['progress']['id']
+        if outcome == 'restart':
+            from core.store import Store
+            reopened = Store(window.store.path)
+            record = next(row for row in reopened.tasks() if row['id'] == progress_id)
+            assert record['status'] == 'interrupted'
+            assert '17 * 23 = 391' in record['detail']
+            assert not output.exists()
+            return
+        if outcome == 'chat_cancel':
+            window.prompt.setPlainText('/cancel')
+            window.send()
         if outcome == 'collision':
             output.write_text('existing', encoding='utf-8')
         if outcome == 'cancel':
             window.policy.stop()
         window.complete_desktop_task()
+        record = next(row for row in window.store.tasks() if row['id'] == progress_id)
+        assert '391' in record['detail']
+        assert record['status'] == {'verified': 'verified', 'cancel': 'cancelled',
+                                    'chat_cancel': 'cancelled'}.get(outcome, 'failed')
         if outcome == 'verified':
             assert output.read_text(encoding='utf-8') == 'விடை 391'
             assert not window.desktop_open_button.isHidden()

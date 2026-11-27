@@ -4916,14 +4916,25 @@ class Window(QMainWindow):
         self.refresh_voice_hud()
         return True
 
-    def schedule_desktop_task(self, task, ticket, digest, *, automatic_action=None, destination=None):
+    def schedule_desktop_task(self, task, ticket, digest, *, automatic_action=None, destination=None, progress=None):
         """Schedule, never poll for a window on the Qt UI thread."""
         self.policy.check(ticket)
         if self.desktop_pending is not None:
             raise ValueError('A desktop task is already running.')
-        if task.launch:
-            launch_app(task.app)
+        if destination is not None and progress is None:
+            detail = f'Waiting for Calculator to verify {task.text}. Destination: {destination}'
+            ident = self.store.task('calculation_note', detail)
+            progress = {'id': ident, 'detail': detail}
+            self.store.finish(ident, 'running')
+        try:
+            if task.launch:
+                launch_app(task.app)
+        except (RuntimeError, ValueError, OSError) as error:
+            if progress:
+                self.store.finish(progress['id'], 'failed', f"{progress['detail']} Launch failed: {error}")
+            raise
         self.desktop_pending = dict(task=task, ticket=ticket, digest=digest, destination=destination,
+                                    progress=progress,
                                     automatic_action=automatic_action,
                                     deadline=time.monotonic() + 7.0)
         self.desktop_task_timer.start()
@@ -4986,6 +4997,16 @@ class Window(QMainWindow):
                                   task_id=ident, completion_status='verified')
         return detail
 
+    def stop_pending_desktop_task(self, reason):
+        self.desktop_task_timer.stop()
+        pending, self.desktop_pending = self.desktop_pending, None
+        progress = pending and pending.get('progress')
+        if progress:
+            detail = f"{progress['detail']} {reason}"
+            self.store.finish(progress['id'], 'cancelled', detail)
+            self.show_desktop_result(detail)
+            self.refresh_history()
+
     def complete_desktop_task(self):
         """Only type after Windows verifies the target foreground process."""
         pending = self.desktop_pending
@@ -4993,21 +5014,15 @@ class Window(QMainWindow):
             self.desktop_task_timer.stop()
             return
         task = pending['task']
+        progress = pending.get('progress')
         try:
             self.policy.check(pending['ticket'])
             automatic = pending.get('automatic_action')
             if automatic is not None and self.policy.requires_confirmation(automatic):
                 raise Denied('Approval mode changed. Request the action again.')
             if time.monotonic() >= pending['deadline']:
-                self.desktop_task_timer.stop()
-                self.desktop_pending = None
-                self.show_local_system_reply('Desktop task',
-                    f'{task.app} did not become foreground in time. '
-                    'No text was entered. Activate the correct window and retry.')
-                self.show_desktop_result(
-                    f'{task.app} did not come to the foreground. No text was sent.')
-                self.conversation_plan.result(False, 'Target window did not become foreground in time.')
-                return
+                raise RuntimeError(f'{task.app} did not become foreground in time. '
+                                   'No text was entered. Activate the correct window and retry.')
             calculator = None
             if task.app == 'Calculator':
                 from automation.calculator import calculate_in_window, foreground_calculator
@@ -5031,9 +5046,11 @@ class Window(QMainWindow):
                 self.show_desktop_result(detail)
                 self.show_local_system_reply('Calculator result', detail)
                 if pending.get('destination') is not None:
+                    progress['detail'] = f'{detail}. Waiting for Notepad. Destination: {pending["destination"]}'
+                    self.store.finish(progress['id'], 'running', progress['detail'])
                     note = DesktopTask('Notepad', f'விடை {result}', True)
                     self.schedule_desktop_task(note, pending['ticket'], pending['digest'],
-                                               destination=pending['destination'])
+                                               destination=pending['destination'], progress=progress)
                     return
                 self.conversation_plan.result(True, detail, verified=True)
                 return
@@ -5059,7 +5076,10 @@ class Window(QMainWindow):
                 if not verified:
                     raise RuntimeError('Notepad contents could not be verified. File save skipped.')
                 self.policy.check(pending['ticket'])
+                progress['detail'] = f'Calculator and Notepad verified: {task.text}. Saving to {destination}.'
+                self.store.finish(progress['id'], 'running', progress['detail'])
                 detail = self.write_desktop_result(destination, task.text)
+                self.store.finish(progress['id'], 'verified', f'{task.text}. {detail}')
                 self.show_desktop_result(detail)
                 self.desktop_saved_path = destination
                 self.desktop_open_button.show()
@@ -5071,8 +5091,12 @@ class Window(QMainWindow):
             label = 'Calculation failed' if task.app == 'Calculator' else 'Typing failed'
             if pending.get('destination'):
                 label = 'Calculation note failed'
-            self.show_desktop_result(f'{label}. {error}')
-            self.show_local_system_reply('Desktop task failed', str(error))
+            detail = f'{label}. {error}'
+            if progress:
+                detail = f"{progress['detail']} {detail}"
+                self.store.finish(progress['id'], 'cancelled' if isinstance(error, Stopped) else 'failed', detail)
+            self.show_desktop_result(detail)
+            self.show_local_system_reply('Desktop task failed', detail)
             self.conversation_plan.result(False, str(error))
         finally:
             self.refresh_prime_state()
@@ -7003,8 +7027,7 @@ class Window(QMainWindow):
                 self.finish_chat_launch(False)
                 cancelled = True
             if not cancelled and self.desktop_pending is not None:
-                self.desktop_task_timer.stop()
-                self.desktop_pending = None
+                self.stop_pending_desktop_task('Cancelled in chat.')
                 cancelled = True
             self.show_local_system_reply(text, 'Pending desktop requests cancelled. Already opened apps remain open.'
                                          if cancelled else 'No pending conversation plan. Use Emergency Stop to cancel other active work.')
@@ -7431,8 +7454,7 @@ class Window(QMainWindow):
         self.clear_suggested_plan()
         self.conversation_plan.cancel('Emergency Stop. Resume will not replay this plan.')
         self.cancel_launch_verification()
-        self.desktop_task_timer.stop()
-        self.desktop_pending = None
+        self.stop_pending_desktop_task('Emergency Stop.')
         if self.test_worker is not None:
             # The test PROCESS is stopped too, not just the assistant.
             self.test_worker.requestInterruption()
@@ -7604,8 +7626,7 @@ class Window(QMainWindow):
         self.conversation_plan.cancel('Window closed; remaining steps cancelled.')
         self.audio_test.stop()
         self.cancel_launch_verification()
-        self.desktop_task_timer.stop()
-        self.desktop_pending = None
+        self.stop_pending_desktop_task('Window closed.')
         if not self.close_when_done and self.editor.document().isModified():
             if not self.confirm(Action('discard_unsaved_editor_changes', self.filename.text())):
                 self.exit_requested = False

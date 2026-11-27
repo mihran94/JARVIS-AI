@@ -95,6 +95,7 @@ class LiveVoice(QObject):
         self.echo_filter = PlaybackEchoFilter()
         self.transcript = ['', '']
         self.ignore_reply = False
+        self.awaiting_interrupt_ack = False
         self.muted = False
         self.readout = ''
         self.readout_finished = False
@@ -299,11 +300,18 @@ class LiveVoice(QObject):
             content = packet.get('serverContent', {})
             interrupted = bool(content.get('interrupted'))
             new_speech = bool(content.get('inputTranscription', {}).get('text', '').strip())
+            acknowledged = interrupted and self.awaiting_interrupt_ack
             cutoff = interrupted or (new_speech and self.state == 'speaking')
-            if cutoff:
-                self.interrupt(server=True)
+            if cutoff and not acknowledged:
+                self.transcript = ['', '']
+                self.ignore_reply = True
+                self.interrupt()
                 if not self.active or self.socket is not socket:
                     return
+            if interrupted:
+                self.awaiting_interrupt_ack = False
+            elif cutoff:
+                self.awaiting_interrupt_ack = True
             if new_speech:
                 self.ignore_reply = False
             for index, field in enumerate(('inputTranscription', 'outputTranscription')):
@@ -321,7 +329,8 @@ class LiveVoice(QObject):
                         self.queue_audio(base64.b64decode(data['data'], validate=True))
                         if not self.active or self.socket is not socket:
                             return
-            if content.get('turnComplete'):
+            if content.get('turnComplete') and not (cutoff and (new_speech or acknowledged)):
+                self.awaiting_interrupt_ack = False
                 completed = self.transcript
                 self.transcript = ['', '']
                 self.ignore_reply = False
@@ -330,7 +339,8 @@ class LiveVoice(QObject):
                     self.connection_timer.stop()
                     self.flush_audio()
                 else:
-                    self.turn_finished.emit(*(line.strip() for line in completed))
+                    if any(line.strip() for line in completed):
+                        self.turn_finished.emit(*(line.strip() for line in completed))
         except (AttributeError, KeyError, ValueError, TypeError, binascii.Error):
             self.stop('Gemini Live returned an unsupported audio response.')
 
@@ -376,13 +386,14 @@ class LiveVoice(QObject):
             # Windows can finish playback before the speaker echo has reached the mic.
             self.speaker_tail.start()
 
-    def interrupt(self, *, server=False):
+    def interrupt(self):
         if self.state != 'speaking':
             return
         if self.readout:
             self.stop()
             return
-        self.ignore_reply = not server
+        self.transcript = ['', '']
+        self.ignore_reply = True
         self.speaker_tail.stop()
         self.pending.clear()
         self.output_level.emit(0)
@@ -417,6 +428,7 @@ class LiveVoice(QObject):
         self.echo_filter.clear()
         self.transcript = ['', '']
         self.ignore_reply = False
+        self.awaiting_interrupt_ack = False
         self.readout = ''
         self.readout_finished = False
         if socket is not None:
