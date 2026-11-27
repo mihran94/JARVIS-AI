@@ -71,6 +71,7 @@ class VoiceWorker(QThread):
 
     transcript = Signal(str)
     wake_started = Signal()
+    capture_changed = Signal()
     wake_call = Signal(str, str)
     failed = Signal(str)
     audio_level = Signal(int)
@@ -80,6 +81,7 @@ class VoiceWorker(QThread):
         self.consent = consent
         self._factory = recognizer_factory
         self._mode = mode
+        self.waiting_for_wake = mode in ('continuous', 'dialogue', 'wake')
         self._timeout = timeout
         self._language = language
         self.replies_muted = False
@@ -132,6 +134,8 @@ class VoiceWorker(QThread):
                             if hasattr(recognizer, 'set_level_listener'):
                                 recognizer.set_level_listener(self.audio_level.emit)
                             if self.consent.listening and not self.isInterruptionRequested():
+                                self.waiting_for_wake = False
+                                self.capture_changed.emit()
                                 command = recognizer.recognize_once(8.0)
                         if self.consent.listening and not self.isInterruptionRequested():
                             self.wake_call.emit(wake, (command or '').strip()[:4000])
@@ -274,6 +278,7 @@ class VoicePanel(QWidget):
         self.muted = False
         self.microphone_muted = False
         self.pending_speech = ''
+        self.pending_local_only = False
         self.pending_sample = None
         self.cloud_config = None
         self.spoken_text = ''
@@ -445,6 +450,7 @@ class VoicePanel(QWidget):
         self.worker.replies_muted = self.muted
         self.worker.audio_level.connect(self.forward_audio_level)
         self.worker.transcript.connect(self.on_transcript)
+        self.worker.capture_changed.connect(self.refresh)
         self.worker.wake_started.connect(self.on_wake_started)
         self.worker.wake_call.connect(self.on_wake_call)
         self.worker.failed.connect(self.on_recognition_failed)
@@ -479,6 +485,10 @@ class VoicePanel(QWidget):
         return (self.consent.listening and self.worker is not None and self.worker.isRunning()
                 and not self.worker.isInterruptionRequested())
 
+    @property
+    def waiting_for_wake(self):
+        return self.listening and getattr(self.worker, 'waiting_for_wake', False)
+
     def stop_continuous(self):
         self.continuous = False
         self.wake_timer.stop()
@@ -502,10 +512,13 @@ class VoicePanel(QWidget):
             return
         self.audio_level.emit(0)
         pending, self.pending_speech = self.pending_speech, ''
+        local_only, self.pending_local_only = self.pending_local_only, False
         sample, self.pending_sample = self.pending_sample, None
         if pending:
             if sample:
                 self.speak_response(pending, sample_language=sample)
+            elif local_only:
+                self.speak_response(pending, local_only=True)
             else:
                 self.speak_response(pending)
         self.refresh()
@@ -562,7 +575,7 @@ class VoicePanel(QWidget):
         """Start optional text-to-speech without blocking Emergency Stop."""
         self.speak_response(self.speak_text.text())
 
-    def speak_response(self, text, *, sample_language=None, local_only=False):
+    def speak_response(self, text, *, sample_language=None, local_only=False, queue_local=False):
         """Speak on a dedicated worker so Qt remains responsive."""
         if self.audio_test_active or self.live_voice_active:
             return
@@ -580,8 +593,9 @@ class VoicePanel(QWidget):
         self.wake_timer.stop()
         self.spoken_text = text
         if self.worker is not None and self.worker.isRunning():
-            if local_only:
+            if local_only and not queue_local:
                 return
+            self.pending_local_only = local_only
             self.pending_speech = text
             self.pending_sample = sample_language
             self.cancel_listening()

@@ -661,6 +661,15 @@ class PrimeAssistant(QWidget):
 
     def set_state(self, state: str):
         self.orb.set_state(state)
+        hint = {
+            'idle': 'Type a message or choose a voice mode.',
+            'standby': 'Say “Hey Jarvis” to wake me.',
+            'listening': 'Speak your question.',
+            'approval': 'Review the action in Chat.',
+            'stopped': 'Resume when you are ready.',
+        }.get(state, '')
+        self.hint.setText(hint)
+        self.hint.setVisible(bool(hint))
         if state != 'idle':
             self.title.setText(STATES[state][0])
         else:
@@ -830,6 +839,18 @@ class PrimeChat(QWidget):
         terminal_header.addWidget(history_button)
         terminal_header.addWidget(window.mission_mode)
         terminal_layout.addLayout(terminal_header)
+        self.target_bar = QWidget()
+        target_layout = QHBoxLayout(self.target_bar)
+        target_layout.setContentsMargins(0, 0, 0, 0)
+        self.target_label = QLabel()
+        self.target_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.target_label.setWordWrap(True)
+        target_layout.addWidget(self.target_label, 1)
+        self.release_target = QPushButton('Release app')
+        self.release_target.clicked.connect(lambda: window.route_interface_command('release selected app'))
+        target_layout.addWidget(self.release_target)
+        self.target_bar.hide()
+        terminal_layout.addWidget(self.target_bar)
         self.work_state = QLabel()
         self.work_state.setWordWrap(True)
         self.work_state.setTextFormat(Qt.TextFormat.PlainText)
@@ -1212,6 +1233,10 @@ class PrimeChat(QWidget):
         self.empty_history.setVisible(not messages)
         self.conversation.render(messages)
 
+    def show_selected_app(self, target):
+        self.target_bar.setVisible(target is not None)
+        self.target_label.setText(f'Selected window · {target.title}' if target else '')
+
     def set_state(self, state: str):
         self.assistant.set_state(state)
         self.timeline.set_state(state)
@@ -1467,9 +1492,8 @@ class PrimeShell(QWidget):
         self.clock_label.setText(now.strftime('%H:%M:%S'))
         self.date_label.setText(now.strftime('%A, %d %b %Y'))
         live = getattr(self.window_ref, 'live_voice', None)
-        engine = 'GEMINI LIVE' if live is not None else self.window_ref.provider.currentText().upper()
-        mic = 'MUTED' if self.window_ref.voice_panel.microphone_muted else (
-            'LIVE' if live is not None else 'READY')
+        engine = 'GEMINI LIVE' if live is not None and live.active else self.window_ref.chat_provider.currentText().upper()
+        mic = self.window_ref.mic_status_label()
         control = 'CONTROL ACTIVE' if self.window_ref.desktop_control_active else 'M-CORE'
         self.footer_status.setText(f'● ENGINE · {engine}     ● MIC · {mic}     ● {control}')
 

@@ -783,3 +783,37 @@ def test_reference_panels_show_real_status_and_keep_upload_with_command(tmp_path
         assert window.prime_shell.clock_label.text().count(':') == 2
     finally:
         window.close()
+
+
+def test_phone_wake_only_displays_m_and_requests_local_speech(tmp_path, monkeypatch):
+    app, window = make_window(tmp_path)
+    spoken = []
+    monkeypatch.setattr(window.voice_panel, 'speak_response', lambda *a, **kw: spoken.append((a, kw)))
+    try:
+        window.hide()
+        assert not window.voice_panel.consent.listening
+        assert window.bridge.bridge.wake()
+        app.processEvents()
+        assert window.wake_overlay.isVisible() and not window.isVisible()
+        assert not window.voice_panel.consent.listening
+        assert spoken == [(('சொல்லுங்க, பாஸ்.',), {'local_only': True, 'queue_local': True})]
+        window.stop()
+        assert not window.bridge.bridge.wake()
+    finally:
+        window.close()
+
+
+def test_inactive_live_session_never_labels_the_mic_live(tmp_path):
+    app, window = make_window(tmp_path)
+    try:
+        window.voice_session()
+        window.prime_shell.refresh_clock()
+        text = window.prime_shell.footer_status.text()
+        assert 'GEMINI LIVE' not in text
+        assert 'MIC · OFF' in text
+        window.voice_panel.allow.setChecked(True)
+        assert window.mic_status_label() == 'READY'
+        window.prime_shell.refresh_clock()
+        assert 'MIC · READY' in window.prime_shell.footer_status.text()
+    finally:
+        window.close()

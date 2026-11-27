@@ -376,6 +376,8 @@ class ChatPrompt(QPlainTextEdit):
 
 
 class Window(QMainWindow):
+    phone_wake = Signal(int)
+
     def __init__(self, data_root):
         super().__init__()
         self.setWindowTitle(APP_NAME)
@@ -843,6 +845,7 @@ class Window(QMainWindow):
                 'approval': 'Waiting for an approval.',
                 'stopped': 'Emergency stop is active.',
             }.get(state, '')
+            chat.show_selected_app(self.selected_app_window)
             chat.work_state.setText(summary)
             chat.work_state.setVisible(bool(summary))
             chat.timeline.set_live_detail(detail)
@@ -894,7 +897,7 @@ class Window(QMainWindow):
             return 'thinking' if self.live_voice.state == 'connecting' else self.live_voice.state
         if self.voice_panel.speaking:
             return 'speaking'
-        if self.voice_panel.listening:
+        if self.voice_panel.listening and not self.voice_panel.waiting_for_wake:
             return 'listening'
         if self.ai_visual_state in ('thinking', 'responding'):
             return self.ai_visual_state
@@ -905,7 +908,7 @@ class Window(QMainWindow):
                 or self.browser.task is not None or self.desktop_pending is not None
                 or self.launch_verification is not None):
             return 'working'
-        return 'idle'
+        return 'standby' if self.voice_panel.waiting_for_wake else 'idle'
 
     def on_theme_chosen(self, name: str) -> None:
         if name not in OMEGA_THEMES:
@@ -1220,10 +1223,29 @@ class Window(QMainWindow):
             'Check or edit what JARVIS heard, then send it to preview the action.', 15000)
         return True
 
+    def queue_phone_wake(self):
+        try:
+            ticket = self.policy.ticket()
+        except Stopped:
+            return False
+        self.phone_wake.emit(ticket)
+        return True
+
+    def receive_phone_wake(self, ticket):
+        try:
+            self.policy.check(ticket)
+        except Stopped:
+            return
+        self.display_m_overlay('idle')
+        self.voice_panel.speak_response('சொல்லுங்க, பாஸ்.', local_only=True, queue_local=True)
+
     def show_wake_overlay(self):
         if (self.policy.stopped or self.voice_panel.microphone_muted
                 or not self.voice_panel.consent.listening):
             return
+        self.display_m_overlay('listening')
+
+    def display_m_overlay(self, state):
         if self.wake_overlay is None:
             from desktop.prime_ui import PrimeOrb
             overlay = self.wake_overlay = PrimeOrb(self.prime_palette)
@@ -1238,7 +1260,7 @@ class Window(QMainWindow):
             self.voice_panel.audio_level.connect(overlay.set_level)
         overlay = self.wake_overlay
         overlay.set_motion(not self.store.get('omega:reduced', False))
-        overlay.set_state('listening')
+        overlay.set_state(state)
         screen = self.screen().availableGeometry()
         overlay.move(screen.right() - overlay.width() - 20, screen.bottom() - overlay.height() - 20)
         overlay.show()
@@ -1676,6 +1698,7 @@ class Window(QMainWindow):
             except Exception as error:
                 detail = str(error)
             self.show_local_system_reply(spoken, detail, speak=False)
+            self.refresh_prime_state()
             return True
         text = addressed_request(spoken).casefold().strip(' .!?')
         text = re.sub(r'\s+', ' ', text)
@@ -2177,6 +2200,21 @@ class Window(QMainWindow):
         self.ai_visual_state = state
         self.refresh_voice_hud()
 
+    def mic_status_label(self):
+        panel = self.voice_panel
+        if panel.microphone_muted:
+            return 'MUTED'
+        if self.policy.stopped or not panel.consent.listening:
+            return 'OFF'
+        if self.live_voice and self.live_voice.active and getattr(self.live_voice, 'input', None) is not None:
+            return 'LIVE'
+        if panel.waiting_for_wake:
+            return 'STANDBY'
+        audio_test = getattr(self, 'audio_test', None)
+        if panel.listening or (panel.audio_test_active and getattr(audio_test, 'mode', None) == 'microphone'):
+            return 'ACTIVE'
+        return 'READY'
+
     def refresh_voice_hud(self):
         if not self.voice_panel.consent.listening and self.hands_free_voice.isChecked():
             self.hands_free_voice.setChecked(False)
@@ -2197,8 +2235,12 @@ class Window(QMainWindow):
             'idle': 'IDLE', 'listening': 'LISTENING', 'thinking': 'THINKING',
             'responding': 'ANSWERING', 'speaking': 'SPEAKING', 'stopped': 'STOPPED',
         }[state]
-        self.orb.set_state(state)
-        self.hud_orb.set_state(state)
+        standby = state == 'listening' and self.voice_panel.waiting_for_wake
+        if standby:
+            label = 'WAKE STANDBY'
+        orb_state = 'idle' if standby else state
+        self.orb.set_state(orb_state)
+        self.hud_orb.set_state(orb_state)
         if self.chat_launch is not None and not self.policy.stopped:
             label = 'APPROVAL REQUIRED'
         self.orb_status.setText('JARVIS  /  ' + label)
@@ -2209,8 +2251,8 @@ class Window(QMainWindow):
         shell = getattr(self, 'prime_shell', None)
         if shell is not None:
             mic_action = 'Unmute mic' if muted else 'Mute mic'
-            shell.mic_mute_button.setText('MIC MUTED' if muted else (
-                'MIC ACTIVE' if self.voice_panel.consent.listening else 'MIC OFF'))
+            shell.mic_mute_button.setText('MIC ' + self.mic_status_label())
+            shell.refresh_clock()
             shell.mic_mute_button.setAccessibleName(mic_action)
             shell.mic_mute_button.setToolTip(mic_action)
             shell.output_mute_button.setChecked(output_muted)
@@ -2223,14 +2265,15 @@ class Window(QMainWindow):
             chat.assistant.refresh_caption()
         self.hud_voice_status.setText(label)
         if self.omega is not None:
-            self.omega.set_voice(state)
+            self.omega.set_voice(orb_state)
         self.hud_talk.setEnabled(not muted and state not in ('stopped', 'listening', 'speaking')
                                  and not self.voice_panel.playback_busy)
         hud = getattr(self, 'hud', None)
         if hud is not None:
             live_listening = self.live_voice is not None and self.live_voice.state == 'listening'
             microphone_open = self.voice_panel.listening or live_listening
-            mic_state = ('The microphone is listening.' if microphone_open else
+            mic_state = ('Waiting for Hey Jarvis.' if standby else
+                         'The microphone is listening.' if microphone_open else
                          self.voice_panel.consent.listener)
             hud.strip.set_mic('The microphone is muted.' if muted else mic_state, output_muted)
         self.refresh_prime_state(refresh_motion=False)
@@ -2857,6 +2900,8 @@ class Window(QMainWindow):
         self.bridge = BridgePanel(self.policy, self.store, self.vault, self.confirm, self.notify,
                                   router=self.router,
                                   history_path=self.root / 'history.sqlite3')
+        self.phone_wake.connect(self.receive_phone_wake, Qt.ConnectionType.QueuedConnection)
+        self.bridge.bridge.wake = self.queue_phone_wake
         self.phone_remote_popup = QDialog(self)
         self.phone_remote_popup.setWindowTitle('Phone Remote')
         screen = self.screen().availableGeometry()

@@ -8,7 +8,7 @@
 // locked screen, a browser without voice and a browser without
 // notifications are all handled without breaking the page.
 
-import { BridgeClient, BridgeError } from './js/bridge.js';
+import { BridgeClient, BridgeError, signCanonical } from './js/bridge.js';
 import { ChatTranscript, renderTranscript } from './js/chat.js';
 import { KINDS, Outbox, createIndexedDbStore } from './js/offline.js';
 import { parsePairingLink, parsePairingPayload } from './js/pairing.js';
@@ -111,7 +111,52 @@ async function connect() {
   }
 }
 
+const WAKE_STORAGE = 'jarvis.siri.wake.v1';
+
+async function enableSiriWake() {
+  try {
+    const client = state.client;
+    if (!client || new URL(client.baseUrl).origin !== location.origin || location.protocol !== 'https:') {
+      throw new Error('Connect in Safari on the PC’s HTTPS Phone Remote page first.');
+    }
+    await client.status();
+    const secret = await signCanonical('JARVIS/iphone/wake/v1', client.secret);
+    if (state.client !== client) return;
+    localStorage.setItem(WAKE_STORAGE, JSON.stringify({ keyId: client.keyId, secret }));
+    const link = new URL(location.pathname, location.origin);
+    link.hash = 'wake';
+    $('siriLink').value = link.href;
+    $('siriLink').hidden = false;
+    try {
+      await navigator.clipboard.writeText(link.href);
+      say('Wake link copied. Use it in a Siri shortcut with Open URLs.');
+    } catch {
+      $('siriLink').select();
+      say('Copy the wake link and use it in a Siri shortcut with Open URLs.');
+    }
+  } catch (error) {
+    say(error.message, 'error');
+  }
+}
+
+async function handleSiriWake() {
+  if (globalThis.location?.hash !== '#wake') return;
+  history.replaceState(null, '', location.pathname);
+  try {
+    const saved = JSON.parse(localStorage.getItem(WAKE_STORAGE));
+    if (!saved) throw new Error('Pair this Safari browser, then choose Set up Siri wake.');
+    const client = new BridgeClient({ ...saved, baseUrl: location.origin });
+    await client.request('POST', '/api/wake');
+    say('Wake request received by your PC.', 'ok');
+  } catch (error) {
+    say(error.message, 'error');
+  }
+}
+
 function forgetSecret() {
+  localStorage.removeItem(WAKE_STORAGE);
+  $('siriLink').hidden = true;
+  $('siriLink').value = '';
   endPhoneCall();
   state.client = null;
   $('secret').value = '';
@@ -899,6 +944,8 @@ function installListeners() {
   if (picker) {
     picker.value = defaultLanguage();
   }
+  $('enableSiriWake').addEventListener('click', enableSiriWake);
+  window.addEventListener('hashchange', handleSiriWake);
   $('connect').addEventListener('click', connect);
   $('disconnect').addEventListener('click', forgetSecret);
   $('scan').addEventListener('click', () => $('scanFile').click());
@@ -1023,6 +1070,7 @@ async function start() {
   // The work that was kept before a reload is read back, the heartbeat that
   // sends it while the app is open is started, and whatever can be sent now
   // is sent now.
+  await handleSiriWake();
   await restoreOutbox();
   if (pairingLink && applyPairing(pairingLink)) await connect();
   await flushOutbox();

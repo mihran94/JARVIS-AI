@@ -172,3 +172,18 @@ rules and the QR reader.
 This is a working client, not a deployed one. It has not been used on a
 physical iPhone, and the bridge has not been reached over a real VPN. The
 pairing, the TLS termination and the tunnel are the owner's part.
+
+### Wake the PC hologram with Siri
+
+Open Phone Remote in Safari on the iPhone using the PC listener's own HTTPS
+address. Pair and tap **Connect**, then **Set up Siri wake**. In Apple Shortcuts,
+create a shortcut named **Jarvis Remote**, add **Open URLs** and paste the
+copied link. Say **Hey Siri, Jarvis Remote** while Windows JARVIS and the
+listener are running and reachable. Siri opens the page in Safari, which signs
+a wake request. The PC shows the M hologram and requests a local spoken cue.
+The wake request leaves the PC microphone and the main window alone.
+
+Setup stores a separate wake-only credential in this Safari origin. The copied
+link contains no pairing credentials. Use the same Safari profile when opening
+it. **Forget secret** clears the saved wake credential in that browser, and
+revoking the phone on the PC disables all credentials derived from its pairing.

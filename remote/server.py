@@ -48,7 +48,7 @@ from remote.protocol import (
     ProtocolError,
     check_timestamp,
     normalize_headers,
-    verify,
+    verify, wake_secret,
 )
 from remote.replay import ReplayGuard
 
@@ -112,13 +112,14 @@ class BridgeServer:
                  memory: MemoryStore | None = None,
                  notifications: NotificationStore | None = None,
                  audit: AuditLog | None = None,
-                 chat=None, status_provider=None, memory_allowed=None):
+                 chat=None, status_provider=None, memory_allowed=None, wake=None):
         self._pairing = pairing
         self._jobs = jobs if jobs is not None else JobStore(now=now)
         self._replay = replay if replay is not None else ReplayGuard()
         self._memory = memory if memory is not None else MemoryStore(now=now)
         self._notifications = notifications if notifications is not None else NotificationStore(now=now)
         self._audit = audit if audit is not None else AuditLog(now=now)
+        self.wake = wake
         self._chat = chat
         self._status_provider = status_provider
         self._memory_allowed = memory_allowed
@@ -178,6 +179,12 @@ class BridgeServer:
     def _dispatch(self, request: BridgeRequest, device) -> dict:
         method = request.method.upper()
         path = request.path
+        if method == 'POST' and path == '/api/wake':
+            if request.body:
+                raise BridgeHandlerError(400, 'A wake request takes no command or audio.')
+            if self.wake is None or not self.wake():
+                raise BridgeHandlerError(409, 'Desktop wake is unavailable.')
+            return {'queued': True}
         if method == 'GET' and path == '/api/status':
             return self._status()
         if method == 'GET' and path == '/api/jobs':
@@ -382,6 +389,8 @@ class BridgeServer:
         try:
             check_timestamp(timestamp, now=self._now(),
                             max_skew_seconds=self._clock_skew_seconds)
+            if request.method.upper() == 'POST' and request.path == '/api/wake':
+                secret = wake_secret(secret)
             verify(request.method, request.path, timestamp, request.body, secret, nonce, signature)
             self._replay.check(nonce)
         except ProtocolError:
