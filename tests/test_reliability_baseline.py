@@ -229,3 +229,25 @@ def test_window_defers_close_without_blocking_until_voice_worker_exits(app, tmp_
         window.close()
         window.deleteLater()
         app.processEvents()
+
+def test_explicit_exit_button_closes_even_when_normal_close_uses_tray(app, tmp_path, monkeypatch):
+    from desktop.app import Window
+
+    window = Window(tmp_path)
+    hidden = []
+    monkeypatch.setattr(window, 'keep_running_in_tray', lambda: True)
+    window.background_controls = SimpleNamespace(tray=SimpleNamespace(isVisible=lambda: True),
+                                                 hide=lambda: hidden.append(True))
+    try:
+        window.show()
+        app.processEvents()
+        button = next(b for b in window.findChildren(QPushButton) if b.text() == 'Exit JARVIS')
+        button.click()
+        assert window.exit_requested
+        assert not window.isVisible()
+        assert hidden == []
+    finally:
+        window.background_controls = None
+        window.close()
+        window.deleteLater()
+        app.processEvents()

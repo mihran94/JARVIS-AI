@@ -4503,6 +4503,7 @@ class Window(QMainWindow):
         update_layout = QVBoxLayout(updates)
         self.flexible_button(update_layout, 'Updates & rollback', lambda: open_updates(self))
         restart = self.flexible_button(update_layout, 'Restart JARVIS', self.request_restart)
+        self.flexible_button(update_layout, 'Exit JARVIS', self.request_exit)
         restart.setEnabled(restart_supported())
         restart.setToolTip('Close this window before starting the next JARVIS session.')
         self.auto_maintenance = QCheckBox('Automatically propose source update guide fixes')
