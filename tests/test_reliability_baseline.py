@@ -1,6 +1,7 @@
 """Recovery and session-boundary regressions; no hardware/provider calls."""
 import json
 import os
+import time
 from types import SimpleNamespace
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
@@ -189,6 +190,42 @@ def test_retry_after_restart_still_requires_new_approval(app, tmp_path, monkeypa
         assert called[0][0][0] == task.goal
         assert called[0][1]['task'].ident == task.ident
     finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_window_defers_close_without_blocking_until_voice_worker_exits(app, tmp_path, monkeypatch):
+    from desktop.app import Window
+
+    window = Window(tmp_path)
+    busy = [True]
+    stopped, waited, cancelled = [], [], []
+    window.voice_panel.worker = SimpleNamespace(isRunning=lambda: busy[0],
+                                                isInterruptionRequested=lambda: True)
+    monkeypatch.setattr(window, 'stop', lambda: stopped.append(True))
+    monkeypatch.setattr(window.voice_panel, 'stop_voice', lambda: cancelled.append(True))
+    monkeypatch.setattr(window.voice_panel, 'wait_for_workers', lambda: waited.append(True))
+    try:
+        window.show()
+        app.processEvents()
+        window.close()
+        assert window.isVisible()
+        assert window.close_when_done
+        assert stopped == []
+        assert cancelled == [True]
+        assert window.policy.stopped
+        assert waited == []
+        busy[0] = False
+        deadline = time.monotonic() + 2
+        while window.isVisible() and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(0.01)
+        assert not window.isVisible()
+        assert waited == [True]
+        assert stopped == []
+    finally:
+        window.voice_panel.worker = None
         window.close()
         window.deleteLater()
         app.processEvents()

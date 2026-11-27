@@ -13,16 +13,21 @@ profile are unchanged. Physical voice/phone/camera acceptance remains separate.
 | Old socket delivers a delayed text/binary packet after reconnect | Old session content could terminate or modify the replacement session | Each inbound socket callback is bound to its originating socket and ignored after replacement. |
 | Speaker reset triggers Stop while interrupting a reply | Interrupt dereferenced the cleared player or reopened audio after Stop | Check player/session identity after reset/start; stop leaves audio closed. |
 | Turn completion or Heard callback starts another turn/session | Old processing could erase the next transcript or append the old reply | Clear completed-turn buffers before emitting callbacks, and discard remaining old content after a session change. |
+| Close while a native voice worker is still running | A bounded thread wait could expire and still allow window destruction | Poll worker completion with a parented timer; keep the UI responsive and the window alive until the worker exits. Voice-only exit preserves saved startup/control preferences. |
 
-`tests/test_reliability_baseline.py` adds 11 cases. The initial nine fault cases
+`tests/test_reliability_baseline.py` adds 12 cases. The initial nine fault cases
 failed against the previous production behavior before the fixes. Additional
-cases verify approval on retry and reentrant session replacement.
+cases verify approval on retry, reentrant session replacement and deferred close.
+The deferred-close case also failed before its production fix.
 
 ## Validation
 
 - Focused voice/update/rollback regression: 57 passed.
 - Focused recovery, LiveVoice and development-workflow integration: 33 passed
   using the repository-pinned pytest 8.3.5.
+- Recovery and existing worker-close regression after the final close fix:
+  18 passed. Voice-panel/worker-close integration also passed 53 tests during
+  verification of deferred shutdown.
 - Full local regression uses fresh pytest subprocesses per module and isolated
   temporary directories. pytest 8.3.5 is loaded from a dedicated QA directory;
   neither the global test installation nor the application venv is changed.
