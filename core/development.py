@@ -71,7 +71,7 @@ class Improvement:
     @property
     def resumable(self) -> bool:
         """True when this task can be picked up again."""
-        return self.state in ('pending', 'waiting', 'failed')
+        return self.state in ('pending', 'waiting', 'failed', 'interrupted')
 
     @property
     def waiting(self) -> bool:

@@ -35,9 +35,10 @@ COMPLETED = 'completed'
 FAILED = 'failed'
 REJECTED = 'rejected'
 READY = 'ready'
+INTERRUPTED = 'interrupted'
 
 #: The states from which a task can be resumed.
-RESUMABLE = (PENDING, RUNNING, WAITING, FAILED)
+RESUMABLE = (PENDING, RUNNING, WAITING, FAILED, INTERRUPTED)
 
 
 def _now() -> str:

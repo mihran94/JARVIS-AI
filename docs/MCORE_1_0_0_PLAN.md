@@ -41,6 +41,11 @@ Automated regression and hardware acceptance are recorded separately in the audi
 
 ## Internal structure
 
+Stage 1's first production batch is tracked in
+[MCORE_STAGE1_RELIABILITY.md](MCORE_STAGE1_RELIABILITY.md): interrupted-task retry,
+safe camera-preference fallback and voice-session callback/stop isolation.
+This is progress toward the reliability gate, not a declaration of version 1.0.0.
+
 `desktop/app.py` has 7,699 lines and `desktop/prime_ui.py` has 1,691 lines at
 this baseline. Gradually extract voice/vision coordination, desktop-action dispatch,
 remote sessions, settings and update orchestration behind existing entry points.

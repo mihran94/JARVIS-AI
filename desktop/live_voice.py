@@ -153,8 +153,8 @@ class LiveVoice(QObject):
         socket = self.socket = QWebSocket(parent=self)
         setup = setup_message(guidance, tamil_tanglish=tamil_tanglish, preferred_name=preferred_name)
         socket.connected.connect(lambda: self.send(setup) if self.socket is socket else None)
-        socket.textMessageReceived.connect(self.receive)
-        socket.binaryMessageReceived.connect(lambda data: self.receive(bytes(data)))
+        socket.textMessageReceived.connect(lambda data: self.receive_from(socket, data))
+        socket.binaryMessageReceived.connect(lambda data: self.receive_from(socket, bytes(data)))
         socket.errorOccurred.connect(self.connection_lost)
         socket.disconnected.connect(self.connection_lost)
         url = QUrl(ENDPOINT)
@@ -276,9 +276,15 @@ class LiveVoice(QObject):
                 'mimeType': 'image/jpeg', 'data': base64.b64encode(frame).decode('ascii'),
             }}})
 
+    def receive_from(self, socket, raw):
+        # abort/deleteLater can leave queued messages from the previous session.
+        if self.socket is socket:
+            self.receive(raw)
+
     def receive(self, raw):
         if not self.active:
             return
+        socket = self.socket
         try:
             packet = json.loads(raw)
             if packet.get('error'):
@@ -296,7 +302,7 @@ class LiveVoice(QObject):
             cutoff = interrupted or (new_speech and self.state == 'speaking')
             if cutoff:
                 self.interrupt(server=True)
-                if not self.active:
+                if not self.active or self.socket is not socket:
                     return
             if new_speech:
                 self.ignore_reply = False
@@ -306,22 +312,25 @@ class LiveVoice(QObject):
                     self.transcript[index] = (self.transcript[index] + fragment)[:16000]
                     if index == 0 and fragment:
                         self.heard_changed.emit(self.transcript[0].strip())
-                        if not self.active:
+                        if not self.active or self.socket is not socket:
                             return
             if not self.ignore_reply and not cutoff:
                 for part in content.get('modelTurn', {}).get('parts', []):
                     data = part.get('inlineData', {})
                     if data.get('mimeType', '').startswith('audio/pcm'):
                         self.queue_audio(base64.b64decode(data['data'], validate=True))
+                        if not self.active or self.socket is not socket:
+                            return
             if content.get('turnComplete'):
+                completed = self.transcript
+                self.transcript = ['', '']
+                self.ignore_reply = False
                 if self.readout:
                     self.readout_finished = True
                     self.connection_timer.stop()
                     self.flush_audio()
                 else:
-                    self.turn_finished.emit(*(line.strip() for line in self.transcript))
-                self.transcript = ['', '']
-                self.ignore_reply = False
+                    self.turn_finished.emit(*(line.strip() for line in completed))
         except (AttributeError, KeyError, ValueError, TypeError, binascii.Error):
             self.stop('Gemini Live returned an unsupported audio response.')
 
@@ -377,8 +386,14 @@ class LiveVoice(QObject):
         self.speaker_tail.stop()
         self.pending.clear()
         self.output_level.emit(0)
-        self.player.reset()
-        self.output = self.player.start()
+        player = self.player
+        player.reset()
+        if not self.active or self.player is not player:
+            return
+        output = player.start()
+        if not self.active or self.player is not player:
+            return
+        self.output = output
         if self.output is None:
             self.stop('Live Voice could not reopen the speaker.')
             return
@@ -404,13 +419,15 @@ class LiveVoice(QObject):
         self.ignore_reply = False
         self.readout = ''
         self.readout_finished = False
-        socket.abort()
-        socket.deleteLater()
+        if socket is not None:
+            socket.abort()
+            socket.deleteLater()
         if capture is not None:
             capture.stop()
             capture.deleteLater()
-        player.reset()
-        player.deleteLater()
+        if player is not None:
+            player.reset()
+            player.deleteLater()
         self.audio_level.emit(0)
         self.output_level.emit(0)
         self.set_state('idle')

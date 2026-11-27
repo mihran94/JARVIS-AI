@@ -451,6 +451,8 @@ class Window(QMainWindow):
         self.chat_task = None
         self.chat_ticket = None
         self.voice_rearm_timer = QTimer(self)
+        self.voice_exit_timer = QTimer(self, singleShot=True, interval=100)
+        self.voice_exit_timer.timeout.connect(self.close)
         self.voice_rearm_timer.setSingleShot(True)
         self.voice_rearm_timer.timeout.connect(self.rearm_local_voice)
 
@@ -7565,20 +7567,36 @@ class Window(QMainWindow):
         controller = getattr(self, 'mission_controller', None)
         mission_running = (controller is not None and controller.worker is not None
                            and controller.worker.isRunning())
-        if (self.worker is not None or self.coding_worker is not None
+        voice_running = any(worker is not None and worker.isRunning()
+                            for worker in (self.voice_panel.worker,
+                                           self.voice_panel.speaker_worker))
+        work_running = (self.worker is not None or self.coding_worker is not None
                 or self.browser.worker is not None
                 or (self.research_dialog and self.research_dialog.worker is not None)
                 or self.test_worker is not None or self.release_checker.source_worker is not None
-                or self.improvement_worker is not None or mission_running):
+                or self.improvement_worker is not None or mission_running)
+        if work_running or voice_running:
             # A coding task runs the Codex CLI and the test command in their
             # own processes. Closing the window must not leave them running
             # behind the owner's back, so the stop happens first and the
             # window closes when the workers are gone.
-            self.close_when_done = True
-            self.stop()
+            if not self.close_when_done:
+                self.close_when_done = True
+                if work_running:
+                    self.stop()
+                else:
+                    # Ordinary voice-only exit must not overwrite the saved
+                    # startup microphone/control preferences via Emergency Stop.
+                    self.policy.stop()
+                    self.voice_panel.stop_voice()
             self.statusBar().showMessage('Waiting for the current task to exit safely…')
+            if voice_running:
+                # Native audio adapters can outlive a bounded wait. Keep the
+                # window and its threads alive, without blocking the UI loop.
+                self.voice_exit_timer.start()
             event.ignore()
         else:
+            self.voice_exit_timer.stop()
             self.prime_shell.close_drawer()
             self.prime_shell.clock_timer.stop()
             self.prime_chat.weather_timer.stop()

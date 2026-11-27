@@ -50,7 +50,11 @@ class CameraPanel(QGroupBox):
         if QCamera is not None:
             for device in QMediaDevices.videoInputs():
                 self.choice.addItem(device.description(), bytes(device.id()))
-        saved = bytes.fromhex(self.store.get('camera:device', '') or '')
+        try:
+            saved = bytes.fromhex(self.store.get('camera:device', '') or '')
+        except (TypeError, ValueError):
+            # A damaged preference must not prevent the whole desktop opening.
+            saved = b''
         self.choice.setCurrentIndex(max(0, self.choice.findData(saved)))
         self.choice.blockSignals(False)
         available = QCamera is not None and bool(QMediaDevices.videoInputs())
