@@ -463,3 +463,25 @@ def test_settings_speaker_test_plays_a_local_tone_and_releases_buffer(tmp_path, 
         window.close()
         window.deleteLater()
         app.processEvents()
+
+
+def test_native_standby_closes_gate_before_cue_and_command(monkeypatch):
+    from desktop import voice_panel
+    from voice.consent import VoiceConsent
+    consent = VoiceConsent()
+    consent.grant()
+    events = []
+    gate = FakeRecognizer(wake=('Hey Jarvis', ''))
+    command = FakeRecognizer(transcript='என்ன நேரம்?')
+    monkeypatch.setattr(gate, 'stop', lambda: events.append('gate closed'))
+    monkeypatch.setattr(voice_panel, 'WindowsSpeechRecognizer', lambda *_: gate)
+    monkeypatch.setattr(voice_panel, 'acknowledge_wake', lambda stop: events.append('cue'))
+    def factory(*_):
+        events.append('command opened')
+        return command
+    monkeypatch.setattr(voice_panel, 'default_recognizer_factory', factory)
+    worker = voice_panel.VoiceWorker(consent, factory, mode='continuous', language='ta_en')
+    worker.wake_started.connect(lambda: events.append('hologram'))
+    worker.wake_call.connect(lambda _, text: events.append(text))
+    worker.run()
+    assert events == ['hologram', 'gate closed', 'cue', 'command opened', 'என்ன நேரம்?']

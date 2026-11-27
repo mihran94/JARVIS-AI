@@ -5,7 +5,15 @@ task and approval backend. This checkout has its own desktop layout, artwork,
 data folder and Windows Credential Manager entries.
 
 Run `setup.cmd` once from this folder, then start `START_JARVIS_M.cmd`.
-Use **Live Voice** for Tamil and Tanglish conversation. Configure a Gemini
+For wake-only standby, enable **Allow the microphone** and **Hey Jarvis** in
+Voice settings. Windows listens locally for the exact English phrase “Hey Jarvis”
+using an installed English speech recognizer. Say it, wait for the floating M and the short local spoken cue,
+then speak one question in the selected command language. Only the question
+after waking can go to the configured chat provider. Mute closes the listener.
+Say “Jarvis app open pannu” or “Jarvis preview kaattu” after waking to show
+the main chat window. The floating M leaves the current app in focus.
+
+Choose **Live Voice** explicitly for a continuous Tamil or Tanglish conversation. Configure a Gemini
 key under **Settings → AI providers** and enable the microphone under **Voice**.
 While Live Voice is on, the app streams microphone audio to Gemini.
 

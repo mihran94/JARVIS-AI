@@ -508,6 +508,9 @@ class Window(QMainWindow):
             self.voice_panel.set_language(saved_language)
         self.voice_panel.language.currentTextChanged.connect(
             lambda name: self.store.set('voice_language', self.voice_panel.language_code))
+        self.wake_overlay = None
+        self.wake_chat_worker = None
+        self.voice_panel.wake_started.connect(self.show_wake_overlay)
         self.voice_panel.wake_detected.connect(self.on_wake_detected)
         self.voice_panel.utterance_detected.connect(self.on_voice_transcript)
         self.voice_panel.cycle_finished.connect(self.schedule_local_voice_rearm)
@@ -1074,9 +1077,6 @@ class Window(QMainWindow):
             self.set_desktop_control(True)
         if self.store.get('voice:remember_permission', False) and not self.policy.stopped:
             self.voice_panel.allow.setChecked(True)
-        if self.store.get('voice:auto_gemini', False):
-            self.start_automatic_voice()
-            return
         if not self.startup_greeting.isChecked():
             self.restore_startup_microphone()
             return
@@ -1128,8 +1128,6 @@ class Window(QMainWindow):
             self.voice_panel.cancel_listening()
 
     def restore_startup_microphone(self):
-        if self.store.get('voice:auto_gemini', False):
-            return
         if (not self.startup_microphone.isChecked() or self.policy.stopped
                 or self.voice_panel.microphone_muted):
             return
@@ -1222,38 +1220,76 @@ class Window(QMainWindow):
             'Check or edit what JARVIS heard, then send it to preview the action.', 15000)
         return True
 
-    def on_wake_detected(self, transcript, command):
+    def show_wake_overlay(self):
         if (self.policy.stopped or self.voice_panel.microphone_muted
                 or not self.voice_panel.consent.listening):
             return
-        if self.omega is not None and self.omega.mode == 'Island':
-            self.omega.switch('Omega')
-        if not self.isVisible() or self.isMinimized() or not self.isActiveWindow():
-            self.summon_from_hotkey()
-        self.open_section('JARVIS Chat')
-        self.prime_shell.pulse_wake()
+        if self.wake_overlay is None:
+            from desktop.prime_ui import PrimeOrb
+            overlay = self.wake_overlay = PrimeOrb(self.prime_palette)
+            overlay.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
+                                   | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowDoesNotAcceptFocus
+                                   | Qt.WindowType.WindowTransparentForInput)
+            overlay.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+            overlay.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+            overlay.setFixedSize(136, 136)
+            self.wake_overlay_timer = QTimer(overlay, singleShot=True, interval=12000)
+            self.wake_overlay_timer.timeout.connect(self.finish_wake_overlay)
+            self.voice_panel.audio_level.connect(overlay.set_level)
+        overlay = self.wake_overlay
+        overlay.set_motion(not self.store.get('omega:reduced', False))
+        overlay.set_state('listening')
+        screen = self.screen().availableGeometry()
+        overlay.move(screen.right() - overlay.width() - 20, screen.bottom() - overlay.height() - 20)
+        overlay.show()
+        self.wake_overlay_timer.start(12000)
+
+    def finish_wake_overlay(self):
+        if self.wake_overlay.isVisible() and (self.voice_panel.playback_busy or self.wake_chat_worker is not None):
+            self.wake_overlay_timer.start(1500)
+        else:
+            self.wake_overlay.hide()
+
+    def on_wake_detected(self, transcript, command):
+        if not re.match(r'^hey\s+jarvis(?:$|[\s,.!?])', (transcript or '').strip(), re.I):
+            return
+        if (self.policy.stopped or self.voice_panel.microphone_muted
+                or not self.voice_panel.consent.listening):
+            return
+        self.show_wake_overlay()
         text = (command or '').strip()[:4000]
-        if text:
-            self.show_hud_text('Heard: ' + text)
+        request = addressed_request(text).casefold().strip(' .!?')
+        if request in {'open jarvis', 'open jarvis app', 'app open', 'app open pannu', 'app திற',
+                       'preview', 'show preview', 'show jarvis preview', 'preview kaattu', 'preview pannu', 'preview காட்டு',
+                       'jarvis app open pannu', 'jarvis preview kaattu', 'ஜார்விஸ் ஆப்பைத் திற'}:
+            self.wake_overlay.hide()
+            self.summon_from_hotkey()
+            self.open_section('JARVIS Chat')
+            return
+        if not text:
+            return
+        self.show_hud_text('Heard: ' + text)
         if self.draft_spoken_desktop_action(text):
             return
-        if (not self.suggestion_mode.isChecked() and suggestion_argument(text) is None
-                and (self.answer_spoken_system_command(text) or self.route_task(text))):
-            return
-        if (text and self.local_voice_allowed() and self.worker is None
+        if not self.suggestion_mode.isChecked() and suggestion_argument(text) is None:
+            reply = self.local_system_reply(text)
+            if reply is not None:
+                self.show_local_system_reply(text, reply, speak=False)
+                self.voice_panel.speak_response(reply)
+                return
+            if self.route_task(text):
+                return
+        if (not self.startup_microphone.isChecked() and self.local_voice_allowed() and self.worker is None
                 and not self.prompt.toPlainText().strip()):
             # Exact opt-in, local model only: no cloud API charges, no shell
             # execution, no implicit PC action approval, no model fallback.
             self.prompt.setPlainText(text)
             self.send(allow_notes=False)
             return
-        if text:
-            self.on_voice_transcript(text)
+        if self.startup_microphone.isChecked() and self.worker is None:
+            self.send_chat_reply(text, wake_question=True)
         else:
-            self.prompt.setFocus()
-            self.statusBar().showMessage(
-                'Hello! Say your request after Hey Jarvis. '
-                'PC actions always need approval.', 15000)
+            self.on_voice_transcript(text)
 
     def on_voice_transcript(self, transcript):
         """Draft spoken text on the main screen; never automatically send."""
@@ -1387,8 +1423,6 @@ class Window(QMainWindow):
         return True
 
     def set_microphone_muted(self, muted):
-        if muted and hasattr(self, 'live_reconnect_timer'):
-            self.live_reconnect_timer.stop()
         self.voice_panel.microphone_muted = muted
         if muted:
             self.hands_free_voice.setChecked(False)
@@ -1401,15 +1435,10 @@ class Window(QMainWindow):
                 self.live_voice.stop('Microphone muted. Live Voice ended.')
             self.voice_panel.audio_level.emit(0)
         self.voice_panel.refresh()
-        if not muted and self.store.get('voice:auto_gemini', False):
-            self.start_automatic_voice()
-
-    def start_automatic_voice(self):
-        if (self.policy.stopped or self.close_when_done or self.voice_panel.microphone_muted
-                or self.live_voice_starting or (self.live_voice and self.live_voice.active)):
-            return
-        self.voice_panel.allow.setChecked(True)
-        self.toggle_live_voice()
+        if not muted:
+            self.restore_startup_microphone()
+        elif self.wake_overlay is not None:
+            self.wake_overlay.hide()
 
     def listen_to_user(self):
         """One click in Chat; microphone permission always belongs to Voice."""
@@ -1426,6 +1455,8 @@ class Window(QMainWindow):
             self.voice_panel.listen('once')
 
     def on_live_mic_consent(self, allowed):
+        if not allowed and getattr(self, 'wake_overlay', None) is not None:
+            self.wake_overlay.hide()
         if not allowed and hasattr(self, 'startup_microphone'):
             self.startup_microphone.setChecked(False)
         if not allowed and self.live_voice is not None:
@@ -1455,7 +1486,7 @@ class Window(QMainWindow):
 
         def start():
             key = self.get_key('Gemini')
-            if not self.store.get('voice:auto_gemini', False) and not self.confirm(Action(
+            if not self.confirm(Action(
                 'live_voice', 'Start Gemini Live voice chat. While on, audio from the microphone '
                 'is streamed to Google and may incur provider charges. Stop Live Voice closes '
                 'the microphone. The conversation is saved as chat text.',
@@ -1517,7 +1548,6 @@ class Window(QMainWindow):
         if self.live_voice is None:
             from desktop.live_voice import LiveVoice
             self.live_voice = LiveVoice(self)
-            self.live_voice.reconnect_requested.connect(self.schedule_live_reconnect)
             self.live_voice.frame_provider = self.camera_panel.snapshot
             self.live_voice.status.connect(lambda text: self.statusBar().showMessage(text, 20000))
             self.live_voice.state_changed.connect(self.on_live_voice_state)
@@ -1552,29 +1582,7 @@ class Window(QMainWindow):
                     output_device=self.audio_test.audio_device('speaker'))
         return voice.active
 
-    def schedule_live_reconnect(self):
-        if (self.policy.stopped or self.close_when_done or self.voice_panel.microphone_muted
-                or not self.voice_panel.consent.listening
-                or not self.store.get('voice:auto_gemini', False)):
-            return
-        if not hasattr(self, 'live_reconnect_timer'):
-            self.live_reconnect_attempts = 0
-            self.live_reconnect_timer = QTimer(self, singleShot=True)
-            self.live_reconnect_timer.timeout.connect(self.start_automatic_voice)
-        if self.live_reconnect_timer.isActive():
-            return
-        if self.live_reconnect_attempts >= 3:
-            self.statusBar().showMessage('Voice reconnection paused. Check the network and unmute to retry.', 15000)
-            return
-        self.live_reconnect_attempts += 1
-        delay = 2000 * 2 ** (self.live_reconnect_attempts - 1)
-        self.live_reconnect_timer.start(delay)
-        self.statusBar().showMessage(f'Voice disconnected. Reconnecting in {delay // 1000} seconds…', 15000)
-
     def on_live_voice_state(self, state):
-        if state == 'listening' and hasattr(self, 'live_reconnect_timer'):
-            self.live_reconnect_timer.stop()
-            self.live_reconnect_attempts = 0
         self.voice_panel.live_voice_active = state != 'idle'
         title = 'Stop Live Voice' if state != 'idle' else 'Live Voice'
         self.live_voice_settings_button.setText(title)
@@ -4458,19 +4466,17 @@ class Window(QMainWindow):
         self.startup_greeting.toggled.connect(
             lambda enabled: self.store.set('voice:startup_greeting', enabled))
         self.startup_microphone = QCheckBox('Hey Jarvis')
-        self.startup_microphone.setToolTip('Wake-word recognition stays on this PC.')
+        self.startup_microphone.setToolTip('Wait locally for Hey Jarvis. After the cue, one spoken question can be sent as text to your configured chat provider for a spoken answer.')
+        legacy_live = self.store.get('voice:auto_gemini', False)
+        if legacy_live:
+            self.store.set('voice:local_on_startup', True)
+            self.store.set('voice:auto_gemini', False)
         self.startup_microphone.setChecked(bool(self.store.get('voice:local_on_startup', False)))
         self.startup_microphone.toggled.connect(self.save_startup_microphone)
         voice_controls.addWidget(self.startup_microphone)
-        auto_voice = QCheckBox('Start Gemini voice automatically')
-        auto_voice.setChecked(bool(self.store.get('voice:auto_gemini', False)))
-        auto_voice.setToolTip('Streams microphone audio to Google while unmuted. Provider charges may apply.')
-        auto_voice.toggled.connect(lambda enabled: self.store.set('voice:auto_gemini', enabled))
-        voice_controls.addWidget(auto_voice)
         wake_group = QGroupBox('Wake and startup')
         wake_layout = QVBoxLayout(wake_group)
         wake_layout.addWidget(self.startup_microphone)
-        wake_layout.addWidget(auto_voice)
         voice_links = QHBoxLayout()
         if sys.platform == 'win32':
             self.flexible_button(voice_links, 'Windows sound volume',
@@ -7213,7 +7219,7 @@ class Window(QMainWindow):
         return True
 
     def send_chat_reply(self, text, *, analysis=None, use_notes=False, suggestion=False,
-                        suggestions_online=False):
+                        suggestions_online=False, wake_question=False):
         def operation():
             self.chat_ticket = self.policy.ticket()
             provider = 'Gemini' if suggestions_online else self.chat_provider.currentText()
@@ -7257,7 +7263,7 @@ class Window(QMainWindow):
             # A chosen path alone never uploads content. The app never saves
             # these file bytes in the conversation database.
             shared_files = ()
-            if not suggestion and self.files_share_once.isChecked():
+            if not wake_question and not suggestion and self.files_share_once.isChecked():
                 shared_files = tuple(self.attachments)
             if shared_files:
                 messages[-1]['content'] += '\n\n' + as_untrusted_context(shared_files)
@@ -7266,7 +7272,7 @@ class Window(QMainWindow):
             self.store.message(self.session, 'user', prompt)
             self.render_chat()
             self.transcript.appendPlainText('\nJARVIS\n')
-            if not (suggestion and self.automation_panel.isAncestorOf(self.suggestion_card)):
+            if not wake_question and not (suggestion and self.automation_panel.isAncestorOf(self.suggestion_card)):
                 self.prompt.clear()
             guidance = self.conversation_guidance()
             if suggestion:
@@ -7276,6 +7282,8 @@ class Window(QMainWindow):
             system = {'role': 'system', 'content': guidance}
             kind = 'suggestion' if suggestion else 'chat'
             self.start_worker(provider, model, key, [system] + messages, kind, backup=backup)
+            if wake_question:
+                self.wake_chat_worker = self.worker
             if suggestion:
                 self.use_notes.setChecked(False)
                 self.files_share_once.setChecked(False)
@@ -7285,7 +7293,14 @@ class Window(QMainWindow):
                     f'{len(shared_files)} file(s) shared with the chosen AI for this message only.',
                     12000)
             self.backup_consent.setChecked(False)
-        self.notify(operation)
+        if wake_question:
+            try:
+                operation()
+            except (RuntimeError, OSError, ValueError) as error:
+                self.statusBar().showMessage(str(error), 15000)
+                self.voice_panel.speak_response('Check the chat provider in JARVIS settings.')
+        else:
+            self.notify(operation)
 
     def on_chunk(self, text):
         if self.worker_kind not in ('chat', 'suggestion'):
@@ -7390,7 +7405,12 @@ class Window(QMainWindow):
                 self.store.message(self.session, 'assistant', text)
                 self.render_chat()
                 self.show_hud_text(text)
-                if self.read_replies.isChecked() and not self.policy.stopped:
+                if self.worker is not None and self.worker is self.wake_chat_worker and not self.policy.stopped:
+                    self.show_wake_overlay()
+                    if self.wake_overlay is not None:
+                        self.wake_overlay.set_state('speaking')
+                    self.voice_panel.speak_response(text)
+                elif self.read_replies.isChecked() and not self.policy.stopped:
                     self.read_with_gemini(text)
             else:
                 if status == 'cancelled':
@@ -7427,8 +7447,7 @@ class Window(QMainWindow):
     def on_finished(self):
         self.worker.deleteLater()
         self.worker = None
-        if self.store.get('voice:auto_gemini', False):
-            QTimer.singleShot(0, self.start_automatic_voice)
+        self.wake_chat_worker = None
         self.refresh_brain_label()
         self.video_cancel_render.hide()
         self.video_brief.setReadOnly(False)
@@ -7472,8 +7491,8 @@ class Window(QMainWindow):
         self.after_effects_timeline_button.setEnabled(ready and self.video_plan is not None)
 
     def stop(self):
-        if hasattr(self, 'live_reconnect_timer'):
-            self.live_reconnect_timer.stop()
+        if getattr(self, 'wake_overlay', None) is not None:
+            self.wake_overlay.hide()
         self.keep_desktop_control.setChecked(False)
         self.selected_app_window = None
         self.desktop_control_active = False
@@ -7663,8 +7682,8 @@ class Window(QMainWindow):
 
     def closeEvent(self, event):
         self.selected_app_window = None
-        if hasattr(self, 'live_reconnect_timer'):
-            self.live_reconnect_timer.stop()
+        if getattr(self, 'wake_overlay', None) is not None:
+            self.wake_overlay.hide()
         self.camera_toggle.setChecked(False)
         if self.live_voice is not None:
             self.live_voice.stop()

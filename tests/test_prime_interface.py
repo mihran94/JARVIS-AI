@@ -506,7 +506,7 @@ def test_packaged_revision_reads_the_installed_build(tmp_path, monkeypatch):
     assert ui.build_commit() == '0123456'
 
 
-def test_wake_summons_the_window_and_animates_the_m_after_consent(tmp_path, monkeypatch):
+def test_wake_displays_only_the_m_until_the_owner_requests_the_app(tmp_path, monkeypatch):
     app, window = make_window(tmp_path)
     summoned = []
     monkeypatch.setattr(window, 'isActiveWindow', lambda: False)
@@ -515,10 +515,17 @@ def test_wake_summons_the_window_and_animates_the_m_after_consent(tmp_path, monk
         window.on_wake_detected('Hey Jarvis', '')
         assert summoned == []
         window.voice_panel.allow.setChecked(True)
+        monkeypatch.setattr(window.voice_panel, 'speak_response', lambda *_: None)
+        window.hide()
+        window.on_wake_detected('Someone mentioned Jarvis', '')
+        assert window.wake_overlay is None
         window.on_wake_detected('Hey Jarvis', '')
+        assert not window.isVisible()
+        assert summoned == []
+        assert window.wake_overlay.isVisible()
+        window.on_wake_detected('Hey Jarvis', 'Jarvis app open pannu')
         assert summoned == [True]
-        assert window.pages.currentWidget() is window.prime_chat
-        assert window.prime_chat.assistant.orb._wake_timer.isActive()
+        assert not window.wake_overlay.isVisible()
     finally:
         window.close()
 

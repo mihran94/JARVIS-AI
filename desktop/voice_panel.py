@@ -50,10 +50,27 @@ def default_speaker_factory():
     return WindowsTextToSpeech()
 
 
+def acknowledge_wake(should_stop):
+    """Play a short local acknowledgement while both recognition engines are closed."""
+    try:
+        import pythoncom
+        pythoncom.CoInitialize()
+        try:
+            speaker = WindowsTextToSpeech()
+            greeting = 'சொல்லுங்க, பாஸ்.' if speaker.select_language('ta') else 'Yes, Boss?'
+            speaker.speak_interruptibly(greeting, should_stop)
+        finally:
+            pythoncom.CoUninitialize()
+    except Exception:
+        # The visible wake cue still works when no local speaker is available.
+        return
+
+
 class VoiceWorker(QThread):
     """Runs one recognition request away from the Qt thread."""
 
     transcript = Signal(str)
+    wake_started = Signal()
     wake_call = Signal(str, str)
     failed = Signal(str)
     audio_level = Signal(int)
@@ -65,6 +82,7 @@ class VoiceWorker(QThread):
         self._mode = mode
         self._timeout = timeout
         self._language = language
+        self.replies_muted = False
 
     def run(self):
         try:
@@ -73,7 +91,9 @@ class VoiceWorker(QThread):
             self.failed.emit(str(error))
             return
         try:
-            recognizer = self._factory(self.consent, self._language)
+            native_gate = self._factory is default_recognizer_factory and self._mode in ('wake', 'dialogue', 'continuous')
+            recognizer = (WindowsSpeechRecognizer(self.consent, 'en') if native_gate
+                          else self._factory(self.consent, self._language))
         except VoiceUnavailable as error:
             self.failed.emit(str(error))
             return
@@ -85,7 +105,7 @@ class VoiceWorker(QThread):
             if callable(set_cancel):
                 set_cancel(self.isInterruptionRequested)
             set_level = getattr(recognizer, 'set_level_listener', None)
-            if callable(set_level):
+            if callable(set_level) and self._mode == 'once':
                 set_level(self.audio_level.emit)
             if self._mode in ('dialogue', 'continuous'):
                 # One supervised turn: idle on the local wake recognizer,
@@ -94,16 +114,32 @@ class VoiceWorker(QThread):
                 # calls providers or launches a PC action.
                 while self.consent.listening and not self.isInterruptionRequested():
                     wake, command = recognizer.wait_for_wake_phrase(self._timeout)
-                    if wake:
+                    if (wake or '').strip().casefold() == 'hey jarvis':
+                        if self.isInterruptionRequested() or not self.consent.listening:
+                            break
+                        self.wake_started.emit()
                         if not command and self.consent.listening and not self.isInterruptionRequested():
-                            command = recognizer.recognize_once(8.0)
+                            if native_gate:
+                                recognizer.stop()
+                                if not self.replies_muted:
+                                    acknowledge_wake(lambda: self.replies_muted or self.isInterruptionRequested()
+                                                     or not self.consent.listening)
+                                if self.isInterruptionRequested() or not self.consent.listening:
+                                    break
+                                recognizer = self._factory(self.consent, self._language)
+                                if hasattr(recognizer, 'set_cancel_check'):
+                                    recognizer.set_cancel_check(self.isInterruptionRequested)
+                            if hasattr(recognizer, 'set_level_listener'):
+                                recognizer.set_level_listener(self.audio_level.emit)
+                            if self.consent.listening and not self.isInterruptionRequested():
+                                command = recognizer.recognize_once(8.0)
                         if self.consent.listening and not self.isInterruptionRequested():
                             self.wake_call.emit(wake, (command or '').strip()[:4000])
                         break
                     QThread.msleep(120)
             elif self._mode == 'wake':
                 transcript, command = recognizer.wait_for_wake_phrase(self._timeout)
-                if transcript and not self.isInterruptionRequested():
+                if (transcript or '').strip().casefold() == 'hey jarvis' and not self.isInterruptionRequested():
                     self.wake_call.emit(transcript, command or '')
             else:
                 transcript = recognizer.recognize_once(self._timeout)
@@ -212,6 +248,7 @@ class VoicePanel(QWidget):
 
     # The main Windows window uses this to draft spoken chat, never to
     # execute PC actions or send to a paid provider automatically.
+    wake_started = Signal()
     wake_detected = Signal(str, str)
     # A listen-once utterance is a chat draft, never an action or API call.
     utterance_detected = Signal(str)
@@ -265,7 +302,8 @@ class VoicePanel(QWidget):
         consent_box = QGroupBox('Microphone')
         consent_layout = QFormLayout(consent_box)
         consent_layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
-        self.phrase = QLineEdit(self.matcher.canonical_phrase or DEFAULT_PHRASE)
+        self.phrase = QLineEdit('Hey Jarvis')
+        self.phrase.setReadOnly(True)
         self.phrase.textChanged.connect(self.set_phrase)
         consent_layout.addRow('Wake phrase', self.phrase)
         self.language = QComboBox()
@@ -335,6 +373,8 @@ class VoicePanel(QWidget):
     def set_muted(self, muted):
         """Turn the spoken answers off without touching the microphone."""
         self.muted = muted
+        if self.worker is not None:
+            self.worker.replies_muted = muted
         self.mute_button.setText('Unmute replies' if muted else 'Mute replies')
         if muted:
             self.pending_speech = ''
@@ -402,8 +442,10 @@ class VoicePanel(QWidget):
         self.discard_recognition = False
         self.worker = VoiceWorker(self.consent, self._recognizer_factory, mode=mode,
                                   language=self.language_code)
+        self.worker.replies_muted = self.muted
         self.worker.audio_level.connect(self.forward_audio_level)
         self.worker.transcript.connect(self.on_transcript)
+        self.worker.wake_started.connect(self.on_wake_started)
         self.worker.wake_call.connect(self.on_wake_call)
         self.worker.failed.connect(self.on_recognition_failed)
         self.worker.finished.connect(self.on_recognition_finished)
@@ -498,6 +540,10 @@ class VoicePanel(QWidget):
             self.wake_detected.emit(text, command or '')
         elif text.strip():
             self.utterance_detected.emit(text.strip())
+
+    def on_wake_started(self):
+        if self.accepts_recognition() and not self.microphone_muted:
+            self.wake_started.emit()
 
     def on_wake_call(self, transcript, command):
         """Show a wake call and offer it to the desktop as a draft only."""
