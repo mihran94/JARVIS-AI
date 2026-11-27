@@ -1636,6 +1636,10 @@ class Window(QMainWindow):
     def route_interface_command(self, spoken):
         text = addressed_request(spoken).casefold().strip(' .!?')
         text = re.sub(r'\s+', ' ', text)
+        if text in {'open browser', 'browser open', 'browser open pannu',
+                    'பிரவுசர் திற', 'பிரவுசர் ஓபன் பண்ணு'}:
+            self.prime_chat.open_browser()
+            return True
         if text in {'news update', 'news sollu', 'news update sollu', 'செய்தி சொல்லு',
                     'செய்திகள் சொல்லு', 'செய்திகளை சொல்லு', 'இன்றைய செய்திகள்',
                     'நியூஸ் சொல்லு', 'நியூஸ் அப்டேட் சொல்லு'}:
@@ -6980,6 +6984,10 @@ class Window(QMainWindow):
                                      consume_draft=True, online=requested_goal is not None)
             return
         command, _, argument = addressed_request(text).partition(' ')
+        if command.casefold() == '/web':
+            self.prompt.clear()
+            self.prime_chat.open_browser(argument.strip())
+            return
         if command.casefold() == '/browser':
             self.prompt.clear()
             self.open_section('JARVIS Chat')
@@ -7359,6 +7367,7 @@ class Window(QMainWindow):
             self.desktop_control_status.setText('Control released')
         self.camera_toggle.setChecked(False)
         self.prime_chat.youtube.stop()
+        self.prime_chat.web_panel.stop()
         self.policy.stop()
         self.startup_microphone.setChecked(False)
         if self.live_voice is not None:

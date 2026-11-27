@@ -772,6 +772,10 @@ class PrimeChat(QWidget):
         from desktop.youtube_panel import YouTubePanel
         self.youtube = YouTubePanel()
         self.displays.addWidget(self.youtube)
+        from desktop.web_panel import WebPanel
+        self.web_panel = WebPanel()
+        self.web_panel.closed.connect(lambda: self.show_display('hologram'))
+        self.displays.addWidget(self.web_panel)
         self.display_buttons = {}
         for key, label in (('hologram', 'Hologram'), ('media', 'Media')):
             button = QPushButton(label)
@@ -1099,6 +1103,13 @@ class PrimeChat(QWidget):
             button.setChecked(True)
         self.window_ref.prime_shell.mark_active('JARVIS Chat')
         self.update_workspace_visibility()
+
+    def open_browser(self, url=''):
+        self.window_ref.prime_shell.close_drawer()
+        self.window_ref.open_section('JARVIS Chat')
+        self.displays.setCurrentWidget(self.web_panel)
+        self.update_workspace_visibility()
+        self.web_panel.open_url(url)
 
     def play_youtube(self, url):
         self.displays.setCurrentWidget(self.youtube)
@@ -1491,6 +1502,7 @@ class PrimeShell(QWidget):
         plugins.clicked.connect(self.window_ref.open_plugins)
         menu_layout.addWidget(plugins)
         for title, action in (
+            ('Browser', lambda: self.window_ref.prime_chat.open_browser()),
             ('Desktop Control', lambda: self.window_ref.open_setting_category('Desktop Control')),
             ('Files & Folders', lambda: self.open_section('Files & Folders')),
             ('Remote Control', lambda: self.window_ref.open_setting_category('Remote Control')),

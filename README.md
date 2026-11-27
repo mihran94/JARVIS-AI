@@ -17,6 +17,20 @@ While Live Voice is on, the app streams microphone audio to Gemini.
 The remaining documentation describes the inherited JARVIS AI features and
 older distributions.
 
+### Built-in browser
+
+Choose **Menu → Browser**, say “open browser”, or type `/web https://example.com`
+in Chat. The browser opens in the central display while Chat and Terminal stay
+available. Enter a website address and press Enter or Go; use Back, Forward and
+Reload to navigate. **Back to hologram** stops the page and restores M.
+
+The web engine starts only when a website is opened. Its private session does
+not persist cookies or history across app restarts, and pages have no bridge to
+JARVIS credentials, chat memory or automation. Website device permissions,
+downloads, file selection and pop-up windows are disabled in this first version.
+Some sites require a full external browser. `/browser` retains the existing
+separate reviewed browser-automation workflow.
+
 ## Command-first JARVIS (Island + Settings)
 
 The main Windows assistant uses the **JARVIS PRIME** design. Its primary
