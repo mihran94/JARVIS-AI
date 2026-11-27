@@ -73,3 +73,49 @@ def test_typed_and_spoken_requests_reach_local_catalog(tmp_path, monkeypatch):
         window.close()
         window.deleteLater()
         app.processEvents()
+
+
+def test_selected_app_followups_verify_original_handle(tmp_path, monkeypatch):
+    gateway = Gateway(Policy(), Store(tmp_path / 'history.db'))
+    current = [41]
+    monkeypatch.setattr(named_apps, 'resolve_window', lambda _: (7, 'My edit', 123))
+    monkeypatch.setattr(named_apps.psutil, 'Process', lambda _: SimpleNamespace(create_time=lambda: 123))
+    monkeypatch.setattr(named_apps.app_control, 'focus_selected', lambda *_: None)
+    monkeypatch.setattr(named_apps.app_control.win_controls, 'foreground_window', lambda: current[0])
+    monkeypatch.setattr(named_apps.app_control, 'see_controls', lambda *_: "Button 'Export'")
+    invoke = Mock(return_value='Windows invoked Export')
+    monkeypatch.setattr(named_apps.app_control, 'use_control', invoke)
+    target, detail = named_apps.select('CapCut', gateway, lambda _: True, lambda: None)
+    assert target == named_apps.SelectedWindow(7, 'My edit', 123, 41)
+    assert 'Export' in detail
+    assert named_apps.parse('Export click pannu') is None
+    request = named_apps.parse('Export click pannu', has_selection=True)
+    named_apps.run(request, gateway, lambda _: True, lambda: None, selected=target)
+    assert invoke.call_args.args[:3] == (7, 'My edit', 'Export')
+    current[0] = 42
+    with pytest.raises(InputRefused, match='window changed'):
+        named_apps.run(request, gateway, lambda _: True, lambda: None, selected=target)
+    assert invoke.call_count == 1
+
+
+def test_selected_app_survives_voice_turn_and_releases_on_stop(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QApplication
+    from desktop.app import Window
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
+    target = named_apps.SelectedWindow(7, 'My edit', 123, 41)
+    monkeypatch.setattr(named_apps, 'select', lambda *args: (target, 'Selected My edit'))
+    run = Mock(return_value='Field verified')
+    monkeypatch.setattr(named_apps, 'run', run)
+    try:
+        window.prompt.setPlainText('CapCut app select pannu')
+        window.send()
+        window.save_live_voice_turn('set Project name = KAAVALAN AI', '')
+        assert run.call_args.kwargs['selected'] == target
+        assert run.call_args.args[0].value == 'KAAVALAN AI'
+        window.stop()
+        assert window.selected_app_window is None
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()

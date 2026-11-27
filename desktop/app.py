@@ -381,6 +381,7 @@ class Window(QMainWindow):
         self.setWindowTitle(APP_NAME)
         self.resize(1360, 790)
         self.root = Path(data_root)
+        self.selected_app_window = None
         self.desktop_control_active = False
         self.desktop_control_ticket = None
         self.store = Store(self.root / 'history.sqlite3')
@@ -1636,13 +1637,34 @@ class Window(QMainWindow):
 
     def route_interface_command(self, spoken):
         from automation import named_apps
-        request = named_apps.parse(spoken)
+        request = named_apps.parse(spoken, has_selection=self.selected_app_window is not None)
         if request is not None:
             try:
                 if not self.store.get('automation:self_control', True):
                     raise Denied('Enable PC control in Settings first.')
                 ticket = self.policy.ticket()
-                detail = named_apps.run(request, self.gateway, self.confirm, lambda: self.policy.check(ticket))
+                selected = self.selected_app_window
+                session = self.session
+
+                def checkpoint():
+                    self.policy.check(ticket)
+                    if self.session != session or self.selected_app_window is not selected:
+                        raise Denied('The conversation or selected app changed.')
+                    if not self.store.get('automation:self_control', True):
+                        raise Denied('PC control is disabled.')
+
+                if request.verb == 'release':
+                    self.selected_app_window = None
+                    detail = 'App selection released.'
+                elif request.verb == 'select':
+                    self.selected_app_window = None
+                    selected = None
+                    self.selected_app_window, detail = named_apps.select(
+                        request.app, self.gateway, self.confirm, checkpoint)
+                else:
+                    if request.app and selected is not None:
+                        self.selected_app_window = selected = None
+                    detail = named_apps.run(request, self.gateway, self.confirm, checkpoint, selected=selected)
             except Exception as error:
                 detail = str(error)
             self.show_local_system_reply(spoken, detail, speak=False)
@@ -1731,6 +1753,7 @@ class Window(QMainWindow):
         self.desktop_control_active = bool(enabled)
         self.desktop_control_ticket = self.policy.ticket() if enabled else None
         if not enabled:
+            self.selected_app_window = None
             preference = getattr(self, 'keep_desktop_control', None)
             if preference is not None and preference.isChecked():
                 preference.setChecked(False)
@@ -4200,6 +4223,7 @@ class Window(QMainWindow):
             self.conversation_plan.cancel('Conversation changed; remaining steps cancelled.')
             if self.chat_launch is not None:
                 self.finish_chat_launch(False)
+            self.selected_app_window = None
             self.session = session
             self.store.set('session', session)
             self.render_chat()
@@ -6918,6 +6942,7 @@ class Window(QMainWindow):
         self.cancel_launch_verification()
         if self.chat_launch is not None:
             self.finish_chat_launch(False)
+        self.selected_app_window = None
         self.session = uuid.uuid4().hex
         self.store.set('session', self.session)
         self.clear_attachments()
@@ -7450,6 +7475,7 @@ class Window(QMainWindow):
         if hasattr(self, 'live_reconnect_timer'):
             self.live_reconnect_timer.stop()
         self.keep_desktop_control.setChecked(False)
+        self.selected_app_window = None
         self.desktop_control_active = False
         self.desktop_control_ticket = None
         if hasattr(self, 'desktop_control_status'):
@@ -7636,6 +7662,7 @@ class Window(QMainWindow):
         self.request_exit()
 
     def closeEvent(self, event):
+        self.selected_app_window = None
         if hasattr(self, 'live_reconnect_timer'):
             self.live_reconnect_timer.stop()
         self.camera_toggle.setChecked(False)

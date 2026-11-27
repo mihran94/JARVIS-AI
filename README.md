@@ -37,6 +37,13 @@ From JARVIS Chat or Live Voice, use these local commands:
   The label must match your installed app. Use `id=...` in place of the label
   when the app publishes an automation ID.
 
+For several actions in the same window, say `CapCut app select pannu`. After
+approval, JARVIS displays the window title and accessible controls. You can
+then say `controls kaattu`, `Export click pannu`, or type
+`set Project name = My edit`. Each action still shows its target for approval.
+Say `app release pannu` to finish. Starting another chat or using Emergency
+Stop also clears the selection.
+
 Review the app, control and proposed change in the approval dialog. Text edits
 are checked by reading the value back. For a click, inspect the updated window
 to confirm what the app did. Custom canvases, elevated windows and controls

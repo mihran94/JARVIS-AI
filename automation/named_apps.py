@@ -21,12 +21,25 @@ class Request:
     value: str = ''
 
 
-def parse(message):
+@dataclass(frozen=True)
+class SelectedWindow:
+    pid: int
+    title: str
+    started: float
+    handle: int
+
+
+def parse(message, *, has_selection=False):
     text = addressed_request(message)
     if text.casefold() in ('list installed apps', 'installed apps kaattu'):
         return Request('list')
     if text.casefold() in ('list open windows', 'open windows kaattu'):
         return Request('windows')
+    match = re.fullmatch(r'select app (.+)|(.+?) app select pannu', text, re.I)
+    if match:
+        return Request('select', (match[1] or match[2]).strip())
+    if text.casefold() in ('release selected app', 'app release pannu'):
+        return Request('release')
     for pattern in (r'open installed app (.+)', r'installed app (.+?) open pannu'):
         match = re.fullmatch(pattern, text, re.I)
         if match:
@@ -45,6 +58,15 @@ def parse(message):
         field, sep, value = label.partition(' = ')
         if sep:
             return Request('set', app.strip(), field.strip(), value)
+    if has_selection:
+        if text.casefold() in ('show controls', 'controls kaattu'):
+            return Request('inspect')
+        match = re.fullmatch(r'click (.+)|(.+?) click pannu', text, re.I)
+        if match:
+            return Request('click', control=(match[1] or match[2]).strip())
+        match = re.fullmatch(r'set (.+?) = (.+)', text, re.I)
+        if match:
+            return Request('set', control=match[1].strip(), value=match[2])
     return None
 
 
@@ -83,7 +105,29 @@ def resolve_window(name):
     return matches[0]
 
 
-def run(request, gateway, confirm, checkpoint):
+def select(name, gateway, confirm, checkpoint):
+    checkpoint()
+    pid, title, started = resolve_window(name)
+    target = None
+
+    def inspect():
+        nonlocal target
+        checkpoint()
+        if psutil.Process(pid).create_time() != started:
+            raise InputRefused('The app restarted. Select its window again.')
+        app_control.focus_selected(pid, title)
+        handle = app_control.win_controls.foreground_window()
+        controls = app_control.see_controls(pid, title)
+        if not handle or app_control.win_controls.foreground_window() != handle:
+            raise InputRefused('The window changed during inspection. Select it again.')
+        target = SelectedWindow(pid, title, started, handle)
+        return f'Selected {title}.\n{controls}'
+
+    detail = gateway.run(Action('select_app', f'{title} (PID {pid})'), confirm, inspect)
+    return target, detail
+
+
+def run(request, gateway, confirm, checkpoint, *, selected=None):
     checkpoint()
     if request.verb == 'windows':
         return app_control.list_apps()
@@ -104,7 +148,12 @@ def run(request, gateway, confirm, checkpoint):
         return gateway.run(Action('open_installed_app', f'{item.Name} ({identity})'),
                            confirm, launch, completion_status='dispatched')
 
-    pid, title, started = resolve_window(request.app)
+    if request.app:
+        pid, title, started = resolve_window(request.app)
+    elif selected:
+        pid, title, started = selected.pid, selected.title, selected.started
+    else:
+        raise InputRefused('Select an app first.')
     target = f'{title} (PID {pid})'
     if request.control:
         target += f' — {request.control}'
@@ -116,6 +165,13 @@ def run(request, gateway, confirm, checkpoint):
         if psutil.Process(pid).create_time() != started:
             raise InputRefused('The selected app restarted. Select it again.')
         app_control.focus_selected(pid, title)
+
+        def guard():
+            checkpoint()
+            if selected and app_control.win_controls.foreground_window() != selected.handle:
+                raise InputRefused('The selected window changed. Select the app again.')
+
+        guard()
         if request.verb == 'inspect':
             return app_control.see_controls(pid, title)
         name, ident = request.control, ''
@@ -123,7 +179,7 @@ def run(request, gateway, confirm, checkpoint):
             name, ident = '', name[3:]
         return app_control.use_control(pid, title, name, ident,
                                        text=request.value if request.verb == 'set' else None,
-                                       checkpoint=checkpoint)
+                                       checkpoint=guard)
 
     status = {'click': 'dispatched', 'set': 'verified', 'inspect': 'completed'}[request.verb]
     return gateway.run(Action(f'app_{request.verb}', target), confirm, operate, completion_status=status)
