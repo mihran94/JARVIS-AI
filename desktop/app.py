@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timezone
 from hashlib import sha256
 
-from PySide6.QtCore import QProcess, QThread, Signal, QTimer, Qt, QLockFile, QUrl, QEvent
+from PySide6.QtCore import QProcess, QThread, Signal, QTimer, Qt, QLockFile, QUrl, QEvent, QStandardPaths
 from PySide6.QtGui import QDesktopServices, QFont, QTextCursor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSizePolicy,
@@ -94,7 +94,7 @@ from automation.windows import (APPS, EDITOR_EXECUTABLES, LaunchRequest, editor_
                                 launch_editor, launch_is_foreground, open_path)
 from automation.organise import (OrganiseError, organise, plan_organise, plan_text,
                                  result_text)
-from automation.desktop_tasks import VerifiedEdit, parse_desktop_task, target_is_foreground, type_into_target
+from automation.desktop_tasks import DesktopTask, VerifiedEdit, parse_desktop_task, target_is_foreground, type_into_target
 from automation.inspection import inspect_windows
 from developer_studio.workspace import Workspace
 from developer_studio.codex_cli import codex_executable, run_codex
@@ -2401,6 +2401,9 @@ class Window(QMainWindow):
         result_layout.addWidget(self.desktop_result_label)
         self.desktop_save_button = self.button(result_layout, 'Save inserted text as…',
                                                self.save_desktop_result)
+        self.desktop_open_button = self.button(
+            result_layout, 'Open saved file', lambda: self.notify(lambda: open_path(self.desktop_saved_path)))
+        self.desktop_open_button.hide()
         self.desktop_result_card.hide()
         layout.addWidget(self.desktop_result_card)
         self.prompt = ChatPrompt()
@@ -2960,6 +2963,8 @@ class Window(QMainWindow):
                       if typing.app == 'Calculator' else
                       'Review the exact text JARVIS would enter in Notepad:\n' + typing.text
                       + '\n\nTyping will not save a file.')
+            if typing.note_filename:
+                review += f'\nWrite விடை and the displayed result in blank Notepad and save {typing.note_filename} in Documents.'
             step = Step(typing.app, typing)
         self.show_local_system_reply(goal, review)
         self.show_suggested_steps((step,), detail=review)
@@ -4870,11 +4875,24 @@ class Window(QMainWindow):
         scope = ApprovalScope.ROUTINE if calculator else ApprovalScope.ALWAYS
         if task.app == 'Notepad':
             scope = ApprovalScope.LOCAL_WRITE
+        destination = None
+        if task.note_filename:
+            folder = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation)
+            if not folder or not Path(folder).is_dir():
+                self.show_local_system_reply(command, 'Windows Documents folder is unavailable.')
+                return False
+            destination = Path(folder) / task.note_filename
+            if destination.exists():
+                self.show_local_system_reply(command, f'Choose a new filename. {destination} already exists.')
+                return False
+            step = f'calculate {task.text}, type விடை and the displayed result in blank Notepad, save to {destination}'
+            digest = sha256(step.encode('utf-8')).hexdigest()
+            scope = ApprovalScope.ALWAYS
         action = Action('desktop_plan_approval', f'{task.app}: {step}, {len(task.text)} chars',
                         digest, scope)
         automatic = not self.policy.requires_confirmation(action)
         self.chat_launch = (task.app, ticket, action, lambda: self.schedule_desktop_task(
-            task, ticket, digest, automatic_action=action if automatic else None))
+            task, ticket, digest, destination=destination, automatic_action=action if automatic else None))
         if automatic:
             self.finish_chat_launch(None)
             return True
@@ -4892,14 +4910,14 @@ class Window(QMainWindow):
         self.refresh_voice_hud()
         return True
 
-    def schedule_desktop_task(self, task, ticket, digest, *, automatic_action=None):
+    def schedule_desktop_task(self, task, ticket, digest, *, automatic_action=None, destination=None):
         """Schedule, never poll for a window on the Qt UI thread."""
         self.policy.check(ticket)
         if self.desktop_pending is not None:
             raise ValueError('A desktop task is already running.')
         if task.launch:
             launch_app(task.app)
-        self.desktop_pending = dict(task=task, ticket=ticket, digest=digest,
+        self.desktop_pending = dict(task=task, ticket=ticket, digest=digest, destination=destination,
                                     automatic_action=automatic_action,
                                     deadline=time.monotonic() + 7.0)
         self.desktop_task_timer.start()
@@ -4907,6 +4925,7 @@ class Window(QMainWindow):
         return f'Desktop plan approved for {task.app}. Waiting for its foreground window.'
 
     def show_desktop_result(self, detail, verified_text=None):
+        self.desktop_open_button.hide()
         self.desktop_export_text = verified_text
         self.desktop_result_label.setText(detail)
         self.desktop_save_button.setVisible(verified_text is not None)
@@ -4935,27 +4954,31 @@ class Window(QMainWindow):
                 path = path.with_suffix('.txt')
             if path.suffix.lower() != '.txt':
                 raise ValueError('Choose a .txt filename.')
-            payload = text.encode('utf-8')
-
-            def write_verified():
-                try:
-                    with path.open('xb') as output:
-                        output.write(payload)
-                except FileExistsError:
-                    raise ValueError('That file already exists. Choose a new filename.') from None
-                with path.open('rb') as output:
-                    if output.read(len(payload) + 1) != payload:
-                        raise OSError('The saved file could not be verified.')
-                return f'Inserted text saved and verified in {path}'
-
-            ident = self.store.task('desktop_text_export', str(path))
-            detail = self.gateway.run(Action('desktop_text_export', str(path)),
-                                      lambda _action: True, write_verified,
-                                      task_id=ident, completion_status='verified')
+            detail = self.write_desktop_result(path, text)
             self.show_desktop_result(detail)
             self.show_local_system_reply('Save inserted text', detail)
 
         self.notify(save)
+
+    def write_desktop_result(self, path, text):
+        payload = text.encode('utf-8')
+
+        def write_verified():
+            try:
+                with path.open('xb') as output:
+                    output.write(payload)
+            except FileExistsError:
+                raise ValueError('That file already exists. Choose a new filename.') from None
+            with path.open('rb') as output:
+                if output.read(len(payload) + 1) != payload:
+                    raise OSError('The saved file could not be verified.')
+            return f'Inserted text saved and verified in {path}'
+
+        ident = self.store.task('desktop_text_export', str(path))
+        detail = self.gateway.run(Action('desktop_text_export', str(path)),
+                                  lambda _action: True, write_verified,
+                                  task_id=ident, completion_status='verified')
+        return detail
 
     def complete_desktop_task(self):
         """Only type after Windows verifies the target foreground process."""
@@ -5001,27 +5024,47 @@ class Window(QMainWindow):
                 detail = f'Calculator display verified: {task.text} = {result}'
                 self.show_desktop_result(detail)
                 self.show_local_system_reply('Calculator result', detail)
+                if pending.get('destination') is not None:
+                    note = DesktopTask('Notepad', f'விடை {result}', True)
+                    self.schedule_desktop_task(note, pending['ticket'], pending['digest'],
+                                               destination=pending['destination'])
+                    return
                 self.conversation_plan.result(True, detail, verified=True)
                 return
             action = Action('desktop_type', f'{task.app}: {len(task.text)} characters', pending['digest'])
             task_id = self.store.task(action.kind, action.target)
             result = self.gateway.run(
                 action, lambda _action: True,  # the exact text was approved in chat
-                lambda: type_into_target(task.app, task.text),
+                lambda: (type_into_target(task.app, task.text, empty_only=True)
+                         if pending.get('destination') else type_into_target(task.app, task.text)),
                 task_id=task_id, completion_status='dispatched')
             verified = isinstance(result, VerifiedEdit)
             status = 'verified' if verified else 'unverified'
-            detail = f'{task.app} foreground confirmed. {result} JARVIS did not save a file.'
+            detail = f'{task.app} foreground confirmed. {result}'
+            if not pending.get('destination'):
+                detail += ' JARVIS did not save a file.'
             self.store.finish(task_id, status, detail)
             self.show_desktop_result(
                 detail if verified else detail + ' Check the editor before trying again.',
                 task.text if verified else None)
             self.show_local_system_reply('Desktop task result', detail)
+            destination = pending.get('destination')
+            if destination is not None:
+                if not verified:
+                    raise RuntimeError('Notepad contents could not be verified. File save skipped.')
+                self.policy.check(pending['ticket'])
+                detail = self.write_desktop_result(destination, task.text)
+                self.show_desktop_result(detail)
+                self.desktop_saved_path = destination
+                self.desktop_open_button.show()
+                self.show_local_system_reply('Calculation note saved', f'Boss, சேமித்துவிட்டேன். {detail}')
             self.conversation_plan.result(True, detail, verified=verified)
         except (Denied, Stopped, RuntimeError, ValueError, OSError) as error:
             self.desktop_task_timer.stop()
             self.desktop_pending = None
             label = 'Calculation failed' if task.app == 'Calculator' else 'Typing failed'
+            if pending.get('destination'):
+                label = 'Calculation note failed'
             self.show_desktop_result(f'{label}. {error}')
             self.show_local_system_reply('Desktop task failed', str(error))
             self.conversation_plan.result(False, str(error))

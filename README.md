@@ -14,6 +14,14 @@ While Live Voice is on, the app streams microphone audio to Gemini.
 - Plain requests such as “Calculator-la 17 times 23 calculate pannu” prepare a
   desktop action in the chat. Check the approval card before any action is run.
 
+To save a calculation note, type or say “Jarvis, 17 times 23 calculate panni,
+result-a kanakku.txt-la save pannu”. Review the expression and the full path in
+Documents, then approve. JARVIS reads the Windows Calculator display, inserts
+the result prefixed with “விடை” into a blank Notepad editor, and verifies the
+editor contents. JARVIS exports those contents to a new UTF-8 text file and
+reads it back before offering **Open saved file**. Choose a fresh filename for
+each run. The open Notepad tab remains a separate draft.
+
 The remaining documentation describes the inherited JARVIS AI features and
 older distributions.
 
