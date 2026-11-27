@@ -28,8 +28,9 @@ if errorlevel 1 (
   exit /b 1
 )
 echo Setup complete.
-echo To open JARVIS M, run START_JARVIS_M.cmd
-exit /b 0
+echo Starting JARVIS M. First launch asks for Main Brain and Coding Agent API keys.
+call START_JARVIS_M.cmd
+exit /b %errorlevel%
 
 :venv_failed
 echo Could not use .venv with Python 3.12 64-bit. Fix the Python installation or rename the existing .venv and retry.

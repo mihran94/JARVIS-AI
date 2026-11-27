@@ -1101,7 +1101,7 @@ class Window(QMainWindow):
                         break
                 except (RuntimeError, ValueError, OSError, KeyringError):
                     pass
-            if not configured:
+            if not configured or self.store.get('setup:started', False):
                 from desktop.first_run import FirstRunDialog
                 dialog = FirstRunDialog(self.store, self.vault, self)
                 if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -3703,7 +3703,7 @@ class Window(QMainWindow):
         self.button(provider_row, 'MiniMax API settings', self.open_minimax_settings)
         layout.addLayout(provider_row)
         routing_note = QLabel(
-            'Only MiniMax and Codex may write or fix source code. Gemini answers you, '
+            'OpenAI, MiniMax and Codex can write or fix source code. Gemini answers you, '
             'reads the proposed change and explains it; it never edits a file.')
         routing_note.setWordWrap(True)
         layout.addWidget(routing_note)
@@ -3769,7 +3769,7 @@ class Window(QMainWindow):
     def selected_coding_provider(self):
         """The provider that writes code.
 
-        Only MiniMax and Codex may do this. The chat provider is never used
+        OpenAI, MiniMax and Codex may do this. The chat provider is never used
         for code, whatever it is set to.
         """
         return routing.require_coding_provider(routing.coding_provider(self.store))
