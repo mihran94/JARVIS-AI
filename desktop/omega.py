@@ -378,7 +378,7 @@ class Feeds:
         reply.downloadProgress.connect(progress)
         reply.finished.connect(finish)
 
-    def refresh(self):
+    def refresh(self, *, weather_only=False):
         ui = self.controller
         if self.replies or ui.window.policy.stopped:
             return
@@ -386,9 +386,10 @@ class Feeds:
         generation = self.job
         ui.refresh_feed.setEnabled(False)
         ui.weather_value.setText('Fetching…')
-        ui.news_value.setText('Fetching…')
+        if not weather_only:
+            ui.news_value.setText('Fetching…')
         place = ui.location.text().strip() or 'Selected coordinates'
-        pending = len(FEEDS) + 1
+        pending = 1 if weather_only else len(FEEDS) + 1
         headlines = {}
 
         def finish():
@@ -408,9 +409,13 @@ class Feeds:
                 if type(value) not in (float, int) or units != '°C':
                     raise ValueError('Invalid temperature')
                 ui.weather_value.setText(f'{value:.0f} °C')
+                code = data['current'].get('weather_code')
+                ui.weather_code = code if type(code) is int else None
+                ui.weather_day = data['current'].get('is_day', 1) == 1
                 ui.weather_detail.setText(
                     f'{place} · {stamp:%H:%M} local · Open-Meteo')
             except (TypeError, KeyError, ValueError):
+                ui.weather_code = None
                 ui.weather_value.setText('Unavailable')
                 ui.weather_detail.setText(f'{place} · Open-Meteo')
             finish()
@@ -432,9 +437,9 @@ class Feeds:
             finish()
 
         query = urlencode({'latitude': ui.latitude.value(), 'longitude': ui.longitude.value(),
-                           'current': 'temperature_2m', 'timezone': 'auto'})
+                           'current': 'temperature_2m,weather_code,is_day', 'timezone': 'auto'})
         self.request('https://api.open-meteo.com/v1/forecast?' + query, 64000, weather)
-        for region, (publisher, url) in FEEDS.items():
+        for region, (publisher, url) in (() if weather_only else FEEDS.items()):
             self.request(url, MAX_FEED_BYTES,
                          lambda payload, region=region, publisher=publisher: news(region, publisher, payload))
 

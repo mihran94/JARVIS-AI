@@ -871,7 +871,13 @@ class PrimeChat(QWidget):
             setattr(self, attr, detail)
             body.addWidget(detail)
             if title == 'WEATHER':
+                from desktop.weather_visual import WeatherVisual
                 heading.setText('TIME / WEATHER')
+                self.weather_visual = WeatherVisual()
+                self.weather_visual.set_motion(not window.reduce_motion.isChecked())
+                window.reduce_motion.toggled.connect(
+                    lambda reduced: self.weather_visual.set_motion(not reduced))
+                body.insertWidget(1, self.weather_visual)
                 clock = window.prime_shell.clock_label
                 date = window.prime_shell.date_label
                 clock.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
@@ -886,6 +892,9 @@ class PrimeChat(QWidget):
             self.reference_cards.append(card)
             rail.addWidget(card)
         self.weather_detail.setText('Paris, France\nRefresh to load · Open-Meteo')
+        self.weather_timer = QTimer(self, interval=15 * 60 * 1000)
+        self.weather_timer.timeout.connect(self.refresh_weather)
+        self.weather_timer.start()
         rail.addStretch(1)
         dashboard.addWidget(self.system_rail, 0, 0)
         for column, stretch in enumerate((2, 5, 3)):
@@ -933,8 +942,11 @@ class PrimeChat(QWidget):
     def refresh_weather(self):
         ui = self.window_ref.omega
         if ui is not None:
-            ui.feeds.refresh()
-            self.weather_detail.setText('Paris, France\nFetching weather…')
+            if self.window_ref.policy.stopped:
+                return
+            ui.feeds.refresh(weather_only=True)
+            self.weather_detail.setText((ui.location.text().strip() or 'Selected coordinates')
+                                        + '\nFetching weather…')
 
     def refresh_reference_panels(self, data=None):
         import psutil
@@ -955,7 +967,12 @@ class PrimeChat(QWidget):
                                           'N/A' if temperature is None else f'{temperature:.0f}°C')
         ui = window.omega
         if ui is not None and ui.weather_value.text() not in ('—', ''):
-            self.weather_detail.setText(ui.weather_value.text() + '\n' + ui.weather_detail.text())
+            from desktop.weather_visual import weather_kind
+            code = getattr(ui, 'weather_code', None)
+            condition = weather_kind(code)
+            self.weather_visual.set_weather(code, getattr(ui, 'weather_day', True))
+            self.weather_detail.setText(ui.weather_value.text() + ' · ' + condition
+                                        + '\n' + ui.weather_detail.text())
         if ui is not None:
             headlines = ui.news_value.text()
             if ('  ·  ' in headlines and headlines != getattr(self, '_last_feed_news', '')):
