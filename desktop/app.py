@@ -94,7 +94,8 @@ from automation.windows import (APPS, EDITOR_EXECUTABLES, LaunchRequest, editor_
                                 launch_editor, launch_is_foreground, open_path)
 from automation.organise import (OrganiseError, organise, plan_organise, plan_text,
                                  result_text)
-from automation.desktop_tasks import DesktopTask, VerifiedEdit, parse_desktop_task, target_is_foreground, type_into_target
+from desktop.voice_tasks import parse_local_desktop_request
+from automation.desktop_tasks import DesktopTask, VerifiedEdit, target_is_foreground, type_into_target
 from automation.inspection import inspect_windows
 from developer_studio.workspace import Workspace
 from developer_studio.codex_cli import codex_executable, run_codex
@@ -1204,7 +1205,7 @@ class Window(QMainWindow):
         if suggestion_argument(text) is not None:
             return False
         try:
-            typing = parse_desktop_task(text)
+            typing = parse_local_desktop_request(text)
         except ValueError:
             return False
         if typing is None and parse_voice_command(text) is None:
@@ -2941,7 +2942,7 @@ class Window(QMainWindow):
 
     def request_suggestions(self, goal: str, *, explicit: bool, consume_draft=False, online=False):
         try:
-            typing = parse_desktop_task(goal)
+            typing = parse_local_desktop_request(goal)
         except ValueError as error:
             self.statusBar().showMessage(str(error), 10000)
             return
@@ -4897,14 +4898,19 @@ class Window(QMainWindow):
             self.finish_chat_launch(None)
             return True
         excerpt = task.text[:160] + ('…' if len(task.text) > 160 else '')
-        review = (f'Review desktop task: {step} in Calculator.\n{task.text}'
-                  if calculator else
-                  f'Review desktop task: {step} in {task.app}. '
-                  'The full text to be inserted follows; approve only if correct:\n'
-                  + task.text + '\nThe target window must be verified before typing.')
+        if destination is not None:
+            summary = (f'Calculate {task.text} in Calculator, write விடை and the displayed result '
+                       f'in blank Notepad, then save to {destination}')
+            review = summary
+        else:
+            summary = f'{step.capitalize()} in {task.app}\n{excerpt}'
+            review = (f'Review desktop task: {step} in Calculator.\n{task.text}'
+                      if calculator else
+                      f'Review desktop task: {step} in {task.app}. '
+                      'The full text to be inserted follows; approve only if correct:\n'
+                      + task.text + '\nThe target window must be verified before typing.')
         self.show_local_system_reply(command, review)
-        self.chat_approval_label.setText(
-            f'{step.capitalize()} in {task.app}\n{excerpt}')
+        self.chat_approval_label.setText(summary)
         self.chat_approval_label.setToolTip(f'Exact action content fingerprint: {digest}')
         self.chat_approval.show()
         self.refresh_voice_hud()
@@ -6968,12 +6974,19 @@ class Window(QMainWindow):
             self.prompt.clear()
             return
         if self.live_voice is not None and self.live_voice.active:
-            if not text.startswith('/'):
-                self.store.message(self.session, 'user', text)
-                self.prompt.clear()
-                self.render_chat()
-                self.live_voice.send({'realtimeInput': {'text': text}})
-                return
+            cancel = addressed_request(text).casefold() in ('cancel task', 'task cancel pannu')
+            if not text.startswith('/') and not cancel:
+                try:
+                    desktop_request = parse_local_desktop_request(text)
+                except ValueError as error:
+                    self.show_local_system_reply(text, str(error))
+                    return
+                if desktop_request is None:
+                    self.store.message(self.session, 'user', text)
+                    self.prompt.clear()
+                    self.render_chat()
+                    self.live_voice.send({'realtimeInput': {'text': text}})
+                    return
             self.live_voice.stop('Running the Chat command.')
         if self.route_youtube(text):
             self.prompt.clear()
@@ -7074,13 +7087,13 @@ class Window(QMainWindow):
                 self.open_section('JARVIS Chat')
                 return
             try:
-                desktop_task = parse_desktop_task(text)
+                desktop_task = parse_local_desktop_request(text)
             except ValueError as error:
                 self.show_local_system_reply(text, str(error))
                 return
             if desktop_task is not None:
-                self.prompt.clear()
-                self.queue_desktop_task(text, desktop_task)
+                if self.queue_desktop_task(text, desktop_task):
+                    self.prompt.clear()
                 return
             coding = self.coding_request(text)
             if coding is not None:

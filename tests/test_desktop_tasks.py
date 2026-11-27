@@ -256,13 +256,13 @@ def test_calculation_note_handoff(tmp_path, monkeypatch, outcome):
     from desktop.voice_tasks import local_voice_request
     from PySide6.QtCore import QStandardPaths
 
-    command = "Jarvis, 17 times 23 calculate panni, ‘விடை’ன்னு போட்டு result-a kanakku.txt-la save pannu"
-    task = DesktopTask('Calculator', '17 * 23', True, 'kanakku.txt')
+    command = "Jarvis, 17 times 23 calculate panni, ‘விடை’ன்னு போட்டு result-a Kanakku.txt-la save pannu"
+    task = DesktopTask('Calculator', '17 * 23', True, 'Kanakku.txt')
     assert local_voice_request(command) == ('desktop', task)
     app = QApplication.instance() or QApplication([])
     window = Window(tmp_path)
     launches = []
-    output = tmp_path / 'kanakku.txt'
+    output = tmp_path / 'Kanakku.txt'
     monkeypatch.setattr(QStandardPaths, 'writableLocation', lambda _: str(tmp_path))
     monkeypatch.setattr('desktop.app.launch_app', launches.append)
     monkeypatch.setattr('automation.calculator.foreground_calculator', lambda: object())
