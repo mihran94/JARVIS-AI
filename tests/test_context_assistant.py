@@ -65,6 +65,14 @@ def jarvis(tmp_path, monkeypatch):
     app = QApplication.instance() or QApplication([])
     window = desktop.Window(tmp_path)
     monkeypatch.setattr(window, 'get_key', lambda provider: 'fake-key')
+    # The workflow may approve an editor step; never launch the owner's editor.
+    window.test_editor_launches = []
+
+    def open_test_project(name, folder, configured=None):
+        window.test_editor_launches.append((name, str(folder)))
+        return f'Opened test project in {name}.'
+
+    monkeypatch.setattr(desktop, 'open_project_in_editor', open_test_project)
     monkeypatch.setattr(desktop.QMessageBox, 'warning',
                         staticmethod(lambda *args, **kwargs: None))
     yield window, app
@@ -177,6 +185,7 @@ def test_the_complete_workflow_reports_files_diff_tests_and_where_it_saved(
         jarvis, monkeypatch, project):
     win, app = jarvis
     transcript = run_demo(win, app, monkeypatch, project)
+    assert win.test_editor_launches == [('VS Code', str(project))]
     assert 'app.py' in transcript
     assert 'diff --git' in transcript
     assert 'worktrees' in transcript

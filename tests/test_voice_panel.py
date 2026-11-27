@@ -6,6 +6,7 @@ import pytest
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QCoreApplication, QEvent
 
 from desktop.voice_panel import VoicePanel
 from voice.consent import VoiceConsent
@@ -16,12 +17,28 @@ from voice.wake import WakePhraseMatcher
 @pytest.fixture(scope='module')
 def app():
     application = QApplication.instance() or QApplication([])
-    return application
+    yield application
+    # Release native voice widgets while QApplication still exists. Leaving
+    # queued QObject destruction to interpreter shutdown can fail on Windows.
+    for widget in application.topLevelWidgets():
+        if isinstance(widget, VoicePanel):
+            widget.stop_voice()
+            widget.wait_for_workers()
+            widget.close()
+            widget.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    application.processEvents()
 
 
 @pytest.fixture()
 def panel(app):
-    return VoicePanel()
+    voice = VoicePanel()
+    yield voice
+    voice.stop_voice()
+    voice.wait_for_workers()
+    voice.close()
+    voice.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 class FakeRecognizer:
