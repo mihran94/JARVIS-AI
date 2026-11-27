@@ -104,7 +104,9 @@ def test_the_first_model_is_used_when_the_owner_model_is_not_there():
     assert supervisor.choose_model() == 'llama3:8b'
 
 
-def test_starting_a_model_that_is_not_installed_says_so():
+def test_starting_a_model_that_is_not_installed_says_so(monkeypatch):
+    # Exercise an absent installation even on a developer's PC with Ollama.
+    monkeypatch.setattr('core.local_model.find_executable', lambda: '')
     supervisor = LocalModelSupervisor(executable='')
     with pytest.raises(LocalModelUnavailable):
         supervisor.start()
