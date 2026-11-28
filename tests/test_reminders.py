@@ -27,3 +27,17 @@ def test_daily_briefing_lists_upcoming_reminders_and_recurs(tmp_path):
     assert '24-hour' in reminders.command('alarm 25:00', morning)
     ident = reminders.items()[0]['id']
     assert reminders.command('cancel reminder ' + ident) == 'Reminder cancelled.'
+
+
+def test_edit_keeps_id_and_calendar_draft_uses_new_time(tmp_path):
+    from urllib.parse import parse_qs, urlsplit
+
+    reminders = Reminders(Store(tmp_path / 'history.sqlite3'))
+    now = datetime(2026, 11, 28, 9)
+    reminders.command('ஷெட்யூல் 2026-12-01 18:00 Gym', now)
+    ident = reminders.items()[0]['id']
+    reminders.command(f'நேரம் மாற்று {ident} 2026-12-01 19:45', now)
+    assert len(reminders.items()) == 1
+    params = parse_qs(urlsplit(reminders.google_calendar_url(ident)).query)
+    assert params['text'] == ['Gym']
+    assert params['dates'] == ['20261201T194500/20261201T201500']

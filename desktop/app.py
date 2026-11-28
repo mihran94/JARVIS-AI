@@ -1726,6 +1726,24 @@ class Window(QMainWindow):
                 self.voice_panel.speak_response(reminder, local_only=True, queue_local=True)
 
     def route_interface_command(self, spoken):
+        calendar = re.fullmatch(r'(?:google calendar|கூகுள் காலண்டர்) ([a-f0-9]{8})',
+                                addressed_request(spoken), re.I)
+        if calendar and not self.policy.stopped:
+            url = self.reminders.google_calendar_url(calendar[1].lower())
+            if url is None:
+                detail = 'Choose a saved reminder ID from “list reminders”.'
+            else:
+                try:
+                    def open_calendar():
+                        if not QDesktopServices.openUrl(QUrl(url)):
+                            raise RuntimeError('Could not open Google Calendar.')
+                        return 'Google Calendar opened. Review the event and tap Save.'
+                    detail = self.gateway.run(Action('open_google_calendar', 'Google Calendar event'),
+                                              self.confirm, open_calendar)
+                except RuntimeError as error:
+                    detail = str(error)
+            self.show_local_system_reply(spoken, detail, speak=False)
+            return True
         if not self.policy.stopped:
             reply = self.reminders.command(spoken)
             if reply is not None:
