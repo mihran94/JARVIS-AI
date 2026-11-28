@@ -241,6 +241,75 @@ def test_a_tool_that_raises_something_unexpected_ends_the_mission(registry, gate
     assert 'secret internal detail' not in json.dumps(mission.as_dict())
 
 
+@pytest.mark.parametrize('error_type', [ToolError, RuntimeError, Stopped])
+def test_unconfirmed_mutation_is_never_replayed(registry, gateway, error_type):
+    changes = []
+    asked = []
+
+    def change_and_fail(arguments):
+        changes.append('mutated')
+        raise error_type('private diagnostic')
+
+    def confirm(action):
+        asked.append(action)
+        return True
+
+    registry.register(Tool(
+        name='partial_change',
+        description='Change a thing; verification might fail.',
+        parameters={'type': 'object', 'properties': {}},
+        read_only=False,
+        run=change_and_fail,
+    ))
+    planner = FakePlanner([tool_call('partial_change'), tool_call('partial_change')])
+    mission = runtime_for(registry, gateway, planner).run('Change it.', confirm=confirm)
+
+    assert len(asked) == 1
+    assert changes == ['mutated']
+    assert len(planner.calls) == 1
+    assert mission.status == ('cancelled' if error_type is Stopped else 'failed')
+    assert mission.evidence == []
+    assert 'may already have changed' in mission.events[-1].detail
+    assert 'check the current state before retrying' in mission.events[-1].detail
+    assert 'private diagnostic' not in json.dumps(mission.as_dict())
+
+
+@pytest.mark.parametrize('expired', [False, True])
+def test_mission_stops_after_a_mutation_even_if_the_tool_returned(
+        registry, gateway, monkeypatch, expired):
+    clock = [0.0]
+    changed = []
+    monkeypatch.setattr('core.mission.time.monotonic', lambda: clock[0])
+
+    def change(arguments):
+        changed.append(True)
+        if expired:
+            clock[0] = 9999.0
+        return 'the tool returned; external state was not verified'
+
+    def check():
+        if changed and not expired:
+            raise Stopped('Emergency stop.')
+
+    registry.register(Tool(
+        name='change_before_checkpoint',
+        description='Change a thing before the next checkpoint.',
+        parameters={'type': 'object', 'properties': {}},
+        read_only=False,
+        run=change,
+    ))
+    planner = FakePlanner([tool_call('change_before_checkpoint'), final_answer('Done.')])
+    mission = runtime_for(registry, gateway, planner, check=check).run(
+        'Change it.', confirm=lambda action: True)
+
+    assert changed == [True]
+    assert len(planner.calls) == 1
+    assert mission.status == ('failed' if expired else 'cancelled')
+    assert mission.evidence == []
+    assert 'may already have changed' in mission.events[-1].detail
+    assert ('time limit' in mission.events[-1].detail) is expired
+
+
 # ── the bounds ─────────────────────────────────────────────────────────────
 
 def test_an_answer_that_cannot_be_read_stops_the_mission_after_two_turns(registry, gateway):
@@ -373,6 +442,7 @@ def test_expired_approval_cannot_dispatch(registry, gateway, monkeypatch):
     mission = runtime_for(registry, gateway, planner).run('Work', confirm=approve)
     assert called and mission.status == 'failed'
     assert 'time limit' in mission.events[-1].detail
+    assert 'may already have changed' not in mission.events[-1].detail
     assert not mission.tools_used
 
 

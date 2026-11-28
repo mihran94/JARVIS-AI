@@ -50,6 +50,10 @@ MAX_EVENTS = 200
 #: How many readable failures are allowed before the mission stops.
 MAX_RECOVERABLE_ERRORS = 2
 
+_UNVERIFIED_CHANGE = (
+    'The action may already have changed something. JARVIS did not verify the outcome; '
+    'check the current state before retrying.')
+
 
 class MissionError(RuntimeError):
     """The mission could not be run at all."""
@@ -459,9 +463,20 @@ class AgentRuntime:
             summary = tool.summary(arguments)
             self._emit(mission, 'tool', f'Calling {tool.name}', summary, step)
 
+            write_started = False
+
+            def invoke(checked):
+                nonlocal write_started
+                checkpoint()
+                write_started = not tool.read_only
+                result = (tool.run(checked, checkpoint) if tool.accepts_checkpoint
+                          else tool.run(checked))
+                checkpoint()
+                return result
+
             try:
                 if tool.read_only:
-                    result = self._call(tool, arguments, checkpoint)
+                    result = invoke(arguments)
                 else:
                     if confirm is None:
                         # A tool that changes something is never run without a
@@ -488,23 +503,32 @@ class AgentRuntime:
                     def run_approved():
                         merged = {**arguments, **coerce_edit(tool, edited)}
                         checked = self.registry.check_arguments(tool, merged)
-                        return self._call(tool, checked, checkpoint)
+                        return invoke(checked)
 
                     result = self.gateway.run(
                         Action('mission_tool', summary, arguments=json.dumps(
                             arguments, ensure_ascii=False, default=str)),
                         ask, run_approved)
+                text = str(result)
             except MissionError as error:
-                return self._fail(mission, 'Mission stopped', str(error))
+                detail = f'{error} {_UNVERIFIED_CHANGE}' if write_started else str(error)
+                return self._fail(mission, 'Mission stopped', detail)
             except Denied:
+                if write_started:
+                    return self._fail(mission, f'{tool.name} outcome unverified', _UNVERIFIED_CHANGE)
                 return self._fail(mission, 'The owner did not allow it',
                                   f'{tool.name} was not run.')
             except Stopped:
-                return self._stop(mission, 'Mission cancelled',
-                                  'The mission was cancelled before the next step.')
+                detail = (_UNVERIFIED_CHANGE if write_started
+                          else 'The mission was cancelled before the next step.')
+                return self._stop(mission, 'Mission cancelled', detail)
             except ToolError as problem:
+                # A write can fail while reading its result, after the change.
+                # Do not ask the planner to repeat a write we cannot verify.
+                if write_started:
+                    return self._fail(mission, f'{tool.name} outcome unverified', _UNVERIFIED_CHANGE)
                 errors += 1
-                self._emit(mission, 'error', f'{tool.name} did not run', str(problem), step)
+                self._emit(mission, 'error', f'{tool.name} could not complete', str(problem), step)
                 if errors >= MAX_RECOVERABLE_ERRORS:
                     return self._fail(mission, 'Mission stopped', str(problem))
                 messages.append({'role': 'assistant', 'content': raw})
@@ -512,10 +536,11 @@ class AgentRuntime:
                                  failure_observation(tool.name, str(problem))})
                 continue
             except Exception:
-                return self._fail(mission, f'{tool.name} did not run',
-                                  'The tool failed and nothing was changed.')
+                if write_started:
+                    return self._fail(mission, f'{tool.name} outcome unverified', _UNVERIFIED_CHANGE)
+                return self._fail(mission, f'{tool.name} could not complete',
+                                  'No further step was taken.')
 
-            text = str(result)
             self._emit(mission, 'result', f'{tool.name} finished', text[:400], step)
             mission.tools_used.append({'tool': tool.name, 'summary': summary, 'result': text[:400]})
             messages.append({'role': 'assistant', 'content': raw})
@@ -526,14 +551,6 @@ class AgentRuntime:
             mission, 'Mission stopped',
             f'It used all {self.max_steps} steps without a final answer. '
             'The steps that ran are listed above.')
-
-    def _call(self, tool, arguments, check):
-        """Run one tool, with the emergency stop checked on both sides."""
-        check()
-        result = tool.run(arguments, check) if tool.accepts_checkpoint else tool.run(arguments)
-        check()
-        return result
-
 
 __all__ = ['BUDGET_SECONDS', 'MAX_EVENTS', 'MAX_RECOVERABLE_ERRORS', 'MAX_STEPS',
            'AgentRuntime', 'Mission', 'MissionError', 'MissionEvent', 'coerce_edit',
