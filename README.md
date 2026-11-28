@@ -52,6 +52,13 @@ then say `controls kaattu`, `Export click pannu`, or type
 Say `app release pannu` to finish. Starting another chat or using Emergency
 Stop also clears the selection.
 
+With the selected app in front, point at a visible control and say
+`இதை செலக்ட் பண்ணு`, `itha select pannu`, or `select this`. JARVIS shows
+the captured target for approval and checks that Windows reports the item as
+selected. To press a published button, point at it and say `click here`.
+Moving the pointer during approval keeps the original target. If that target is
+no longer available, point at the control again and repeat the command.
+
 Review the app, control and proposed change in the approval dialog. Text edits
 are checked by reading the value back. For a click, inspect the updated window
 to confirm what the app did. Custom canvases, elevated windows and controls

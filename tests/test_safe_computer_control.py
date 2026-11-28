@@ -303,3 +303,68 @@ def test_verified_scroll_checks_actual_position_and_never_replays(monkeypatch):
     with pytest.raises(app_control.InputRefused, match='did not verify'):
         app_control.scroll_control(7, 'App', 'Project panel', direction='down')
     assert calls == [(0, 1), (0, 1)]
+
+
+def test_pointed_selection_requires_original_control_and_readback(monkeypatch):
+    import sys
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    from automation import app_control
+
+    monkeypatch.setitem(sys.modules, 'System.Windows.Automation', SimpleNamespace(
+        SelectionItemPattern=SimpleNamespace(Pattern=1)))
+    monkeypatch.setattr(app_control.win_controls, 'foreground_process', lambda: 7)
+    state = SimpleNamespace(IsSelected=False)
+    calls = []
+
+    def control(runtime_id):
+        pattern = SimpleNamespace(Current=state, Select=lambda: calls.append(runtime_id))
+        return SimpleNamespace(GetRuntimeId=lambda: runtime_id, GetCurrentPattern=lambda _: pattern)
+
+    controls = [control((2, 8)), control((2, 9))]
+    monkeypatch.setattr(app_control, '_usable', lambda *_: ('Clip', '', 'ListItem'))
+
+    @contextmanager
+    def foreground(*_):
+        yield controls, lambda: None
+
+    monkeypatch.setattr(app_control, '_foreground_app', foreground)
+    with pytest.raises(app_control.InputRefused, match='did not verify'):
+        app_control.select_control(7, 'Editor', 'Clip', runtime_id=(2, 9))
+    assert calls == [(2, 9)]
+    state.IsSelected = True
+    assert "'Clip' is selected" in app_control.select_control(7, 'Editor', 'Clip', runtime_id=(2, 9))
+    controls.pop()
+    with pytest.raises(app_control.InputRefused, match='missing or ambiguous'):
+        app_control.select_control(7, 'Editor', 'Clip', runtime_id=(2, 9))
+    assert calls == [(2, 9), (2, 9)]
+
+
+def test_pointer_hit_must_be_an_accessible_control_in_the_selected_window(monkeypatch):
+    import sys
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    from automation import app_control
+
+    monkeypatch.setitem(sys.modules, 'System.Windows', SimpleNamespace(Point=lambda x, y: (x, y)))
+    monkeypatch.setattr(app_control.ctypes, 'windll', SimpleNamespace(
+        user32=SimpleNamespace(GetCursorPos=lambda _: True)), raising=False)
+    control = SimpleNamespace(GetRuntimeId=lambda: (4, 1))
+    hit = control
+    monkeypatch.setattr(app_control.uia, 'load_client', lambda: SimpleNamespace(FromPoint=lambda _: hit))
+    properties = ('Clip', '', 'ListItem')
+    monkeypatch.setattr(app_control, '_usable', lambda *_: properties)
+
+    @contextmanager
+    def foreground(*_):
+        yield [control], lambda: None
+
+    monkeypatch.setattr(app_control, '_foreground_app', foreground)
+    assert app_control.pointed_control(7, 'Editor', selecting=True) == ('Clip', '', (4, 1))
+    hit = SimpleNamespace(GetRuntimeId=lambda: (4, 2))
+    with pytest.raises(app_control.InputRefused, match='Point at a named control'):
+        app_control.pointed_control(7, 'Editor', selecting=True)
+    hit = control
+    properties = None
+    with pytest.raises(app_control.InputRefused, match='Point at a named control'):
+        app_control.pointed_control(7, 'Editor', selecting=True)

@@ -58,6 +58,12 @@ def parse(message, *, has_selection=False):
         field, sep, value = label.partition(' = ')
         if sep:
             return Request('set', app.strip(), field.strip(), value)
+    spoken = re.sub(r'\s+', ' ', text.casefold().strip(' .!?'))
+    if spoken in {'select this', 'select it', 'itha select pannu', 'idhai select pannu',
+                  'இதை செலக்ட் பண்ணு', 'இத செலக்ட் பண்ணு', 'இதைத் தேர்வு செய்'}:
+        return Request('select_pointed')
+    if spoken in {'click here', 'mouse click here', 'இங்கே கிளிக் பண்ணு', 'inga click pannu'}:
+        return Request('click_pointed')
     if has_selection:
         if text.casefold() in ('show controls', 'controls kaattu'):
             return Request('inspect')
@@ -155,6 +161,17 @@ def run(request, gateway, confirm, checkpoint, *, selected=None):
     else:
         raise InputRefused('Select an app first.')
     target = f'{title} (PID {pid})'
+    pointed = None
+    if request.verb in ('select_pointed', 'click_pointed'):
+        if not selected or app_control.win_controls.foreground_window() != selected.handle:
+            raise InputRefused('Select an app and point at a control in its foreground window.')
+        if psutil.Process(pid).create_time() != started:
+            raise InputRefused('The selected app restarted. Select it again.')
+        pointed = app_control.pointed_control(pid, title, selecting=request.verb == 'select_pointed')
+        checkpoint()
+        if app_control.win_controls.foreground_window() != selected.handle:
+            raise InputRefused('The selected window changed. Select the app again.')
+        target += ' — ' + (pointed[0] or pointed[1])
     if request.control:
         target += f' — {request.control}'
     if request.verb == 'set':
@@ -174,6 +191,11 @@ def run(request, gateway, confirm, checkpoint, *, selected=None):
         guard()
         if request.verb == 'inspect':
             return app_control.see_controls(pid, title)
+        if pointed is not None:
+            name, ident, runtime_id = pointed
+            action = (app_control.select_control if request.verb == 'select_pointed'
+                      else app_control.mouse_click)
+            return action(pid, title, name, ident, checkpoint=guard, runtime_id=runtime_id)
         name, ident = request.control, ''
         if name.startswith('id='):
             name, ident = '', name[3:]
@@ -181,5 +203,8 @@ def run(request, gateway, confirm, checkpoint, *, selected=None):
                                        text=request.value if request.verb == 'set' else None,
                                        checkpoint=guard)
 
-    status = {'click': 'dispatched', 'set': 'verified', 'inspect': 'completed'}[request.verb]
+    status = {
+        'click': 'dispatched', 'set': 'verified', 'inspect': 'completed',
+        'select_pointed': 'verified', 'click_pointed': 'dispatched',
+    }[request.verb]
     return gateway.run(Action(f'app_{request.verb}', target), confirm, operate, completion_status=status)

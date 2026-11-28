@@ -20,6 +20,7 @@ BLOCKED_PROCESSES = {
 }
 INVOKE_TYPES = {'Button', 'MenuItem', 'SplitButton'}
 EDIT_TYPES = {'Edit'}
+SELECT_TYPES = {'DataItem', 'ListItem', 'TabItem', 'TreeItem'}
 SCROLL_TYPES = {'DataGrid', 'Document', 'List', 'Pane', 'Table', 'Tree'}
 SENSITIVE_LABELS = (
     'password', 'passcode', 'secret', 'one-time code', 'security code', 'api key',
@@ -108,7 +109,7 @@ def see_controls(pid, title):
         results = []
         for control in controls:
             entry = _usable(control, pid)
-            if entry and entry[2] in INVOKE_TYPES | EDIT_TYPES | SCROLL_TYPES and (entry[0] or entry[1]):
+            if entry and entry[2] in INVOKE_TYPES | EDIT_TYPES | SCROLL_TYPES | SELECT_TYPES and (entry[0] or entry[1]):
                 name, automation_id, kind = entry
                 results.append(f'{kind} {name[:100]!r} (id={automation_id[:100]!r})')
         check()
@@ -122,7 +123,8 @@ def _control_pattern(control, *, editing):
 
 
 @contextmanager
-def _selected_control(pid, title, name, automation_id, kinds, checkpoint, *, restore_focus=True):
+def _selected_control(pid, title, name, automation_id, kinds, checkpoint, *,
+                      restore_focus=True, runtime_id=None):
     if (not name and not automation_id) or len(name) > 100 or len(automation_id) > 100:
         raise InputRefused('Choose a control by the exact name or ID shown by inspection.')
     # A JARVIS approval dialog can briefly take focus. Restore the approved
@@ -139,7 +141,8 @@ def _selected_control(pid, title, name, automation_id, kinds, checkpoint, *, res
                 continue
             actual_name, actual_id, kind = entry
             if kind in kinds and (not name or name == actual_name) and (
-                    not automation_id or automation_id == actual_id):
+                    not automation_id or automation_id == actual_id) and (
+                    runtime_id is None or tuple(control.GetRuntimeId()) == runtime_id):
                 matches.append((control, entry))
         if len(matches) != 1:
             raise InputRefused('The named control is missing or ambiguous. Inspect the window again.')
@@ -147,7 +150,8 @@ def _selected_control(pid, title, name, automation_id, kinds, checkpoint, *, res
 
         def guard():
             check()
-            if _usable(control, pid) != entry:
+            if _usable(control, pid) != entry or (
+                    runtime_id is not None and tuple(control.GetRuntimeId()) != runtime_id):
                 raise InputRefused('The control changed. No input was sent.')
             checkpoint()
             return pid
@@ -223,6 +227,44 @@ def use_control(pid, title, name, automation_id='', *, text=None, checkpoint=lam
         return f'Windows verified the text in {label!r}.'
 
 
+def select_control(pid, title, name, automation_id='', *, checkpoint=lambda: None, runtime_id=None):
+    from System.Windows.Automation import SelectionItemPattern
+
+    with _selected_control(pid, title, name, automation_id, SELECT_TYPES, checkpoint,
+                           runtime_id=runtime_id) as (
+            control, label, guard):
+        pattern = control.GetCurrentPattern(SelectionItemPattern.Pattern)
+        guard()
+        pattern.Select()
+        guard()
+        if not pattern.Current.IsSelected:
+            raise InputRefused('Windows did not verify the requested selection.')
+        return f'Windows verified that {label!r} is selected.'
+
+
+def pointed_control(pid, title, *, selecting=False):
+    """Capture a published control under the cursor inside the approved window."""
+    kinds = SELECT_TYPES if selecting else INVOKE_TYPES | EDIT_TYPES
+    with _foreground_app(pid, title) as (controls, check):
+        from System.Windows import Point
+
+        cursor = wintypes.POINT()
+        if not ctypes.windll.user32.GetCursorPos(ctypes.byref(cursor)):
+            raise InputRefused('Windows could not read the mouse position.')
+        hit = uia.load_client().FromPoint(Point(cursor.x, cursor.y))
+        runtime = tuple(hit.GetRuntimeId() or ()) if hit is not None else ()
+        if runtime:
+            for control in controls:
+                if tuple(control.GetRuntimeId()) != runtime:
+                    continue
+                entry = _usable(control, pid)
+                if entry and entry[2] in kinds and (entry[0] or entry[1]):
+                    check()
+                    return entry[0], entry[1], runtime
+                break
+    raise InputRefused('Point at a named control inside the selected app and try again.')
+
+
 def _point_hits(control, x, y):
     from System.Windows import Point
 
@@ -230,10 +272,10 @@ def _point_hits(control, x, y):
     return hit is not None and tuple(hit.GetRuntimeId()) == tuple(control.GetRuntimeId())
 
 
-def mouse_click(pid, title, name, automation_id='', *, checkpoint=lambda: None):
+def mouse_click(pid, title, name, automation_id='', *, checkpoint=lambda: None, runtime_id=None):
     """Physically click the published point of exactly one visible control."""
     with _selected_control(pid, title, name, automation_id, INVOKE_TYPES | EDIT_TYPES,
-                           checkpoint) as (control, label, guard):
+                           checkpoint, runtime_id=runtime_id) as (control, label, guard):
         point = control.GetClickablePoint()
         x, y = round(point.X), round(point.Y)
         if not (0 <= x <= 10000 and 0 <= y <= 10000):
