@@ -39,7 +39,7 @@ from core.mission_tools import ToolError
 from security.policy import Action, Denied, Stopped
 
 #: How many steps one mission may take.
-MAX_STEPS = 6
+MAX_STEPS = 10
 
 #: How long one mission may run, in seconds.
 BUDGET_SECONDS = 180
@@ -89,6 +89,7 @@ class Mission:
     steps: int = 0
     events: list = field(default_factory=list)
     tools_used: list = field(default_factory=list)
+    event_counts: dict = field(default_factory=dict)
 
     @property
     def completed(self) -> bool:
@@ -99,6 +100,28 @@ class Mission:
         """The calls that really ran, and what they returned."""
         return list(self.tools_used)
 
+    @property
+    def metrics(self) -> dict:
+        """Count actions and blockers without confusing a dispatched call with success.
+
+        Counts are updated before display events are trimmed, so long missions
+        retain accurate metrics even when their HUD history is bounded.
+        A recorded result is evidence of a tool response, not independent
+        proof that the external application's requested outcome occurred.
+        """
+        counts = self.event_counts
+        attempts = counts.get('tool', 0)
+        results = counts.get('result', 0)
+        return {
+            'decision_steps': self.steps,
+            'tool_attempts': attempts,
+            'tool_results_recorded': results,
+            'tool_attempts_without_result': max(0, attempts - results),
+            'approval_requests': counts.get('approval', 0),
+            'skipped_steps': counts.get('skipped', 0),
+            'errors_reported': counts.get('error', 0),
+        }
+
     def as_dict(self) -> dict:
         return {
             'id': self.id,
@@ -108,6 +131,7 @@ class Mission:
             'steps': self.steps,
             'events': [event.as_dict() for event in self.events],
             'tools_used': list(self.tools_used),
+            'metrics': self.metrics,
         }
 
 
@@ -216,6 +240,9 @@ def system_instructions(registry, *, compact=False) -> str:
         '* One tool per answer. Wait for the result before the next answer.\n'
         '* Answer only from what the tool results show. If a tool failed, say that it failed.\n'
         '* Do not claim something was done that you did not observe in a result.\n'
+        '* A dispatched click or keyboard input is not proof of the requested app change. '
+        'When a checking tool exists, inspect the updated state or output before reporting completion.\n'
+        '* If any step was skipped, clearly explain what remains unfinished.\n'
         '* If the goal needs no tool, answer straight away.\n'
         '\n'
         'The tools:\n'
@@ -306,6 +333,7 @@ class AgentRuntime:
               step: int = 0) -> None:
         event = MissionEvent(kind=kind, label=label, detail=detail, step=step)
         mission.events.append(event)
+        mission.event_counts[kind] = mission.event_counts.get(kind, 0) + 1
         if len(mission.events) > MAX_EVENTS:
             del mission.events[:-MAX_EVENTS]
         if self.on_event is not None:
