@@ -165,3 +165,28 @@ def test_completed_audio_turn_delivers_both_transcripts_once(monkeypatch):
     assert struct.unpack('<8h', playback_pcm(raw, 48000, 2)) == (
         -100, -100, 550, 550, 1200, 1200, 1200, 1200,
     )
+
+
+def test_fragmented_playback_buffers_briefly_but_releases_short_replies(monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    live = LiveVoice()
+    fmt = QAudioFormat()
+    fmt.setChannelCount(1)
+    fmt.setSampleRate(24000)
+    fmt.setSampleFormat(QAudioFormat.SampleFormat.Int16)
+    live.output_format = fmt
+    writes = []
+    live.output = type('Output', (), {'write': lambda _, data: writes.append(data) or len(data)})()
+    live.player = type('Sink', (), {'state': lambda _: QAudio.State.IdleState,
+                                     'bytesFree': lambda _: 10000})()
+    now = [0.0]
+    monkeypatch.setattr('desktop.live_voice.monotonic', lambda: now[0])
+    packet = bytes(960)
+    live.queue_audio(packet)
+    assert not writes
+    now[0] = 0.11
+    live.flush_audio()
+    assert writes == [packet]
+    for _ in range(5):
+        live.queue_audio(packet)
+    assert writes[1:] == [5 * packet]

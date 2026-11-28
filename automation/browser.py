@@ -7,7 +7,7 @@ from pathlib import Path
 import json
 import shutil
 import sys
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 from playwright.async_api import async_playwright
 
@@ -45,7 +45,7 @@ class BrowserAction:
         return sha256(payload.encode()).hexdigest()
 
 
-HELP = ('/browser open https://…  ·  /browser inspect  ·  /browser fill Field label  ·  '
+HELP = ('/browser search Keywords  ·  /browser open https://…  ·  /browser inspect  ·  /browser fill Field label  ·  '
         '/browser click Button name  ·  /browser link Link name  ·  /browser upload File label  ·  '
         '/browser verify Visible text  ·  /browser close')
 
@@ -53,6 +53,10 @@ HELP = ('/browser open https://…  ·  /browser inspect  ·  /browser fill Fiel
 def parse_browser(text):
     verb, _, target = text.strip().partition(' ')
     verb, target = verb.lower(), target.strip()
+    if verb == 'search' and target:
+        if len(target) > 240:
+            raise BrowserTaskError('Use at most 240 characters in a search.')
+        return BrowserAction('open', 'https://www.google.com/search?' + urlencode({'q': target}))
     if verb in ('inspect', 'close') and not target:
         return BrowserAction(verb)
     if verb in ('open', 'click', 'link', 'fill', 'upload', 'verify') and target:

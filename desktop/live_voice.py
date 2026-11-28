@@ -2,6 +2,7 @@
 import base64
 import binascii
 import json
+from time import monotonic
 
 import numpy as np
 from PySide6.QtCore import QObject, QTimer, QUrl, QUrlQuery, Signal
@@ -21,6 +22,7 @@ ENDPOINT = (
 OUTPUT_RATE = 24000
 MAX_AUDIO_QUEUE = 2_000_000
 SPEAKER_TAIL_MS = 450
+PLAYBACK_LEAD_MS = 100
 
 
 def setup_message(guidance, *, tamil_tanglish=False, preferred_name=''):
@@ -92,6 +94,7 @@ class LiveVoice(QObject):
         self.capture = self.player = None
         self.input = self.output = None
         self.pending = bytearray()
+        self.buffer_until = None
         self.echo_filter = PlaybackEchoFilter()
         self.transcript = ['', '']
         self.ignore_reply = False
@@ -350,6 +353,9 @@ class LiveVoice(QObject):
         self.speaker_tail.stop()
         if self.readout:
             self.connection_timer.start(12000)
+        # When the sink has drained, briefly accumulate network packets before playback.
+        if raw and not self.pending and self.player.state() == QAudio.State.IdleState:
+            self.buffer_until = monotonic() + PLAYBACK_LEAD_MS / 1000
         self.pending.extend(playback_pcm(raw, self.output_format.sampleRate(),
                                          self.output_format.channelCount()))
         if len(self.pending) > MAX_AUDIO_QUEUE:
@@ -362,6 +368,12 @@ class LiveVoice(QObject):
         if self.output is None:
             return
         if self.pending:
+            if self.buffer_until is not None:
+                target = self.output_format.bytesForDuration(PLAYBACK_LEAD_MS * 1000)
+                if (len(self.pending) < target and monotonic() < self.buffer_until
+                        and not self.readout_finished):
+                    return
+                self.buffer_until = None
             available = min(len(self.pending), self.player.bytesFree())
             if available > 0:
                 chunk = bytes(self.pending[:available])
@@ -395,6 +407,7 @@ class LiveVoice(QObject):
         self.transcript = ['', '']
         self.ignore_reply = True
         self.speaker_tail.stop()
+        self.buffer_until = None
         self.pending.clear()
         self.output_level.emit(0)
         player = self.player
@@ -424,6 +437,7 @@ class LiveVoice(QObject):
         capture, self.capture = self.capture, None
         player, self.player = self.player, None
         self.input = self.output = None
+        self.buffer_until = None
         self.pending.clear()
         self.echo_filter.clear()
         self.transcript = ['', '']

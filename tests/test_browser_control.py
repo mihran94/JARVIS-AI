@@ -68,3 +68,13 @@ def test_browser_actions_against_a_real_document(tmp_path):
             await session.close()
 
     asyncio.run(run())
+
+
+def test_browser_search_preserves_tamil_and_special_characters():
+    from urllib.parse import parse_qs, urlsplit
+    action = parse_browser('search தமிழ் C++ & Qt')
+    parts = urlsplit(action.target)
+    assert action.verb == 'open' and parts.hostname == 'www.google.com'
+    assert parse_qs(parts.query) == {'q': ['தமிழ் C++ & Qt']}
+    with pytest.raises(BrowserTaskError):
+        parse_browser('search')
