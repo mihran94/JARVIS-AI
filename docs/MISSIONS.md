@@ -75,8 +75,8 @@ mission.
   painted: one marker per step, coloured by kind, and the newest step
   glows.
 * **On the right, the evidence.** The calls that really ran, what each
-  one returned, and the final answer. When nothing ran, it says *no
-  tool ran*.
+  one returned, and the final answer. When there is no result, it says *no
+  tool result recorded*.
 
 The counter says **Step N of 10** by default. There is no percentage
 and no estimate, because neither is known,

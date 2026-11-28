@@ -14,8 +14,8 @@ WHAT THIS IS
       notes;
     * in the middle, the mission: its goal, its rail of steps, the
       approval it is waiting for and the answer it produced;
-    * on the right, the evidence — the calls that really ran, what they
-      returned, and the final answer.
+    * on the right, the evidence — the recorded tool results and the final
+    answer.
 
     The rail is painted rather than assembled from list rows, because the
     rail is the point: one marker per step, coloured by kind, and the
@@ -27,7 +27,8 @@ WHAT THIS IS NOT
     * It does not invent progress. There is no percentage and no
       estimate. The counter says which step of how many, and only the
       steps that really ran are on the rail.
-    * It does not show a tool as successful unless the tool returned.
+    * An empty evidence column does not mean no tool ran. A returned tool
+      result is not, by itself, proof of the requested external outcome.
     * A reading that cannot be taken is shown as unavailable. The rings
       never carry a made-up number.
 """
@@ -328,7 +329,9 @@ class TelemetryColumn(QWidget):
 
 
 class EvidenceColumn(QWidget):
-    """The right column: what really ran, and what came of it."""
+    """The right column: recorded tool results and the final answer."""
+
+    EMPTY_COUNT = 'no tool result recorded'
 
     def __init__(self, palette, parent=None):
         super().__init__(parent)
@@ -343,7 +346,7 @@ class EvidenceColumn(QWidget):
         self.eyebrow.setStyleSheet('color: #63e6ff; font-size: 10px; font-weight: 700; '
                                    'letter-spacing: 2.6px;')
         layout.addWidget(self.eyebrow)
-        self.count = QLabel('no tool ran')
+        self.count = QLabel(self.EMPTY_COUNT)
         self.count.setStyleSheet('color: #93a1b8; font-size: 11px;')
         layout.addWidget(self.count)
 
@@ -369,18 +372,18 @@ class EvidenceColumn(QWidget):
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
-        self.count.setText('no tool ran')
+        self.count.setText(self.EMPTY_COUNT)
         self.answer.setText('No mission has run yet.')
 
     def show_evidence(self, tools_used):
-        """Show the calls that really ran."""
+        """Show the calls that returned a recorded result."""
         while self.cards.count():
             item = self.cards.takeAt(0)
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
         if not tools_used:
-            self.count.setText('no tool ran')
+            self.count.setText(self.EMPTY_COUNT)
             return
         self.count.setText(f'{len(tools_used)} tool result(s)')
         for entry in tools_used:
@@ -613,9 +616,9 @@ class MissionPanel(QWidget):
         command.addWidget(self.goal, 1)
         self.run_limit = QComboBox()
         self.run_limit.setAccessibleName('Mission execution limits')
-        self.run_limit.addItem('6 steps · 3 min', (MAX_STEPS, BUDGET_SECONDS))
-        self.run_limit.addItem('12 steps · 6 min', (12, 360))
-        self.run_limit.addItem('24 steps · 12 min', (24, 720))
+        for steps, seconds in ((MAX_STEPS, BUDGET_SECONDS), (12, 360), (24, 720)):
+            duration = f'{seconds} s' if seconds % 60 else f'{seconds // 60} min'
+            self.run_limit.addItem(f'{steps} steps · {duration}', (steps, seconds))
         self.run_limit.setToolTip('Maximum planner steps and elapsed time for this mission')
         command.addWidget(self.run_limit)
         self.run_button = QPushButton('Start mission')
