@@ -259,7 +259,7 @@ async function sendMessage(text, { images } = {}) {
   }
   const call = state.call;
   const command = message.toLowerCase().replace(/[.!?]+$/, '');
-  const asksToLook = /^(?:look|look at this|look through the camera|what is this|what do you see|பார்|பாரு|இதைப் பார்|இதை பாரு|இது என்ன|நான் என்ன காட்டுறேன்|camera paaru|கேமராவில் பார்)[.!?]*$/iu.test(message);
+  const asksToLook = /^(?:look|look at this|look through the camera|what is this|what do you see|what object is this|ithu enna|இந்தப் பொருள் என்ன|இந்த பொருள் என்ன|பார்|பாரு|இதைப் பார்|இதை பாரு|இது என்ன|நான் என்ன காட்டுறேன்|camera paaru|கேமராவில் பார்)[.!?]*$/iu.test(message);
   if (!images && (asksToLook || (call?.mode === 'video' && !CHAT_COMMANDS.has(command)))) {
     const view = $('liveCameraView');
     if (!state.camera || !view.videoWidth) {
@@ -984,7 +984,7 @@ function installListeners() {
   $('lookNow').addEventListener('click', () => {
     const question = $('message').value.trim();
     if (!question) {
-      sendMessage('பார்');
+      sendMessage('இது என்ன?');
       return;
     }
     const view = $('liveCameraView');

@@ -1567,7 +1567,8 @@ class Window(QMainWindow):
                   'Answer in friendly conversational Tamil with useful English terms. '
                   'Avoid repeating greetings or asking how to help after every turn. '
                   'Ask one short clarification only when an essential detail is missing. '
-                  'Describe only visible camera evidence and say when the view is unclear. '
+                  'When identifying an object, name it first and state the visible detail that supports it. '
+                  'If the object is unclear, say so and ask for a closer view. '
                   'explicit local commands separately. For a requested PC action, tell the '
                   'user to check for an approval in the app. Never claim the action ran. '
                   'The desktop can control supported apps with mouse and keyboard. '
@@ -1692,8 +1693,9 @@ class Window(QMainWindow):
         camera_request = bool(re.search(
             r'(?:camera|கேமரா).{0,60}(?:look|see|paaru|paru|பாரு|பார்|காட்டு)', question))
         if not camera_request and question not in {
-            'look at this', 'what am i doing', 'what am i showing you', 'look through the camera',
+            'look at this', 'what is this', 'what object is this', 'what am i doing', 'what am i showing you', 'look through the camera',
             'பார்', 'பாரு', 'paaru', 'paru', 'இதைப் பார்', 'இதை பாரு',
+            'இது என்ன', 'இந்தப் பொருள் என்ன', 'இந்த பொருள் என்ன', 'ithu enna',
             'நான் என்ன செய்றேன்', 'நான் என்ன செய்கிறேன்',
             'நான் என்ன காட்டுறேன்', 'நான் காட்டியது என்ன', 'நான் காட்டுறது என்ன',
         }:
@@ -4599,6 +4601,9 @@ class Window(QMainWindow):
         self.camera_panel = CameraPanel(self.store, self.policy, self.camera_toggle)
         self.camera_preview_choice = QCheckBox('Show camera preview in the HUD')
         self.camera_panel.layout().addWidget(self.camera_preview_choice)
+        look_now = QPushButton('Identify this object')
+        look_now.clicked.connect(lambda: self.route_camera_question('இது என்ன?'))
+        self.camera_panel.layout().addWidget(look_now)
         voice_advanced = QWidget()
         advanced_layout = QVBoxLayout(voice_advanced)
         advanced_layout.setContentsMargins(0, 0, 0, 0)

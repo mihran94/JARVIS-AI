@@ -10,7 +10,7 @@ from PySide6.QtMultimedia import QAudio, QAudioFormat, QAudioSink, QAudioSource,
 from PySide6.QtWebSockets import QWebSocket
 
 from desktop.audio_test import AudioTest
-from desktop.audio_echo import PlaybackEchoFilter
+from desktop.audio_echo import BackgroundNoiseReducer, PlaybackEchoFilter
 
 
 MODEL = 'gemini-3.8-live'
@@ -96,6 +96,7 @@ class LiveVoice(QObject):
         self.pending = bytearray()
         self.buffer_until = None
         self.echo_filter = PlaybackEchoFilter()
+        self.noise_filter = BackgroundNoiseReducer()
         self.transcript = ['', '']
         self.ignore_reply = False
         self.awaiting_interrupt_ack = False
@@ -264,6 +265,7 @@ class LiveVoice(QObject):
             self.stop('Live Voice connection is too slow to keep up with microphone audio.')
             return
         rate = self.input_format.sampleRate()
+        samples = self.noise_filter.filter(samples, rate)
         self.send({'realtimeInput': {'audio': {
             'mimeType': f'audio/pcm;rate={rate}',
             'data': base64.b64encode(samples.tobytes()).decode('ascii'),
@@ -440,6 +442,7 @@ class LiveVoice(QObject):
         self.buffer_until = None
         self.pending.clear()
         self.echo_filter.clear()
+        self.noise_filter.clear()
         self.transcript = ['', '']
         self.ignore_reply = False
         self.awaiting_interrupt_ack = False

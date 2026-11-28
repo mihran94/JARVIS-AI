@@ -190,3 +190,17 @@ def test_fragmented_playback_buffers_briefly_but_releases_short_replies(monkeypa
     for _ in range(5):
         live.queue_audio(packet)
     assert writes[1:] == [5 * packet]
+
+
+def test_noise_reduction_preserves_nearby_voice_after_quiet_background():
+    import numpy as np
+    from desktop.audio_echo import BackgroundNoiseReducer
+
+    reducer = BackgroundNoiseReducer()
+    background = np.full(320, 45, dtype=np.int16)
+    for _ in range(30):
+        quiet = reducer.filter(background, 16000)
+    assert 0 < int(quiet.max()) < int(background.max()) / 2
+    voice = np.full(320, 1200, dtype=np.int16)
+    reducer.filter(voice, 16000)
+    assert np.array_equal(reducer.filter(voice, 16000), voice)
