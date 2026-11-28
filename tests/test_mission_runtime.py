@@ -23,7 +23,7 @@ from core.mission import (
 from core.mission_tools import Tool, ToolError, ToolRegistry
 from core.store import Store
 from agents.gateway import Gateway
-from security.policy import Policy, Stopped
+from security.policy import Action, Policy, Stopped
 
 
 def tool_call(name, arguments=None, thought='Looking at it.'):
@@ -558,3 +558,60 @@ def test_activity_records_last_tool_response_on_completion(tmp_path, registry, g
     entry = store.tasks()[0]
     assert entry['status'] == 'completed'
     assert entry['detail'] == 'Last tool response: step 1, change_thing'
+
+
+def test_activity_redacts_dispatched_tool_arguments_and_result(store, registry, gateway):
+    from core.mission import MissionJournal
+
+    schema = {'type': 'object', 'properties': {
+        'process_id': {'type': 'integer'}, 'title': {'type': 'string'},
+    }, 'required': ['process_id', 'title']}
+    registry.register(Tool('click', 'Dispatch a click.', schema, False,
+                           lambda _: 'private dispatch result', needs_window_readback=True))
+    asked = []
+    planner = FakePlanner([
+        tool_call('click', {'process_id': 7, 'title': 'private synthetic title'}),
+        final_answer(),
+    ])
+    result = runtime_for(registry, gateway, planner, max_steps=2,
+                         journal=MissionJournal(store)).run(
+                             'private synthetic goal', confirm=lambda action: asked.append(action) or True)
+    assert 'private synthetic title' in asked[0].target
+    assert json.loads(asked[0].arguments) == {'process_id': 7, 'title': 'private synthetic title'}
+    assert result.evidence[0]['result'] == 'private dispatch result'
+    assert result.pending_readback is not None
+    rows = store.tasks()
+    tool = next(row for row in rows if row['kind'] == 'mission_tool')
+    assert tool['status'] == 'dispatched'
+    assert 'click' in tool['detail']
+    assert all('private' not in row['detail'] for row in rows)
+
+
+def test_activity_preserves_warning_if_continuation_is_interrupted_again(tmp_path, registry):
+    from core.mission import MissionJournal
+
+    path = tmp_path / 'recovery.sqlite3'
+    store = Store(path)
+    origin = store.task('mission', 'Mission started')
+    warning = 'Check before retrying: step 3, click_app_control'
+    store.finish(origin, 'interrupted', warning)
+    journal = MissionJournal(store, continue_from=origin)
+
+    def interrupt_before_first_tool(_):
+        raise KeyboardInterrupt()
+
+    runtime = runtime_for(registry, Gateway(Policy(), store), interrupt_before_first_tool,
+                          journal=journal)
+    with pytest.raises(KeyboardInterrupt):
+        runtime.run('private remaining instruction')
+    resumed = Store(path).interrupted_mission()
+    assert resumed['id'] == journal.task_id
+    assert resumed['detail'] == warning
+
+
+
+def test_gateway_still_records_results_for_non_mission_callers(store, gateway):
+    action = Action('fixture_action', 'Existing history description')
+    assert gateway.run(action, lambda _: True, lambda: 'Existing result') == 'Existing result'
+    row, = store.tasks()
+    assert (row['status'], row['detail']) == ('completed', 'Existing result')

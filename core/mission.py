@@ -318,6 +318,7 @@ class MissionJournal:
 
     def __init__(self, store, *, continue_from=None):
         self.store = store
+        self.continued = continue_from is not None
         self.task_id = (store.continue_mission(continue_from) if continue_from is not None
                         else store.task('mission', 'Mission started'))
         self.last_response = None
@@ -341,6 +342,11 @@ class MissionJournal:
         if self.pending_action:
             step, name = self.pending_action
             parts.append(f'Check before retrying: step {step}, {name}')
+        # The atomic continuation carries the earlier checkpoint forward.
+        # Keep it if the successor ends or is interrupted without new evidence.
+        if not parts and self.continued and status != 'completed':
+            self.store.finish(self.task_id, status)
+            return
         self.store.finish(self.task_id, status, ' · '.join(parts) or 'No tool response recorded')
 
 
@@ -575,7 +581,9 @@ class AgentRuntime:
                     result = self.gateway.run(
                         Action('mission_tool', summary, arguments=json.dumps(
                             arguments, ensure_ascii=False, default=str)),
-                        ask, run_approved)
+                        ask, run_approved,
+                        completion_status='dispatched' if tool.needs_window_readback else 'completed',
+                        history_detail=f'Mission tool: {tool.name}')
                 text = str(result)
             except MissionError as error:
                 detail = f'{error} {_UNVERIFIED_CHANGE}' if write_started else str(error)
