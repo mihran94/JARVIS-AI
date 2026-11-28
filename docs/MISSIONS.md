@@ -90,6 +90,13 @@ started but its outcome could not be confirmed, the mission stops and
 asks the owner to inspect the current state before retrying. Emergency
 Stop stops further actions; it does not undo a change that already happened.
 
+Activity records only step and tool names for mission checkpoints and tool
+receipts. A window input receipt says `dispatched` rather than completed;
+the separate tool observation checks the window state. The owner still sees
+the action details when reviewing an approval. Continuing an interrupted
+mission never replays it; a second interruption before new evidence preserves
+the prior checkpoint warning. Existing history rows are not rewritten.
+
 ## Where it runs
 
 The mission runs in a worker thread, so the console keeps painting while
