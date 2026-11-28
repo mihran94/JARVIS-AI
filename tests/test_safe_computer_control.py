@@ -267,3 +267,39 @@ def test_camera_preview_stops_before_device_access_if_owner_declines():
                              confirm=lambda action: requested.append(action) or False)
     assert open_camera_reader(window) is None
     assert requested == [Action('Start camera preview', 'Selected local camera')]
+
+
+def test_verified_scroll_checks_actual_position_and_never_replays(monkeypatch):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    import sys
+    from automation import app_control
+
+    scroll_amount = SimpleNamespace(NoAmount=0, SmallIncrement=1, SmallDecrement=-1)
+    monkeypatch.setitem(sys.modules, 'System.Windows.Automation', SimpleNamespace(
+        ScrollAmount=scroll_amount, ScrollPattern=SimpleNamespace(Pattern=1)))
+    position = SimpleNamespace(VerticallyScrollable=True, VerticalScrollPercent=25.0)
+    calls = []
+    can_move = True
+
+    def scroll(horizontal, vertical):
+        calls.append((horizontal, vertical))
+        if can_move:
+            position.VerticalScrollPercent = 40.0
+
+    pattern = SimpleNamespace(Current=position, Scroll=scroll)
+    control = SimpleNamespace(GetCurrentPattern=lambda _: pattern)
+
+    @contextmanager
+    def selected(*_args):
+        yield control, 'Project panel', lambda: None
+
+    monkeypatch.setattr(app_control, '_selected_control', selected)
+    assert 'from 25% to 40%' in app_control.scroll_control(7, 'App', 'Project panel', direction='down')
+    assert calls == [(0, 1)]
+    can_move = False
+    ticks = iter((0.0, 1.0))
+    monkeypatch.setattr(app_control, 'time', SimpleNamespace(monotonic=lambda: next(ticks)))
+    with pytest.raises(app_control.InputRefused, match='did not verify'):
+        app_control.scroll_control(7, 'App', 'Project panel', direction='down')
+    assert calls == [(0, 1), (0, 1)]

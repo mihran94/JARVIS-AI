@@ -20,6 +20,7 @@ BLOCKED_PROCESSES = {
 }
 INVOKE_TYPES = {'Button', 'MenuItem', 'SplitButton'}
 EDIT_TYPES = {'Edit'}
+SCROLL_TYPES = {'DataGrid', 'Document', 'List', 'Pane', 'Table', 'Tree'}
 SENSITIVE_LABELS = (
     'password', 'passcode', 'secret', 'one-time code', 'security code', 'api key',
     'terminal', 'command prompt', 'powershell',
@@ -107,7 +108,7 @@ def see_controls(pid, title):
         results = []
         for control in controls:
             entry = _usable(control, pid)
-            if entry and entry[2] in INVOKE_TYPES | EDIT_TYPES and (entry[0] or entry[1]):
+            if entry and entry[2] in INVOKE_TYPES | EDIT_TYPES | SCROLL_TYPES and (entry[0] or entry[1]):
                 name, automation_id, kind = entry
                 results.append(f'{kind} {name[:100]!r} (id={automation_id[:100]!r})')
         check()
@@ -164,6 +165,39 @@ def verify_control(pid, title, name, automation_id='', *, expected, checkpoint=l
             raise InputRefused('The expected control does not have keyboard focus.')
         guard()
         return f'Windows observed {label!r} {expected}.'
+
+
+def scroll_control(pid, title, name, automation_id='', *, direction, checkpoint=lambda: None):
+    """Scroll one increment and verify movement in the requested direction."""
+    from System.Windows.Automation import ScrollAmount, ScrollPattern
+
+    if direction not in ('up', 'down'):
+        raise InputRefused('Choose up or down.')
+    with _selected_control(pid, title, name, automation_id, SCROLL_TYPES, checkpoint) as (
+            control, label, guard):
+        pattern = control.GetCurrentPattern(ScrollPattern.Pattern)
+        guard()
+        snapshot = pattern.Current
+        if not snapshot.VerticallyScrollable:
+            raise InputRefused('This control does not expose a vertical scroll range.')
+        before = float(snapshot.VerticalScrollPercent)
+        if not 0 <= before <= 100:
+            raise InputRefused('Windows did not report a valid scroll position.')
+        down = direction == 'down'
+        if (down and before == 100) or (not down and before == 0):
+            raise InputRefused(f'{label!r} is already at the requested edge.')
+        amount = ScrollAmount.SmallIncrement if down else ScrollAmount.SmallDecrement
+        guard()
+        pattern.Scroll(ScrollAmount.NoAmount, amount)
+        deadline = time.monotonic() + 0.7
+        while True:
+            guard()
+            after = float(pattern.Current.VerticalScrollPercent)
+            if 0 <= after <= 100 and (after > before if down else after < before):
+                return f'Windows verified that {label!r} scrolled {direction}, from {before:g}% to {after:g}%.'
+            if time.monotonic() >= deadline:
+                raise InputRefused('Windows did not verify the scroll movement. Check the app before retrying.')
+            time.sleep(0.05)
 
 
 def _check_text(text):

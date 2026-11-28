@@ -121,3 +121,9 @@ cannot read the state, the mission ends with the action marked unverified.
 The report keeps the pending process ID and window title for manual review.
 A visible or focused control confirms the current UI state. It is not proof
 that an external operation, such as a video export, finished.
+
+For an app that exposes a named scrollable container, a mission can ask to
+scroll it one increment. JARVIS reads the Windows UI Automation scroll
+position before and after, and records the movement only when it matches the
+requested direction. Reaching an edge or losing the target ends the action
+without a repeat attempt.

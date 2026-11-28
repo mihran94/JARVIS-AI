@@ -47,7 +47,7 @@ def test_the_catalogue_has_the_real_capabilities(registry):
         'current_time', 'system_status', 'evaluate_expression', 'research_fetch', 'discover_apps',
         'inspect_window', 'activate_window', 'observe_screen', 'read_calculator',
         'list_app_windows', 'inspect_app_controls', 'verify_app_control', 'click_app_control', 'set_app_field',
-        'mouse_click_app_control', 'type_app_text', 'press_app_navigation_key',
+        'mouse_click_app_control', 'type_app_text', 'press_app_navigation_key', 'scroll_app_control',
         'save_open_document', 'edit_image', 'render_timeline', 'apply_effects_changes',
         'verify_media',
         'launch_app', 'browser_draft', 'type_notepad', 'export_text', 'list_directory', 'read_text_file',
