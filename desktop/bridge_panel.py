@@ -35,6 +35,7 @@ from desktop.bridge_pairing import (
     pairing_matrix, pairing_payload,
 )
 from desktop.bridge_status import PlatformMetrics
+from desktop.bridge_screen import PhoneScreen
 from providers.registry import specs
 from remote import certificate
 from remote.jobs import (
@@ -88,6 +89,8 @@ class BridgePanel(QWidget):
             self.pairing, peer_id=platform.node() or 'windows',
             agent_version='0.3.0', allowed_hosts=('127.0.0.1', '::1'),
             status_provider=PlatformMetrics().snapshot)
+        self.screen = PhoneScreen(policy, self)
+        self.bridge.screen_provider = self.screen.frame
         self.listener = listener if listener is not None else BridgeListener(self.bridge)
         self.chat = BridgeChatService(router, store, vault, policy=policy) if router else None
         if self.chat is not None:
@@ -170,6 +173,11 @@ class BridgePanel(QWidget):
         self.listener_status = QLabel('Stopped')
         self.listener_status.setWordWrap(True)
         listener_layout.addRow('Status', self.listener_status)
+        self.private_startup = QCheckBox('Auto-start private listener')
+        self.private_startup.setToolTip('Start the verified private Tailscale listener with JARVIS.')
+        self.private_startup.setChecked(bool(self.store.get('bridge:private_startup', False)))
+        self.private_startup.toggled.connect(lambda enabled: self.store.set('bridge:private_startup', enabled))
+        listener_layout.addRow(self.private_startup)
 
         pairing_box = QGroupBox('Paired devices')
         pairing_layout = QVBoxLayout(pairing_box)
@@ -345,6 +353,24 @@ class BridgePanel(QWidget):
         raw = self.peer_hosts.text() if hasattr(self, 'peer_hosts') else ''
         return tuple(part.strip() for part in raw.replace(';', ',').split(',')
                      if part.strip())
+
+    def restore_private_listener(self):
+        if not self.store.get('bridge:private_startup', False) or self.policy.stopped:
+            return False
+        from remote.private_tunnel import discover_private_origin
+        origin = discover_private_origin()
+        self.listener._config = ListenerConfig(
+            host='127.0.0.1', port=8765, allow_plaintext=True,
+            phone_web_root=Path(__file__).resolve().parents[1] / 'iphone-pwa')
+        self.bridge.set_allowed_hosts(())
+        self.listener.start()
+        self.host.setText('127.0.0.1')
+        self.port.setText('8765')
+        self.plaintext.setChecked(True)
+        self.phone_address.setText(origin)
+        self.store.set('bridge:phone_origin', origin)
+        self.refresh()
+        return True
 
     def start_listener(self):
         def operation():

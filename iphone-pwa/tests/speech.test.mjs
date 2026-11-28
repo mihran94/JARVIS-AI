@@ -90,9 +90,35 @@ test('listening gives the spoken text', () => {
   assert.equal(recogniser.lang, 'ta-IN');
   assert.equal(recogniser.continuous, false);
   recogniser.onresult({ results: [[{ transcript: '  வணக்கம்  ' }]] });
+  recogniser.onend();
   assert.deepEqual(seen, [['வணக்கம்', 'ta-IN']]);
   handle.stop();
   assert.equal(recogniser.started, false);
+});
+
+test('all final Tamil and Tanglish segments are sent once after listening ends', () => {
+  const heard = [], sent = [];
+  startListening({ constructor: FakeRecognition, onPartial: (text) => heard.push(text),
+    onResult: (text) => sent.push(text) });
+  const recogniser = FakeRecognition.lastInstance;
+  const first = [{ transcript: 'இன்னைக்கு meeting' }]; first.isFinal = true;
+  const partial = [{ transcript: 'முடிஞ்சதும்' }]; partial.isFinal = false;
+  recogniser.onresult({ results: [first, partial] });
+  assert.deepEqual(sent, []);
+  partial.isFinal = true;
+  recogniser.onresult({ results: [first, partial] });
+  recogniser.onend(); recogniser.onend();
+  assert.deepEqual(sent, ['இன்னைக்கு meeting முடிஞ்சதும்']);
+  assert.equal(heard.at(-1), 'இன்னைக்கு meeting முடிஞ்சதும்');
+});
+
+test('cancelled listening never submits the captured words', () => {
+  const sent = [];
+  const handle = startListening({ constructor: FakeRecognition, onResult: (text) => sent.push(text) });
+  const recogniser = FakeRecognition.lastInstance;
+  recogniser.onresult({ results: [[{ transcript: 'cancel this' }]] });
+  handle.stop(); recogniser.onend();
+  assert.deepEqual(sent, []);
 });
 
 test('a recognition error is reported', () => {

@@ -1098,6 +1098,14 @@ class Window(QMainWindow):
             self.restore_startup_microphone()
 
     def begin_first_run(self):
+        if self.store.get('bridge:private_startup', False):
+            try:
+                if self.bridge.restore_private_listener() and self.store.get('bridge:show_pairing_once', False):
+                    self.store.set('bridge:show_pairing_once', False)
+                    self.open_section('Phone Remote')
+                    self.bridge.pair_browser_device()
+            except (OSError, ValueError, RuntimeError) as error:
+                self.statusBar().showMessage('Phone Remote: ' + str(error), 20000)
         if not self.store.get('setup:complete', False):
             from keyring.errors import KeyringError
             from providers.registry import specs
@@ -1588,6 +1596,7 @@ class Window(QMainWindow):
         if self.live_voice is None:
             from desktop.live_voice import LiveVoice
             self.live_voice = LiveVoice(self)
+            self.live_voice.noise_reduction = bool(self.store.get('voice:noise_reduction', True))
             self.live_voice.reconnect_requested.connect(self.schedule_live_reconnect)
             self.live_voice.frame_provider = self.camera_panel.snapshot
             self.live_voice.status.connect(lambda text: self.statusBar().showMessage(text, 20000))
@@ -4602,6 +4611,15 @@ class Window(QMainWindow):
         voice_advanced = QWidget()
         advanced_layout = QVBoxLayout(voice_advanced)
         advanced_layout.setContentsMargins(0, 0, 0, 0)
+        self.noise_reduction_choice = QCheckBox('Reduce microphone rumble and low-frequency noise')
+        self.noise_reduction_choice.setChecked(bool(self.store.get('voice:noise_reduction', True)))
+        def set_noise_reduction(enabled):
+            self.store.set('voice:noise_reduction', enabled)
+            if self.live_voice is not None:
+                self.live_voice.noise_reduction = enabled
+                self.live_voice.noise_filter.clear()
+        self.noise_reduction_choice.toggled.connect(set_noise_reduction)
+        advanced_layout.addWidget(self.noise_reduction_choice)
         self.automatic_gemini = QCheckBox('Start Gemini Live automatically with existing microphone permission')
         self.automatic_gemini.setChecked(bool(self.store.get('voice:auto_gemini', False)))
         self.automatic_gemini.toggled.connect(

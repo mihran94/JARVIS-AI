@@ -27,6 +27,12 @@ export const MAX_CLOCK_SKEW_SECONDS = 300;
 
 const encoder = new TextEncoder();
 
+export function validSigningKey(key) {
+  return Boolean(key && key.type === 'secret' && key.extractable === false &&
+    key.algorithm?.name === 'HMAC' && key.algorithm?.hash?.name === 'SHA-256' &&
+    key.usages?.includes('sign'));
+}
+
 /** Lowercase hex of a byte buffer. */
 export function toHex(bytes) {
   return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, '0')).join('');
@@ -45,8 +51,8 @@ export function canonicalString(method, path, timestamp, nonce, bodyDigest) {
 
 /** The HMAC-SHA256 of the canonical string, as lowercase hex. */
 export async function signCanonical(canonical, secret) {
-  const key = await crypto.subtle.importKey(
-    'raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const key = typeof secret === 'string' ? await crypto.subtle.importKey(
+    'raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']) : secret;
   const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(canonical));
   return toHex(signature);
 }
@@ -117,6 +123,7 @@ export class BridgeClient {
     baseUrl,
     keyId,
     secret,
+    signingKey,
     fetchImpl = globalThis.fetch.bind(globalThis),
     now = Date.now,
     randomBytes = (bytes) => crypto.getRandomValues(bytes),
@@ -126,11 +133,12 @@ export class BridgeClient {
     if (typeof keyId !== 'string' || !keyId.trim()) {
       throw new Error('A device key id is required.');
     }
-    if (typeof secret !== 'string' || secret.length < MINIMUM_SECRET_LENGTH) {
+    if (!validSigningKey(signingKey) && (typeof secret !== 'string' || secret.length < MINIMUM_SECRET_LENGTH)) {
       throw new Error(`The pairing secret needs at least ${MINIMUM_SECRET_LENGTH} characters.`);
     }
     this.keyId = keyId.trim();
     this.secret = secret;
+    this.signingKey = signingKey;
     this.fetchImpl = fetchImpl;
     this.now = now;
     this.randomBytes = randomBytes;
@@ -144,7 +152,7 @@ export class BridgeClient {
     const timestamp = String(this.now());
     const nonce = makeNonce(this.randomBytes);
     const signature = await signRequest({
-      method, path, timestamp, nonce, body, secret: this.secret,
+      method, path, timestamp, nonce, body, secret: this.signingKey || this.secret,
     });
     const headers = {
       [KEY_ID_HEADER]: this.keyId,

@@ -20,23 +20,25 @@
     <div class="logo" aria-hidden="true">M</div>
     <div class="titles">
       <h1>JARVIS</h1>
-      <small>Phone Remote</small>
+      <small>YOUR PRIVATE COMPANION</small>
     </div>
+    <span id="connectionBadge" class="connection-badge" role="status">Not connected</span>
     <button id="install" class="ghost" hidden>Add to Home Screen</button>
   </header>
   <nav class="remote-nav" aria-label="Phone Remote sections">
-    <a href="#pairing">Pair</a><a href="#statusPanel">PC</a><a href="#chatPanel">Chat</a>
+    <a href="#chatPanel">Chat</a><a href="#displayPanel">Display</a><a href="#statusPanel">PC</a>
     <a href="#taskPanel">Tasks</a><a href="#memoryPanel">Memory</a><a href="#notificationPanel">Alerts</a>
+    <a href="#pairing">Connect</a>
   </nav>
 
   <p id="banner" class="banner" role="status" aria-live="polite" hidden></p>
   <p id="outboxStatus" class="status" role="status" aria-live="polite"></p>
 
   <section class="panel" id="pairing">
-    <h2>Pair with the PC</h2>
-    <p class="hint">The PC shows a pairing code. Scan it, or paste the code as
-      text. The secret is held in this page's memory only: reloading the page
-      clears it, and it is never written to storage.</p>
+    <h2>Connect your PC</h2>
+    <p class="hint">Scan the current QR in PC → Menu → Remote Control to connect automatically. If you reload without a remembered device, scan again.</p>
+    <label class="inline"><input id="rememberDevice" type="checkbox" checked> Remember this browser</label>
+    <p class="hint">Keeps a non-exportable signing key on this browser. Forget device removes it; you can also revoke access on the PC.</p>
     <label>Bridge URL
       <input id="url" type="url" inputmode="url" autocomplete="off" spellcheck="false"
              placeholder="https://pc.example.lan">
@@ -59,7 +61,7 @@
     </label>
     <div class="row">
       <button id="connect" class="primary">Connect</button>
-      <button id="disconnect" class="ghost">Forget secret</button>
+      <button id="disconnect" class="ghost">Forget device</button>
     </div>
     <button id="enableSiriWake" class="ghost">Set up Siri wake</button>
     <input type="url" id="siriLink" aria-label="Siri wake link" readonly hidden>
@@ -87,38 +89,27 @@
   </section>
 
   <section class="panel" id="chatPanel">
-    <h2>Voice &amp; Command Chat</h2>
-    <p class="hint">The message goes to your PC. The provider key stays on the
-      PC and is never sent to the phone. If the PC cannot be reached, the
-      message is kept on this phone and goes out when the app is open and the
-      PC answers.</p>
-    <p class="hint">Type <code>/disk</code> or <code>/backup</code>, or say
-      “command check disk space” or “command back up history”. Approve PC tasks on the desktop.</p>
+    <div class="section-heading"><div><span class="eyebrow">JARVIS · ALWAYS WITH YOU</span><h2>What can I help with?</h2></div><span class="privacy-pill">Private link</span></div>
+    <p class="hint">Speak naturally in Tamil or Tanglish, or type a message.</p>
     <div id="transcript" class="transcript" aria-live="polite"></div>
-    <div class="row">
+    <div class="row composer">
       <input id="message" type="text" autocomplete="off" placeholder="Ask JARVIS" enterkeyhint="send">
       <button id="send" class="primary">Send</button>
     </div>
-    <div class="row">
+    <div class="row voice-tools">
       <button id="listen" class="ghost">Listen</button>
-      <button id="speak" class="ghost">Speak answers</button>
-      <label class="inline" for="voiceLanguage">Voice</label>
+      <button id="speak" class="ghost">Play reply</button>
+    </div>
+    <details class="options"><summary>Voice &amp; AI options</summary><div class="row">      <label class="inline" for="voiceLanguage">Voice</label>
       <select id="voiceLanguage" aria-label="Language for the voice">
         <option value="ta-IN">தமிழ்</option>
         <option value="en-US">English</option>
         <option value="fr-FR">Français</option>
       </select>
-      <label class="inline"><input id="consent" type="checkbox"> Allow a paid provider</label>
+      <label class="inline"><input id="consent" type="checkbox"> Allow Gemini processing (may use paid API)</label>
     </div>
+    </details>
     <p id="chatStatus" class="status" role="status" aria-live="polite"></p>
-    <div class="row" aria-label="Call JARVIS">
-      <button id="audioCall" class="primary">Audio call</button>
-      <button id="videoCall" class="primary">Video call</button>
-      <button id="endCall" class="ghost" disabled>End call</button>
-    </div>
-    <p id="callStatus" class="status" role="status" aria-live="polite"></p>
-    <p class="hint">Tap Listen for each turn. During a video call, each question includes a
-      current camera frame for Gemini when you enable provider consent.</p>
     <div class="row">
       <button id="phoneCamera" class="ghost">Camera on</button>
       <button id="lookNow" class="ghost">Look now</button>
@@ -126,12 +117,23 @@
     <video id="liveCameraView" aria-label="Local phone camera preview" width="280" muted playsinline hidden></video>
     <p class="hint">Say “பார்” or “Look at this”, or type a question and tap Look now.
       The camera preview stays on the phone until you ask JARVIS to look.</p>
+    <details class="options"><summary>Ask about a photo or video</summary>
     <button id="cameraAsk" class="ghost">Ask Gemini about a photo</button>
     <input id="cameraPhoto" type="file" accept="image/*" capture="environment" hidden>
     <button id="clipAsk" class="ghost">Ask Gemini about a short video</button>
     <input id="cameraClip" type="file" accept="video/*" capture="environment" hidden>
     <p class="hint">One photo or three frames from a video up to 30 seconds are sent
       through your paired PC to Gemini. Video audio stays on the phone.</p>
+    </details>
+  </section>
+
+  <section class="panel" id="displayPanel">
+    <span class="eyebrow">YOUR DESKTOP · ON YOUR PHONE</span>
+    <h2>PC display</h2>
+    <p class="hint">View the PC’s primary screen over your paired private connection. Updates about once a second while this tab is open. Screen images stay between your PC and this phone.</p>
+    <div class="row"><button id="startDisplay" class="primary">Start view</button><button id="stopDisplay" class="ghost" disabled>Stop</button></div>
+    <div class="screen-stage"><img id="desktopView" alt="Live PC primary screen" hidden><p id="screenPlaceholder">Your desktop will appear here</p></div>
+    <p id="displayStatus" class="status" role="status" aria-live="polite">View only · no mouse or keyboard input</p>
   </section>
 
   <section class="panel" id="taskPanel">

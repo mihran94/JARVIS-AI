@@ -6,6 +6,7 @@ import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 import numpy as np
+import pytest
 from PySide6.QtMultimedia import QAudioFormat
 from PySide6.QtWidgets import QApplication
 
@@ -13,10 +14,12 @@ from desktop.audio_echo import PlaybackEchoFilter
 from desktop.live_voice import LiveVoice, setup_message
 
 
-def test_microphone_stays_connected_while_gemini_is_speaking(monkeypatch):
+@pytest.mark.parametrize('noise_reduction', [False, True])
+def test_microphone_stays_connected_while_gemini_is_speaking(monkeypatch, noise_reduction):
     app = QApplication.instance() or QApplication([])
     live = LiveVoice()
-    samples = np.arange(640, dtype='<i2') * 12
+    live.noise_reduction = noise_reduction
+    samples = (50 * np.sin(2 * np.pi * 650 * np.arange(640) / 16000)).astype('<i2')
     live.input = type('Input', (), {'readAll': lambda _: samples.tobytes()})()
     fmt = QAudioFormat()
     fmt.setSampleRate(16000)
@@ -27,7 +30,12 @@ def test_microphone_stays_connected_while_gemini_is_speaking(monkeypatch):
     monkeypatch.setattr(live, 'send', packets.append)
     live.set_state('speaking')
     live.send_audio()
-    assert base64.b64decode(packets[0]['realtimeInput']['audio']['data']) == samples.tobytes()
+    delivered = np.frombuffer(base64.b64decode(packets[0]['realtimeInput']['audio']['data']), dtype='<i2')
+    assert len(delivered) == len(samples)
+    if noise_reduction:
+        assert np.sqrt(np.mean(delivered.astype(float) ** 2)) > .95 * np.sqrt(np.mean(samples.astype(float) ** 2))
+    else:
+        assert np.array_equal(delivered, samples)
     assert setup_message('Listen naturally')['setup']['realtimeInputConfig']['activityHandling'] == 'START_OF_ACTIVITY_INTERRUPTS'
 
 
