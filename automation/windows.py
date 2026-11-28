@@ -40,7 +40,13 @@ def launch_app(name):
     if not executable.is_file():
         raise RuntimeError('This Windows application is not installed.')
     process = subprocess.Popen([str(executable)], shell=False, close_fds=True)
-    return LaunchRequest(name, process.pid)
+    request = LaunchRequest(name, process.pid)
+    import psutil
+    try:
+        request.started = psutil.Process(process.pid).create_time()
+    except (psutil.Error, OSError):
+        request.started = None
+    return request
 
 
 def open_path(path):

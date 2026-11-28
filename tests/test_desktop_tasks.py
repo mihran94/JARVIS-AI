@@ -323,3 +323,25 @@ def test_calculation_note_filename_and_locales():
     assert parse_desktop_task('Calculate 3 plus 4 and save result as ../answer.txt') is None
     with pytest.raises(ValueError):
         parse_desktop_task('Calculate 3 plus 4 and save result as CON.txt')
+
+
+def test_note_handoff_activates_only_the_original_notepad_process(monkeypatch):
+    from types import SimpleNamespace
+    from automation.desktop_tasks import activate_launched_notepad
+    from automation.windows import LaunchRequest
+
+    calls = []
+    request = LaunchRequest('Notepad', 123)
+    request.started = 456
+    process = SimpleNamespace(name=lambda: 'notepad.exe', create_time=lambda: 456)
+    monkeypatch.setattr('automation.desktop_tasks.psutil.Process', lambda pid: process)
+    monkeypatch.setattr('automation.input.activate_window', calls.append)
+    assert activate_launched_notepad(request)
+    assert calls == [123]
+    process.create_time = lambda: 789
+    assert not activate_launched_notepad(request)
+    process.create_time = lambda: 456
+    process.name = lambda: 'other.exe'
+    assert not activate_launched_notepad(request)
+    assert not activate_launched_notepad(None)
+    assert calls == [123]

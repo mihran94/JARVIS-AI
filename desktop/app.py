@@ -5088,14 +5088,16 @@ class Window(QMainWindow):
             progress = {'id': ident, 'detail': detail}
             self.store.finish(ident, 'running')
         try:
+            launch_request = None
             if task.launch:
-                launch_app(task.app)
+                launch_request = launch_app(task.app)
         except (RuntimeError, ValueError, OSError) as error:
             if progress:
                 self.store.finish(progress['id'], 'failed', f"{progress['detail']} Launch failed: {error}")
             raise
         self.desktop_pending = dict(task=task, ticket=ticket, digest=digest, destination=destination,
                                     progress=progress,
+                                    launch_request=launch_request, activation_attempted=False,
                                     automatic_action=automatic_action,
                                     deadline=time.monotonic() + 7.0)
         self.desktop_task_timer.start()
@@ -5192,6 +5194,11 @@ class Window(QMainWindow):
                 if calculator is None:
                     return
             elif not target_is_foreground(task.app):
+                if (task.app == 'Notepad' and pending.get('destination')
+                        and not pending.get('activation_attempted')):
+                    from automation.desktop_tasks import activate_launched_notepad
+                    pending['activation_attempted'] = activate_launched_notepad(
+                        pending.get('launch_request'))
                 return
             self.desktop_task_timer.stop()
             self.desktop_pending = None

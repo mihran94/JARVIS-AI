@@ -122,6 +122,24 @@ def target_is_foreground(app: str) -> bool:
         return False
 
 
+def activate_launched_notepad(request):
+    """Attempt one approved handoff to the exact newly launched Notepad process."""
+    from automation.windows import LaunchRequest
+    from automation.input import activate_window, InputRefused
+
+    if not isinstance(request, LaunchRequest) or getattr(request, 'started', None) is None:
+        return False
+    try:
+        process = psutil.Process(request.pid)
+        if (process.name().casefold() != TARGETS['Notepad']
+                or process.create_time() != request.started):
+            return False
+        activate_window(request.pid)
+        return True
+    except (psutil.Error, InputRefused, OSError):
+        return False
+
+
 def _events(text: str) -> list[_INPUT]:
     """Build UTF-16 keyboard events; support Tamil and non-BMP characters."""
     events = []
