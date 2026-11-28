@@ -22,21 +22,80 @@
       <h1>JARVIS</h1>
       <small>Phone Remote</small>
     </div>
-    <button id="install" class="ghost" hidden>Add to Home Screen</button>
+    <a class="connection" href="#pairing"><span id="connectionLabel" role="status">Connect PC</span></a>
   </header>
   <nav class="remote-nav" aria-label="Phone Remote sections">
-    <a href="#pairing">Pair</a><a href="#statusPanel">PC</a><a href="#chatPanel">Chat</a>
-    <a href="#taskPanel">Tasks</a><a href="#memoryPanel">Memory</a><a href="#notificationPanel">Alerts</a>
+    <a href="#chatPanel">Chat</a><a href="#cameraPanel">Camera</a>
+    <a href="#statusPanel">PC</a><a href="#taskPanel">Tasks</a><a href="#morePanel" id="moreNav">More</a>
   </nav>
 
   <p id="banner" class="banner" role="status" aria-live="polite" hidden></p>
   <p id="outboxStatus" class="status" role="status" aria-live="polite"></p>
 
+  <section class="panel" id="chatPanel">
+    <h2>Talk to JARVIS</h2>
+    <div id="transcript" class="transcript" aria-live="polite"></div>
+    <div class="row composer">
+      <input id="message" aria-label="Message to JARVIS" type="text" autocomplete="off" placeholder="Ask JARVIS" enterkeyhint="send">
+      <button id="listen" class="ghost">Listen</button>
+      <button id="send" class="primary">Send</button>
+    </div>
+    <p id="chatStatus" class="status" role="status" aria-live="polite"></p>
+    <details>
+      <summary>Voice &amp; call settings</summary>
+      <div class="row">
+      <button id="speak" class="ghost">Speak answers</button>
+      <label class="inline" for="voiceLanguage">Voice</label>
+      <select id="voiceLanguage" aria-label="Language for the voice">
+        <option value="ta-IN">தமிழ்</option>
+        <option value="en-US">English</option>
+        <option value="fr-FR">Français</option>
+      </select>
+    </div>
+    <div class="row" aria-label="Call JARVIS">
+      <button id="audioCall" class="primary">Audio call</button>
+      <button id="videoCall" class="primary">Video call</button>
+    </div>
+    <p class="hint">Tap Listen for each turn. Video calls include a camera frame with each question.</p>
+    </details>
+    <p id="callStatus" class="status" role="status" aria-live="polite"></p>
+    <div class="row">
+      <button id="endCall" class="stop" disabled>End call</button>
+      <label class="inline"><input id="consent" type="checkbox"> Allow Gemini or another paid provider</label>
+    </div>
+  </section>
+
+  <section class="panel" id="cameraPanel">
+    <h2>Camera</h2>
+    <div class="row">
+      <button id="phoneCamera" class="ghost">Camera on</button>
+      <button id="lookNow" class="ghost">Identify object</button>
+    </div>
+    <p id="cameraStatus" class="status" role="status" aria-live="polite"></p>
+    <video id="liveCameraView" aria-label="Local phone camera preview" width="280" muted playsinline hidden></video>
+    <p class="hint">Allow Gemini in Chat, then point the camera at the object and tap Identify object.</p>
+    <button id="cameraAsk" class="ghost">Ask Gemini about a photo</button>
+    <input id="cameraPhoto" type="file" accept="image/*" capture="environment" hidden>
+    <button id="clipAsk" class="ghost">Ask Gemini about a short video</button>
+    <input id="cameraClip" type="file" accept="video/*" capture="environment" hidden>
+    <p class="hint">One photo or three frames from a video up to 30 seconds are sent
+      through your paired PC to Gemini. Video audio stays on the phone.</p>
+  </section>
+
   <section class="panel" id="pairing">
     <h2>Pair with the PC</h2>
-    <p class="hint">The PC shows a pairing code. Scan it, or paste the code as
-      text. The secret is held in this page's memory only: reloading the page
-      clears it, and it is never written to storage.</p>
+    <p class="hint">Open Phone Remote on your PC, then scan its QR code or paste the pairing code.</p>
+    <div class="row">
+      <button id="scan">Scan QR code</button>
+      <input id="scanFile" type="file" accept="image/*" capture="environment" hidden>
+      <button id="paste" class="ghost">Use pasted code</button>
+    </div>
+    <label>Or paste the whole code
+      <textarea id="pairingText" rows="3" spellcheck="false"
+                placeholder="JARVIS-BRIDGE-v1"></textarea>
+    </label>
+    <details>
+      <summary>Manual setup</summary>
     <label>Bridge URL
       <input id="url" type="url" inputmode="url" autocomplete="off" spellcheck="false"
              placeholder="https://pc.example.lan">
@@ -48,18 +107,10 @@
       <input id="secret" type="password" autocomplete="off" spellcheck="false"
              placeholder="Paste the approved device secret">
     </label>
-    <div class="row">
-      <button id="scan">Scan pairing code</button>
-      <input id="scanFile" type="file" accept="image/*" capture="environment" hidden>
-      <button id="paste" class="ghost">Paste code</button>
-    </div>
-    <label>Or paste the whole code
-      <textarea id="pairingText" rows="3" spellcheck="false"
-                placeholder="JARVIS-BRIDGE-v1"></textarea>
-    </label>
+    </details>
     <div class="row">
       <button id="connect" class="primary">Connect</button>
-      <button id="disconnect" class="ghost">Forget secret</button>
+      <button id="disconnect" class="ghost">Disconnect</button>
     </div>
     <button id="enableSiriWake" class="ghost">Set up Siri wake</button>
     <input type="url" id="siriLink" aria-label="Siri wake link" readonly hidden>
@@ -86,60 +137,17 @@
       Nothing here is guessed.</p>
   </section>
 
-  <section class="panel" id="chatPanel">
-    <h2>Voice &amp; Command Chat</h2>
-    <p class="hint">The message goes to your PC. The provider key stays on the
-      PC and is never sent to the phone. If the PC cannot be reached, the
-      message is kept on this phone and goes out when the app is open and the
-      PC answers.</p>
-    <p class="hint">Type <code>/disk</code> or <code>/backup</code>, or say
-      “command check disk space” or “command back up history”. Approve PC tasks on the desktop.</p>
-    <div id="transcript" class="transcript" aria-live="polite"></div>
-    <div class="row">
-      <input id="message" type="text" autocomplete="off" placeholder="Ask JARVIS" enterkeyhint="send">
-      <button id="send" class="primary">Send</button>
-    </div>
-    <div class="row">
-      <button id="listen" class="ghost">Listen</button>
-      <button id="speak" class="ghost">Speak answers</button>
-      <label class="inline" for="voiceLanguage">Voice</label>
-      <select id="voiceLanguage" aria-label="Language for the voice">
-        <option value="ta-IN">தமிழ்</option>
-        <option value="en-US">English</option>
-        <option value="fr-FR">Français</option>
-      </select>
-      <label class="inline"><input id="consent" type="checkbox"> Allow a paid provider</label>
-    </div>
-    <p id="chatStatus" class="status" role="status" aria-live="polite"></p>
-    <div class="row" aria-label="Call JARVIS">
-      <button id="audioCall" class="primary">Audio call</button>
-      <button id="videoCall" class="primary">Video call</button>
-      <button id="endCall" class="ghost" disabled>End call</button>
-    </div>
-    <p id="callStatus" class="status" role="status" aria-live="polite"></p>
-    <p class="hint">Tap Listen for each turn. During a video call, each question includes a
-      current camera frame for Gemini when you enable provider consent.</p>
-    <div class="row">
-      <button id="phoneCamera" class="ghost">Camera on</button>
-      <button id="lookNow" class="ghost">Identify object</button>
-    </div>
-    <video id="liveCameraView" aria-label="Local phone camera preview" width="280" muted playsinline hidden></video>
-    <p class="hint">Say “பார்” or “Look at this”, or type a question and tap Identify object.
-      The camera preview stays on the phone until you ask JARVIS to look.</p>
-    <button id="cameraAsk" class="ghost">Ask Gemini about a photo</button>
-    <input id="cameraPhoto" type="file" accept="image/*" capture="environment" hidden>
-    <button id="clipAsk" class="ghost">Ask Gemini about a short video</button>
-    <input id="cameraClip" type="file" accept="video/*" capture="environment" hidden>
-    <p class="hint">One photo or three frames from a video up to 30 seconds are sent
-      through your paired PC to Gemini. Video audio stays on the phone.</p>
-  </section>
-
   <section class="panel" id="taskPanel">
     <h2>Tasks</h2>
     <p class="hint">A task sent from here is queued on the PC. It runs only
       after you approve it there. If the PC cannot be reached, the task is
       kept on this phone and goes out when the app is open and the PC
       answers.</p>
+    <div class="row">
+      <button id="checkDisk" class="ghost">Check disk space</button>
+    </div>
+    <details>
+      <summary>Custom task</summary>
     <label>What to do
       <input id="taskTitle" type="text" autocomplete="off" placeholder="Check PC disk space">
     </label>
@@ -148,15 +156,20 @@
     </label>
     <div class="row">
       <button id="submitTask" class="primary">Send for approval</button>
-      <button id="refreshJobs" class="ghost">Refresh tasks</button>
     </div>
+    </details>
+    <div class="row"><button id="refreshJobs" class="ghost">Refresh tasks</button></div>
     <div class="row">
       <button id="backupHistory" class="ghost">Back up the history on the PC</button>
     </div>
+    <p id="taskStatus" class="status" role="status" aria-live="polite"></p>
     <ul id="jobs" class="jobs"></ul>
   </section>
 
-  <section class="panel" id="memoryPanel">
+  <details class="panel" id="morePanel">
+    <summary>More</summary>
+    <button id="install" class="ghost" hidden>Add to Home Screen</button>
+  <section id="memoryPanel">
     <h2>Memory</h2>
     <p class="hint">Only what you allow is synchronised. The desktop decides
       whether to keep it. A memory entry is not queued when the PC is out of
@@ -169,7 +182,7 @@
     <ul id="memory" class="memory"></ul>
   </section>
 
-  <section class="panel" id="notificationPanel">
+  <section id="notificationPanel">
     <h2>Notifications</h2>
     <div class="row">
       <button id="refreshNotifications" class="ghost">Refresh</button>
@@ -177,6 +190,8 @@
     </div>
     <ul id="notifications" class="notifications"></ul>
   </section>
+
+  </details>
 
   <footer>
     <p>JARVIS Unified AI · iOS Safari PWA</p>
