@@ -9,8 +9,8 @@ WHAT IS COVERED
       and no estimate.
     * The approval banner appears while the owner is being asked, and it
       goes away when the step is over.
-    * The evidence column names the tools that really ran, and says so
-      when none did.
+    * The evidence column names tool results that were recorded. An empty
+      column does not imply there were no tool attempts or side effects.
     * The answer column carries the answer, and says that the mission
       did not finish when it did not.
     * The readings on the left are real, and a reading that cannot be
@@ -54,7 +54,7 @@ def event(kind, label, detail=''):
 def test_the_console_starts_idle(panel):
     assert panel.status.text() == 'READY'
     assert panel.timeline.entries() == []
-    assert panel.evidence_column.count.text() == 'no tool ran'
+    assert panel.evidence_column.count.text() == 'no tool result recorded'
     assert panel.evidence_column.answer.text() == 'No mission has run yet.'
 
 
@@ -130,7 +130,17 @@ def test_the_answer_and_the_evidence_are_shown(panel):
 def test_a_mission_without_a_tool_says_the_evidence_is_empty(panel):
     mission = Mission(id='m2', goal='Say hello.', status='completed', answer='Hello.', steps=1)
     panel.show_result(mission)
-    assert panel.evidence_column.count.text() == 'no tool ran'
+    assert panel.evidence_column.count.text() == 'no tool result recorded'
+
+
+def test_an_unknown_tool_outcome_is_not_shown_as_no_attempt(panel):
+    panel.append_event(event('tool', 'Calling click_app_control'))
+    panel.append_event(event('error', 'Tool outcome unknown'))
+    mission = Mission(id='m4', goal='Click a control.', status='failed', steps=1)
+    panel.show_result(mission)
+    assert panel.evidence_column.count.text() == 'no tool result recorded'
+    assert panel.evidence_column.cards.count() == 0
+    assert panel.timeline.entries()[0]['label'] == 'Calling click_app_control'
 
 
 def test_a_failed_mission_says_it_did_not_finish(panel):
