@@ -58,7 +58,13 @@ _TIMELINE = """
             layer.name = "Shot " + (index + 1);
             layer.startTime = shot.start;
             layer.inPoint = shot.start;
-            layer.outPoint = Math.min(shot.end, shot.start + footage.duration);
+            if (footage.duration < shot.end - shot.start) {
+                layer.timeRemapEnabled = true;
+                var remap = layer.property("ADBE Time Remapping");
+                var finalFrame = Math.max(0, footage.duration - footage.frameDuration);
+                remap.expression = "Math.max(0, Math.min(time - inPoint, " + finalFrame + "))";
+            }
+            layer.outPoint = shot.end;
             scale = Math.min(1080 / footage.width, 1920 / footage.height) * 100;
             layer.property("ADBE Transform Group").property("ADBE Scale").setValue([scale, scale]);
             if (data.narration && layer.hasAudio) {

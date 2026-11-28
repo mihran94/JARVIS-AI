@@ -3614,14 +3614,12 @@ class Window(QMainWindow):
         folder, plan = self.video_plan
 
         def operation():
-            if sys.platform != 'win32':
-                raise ValueError('After Effects timeline handoff requires Windows.')
             dialog = PreviewInputs(plan, self, timeline=True)
             if dialog.exec() != QDialog.DialogCode.Accepted:
                 return
             if self.video_plan != (folder, plan) or self.worker is not None:
                 raise ValueError('The shot plan changed. Open the timeline dialog again.')
-            executable = timeline_executable(dialog.target.text())
+            executable = None if dialog.script_only.isChecked() else timeline_executable(dialog.target.text())
             clips = [field.text() for field in dialog.clips]
             narration = dialog.narration.text() or None
             script = timeline_script(plan, clips, narration)
@@ -3629,6 +3627,8 @@ class Window(QMainWindow):
 
             def handoff():
                 self.workspace.save(name, script)
+                if executable is None:
+                    return f'JSX saved to {self.workspace.path(name)}'
                 # Adobe processes -r in its open application. The dispatch does
                 # not tell JARVIS whether the composition was created.
                 started, _ = QProcess.startDetached(
@@ -3637,7 +3637,8 @@ class Window(QMainWindow):
                     raise ValueError('After Effects could not start. The timeline script was saved in the workspace.')
                 return 'Timeline command sent. Check the composition in After Effects.'
 
-            target = '\n'.join([str(executable), *clips, *([narration] if narration else [])])
+            destination = str(executable) if executable else str(self.workspace.path(name))
+            target = '\n'.join([destination, *clips, *([narration] if narration else [])])
             result = self.gateway.run(
                 Action('build_after_effects_timeline', target, Workspace.digest(script)), self.confirm, handoff)
             self.video_status.setText(result)

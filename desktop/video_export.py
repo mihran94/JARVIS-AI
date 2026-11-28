@@ -1,9 +1,10 @@
 """Review local media inputs before starting a cancellable export."""
 from pathlib import Path
+import sys
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
-    QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
+    QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
     QLineEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
@@ -45,8 +46,8 @@ class PreviewInputs(MediaInputs):
         self.resize(640, 390)
         layout = QVBoxLayout(self)
         note = QLabel((
-            "Open After Effects first. Select one clip per shot. The script adds an editable "
-            "composition to the open project. Short clips leave a gap. Save the project in After Effects."
+            "Select one clip per shot. Save the JSX for File → Scripts → Run Script File, "
+            "or send it to After Effects on Windows. Short clips hold their last frame."
         ) if timeline else (
             "Select one clip per shot. JARVIS trims from the beginning, holds the last "
             "frame for short clips and fits the image inside the vertical frame. "
@@ -64,7 +65,12 @@ class PreviewInputs(MediaInputs):
             for index, shot in enumerate(plan["shots"], 1)
         ]
         self.narration = self.add_file("Narration (optional)", "Audio (*.wav *.mp3 *.m4a *.aac *.flac *.ogg)", clearable=True)
+        self.script_only = None
         if timeline:
+            self.script_only = QCheckBox("Save JSX only")
+            self.script_only.setChecked(True)
+            self.script_only.setEnabled(sys.platform == "win32")
+            self.form.addRow(self.script_only)
             self.target = self.add_file("Adobe application", "After Effects (AfterFX.exe)")
         elif editor:
             self.setWindowTitle(f"Export for {editor}")
@@ -92,9 +98,16 @@ class PreviewInputs(MediaInputs):
         for field in (*self.clips, self.target):
             field.textChanged.connect(self.refresh_ready)
         layout.addWidget(buttons)
+        if self.script_only is not None:
+            self.script_only.toggled.connect(self.refresh_ready)
+        self.refresh_ready()
 
     def refresh_ready(self):
-        self.ok.setEnabled(bool(self.target.text()) and all(field.text() for field in self.clips))
+        script_only = self.script_only is not None and self.script_only.isChecked()
+        if self.script_only is not None:
+            self.target.parentWidget().setEnabled(not script_only)
+        self.ok.setEnabled((script_only or bool(self.target.text()))
+                           and all(field.text() for field in self.clips))
 
 
 class AfterEffectsInputs(MediaInputs):

@@ -63,7 +63,7 @@ def local_media_path(path, extensions):
     return path
 
 
-def render_preview(plan, clips, output, check_cancelled, *, narration=None, burn_captions=True):
+def render_preview(plan, clips, output, check_cancelled, *, narration=None, burn_captions=True, editing_export=False):
     """Trim in shot order, freeze short clips and mix narration."""
     shots = plan["shots"]
     if len(clips) != len(shots):
@@ -122,11 +122,14 @@ def render_preview(plan, clips, output, check_cancelled, *, narration=None, burn
                 "[bed][voice]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95:latency=1[mixed]",
             ])
             audio_map = "[mixed]"
+        preset = "fast" if editing_export else "veryfast"
+        crf = "16" if editing_export else "21"
+        audio_bitrate = "256k" if editing_export else "160k"
         staged = work / "preview.mp4"
         run_media_command(
             [*args, "-filter_complex", ";".join(graph), "-map", video_map, "-map", audio_map,
-             "-t", str(DURATION_MS / 1000), "-c:v", "libx264", "-threads", "4", "-preset", "veryfast",
-             "-crf", "21", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(staged)],
+             "-t", str(DURATION_MS / 1000), "-c:v", "libx264", "-threads", "4", "-preset", preset,
+             "-crf", crf, "-c:a", "aac", "-b:a", audio_bitrate, "-movflags", "+faststart", str(staged)],
             work, check_cancelled,
         )
         check_cancelled()
