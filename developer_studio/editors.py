@@ -83,6 +83,12 @@ EDITORS = (
         aliases=('vs code', 'vscode', 'code', 'விசு கோடு'),
     ),
     EditorSpec(
+        name='Antigravity',
+        command='antigravity',
+        capabilities=(CAP_OPEN_PROJECT, CAP_OPEN_FILE),
+        aliases=('antigravity', 'anti gravity'),
+    ),
+    EditorSpec(
         name='Visual Studio',
         command='devenv',
         capabilities=(CAP_OPEN_PROJECT, CAP_OPEN_FILE, CAP_BUILD),

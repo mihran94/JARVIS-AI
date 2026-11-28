@@ -109,6 +109,7 @@
       <label class="inline"><input id="consent" type="checkbox"> Allow Gemini processing (may use paid API)</label>
     </div>
     </details>
+    <p id="cameraStatus" class="status" role="status" aria-live="polite"></p>
     <p id="chatStatus" class="status" role="status" aria-live="polite"></p>
     <div class="row">
       <button id="phoneCamera" class="ghost">Camera on</button>
@@ -138,6 +139,8 @@
 
   <section class="panel" id="taskPanel">
     <h2>Tasks</h2>
+    <button id="checkDisk" class="ghost">Check disk space</button>
+    <p id="taskStatus" class="status" role="status" aria-live="polite"></p>
     <p class="hint">A task sent from here is queued on the PC. It runs only
       after you approve it there. If the PC cannot be reached, the task is
       kept on this phone and goes out when the app is open and the PC

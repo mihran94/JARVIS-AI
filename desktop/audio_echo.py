@@ -52,3 +52,33 @@ class PlaybackEchoFilter:
         # Near-identical playback is echo, not a new request. Mixed or unrelated
         # speech is deliberately passed through to Gemini's activity detector.
         return np.zeros_like(samples)
+
+
+class BackgroundNoiseReducer:
+    """Attenuate quiet background without muting the microphone or boosting input."""
+
+    def __init__(self):
+        self.clear()
+
+    def clear(self):
+        self.floor = 64.0
+        self.gain = 1.0
+
+    def filter(self, samples, rate):
+        if not len(samples):
+            return samples
+        signal = samples.astype(np.float64)
+        level = float(np.sqrt(np.mean(signal * signal)))
+        duration = len(samples) / rate
+        # Learn quiet noise slowly. Loud input should not train the floor.
+        if level < 300 and level > 0:
+            step = min(1.0, duration / (0.25 if level < self.floor else 1.5))
+            self.floor += step * (level - self.floor)
+        threshold = max(64.0, self.floor * 1.4)
+        target = float(np.clip(level / threshold - 0.65, 0.35, 1.0))
+        # Open quickly for speech and taper slowly between words.
+        change = min(1.0, duration / (0.010 if target > self.gain else 0.18))
+        gain = self.gain + (target - self.gain) * change
+        filtered = signal * np.linspace(self.gain, gain, len(signal))
+        self.gain = gain
+        return filtered.astype(samples.dtype)

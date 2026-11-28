@@ -22,5 +22,8 @@ def test_timeline_script_keeps_manual_media_and_caption_as_data(tmp_path):
     assert data["duration"] == 30
     assert "app.project.close" not in code
     assert "addComp(data.title, 1080, 1920" in code
+    plan["shots"][0]["source_start_ms"] = 500
+    _, payload = timeline_script(plan, [clip]).rsplit("\n}(", 1)
+    assert json.loads(payload.removesuffix("));\n"))["shots"][0]["sourceStart"] == 0.5
     with pytest.raises(ValueError, match="one clip per shot"):
         timeline_script(plan, [])

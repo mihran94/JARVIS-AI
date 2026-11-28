@@ -66,9 +66,13 @@ def test_capcut_exports_separate_editable_captions(tmp_path):
     clip = tmp_path / "clip.mp4"
     subprocess.run([
         "ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=black:s=144x100:d=1",
+        "-f", "lavfi", "-i", "color=white:s=144x100:d=1",
+        "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0",
         "-c:v", "libx264", str(clip),
     ], check=True)
-    plan = {"shots": [{"start_ms": 0, "end_ms": 30000, "english_subtitle": "Editable caption"}]}
+    plan = {"shots": [
+        {"start_ms": 0, "end_ms": 30000, "english_subtitle": "Editable caption", "source_start_ms": 1000},
+    ]}
     folder = export_capcut(plan, [clip], tmp_path, lambda: None)
     assert (folder / "english.srt").read_text(encoding="utf-8") == (
         "1\n00:00:00,000 --> 00:00:30,000\nEditable caption\n")
@@ -76,5 +80,9 @@ def test_capcut_exports_separate_editable_captions(tmp_path):
         "ffmpeg", "-v", "error", "-ss", "0.5", "-i", str(folder / "video.mp4"),
         "-frames:v", "1", "-vf", "format=gray", "-f", "rawvideo", "-",
     ])
-    assert frame and max(frame) == 0
+    assert frame and frame[(1080 * 1920) // 2 + 540] > 240
+    assert frame[0] == 0
     assert not list(tmp_path.glob(".jarvis-capcut-*"))
+    plan["shots"][0]["source_start_ms"] = 2000
+    with pytest.raises(ValueError, match="inside the clip"):
+        export_capcut(plan, [clip], tmp_path, lambda: None)
