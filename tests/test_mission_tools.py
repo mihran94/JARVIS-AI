@@ -46,7 +46,7 @@ def test_the_catalogue_has_the_real_capabilities(registry):
     assert set(registry.names()) == {
         'current_time', 'system_status', 'evaluate_expression', 'research_fetch', 'discover_apps',
         'inspect_window', 'activate_window', 'observe_screen', 'read_calculator',
-        'list_app_windows', 'inspect_app_controls', 'click_app_control', 'set_app_field',
+        'list_app_windows', 'inspect_app_controls', 'verify_app_control', 'click_app_control', 'set_app_field',
         'mouse_click_app_control', 'type_app_text', 'press_app_navigation_key',
         'save_open_document', 'edit_image', 'render_timeline', 'apply_effects_changes',
         'verify_media',
@@ -59,7 +59,7 @@ def test_only_the_tools_that_change_something_need_approval(registry):
     assert set(registry.read_only_names()) == {
         'current_time', 'system_status', 'evaluate_expression', 'research_fetch', 'discover_apps',
         'inspect_window', 'read_calculator', 'verify_media', 'list_directory',
-        'inspect_app_controls',
+        'inspect_app_controls', 'verify_app_control',
         'read_text_file', 'memory_search',
     }
     assert registry.get('launch_app').read_only is False

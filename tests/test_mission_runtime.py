@@ -496,3 +496,32 @@ def test_mission_metrics_outlive_bounded_hud_event_history(registry, gateway):
     assert len(mission.events) == MAX_EVENTS
     assert mission.metrics['tool_attempts'] == MAX_EVENTS + 7
     assert mission.metrics['tool_attempts_without_result'] == MAX_EVENTS + 7
+
+
+@pytest.mark.parametrize('right_window', [False, True])
+def test_app_readback_binds_to_the_approved_window(registry, gateway, right_window):
+    schema = {'type': 'object', 'properties': {
+        'process_id': {'type': 'integer'}, 'title': {'type': 'string'},
+    }, 'required': ['process_id', 'title']}
+    dispatched = []
+    registry.register(Tool('click', 'Dispatch a click.', schema, False,
+                           lambda args: dispatched.append(args) or 'Dispatched',
+                           needs_window_readback=True))
+    registry.register(Tool('check_window', 'Observe a condition.', schema, True,
+                           lambda _: 'Observed', verifies_window=True))
+    proposed = {'process_id': 7, 'title': 'Editor'}
+    approved = {'process_id': 8, 'title': 'Preview'}
+    planner = FakePlanner([
+        tool_call('click', proposed),
+        tool_call('click', proposed),
+        tool_call('check_window', approved if right_window else proposed),
+        final_answer('Done.'),
+    ])
+    result = runtime_for(registry, gateway, planner).run(
+        'Click and verify.', confirm=lambda _: approved)
+    assert dispatched == [approved]
+    assert result.status == ('completed' if right_window else 'failed')
+    assert result.pending_readback == (None if right_window else {'tool': 'click', **approved})
+    assert any(event.label == 'App readback required' for event in result.events)
+    if not right_window:
+        assert result.answer != 'Done.'

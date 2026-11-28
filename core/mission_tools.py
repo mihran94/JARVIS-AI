@@ -75,6 +75,8 @@ class Tool:
     returns: str = ''
     accepts_checkpoint: bool = False
     full_approval_details: bool = False
+    needs_window_readback: bool = False
+    verifies_window: bool = False
 
     def summary(self, arguments: dict) -> str:
         """One line that says what this call is about.
@@ -795,12 +797,26 @@ def build_registry(*, root=None, memory=None, editor_paths=None, input_allowed=N
         returns='Exact labels and IDs for supported current controls. Editable text values are omitted.',
     ))
     registry.register(Tool(
+        name='verify_app_control',
+        description='Read back one expected visible or focused control in the same foreground window after an input.',
+        parameters={'type': 'object', 'properties': {
+            **control_arguments, 'expected': {'type': 'string', 'enum': ['visible', 'focused']},
+        }, 'required': [*window_required, 'name', 'expected']},
+        read_only=True, run=lambda args, check: app_call(
+            app_control.verify_control, pid=args['process_id'], title=args['title'],
+            name=args['name'], automation_id=args.get('automation_id', ''),
+            expected=args['expected'], checkpoint=check),
+        accepts_checkpoint=True, verifies_window=True,
+        returns='Whether the named control is currently visible or focused. This does not establish causality.',
+    ))
+    registry.register(Tool(
         name='click_app_control',
         description='With owner approval, invoke one exact button or menu action from inspect_app_controls.',
         parameters={'type': 'object', 'properties': control_arguments,
                     'required': [*window_required, 'name']},
         read_only=False, run=use_app_control, accepts_checkpoint=True, full_approval_details=True,
         returns='That Windows invoked the named control. Inspect again to verify the result.',
+        needs_window_readback=True,
     ))
     registry.register(Tool(
         name='set_app_field',
@@ -821,6 +837,7 @@ def build_registry(*, root=None, memory=None, editor_paths=None, input_allowed=N
         read_only=False, run=lambda args, check: use_app_control(args, check, app_control.mouse_click),
         accepts_checkpoint=True, full_approval_details=True,
         returns='Whether the mouse click was dispatched. Inspect again to verify the result.',
+        needs_window_readback=True,
     ))
     registry.register(Tool(
         name='type_app_text',
@@ -842,6 +859,7 @@ def build_registry(*, root=None, memory=None, editor_paths=None, input_allowed=N
             args, check, app_control.keyboard_input, key=args['key']),
         accepts_checkpoint=True, full_approval_details=True,
         returns='Whether Windows accepted the key.',
+        needs_window_readback=True,
     ))
 
     def observe_the_screen(arguments):

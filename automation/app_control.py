@@ -121,12 +121,12 @@ def _control_pattern(control, *, editing):
 
 
 @contextmanager
-def _selected_control(pid, title, name, automation_id, kinds, checkpoint):
+def _selected_control(pid, title, name, automation_id, kinds, checkpoint, *, restore_focus=True):
     if (not name and not automation_id) or len(name) > 100 or len(automation_id) > 100:
         raise InputRefused('Choose a control by the exact name or ID shown by inspection.')
     # A JARVIS approval dialog can briefly take focus. Restore the approved
     # app only in that case, and leave a different foreground app alone.
-    if win_controls.foreground_process() == os.getpid():
+    if restore_focus and win_controls.foreground_process() == os.getpid():
         _application(pid)
         checkpoint()
         activate_window(pid, title=title)
@@ -152,6 +152,18 @@ def _selected_control(pid, title, name, automation_id, kinds, checkpoint):
             return pid
 
         yield control, entry[0] or entry[1], guard
+
+
+def verify_control(pid, title, name, automation_id='', *, expected, checkpoint=lambda: None):
+    """Read one observable condition from the selected foreground window."""
+    kinds = INVOKE_TYPES | EDIT_TYPES
+    with _selected_control(pid, title, name, automation_id, kinds, checkpoint,
+                           restore_focus=False) as (control, label, guard):
+        guard()
+        if expected == 'focused' and not control.Current.HasKeyboardFocus:
+            raise InputRefused('The expected control does not have keyboard focus.')
+        guard()
+        return f'Windows observed {label!r} {expected}.'
 
 
 def _check_text(text):
