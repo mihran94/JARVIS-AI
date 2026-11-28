@@ -78,7 +78,7 @@ from desktop.video_export import AfterEffectsInputs, PreviewInputs, VideoExportW
 from video_studio.after_effects import after_effects_render
 from video_studio.after_effects_timeline import timeline_executable, timeline_script
 from video_studio.capcut import export_capcut
-from automation.capcut_export import capcut_launcher, new_mp4, save_open_capcut_export
+from automation.capcut_export import capcut_launcher, new_mp4, prepare_capcut_project, save_open_capcut_export
 from core.runtime_profile import APP_NAME, APP_VERSION, RESTART_EXIT_CODE, restart_supported
 from video_studio.preview import media_tools, render_preview
 from security.policy import Action, ApprovalMode, ApprovalScope, Denied, Policy, Stopped
@@ -1408,6 +1408,17 @@ class Window(QMainWindow):
 
     def route_video_brief(self, text):
         command = text.casefold().strip(' .!?')
+        if command in ('edit in capcut', 'capcut edit pannu', 'capcut-ல் edit பண்ணு'):
+            self.open_section('Video Editor')
+            self.edit_in_capcut()
+            return True
+        if command in ('edit in after effects', 'after effects edit pannu', 'after effects-ல் edit பண்ணு'):
+            self.open_section('Video Editor')
+            if self.video_plan is None:
+                self.video_status.setText('Create a shot plan before opening the After Effects timeline.')
+            else:
+                self.build_after_effects_timeline(open_editor=True)
+            return True
         if command in ('import and export with capcut', 'capcut-ல் வீடியோவை இறக்குமதி செய்து export செய்'):
             self.open_section('Video Editor')
             self.save_capcut_export(import_video=True)
@@ -3413,6 +3424,8 @@ class Window(QMainWindow):
         self.capcut_native_export_button = self.flexible_button(
             layout, 'Export current CapCut project', self.save_capcut_export)
         self.capcut_native_export_button.setEnabled(sys.platform == 'win32')
+        self.capcut_edit_button = self.flexible_button(layout, 'Edit in CapCut', self.edit_in_capcut)
+        self.capcut_edit_button.setEnabled(sys.platform == 'win32')
         self.capcut_import_export_button = self.flexible_button(
             layout, 'Import and export with CapCut',
             lambda: self.save_capcut_export(import_video=True))
@@ -3563,6 +3576,35 @@ class Window(QMainWindow):
 
         self.notify(operation)
 
+    def edit_in_capcut(self):
+        if self.worker is not None or self.policy.stopped:
+            return
+
+        def operation():
+            if sys.platform != 'win32' or not self.plugin_enabled('CapCut'):
+                raise ValueError('Enable CapCut in Settings → Plugins on Windows.')
+            executable = capcut_launcher(self.store.get('editor_path:CapCut', ''))
+            source, _ = QFileDialog.getOpenFileName(
+                self, 'Choose the video to edit in CapCut', '', 'Video (*.mp4 *.mov *.m4v *.mkv *.webm)')
+            if not source:
+                return
+            source = Path(source).resolve(strict=True)
+            ticket = self.policy.ticket()
+
+            def start():
+                def edit(check_cancelled):
+                    def check():
+                        check_cancelled()
+                        self.policy.check(ticket)
+                    return prepare_capcut_project(source, executable, check)
+
+                self.start_video_export(source, 'Opening the timeline in CapCut…', edit, result_prefix='')
+
+            self.gateway.run(Action('capcut_edit', f'{executable}\n{source}'),
+                             self.confirm, start)
+
+        self.notify(operation)
+
     def save_capcut_export(self, *, import_video=False):
         if self.worker is not None or self.policy.stopped:
             return
@@ -3608,13 +3650,20 @@ class Window(QMainWindow):
 
         self.notify(operation)
 
-    def build_after_effects_timeline(self):
+    def build_after_effects_timeline(self, *, open_editor=False):
         if self.video_plan is None or self.worker is not None or self.policy.stopped:
             return
         folder, plan = self.video_plan
 
         def operation():
+            if open_editor and sys.platform != 'win32':
+                raise ValueError('Opening After Effects from JARVIS requires Windows.')
             dialog = PreviewInputs(plan, self, timeline=True)
+            configured = self.store.get('editor_path:After Effects', '')
+            if configured:
+                dialog.target.setText(configured)
+            if open_editor:
+                dialog.script_only.setChecked(False)
             if dialog.exec() != QDialog.DialogCode.Accepted:
                 return
             if self.video_plan != (folder, plan) or self.worker is not None:
@@ -3663,13 +3712,14 @@ class Window(QMainWindow):
 
         self.notify(operation)
 
-    def start_video_export(self, output, message, operation):
+    def start_video_export(self, output, message, operation, *, result_prefix='Video saved to '):
         if self.worker is not None:
             raise ValueError('Wait for the current request to finish.')
         self.worker_kind = 'video_export'
         self.chat_task = self.store.task('video_export', Path(output).name)
         self.store.finish(self.chat_task, 'running')
         self.worker = VideoExportWorker(operation, self)
+        self.video_result_prefix = result_prefix
         self.worker.result.connect(self.on_video_export_result)
         self.worker.finished.connect(self.on_finished)
         self.video_status.setText(message)
@@ -3685,7 +3735,7 @@ class Window(QMainWindow):
 
     def on_video_export_result(self, status, detail):
         self.store.finish(self.chat_task, status)
-        self.video_status.setText('Video saved to ' + detail if status == 'completed' else detail)
+        self.video_status.setText(self.video_result_prefix + detail if status == 'completed' else detail)
         self.refresh_history()
 
     def business_page(self):
@@ -5904,6 +5954,7 @@ class Window(QMainWindow):
         self.chat_task_card.show()
         self.chat_task_diff.setEnabled(bool(outcome and outcome.diff))
         self.chat_task_tests.setEnabled(bool(outcome and outcome.worktree))
+        self.chat_task_open.setText('Open changes in editor' if outcome and outcome.worktree else 'Open project')
         self.chat_task_open.setEnabled(True)
         # The owner accepts or rejects the change once there is one, and not
         # before, so the buttons cannot be pressed on a task that has not
@@ -6085,7 +6136,8 @@ class Window(QMainWindow):
         else:
             self.run_coding_step(step,
                                  lambda: open_project_in_editor(coding['editor'],
-                                                               coding['project'].path))
+                                                               coding['project'].path,
+                                                               self.coding_configured_launcher()))
 
     def run_coding_step(self, step, operation):
         """Run one approved routine action."""
@@ -6624,17 +6676,18 @@ class Window(QMainWindow):
             return
         project = coding['project']
         configured = self.coding_configured_launcher()
-        action = Action('open_project', f'{coding["editor"]} · {project.path}')
+        folder = self.coding_test_folder()
+        action = Action('open_project', f'{coding["editor"]} · {folder}')
 
         def operation():
             try:
-                return open_project_in_editor(coding['editor'], project.path, configured)
+                return open_project_in_editor(coding['editor'], folder, configured)
             except (ValueError, RuntimeError, OSError) as error:
                 return str(error)
 
         self.coding_action_gate(
             action, operation,
-            trusted=routine_allowed(self.store, 'open:' + project.name))
+            trusted=folder == project.folder and routine_allowed(self.store, 'open:' + project.name))
 
     # ── the review of prepared changes ─────────────────────────────────────
 
@@ -7655,6 +7708,7 @@ class Window(QMainWindow):
         self.video_render_button.setEnabled(ready and self.video_plan is not None)
         self.capcut_button.setEnabled(ready and self.video_plan is not None)
         self.capcut_native_export_button.setEnabled(ready and sys.platform == 'win32')
+        self.capcut_edit_button.setEnabled(ready and sys.platform == 'win32')
         self.capcut_import_export_button.setEnabled(ready and sys.platform == 'win32')
         self.davinci_button.setEnabled(ready and self.video_plan is not None)
         self.after_effects_button.setEnabled(ready)
