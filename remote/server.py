@@ -8,6 +8,7 @@ reach a paired phone, and no control port is published to the public internet.
 `handle()` is the whole protocol surface:
 
     GET  /api/status                   -> PC status
+    POST /api/screen                   -> one on-demand primary-screen JPEG
     GET  /api/jobs                     -> {"jobs": [...]}
     GET  /api/jobs/<id>                -> one job record
     POST /api/jobs                     -> one job record
@@ -112,13 +113,14 @@ class BridgeServer:
                  memory: MemoryStore | None = None,
                  notifications: NotificationStore | None = None,
                  audit: AuditLog | None = None,
-                 chat=None, status_provider=None, memory_allowed=None, wake=None):
+                 chat=None, status_provider=None, memory_allowed=None, wake=None, screen_provider=None):
         self._pairing = pairing
         self._jobs = jobs if jobs is not None else JobStore(now=now)
         self._replay = replay if replay is not None else ReplayGuard()
         self._memory = memory if memory is not None else MemoryStore(now=now)
         self._notifications = notifications if notifications is not None else NotificationStore(now=now)
         self._audit = audit if audit is not None else AuditLog(now=now)
+        self.screen_provider = screen_provider
         self.wake = wake
         self._chat = chat
         self._status_provider = status_provider
@@ -185,6 +187,12 @@ class BridgeServer:
             if self.wake is None or not self.wake():
                 raise BridgeHandlerError(409, 'Desktop wake is unavailable.')
             return {'queued': True}
+        if method == 'POST' and path == '/api/screen':
+            if request.body:
+                raise BridgeHandlerError(400, 'A screen request takes no body.')
+            if self.screen_provider is None:
+                raise BridgeHandlerError(503, 'Screen viewing is unavailable on this PC.')
+            return self.screen_provider()
         if method == 'GET' and path == '/api/status':
             return self._status()
         if method == 'GET' and path == '/api/jobs':

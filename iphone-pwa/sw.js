@@ -7,7 +7,7 @@
 
 // The version changes whenever the shell changes, so an installed app
 // stops serving the old files from its cache.
-const CACHE = 'jarvis-iphone-shell-v13';
+const CACHE = 'jarvis-iphone-shell-v14';
 
 const SHELL = [
   './',
@@ -17,6 +17,8 @@ const SHELL = [
   './manifest.webmanifest',
   './js/bridge.js',
   './js/chat.js',
+  './js/navigation.js',
+  './js/display.js',
   './js/history.js',
   './js/offline.js',
   './js/pairing.js',
@@ -29,7 +31,8 @@ const SHELL = [
 ];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));
+  // Activate the new shell without forcing a reload of a paired page.
+  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (event) => {

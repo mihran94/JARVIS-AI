@@ -9,6 +9,8 @@
 // notifications are all handled without breaking the page.
 
 import { BridgeClient, BridgeError, signCanonical } from './js/bridge.js';
+import { createNavigation } from './js/navigation.js';
+import { DesktopViewer } from './js/display.js';
 import { ChatTranscript, renderTranscript } from './js/chat.js';
 import { KINDS, Outbox, createIndexedDbStore } from './js/offline.js';
 import { parsePairingLink, parsePairingPayload } from './js/pairing.js';
@@ -42,7 +44,6 @@ const state = {
   transcript: new ChatTranscript(),
   outbox: new Outbox(),
   listening: null,
-  call: null,
   camera: null,
   cameraRequest: null,
   speakAnswers: false,
@@ -52,6 +53,34 @@ const state = {
 };
 
 const transcriptElement = $('transcript');
+
+let navigation;
+const viewer = new DesktopViewer({
+  fetchFrame: async () => {
+    if (!state.client) throw new Error('Connect your PC first.');
+    return state.client.request('POST', '/api/screen');
+  },
+  showFrame: (frame) => {
+    $('desktopView').src = frame.image;
+    $('desktopView').hidden = false;
+    $('screenPlaceholder').hidden = true;
+  },
+  status: (message, kind = '') => {
+    setStatus('displayStatus', message, kind);
+    $('startDisplay').disabled = Boolean(viewer.active);
+    $('stopDisplay').disabled = !viewer.active;
+  },
+});
+function stopDisplay() {
+  viewer.stop();
+  $('desktopView').removeAttribute('src');
+  $('desktopView').hidden = true;
+  $('screenPlaceholder').hidden = false;
+}
+function connectionBadge(message, connected = false) {
+  $('connectionBadge').textContent = message;
+  $('connectionBadge').dataset.connected = String(connected);
+}
 
 function say(message, kind = '') {
   const element = $('banner');
@@ -96,16 +125,21 @@ async function connect() {
     setStatus('pairStatus', error.message, 'error');
     return;
   }
+  connectionBadge('Connecting…');
   setStatus('pairStatus', 'Checking the PC…');
   try {
     const status = await state.client.status();
     setStatus('pairStatus', `Connected to ${status.hostname || 'the PC'}.`, 'ok');
+    connectionBadge('Connected', true);
+    navigation?.show('chatPanel');
+    say('');
     showStatus(status);
     // The PC is there, so the work that was kept while it was not reachable
     // can go out now.
     await flushOutbox();
     await refreshAll();
   } catch (error) {
+    connectionBadge('Connection failed');
     setStatus('pairStatus', error.message, 'error');
     say(error.message);
   }
@@ -154,10 +188,13 @@ async function handleSiriWake() {
 }
 
 function forgetSecret() {
+  stopDisplay();
+  connectionBadge('Not connected');
+  navigation?.show('pairing');
   localStorage.removeItem(WAKE_STORAGE);
   $('siriLink').hidden = true;
   $('siriLink').value = '';
-  endPhoneCall();
+  stopVoiceAndCamera();
   state.client = null;
   $('secret').value = '';
   setStatus('pairStatus', 'The secret was cleared from this page.');
@@ -224,6 +261,7 @@ async function refreshStatus() {
   try {
     const status = await state.client.status();
     showStatus(status);
+    connectionBadge('Connected', true);
     state.lastError = '';
   } catch (error) {
     handleFailure(error, 'status');
@@ -257,10 +295,9 @@ async function sendMessage(text, { images } = {}) {
     setStatus('chatStatus', 'Connect to the PC first.', 'error');
     return;
   }
-  const call = state.call;
   const command = message.toLowerCase().replace(/[.!?]+$/, '');
   const asksToLook = /^(?:look|look at this|look through the camera|what is this|what do you see|பார்|பாரு|இதைப் பார்|இதை பாரு|இது என்ன|நான் என்ன காட்டுறேன்|camera paaru|கேமராவில் பார்)[.!?]*$/iu.test(message);
-  if (!images && (asksToLook || (call?.mode === 'video' && !CHAT_COMMANDS.has(command)))) {
+  if (!images && asksToLook) {
     const view = $('liveCameraView');
     if (!state.camera || !view.videoWidth) {
       setStatus('chatStatus', 'Turn on the phone camera and wait for the preview.', 'error');
@@ -291,7 +328,7 @@ async function sendMessage(text, { images } = {}) {
     state.transcript.add('jarvis', answer.text || '(no answer)');
     drawChat();
     setStatus('chatStatus', `Answered by ${answer.provider || 'the PC'}.`, 'ok');
-    if (state.speakAnswers || (call && state.call === call)) {
+    if (state.speakAnswers) {
       speak(answer.text || '', {
         lang: chooseLanguage(answer.text || '', { current: chosenVoiceLanguage() }),
       });
@@ -362,43 +399,13 @@ async function togglePhoneCamera() {
   }
 }
 
-function showCallStatus() {
-  const mode = state.call?.mode;
-  $('callStatus').textContent = mode === 'video' ? 'Video call · tap Listen to speak'
-    : mode === 'audio' ? 'Audio call · tap Listen to speak' : 'Call ended';
-  $('audioCall').disabled = !!mode;
-  $('videoCall').disabled = !!mode;
-  $('endCall').disabled = !mode;
-}
-
-function endPhoneCall() {
-  state.call = null;
+function stopVoiceAndCamera() {
   const listening = state.listening;
   state.listening = null;
   if (listening) listening.stop();
   $('listen').textContent = 'Listen';
   stopPhoneCamera();
   globalThis.speechSynthesis?.cancel();
-  showCallStatus();
-}
-
-async function startPhoneCall(mode) {
-  if (!state.client) {
-    setStatus('callStatus', 'Pair and connect to the PC first.', 'error');
-    return;
-  }
-  const call = { mode };
-  state.call = call;
-  showCallStatus();
-  if (mode === 'audio') {
-    if (!state.listening && recognitionSupported()) toggleListening();
-    return;
-  }
-  if (!state.camera) await togglePhoneCamera();
-  if (state.call === call && !state.camera) {
-    endPhoneCall();
-    setStatus('callStatus', 'The video call needs phone camera access.', 'error');
-  }
 }
 
 function videoEvent(video, name) {
@@ -494,20 +501,19 @@ function toggleListening() {
     return;
   }
   try {
-    const call = state.call;
+      state.speakAnswers = true;
+    $('speak').textContent = 'Speaking on';
     globalThis.speechSynthesis?.cancel();
     state.listening = startListening({
       lang: chosenVoiceLanguage(),
       onPartial: (text) => {
-        if (!call || state.call === call) {
-          $('message').value = text;
-          setStatus('chatStatus', text ? `Heard: ${text}` : 'Listening…');
-        }
+        $('message').value = text;
+        setStatus('chatStatus', text ? `Heard: ${text}` : 'Listening…');
       },
       onResult: (text) => {
         state.listening = null;
         $('listen').textContent = 'Listen';
-        if (text && (!call || state.call === call)) {
+        if (text) {
           $('message').value = text;
           sendMessage(text);
         }
@@ -915,6 +921,7 @@ function stopFlushing() {
 function handleFailure(error, area, { kept = null, lost = false } = {}) {
   const message = error instanceof Error ? error.message : String(error);
   if (isUnreachable(error)) {
+    connectionBadge('PC unreachable');
     if (kept && kept.duplicate && kept.sent) {
       say('The PC could not be reached. That work was sent a moment ago, so it was not queued again.');
     } else if (kept && kept.duplicate) {
@@ -984,9 +991,6 @@ function installListeners() {
     }
   });
   $('listen').addEventListener('click', toggleListening);
-  $('audioCall').addEventListener('click', () => startPhoneCall('audio'));
-  $('videoCall').addEventListener('click', () => startPhoneCall('video'));
-  $('endCall').addEventListener('click', endPhoneCall);
   $('phoneCamera').addEventListener('click', togglePhoneCamera);
   $('lookNow').addEventListener('click', () => {
     const question = $('message').value.trim();
@@ -1005,7 +1009,7 @@ function installListeners() {
       setStatus('chatStatus', 'Could not read the current camera frame. Try again.', 'error');
     }
   });
-  window.addEventListener('pagehide', endPhoneCall);
+  window.addEventListener('pagehide', stopVoiceAndCamera);
   for (const [button, input, isClip] of [
     ['cameraAsk', 'cameraPhoto', false], ['clipAsk', 'cameraClip', true],
   ]) {
@@ -1071,6 +1075,13 @@ async function start() {
   const location = globalThis.location;
   const pairingLink = location?.hash.startsWith('#pair=') && location.href;
   if (pairingLink) globalThis.history.replaceState(null, '', location.pathname);
+  navigation = createNavigation(document, (id) => {
+    if (id !== 'displayPanel' && viewer.active) stopDisplay();
+  });
+  $('startDisplay').addEventListener('click', () => viewer.start());
+  $('stopDisplay').addEventListener('click', stopDisplay);
+  window.addEventListener('pagehide', stopDisplay);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) stopDisplay(); });
   drawChat();
   installListeners();
   registerServiceWorker();

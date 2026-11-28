@@ -35,6 +35,7 @@ from desktop.bridge_pairing import (
     pairing_matrix, pairing_payload,
 )
 from desktop.bridge_status import PlatformMetrics
+from desktop.bridge_screen import PhoneScreen
 from providers.registry import specs
 from remote import certificate
 from remote.jobs import (
@@ -88,6 +89,8 @@ class BridgePanel(QWidget):
             self.pairing, peer_id=platform.node() or 'windows',
             agent_version='0.3.0', allowed_hosts=('127.0.0.1', '::1'),
             status_provider=PlatformMetrics().snapshot)
+        self.screen = PhoneScreen(policy, self)
+        self.bridge.screen_provider = self.screen.frame
         self.listener = listener if listener is not None else BridgeListener(self.bridge)
         self.chat = BridgeChatService(router, store, vault, policy=policy) if router else None
         if self.chat is not None:
@@ -170,7 +173,8 @@ class BridgePanel(QWidget):
         self.listener_status = QLabel('Stopped')
         self.listener_status.setWordWrap(True)
         listener_layout.addRow('Status', self.listener_status)
-        self.private_startup = QCheckBox('Start the verified private Tailscale listener with JARVIS')
+        self.private_startup = QCheckBox('Auto-start private listener')
+        self.private_startup.setToolTip('Start the verified private Tailscale listener with JARVIS.')
         self.private_startup.setChecked(bool(self.store.get('bridge:private_startup', False)))
         self.private_startup.toggled.connect(lambda enabled: self.store.set('bridge:private_startup', enabled))
         listener_layout.addRow(self.private_startup)

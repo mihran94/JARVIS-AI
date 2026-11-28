@@ -10,6 +10,7 @@ from PySide6.QtWebSockets import QWebSocket
 
 from desktop.audio_test import AudioTest
 from desktop.audio_echo import PlaybackEchoFilter
+from desktop.audio_noise import MicrophoneRumbleFilter
 
 
 MODEL = 'gemini-3.8-live'
@@ -93,6 +94,8 @@ class LiveVoice(QObject):
         self.input = self.output = None
         self.pending = bytearray()
         self.echo_filter = PlaybackEchoFilter()
+        self.noise_filter = MicrophoneRumbleFilter()
+        self.noise_reduction = True
         self.transcript = ['', '']
         self.ignore_reply = False
         self.awaiting_interrupt_ack = False
@@ -255,6 +258,8 @@ class LiveVoice(QObject):
         if not len(samples):
             return
         samples = self.echo_filter.filter(samples, self.input_format.sampleRate())
+        if self.noise_reduction:
+            samples = self.noise_filter.process(samples, self.input_format.sampleRate())
         peak = max(abs(int(samples.min())), abs(int(samples.max())))
         self.audio_level.emit(round(peak * 100 / 32768))
         if self.socket is not None and self.socket.bytesToWrite() > 128_000:
@@ -426,6 +431,7 @@ class LiveVoice(QObject):
         self.input = self.output = None
         self.pending.clear()
         self.echo_filter.clear()
+        self.noise_filter.clear()
         self.transcript = ['', '']
         self.ignore_reply = False
         self.awaiting_interrupt_ack = False
