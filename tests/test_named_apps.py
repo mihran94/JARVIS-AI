@@ -119,3 +119,68 @@ def test_selected_app_survives_voice_turn_and_releases_on_stop(tmp_path, monkeyp
         window.close()
         window.deleteLater()
         app.processEvents()
+
+
+@pytest.mark.parametrize(('command', 'verb', 'selecting', 'status'), [
+    ('Jarvis, இதை செலக்ட் பண்ணு', 'select_control', True, 'verified'),
+    ('itha select pannu', 'select_control', True, 'verified'),
+    ('click here', 'mouse_click', False, 'dispatched'),
+])
+def test_pointed_voice_command_keeps_original_target(tmp_path, monkeypatch, command, verb, selecting, status):
+    from PySide6.QtWidgets import QApplication
+    from desktop.app import Window
+
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
+    target = named_apps.SelectedWindow(7, 'My edit', 123, 41)
+    window.selected_app_window = target
+    monkeypatch.setattr(named_apps.psutil, 'Process', lambda _: SimpleNamespace(create_time=lambda: 123))
+    monkeypatch.setattr(named_apps.app_control, 'focus_selected', lambda *_: None)
+    monkeypatch.setattr(named_apps.app_control.win_controls, 'foreground_window', lambda: 41)
+    capture = Mock(return_value=('Clip A', '', (2, 9)))
+    monkeypatch.setattr(named_apps.app_control, 'pointed_control', capture)
+    action = Mock(return_value='Windows response')
+    monkeypatch.setattr(named_apps.app_control, verb, action)
+
+    def approve(proposal):
+        assert 'Clip A' in proposal.target
+        capture.return_value = ('Clip B', '', (2, 10))
+        return True
+
+    monkeypatch.setattr(window, 'confirm', approve)
+    try:
+        window.save_live_voice_turn(command, '')
+        capture.assert_called_once_with(7, 'My edit', selecting=selecting)
+        assert action.call_args.args == (7, 'My edit', 'Clip A', '')
+        assert action.call_args.kwargs['runtime_id'] == (2, 9)
+        assert window.store.tasks()[0]['status'] == status
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_selected_window_drag_shows_both_targets_and_requires_approval(tmp_path, monkeypatch):
+    store = Store(tmp_path / 'history.db')
+    gateway = Gateway(Policy(), store)
+    current = named_apps.SelectedWindow(7, 'My edit', 123, 41)
+    monkeypatch.setattr(named_apps.psutil, 'Process', lambda _: SimpleNamespace(create_time=lambda: 123))
+    monkeypatch.setattr(named_apps.app_control, 'focus_selected', lambda *_: None)
+    monkeypatch.setattr(named_apps.app_control.win_controls, 'foreground_window', lambda: 41)
+    drag = Mock(return_value='Verified')
+    monkeypatch.setattr(named_apps.app_control, 'drag_control', drag)
+    request = named_apps.parse('Clip A to Project bin drag pannu', has_selection=True)
+    assert named_apps.parse('drag Clip A into Project bin', has_selection=True) == request
+    assert named_apps.parse('Clip A-ஐ Project bin-க்கு டிராக் பண்ணு', has_selection=True) == request
+
+    def approve(action, answer):
+        assert action.target.endswith('Clip A → Project bin')
+        return answer
+
+    with pytest.raises(Denied):
+        named_apps.run(request, gateway, lambda a: approve(a, False), lambda: None, selected=current)
+    drag.assert_not_called()
+    named_apps.run(request, gateway, lambda a: approve(a, True), lambda: None, selected=current)
+    assert drag.call_args.args == (7, 'My edit', 'Clip A', '')
+    assert drag.call_args.kwargs['destination'] == 'Project bin'
+    assert store.tasks()[0]['status'] == 'verified'

@@ -20,6 +20,8 @@ BLOCKED_PROCESSES = {
 }
 INVOKE_TYPES = {'Button', 'MenuItem', 'SplitButton'}
 EDIT_TYPES = {'Edit'}
+SELECT_TYPES = {'DataItem', 'ListItem', 'TabItem', 'TreeItem'}
+SCROLL_TYPES = {'DataGrid', 'Document', 'List', 'Pane', 'Table', 'Tree'}
 SENSITIVE_LABELS = (
     'password', 'passcode', 'secret', 'one-time code', 'security code', 'api key',
     'terminal', 'command prompt', 'powershell',
@@ -107,7 +109,7 @@ def see_controls(pid, title):
         results = []
         for control in controls:
             entry = _usable(control, pid)
-            if entry and entry[2] in INVOKE_TYPES | EDIT_TYPES and (entry[0] or entry[1]):
+            if entry and entry[2] in INVOKE_TYPES | EDIT_TYPES | SCROLL_TYPES | SELECT_TYPES and (entry[0] or entry[1]):
                 name, automation_id, kind = entry
                 results.append(f'{kind} {name[:100]!r} (id={automation_id[:100]!r})')
         check()
@@ -121,12 +123,13 @@ def _control_pattern(control, *, editing):
 
 
 @contextmanager
-def _selected_control(pid, title, name, automation_id, kinds, checkpoint):
+def _selected_control(pid, title, name, automation_id, kinds, checkpoint, *,
+                      restore_focus=True, runtime_id=None):
     if (not name and not automation_id) or len(name) > 100 or len(automation_id) > 100:
         raise InputRefused('Choose a control by the exact name or ID shown by inspection.')
     # A JARVIS approval dialog can briefly take focus. Restore the approved
     # app only in that case, and leave a different foreground app alone.
-    if win_controls.foreground_process() == os.getpid():
+    if restore_focus and win_controls.foreground_process() == os.getpid():
         _application(pid)
         checkpoint()
         activate_window(pid, title=title)
@@ -138,7 +141,8 @@ def _selected_control(pid, title, name, automation_id, kinds, checkpoint):
                 continue
             actual_name, actual_id, kind = entry
             if kind in kinds and (not name or name == actual_name) and (
-                    not automation_id or automation_id == actual_id):
+                    not automation_id or automation_id == actual_id) and (
+                    runtime_id is None or tuple(control.GetRuntimeId()) == runtime_id):
                 matches.append((control, entry))
         if len(matches) != 1:
             raise InputRefused('The named control is missing or ambiguous. Inspect the window again.')
@@ -146,12 +150,58 @@ def _selected_control(pid, title, name, automation_id, kinds, checkpoint):
 
         def guard():
             check()
-            if _usable(control, pid) != entry:
+            if _usable(control, pid) != entry or (
+                    runtime_id is not None and tuple(control.GetRuntimeId()) != runtime_id):
                 raise InputRefused('The control changed. No input was sent.')
             checkpoint()
             return pid
 
         yield control, entry[0] or entry[1], guard
+
+
+def verify_control(pid, title, name, automation_id='', *, expected, checkpoint=lambda: None):
+    """Read one observable condition from the selected foreground window."""
+    kinds = INVOKE_TYPES | EDIT_TYPES
+    with _selected_control(pid, title, name, automation_id, kinds, checkpoint,
+                           restore_focus=False) as (control, label, guard):
+        guard()
+        if expected == 'focused' and not control.Current.HasKeyboardFocus:
+            raise InputRefused('The expected control does not have keyboard focus.')
+        guard()
+        return f'Windows observed {label!r} {expected}.'
+
+
+def scroll_control(pid, title, name, automation_id='', *, direction, checkpoint=lambda: None):
+    """Scroll one increment and verify movement in the requested direction."""
+    from System.Windows.Automation import ScrollAmount, ScrollPattern
+
+    if direction not in ('up', 'down'):
+        raise InputRefused('Choose up or down.')
+    with _selected_control(pid, title, name, automation_id, SCROLL_TYPES, checkpoint) as (
+            control, label, guard):
+        pattern = control.GetCurrentPattern(ScrollPattern.Pattern)
+        guard()
+        snapshot = pattern.Current
+        if not snapshot.VerticallyScrollable:
+            raise InputRefused('This control does not expose a vertical scroll range.')
+        before = float(snapshot.VerticalScrollPercent)
+        if not 0 <= before <= 100:
+            raise InputRefused('Windows did not report a valid scroll position.')
+        down = direction == 'down'
+        if (down and before == 100) or (not down and before == 0):
+            raise InputRefused(f'{label!r} is already at the requested edge.')
+        amount = ScrollAmount.SmallIncrement if down else ScrollAmount.SmallDecrement
+        guard()
+        pattern.Scroll(ScrollAmount.NoAmount, amount)
+        deadline = time.monotonic() + 0.7
+        while True:
+            guard()
+            after = float(pattern.Current.VerticalScrollPercent)
+            if 0 <= after <= 100 and (after > before if down else after < before):
+                return f'Windows verified that {label!r} scrolled {direction}, from {before:g}% to {after:g}%.'
+            if time.monotonic() >= deadline:
+                raise InputRefused('Windows did not verify the scroll movement. Check the app before retrying.')
+            time.sleep(0.05)
 
 
 def _check_text(text):
@@ -177,6 +227,44 @@ def use_control(pid, title, name, automation_id='', *, text=None, checkpoint=lam
         return f'Windows verified the text in {label!r}.'
 
 
+def select_control(pid, title, name, automation_id='', *, checkpoint=lambda: None, runtime_id=None):
+    from System.Windows.Automation import SelectionItemPattern
+
+    with _selected_control(pid, title, name, automation_id, SELECT_TYPES, checkpoint,
+                           runtime_id=runtime_id) as (
+            control, label, guard):
+        pattern = control.GetCurrentPattern(SelectionItemPattern.Pattern)
+        guard()
+        pattern.Select()
+        guard()
+        if not pattern.Current.IsSelected:
+            raise InputRefused('Windows did not verify the requested selection.')
+        return f'Windows verified that {label!r} is selected.'
+
+
+def pointed_control(pid, title, *, selecting=False):
+    """Capture a published control under the cursor inside the approved window."""
+    kinds = SELECT_TYPES if selecting else INVOKE_TYPES | EDIT_TYPES
+    with _foreground_app(pid, title) as (controls, check):
+        from System.Windows import Point
+
+        cursor = wintypes.POINT()
+        if not ctypes.windll.user32.GetCursorPos(ctypes.byref(cursor)):
+            raise InputRefused('Windows could not read the mouse position.')
+        hit = uia.load_client().FromPoint(Point(cursor.x, cursor.y))
+        runtime = tuple(hit.GetRuntimeId() or ()) if hit is not None else ()
+        if runtime:
+            for control in controls:
+                if tuple(control.GetRuntimeId()) != runtime:
+                    continue
+                entry = _usable(control, pid)
+                if entry and entry[2] in kinds and (entry[0] or entry[1]):
+                    check()
+                    return entry[0], entry[1], runtime
+                break
+    raise InputRefused('Point at a named control inside the selected app and try again.')
+
+
 def _point_hits(control, x, y):
     from System.Windows import Point
 
@@ -184,10 +272,10 @@ def _point_hits(control, x, y):
     return hit is not None and tuple(hit.GetRuntimeId()) == tuple(control.GetRuntimeId())
 
 
-def mouse_click(pid, title, name, automation_id='', *, checkpoint=lambda: None):
+def mouse_click(pid, title, name, automation_id='', *, checkpoint=lambda: None, runtime_id=None):
     """Physically click the published point of exactly one visible control."""
     with _selected_control(pid, title, name, automation_id, INVOKE_TYPES | EDIT_TYPES,
-                           checkpoint) as (control, label, guard):
+                           checkpoint, runtime_id=runtime_id) as (control, label, guard):
         point = control.GetClickablePoint()
         x, y = round(point.X), round(point.Y)
         if not (0 <= x <= 10000 and 0 <= y <= 10000):
@@ -213,6 +301,62 @@ def mouse_click(pid, title, name, automation_id='', *, checkpoint=lambda: None):
 
         desktop_input.click_at(x, y, InputTarget(pid, title), foreground=at_control)
         return f'Mouse clicked {label!r}. Inspect the app to verify its response.'
+
+
+def drag_control(pid, title, name, automation_id='', *, destination, destination_id='',
+                 checkpoint=lambda: None):
+    """Move a published item into a same-window container and verify its identity."""
+    with _selected_control(pid, title, name, automation_id, SELECT_TYPES, checkpoint) as (
+            source, source_label, guard_source), _selected_control(
+                pid, title, destination, destination_id, SCROLL_TYPES, checkpoint,
+                restore_focus=False) as (container, destination_label, guard_container):
+        from System.Windows.Automation import TreeScope, Condition
+
+        runtime_id = tuple(source.GetRuntimeId() or ())
+        container_id = tuple(container.GetRuntimeId() or ())
+        if not runtime_id or not container_id or runtime_id == container_id:
+            raise InputRefused('Windows did not identify two distinct drag controls.')
+
+        def contains_source():
+            if tuple(container.GetRuntimeId() or ()) != container_id:
+                raise InputRefused('The drag destination changed.')
+            items = container.FindAll(TreeScope.Descendants, Condition.TrueCondition)
+            if items.Count > 800:
+                raise InputRefused('The destination exposes too many items to verify.')
+            return any(tuple(item.GetRuntimeId() or ()) == runtime_id for item in items)
+
+        def position(control):
+            point = control.GetClickablePoint()
+            return round(point.X), round(point.Y)
+
+        if contains_source():
+            raise InputRefused('The source is already inside that destination.')
+        start, end = position(source), position(container)
+
+        def before_drag():
+            guard_source()
+            guard_container()
+            if (tuple(source.GetRuntimeId() or ()) != runtime_id
+                    or tuple(container.GetRuntimeId() or ()) != container_id
+                    or not _point_hits(source, *start) or not _point_hits(container, *end)):
+                raise InputRefused('The source or destination changed or is covered.')
+            return pid
+
+        desktop_input.drag_between(start, end, InputTarget(pid, title), foreground=before_drag)
+        deadline = time.monotonic() + 1.0
+        while True:
+            try:
+                guard_container()
+                moved = contains_source()
+            except InputRefused as error:
+                raise InputRefused('The drag was sent, but Windows could not verify the result. '
+                                   'Check the app before retrying.') from error
+            if moved:
+                return f'Windows verified that {source_label!r} moved into {destination_label!r}.'
+            if time.monotonic() >= deadline:
+                raise InputRefused('The drag was sent, but Windows could not verify the result. '
+                                   'Check the app before retrying.')
+            time.sleep(0.05)
 
 
 def keyboard_input(pid, title, name, automation_id='', *, text=None, key=None, checkpoint=lambda: None):

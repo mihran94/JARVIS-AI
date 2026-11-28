@@ -110,3 +110,35 @@ waits for the mission to stop before the window goes.
 - It has not run on a physical Windows machine. The suite covers the
   loop, the refusals and the interface; a real provider key and a real
   owner have not yet been used against it.
+
+### Readback after a desktop input
+
+After an app click or navigation key is dispatched, the mission must observe
+the expected control in the same window before attempting another write or
+reporting completion. The planner can inspect the window, then ask Windows
+to confirm that a specific control is visible or has keyboard focus. If it
+cannot read the state, the mission ends with the action marked unverified.
+The report keeps the pending process ID and window title for manual review.
+A visible or focused control confirms the current UI state. It is not proof
+that an external operation, such as a video export, finished.
+
+For an app that exposes a named scrollable container, a mission can ask to
+scroll it one increment. JARVIS reads the Windows UI Automation scroll
+position before and after, and records the movement only when it matches the
+requested direction. Reaching an edge or losing the target ends the action
+without a repeat attempt.
+
+### Review an interrupted mission
+
+The Activity history keeps the last recorded tool response and any write that
+may need checking. JARVIS records the write checkpoint before dispatching the
+action. If the app closes unexpectedly, the next launch marks the mission
+interrupted. Review the app or output before retrying. The checkpoint records
+the step number and tool name. It does not include command arguments, window
+titles, screen contents, or provider responses.
+
+After restarting JARVIS, choose **Review interrupted mission** in Mission Control.
+It shows the latest interrupted checkpoint. Inspect the app or output, then enter
+only the remaining work. Cancel leaves the checkpoint available. Submitting starts
+a new planning run with fresh approvals and marks the reviewed entry as continued.
+Earlier tool arguments and the original goal are never loaded for execution.

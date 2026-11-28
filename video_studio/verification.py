@@ -118,7 +118,7 @@ def probe(path) -> MediaInfo:
         info.duration = 0.0
     for stream in data.get('streams') or []:
         kind = stream.get('codec_type')
-        if kind == 'video':
+        if kind == 'video' and not (stream.get('disposition') or {}).get('attached_pic'):
             info.has_video = True
             info.width = int(stream.get('width', 0) or 0)
             info.height = int(stream.get('height', 0) or 0)

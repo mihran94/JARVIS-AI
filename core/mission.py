@@ -94,6 +94,7 @@ class Mission:
     events: list = field(default_factory=list)
     tools_used: list = field(default_factory=list)
     event_counts: dict = field(default_factory=dict)
+    pending_readback: dict | None = None
 
     @property
     def completed(self) -> bool:
@@ -136,6 +137,7 @@ class Mission:
             'events': [event.as_dict() for event in self.events],
             'tools_used': list(self.tools_used),
             'metrics': self.metrics,
+            'pending_readback': self.pending_readback,
         }
 
 
@@ -245,7 +247,9 @@ def system_instructions(registry, *, compact=False) -> str:
         '* Answer only from what the tool results show. If a tool failed, say that it failed.\n'
         '* Do not claim something was done that you did not observe in a result.\n'
         '* A dispatched click or keyboard input is not proof of the requested app change. '
-        'When a checking tool exists, inspect the updated state or output before reporting completion.\n'
+        'After an app click or navigation key, choose the expected visible or focused control '
+        'and call verify_app_control for the same process and exact window title. '
+        'Inspect controls first if needed. Stop with a skip if the outcome cannot be observed.\n'
         '* If any step was skipped, clearly explain what remains unfinished.\n'
         '* If the goal needs no tool, answer straight away.\n'
         '\n'
@@ -309,6 +313,37 @@ def coerce_edit(tool, arguments: dict) -> dict:
     return converted
 
 
+class MissionJournal:
+    """Persist action receipts in Activity, without saving the request or results."""
+
+    def __init__(self, store, *, continue_from=None):
+        self.store = store
+        self.task_id = (store.continue_mission(continue_from) if continue_from is not None
+                        else store.task('mission', 'Mission started'))
+        self.last_response = None
+        self.pending_action = None
+
+    def before_write(self, step, name):
+        self.pending_action = (step, name)
+        self.record('running')
+
+    def after_response(self, step, name, *, awaiting_readback):
+        self.last_response = (step, name)
+        if not awaiting_readback:
+            self.pending_action = None
+        self.record('running')
+
+    def record(self, status):
+        parts = []
+        if self.last_response:
+            step, name = self.last_response
+            parts.append(f'Last tool response: step {step}, {name}')
+        if self.pending_action:
+            step, name = self.pending_action
+            parts.append(f'Check before retrying: step {step}, {name}')
+        self.store.finish(self.task_id, status, ' · '.join(parts) or 'No tool response recorded')
+
+
 class AgentRuntime:
     """Runs one mission: propose, check, run, observe, repeat.
 
@@ -320,7 +355,8 @@ class AgentRuntime:
     """
 
     def __init__(self, registry, gateway, planner, *, max_steps=MAX_STEPS,
-                 budget_seconds=BUDGET_SECONDS, on_event=None, check=None, compact_tools=False):
+                 budget_seconds=BUDGET_SECONDS, on_event=None, check=None, compact_tools=False,
+                 journal=None):
         self.registry = registry
         self.gateway = gateway
         self.planner = planner
@@ -328,6 +364,7 @@ class AgentRuntime:
         self.budget_seconds = max(1, int(budget_seconds))
         self.on_event = on_event
         self.compact_tools = compact_tools
+        self.journal = journal
         #: Raised by the caller's check when an emergency stop is active.
         self.check = check or (lambda: None)
 
@@ -345,11 +382,15 @@ class AgentRuntime:
 
     def _stop(self, mission: Mission, label: str, detail: str = '') -> Mission:
         mission.status = 'cancelled'
+        if self.journal is not None:
+            self.journal.record(mission.status)
         self._emit(mission, 'cancelled', label, detail)
         return mission
 
     def _fail(self, mission: Mission, label: str, detail: str = '') -> Mission:
         mission.status = 'failed'
+        if self.journal is not None:
+            self.journal.record(mission.status)
         self._emit(mission, 'error', label, detail)
         return mission
 
@@ -369,6 +410,8 @@ class AgentRuntime:
             raise MissionError('A mission needs a goal.')
         check = check or self.check
         mission = Mission(id=uuid.uuid4().hex, goal=goal)
+        if self.journal is not None:
+            self.journal.record('running')
         self._emit(mission, 'goal', 'Mission started', goal)
 
         messages = [
@@ -420,9 +463,14 @@ class AgentRuntime:
                                  'Answer with one JSON object as instructed.'})
                 continue
 
+            if mission.pending_readback and decision['action'] in ('answer', 'skip'):
+                return self._fail(mission, 'App outcome unverified', _UNVERIFIED_CHANGE)
+
             if decision['action'] == 'answer':
                 mission.answer = decision['answer']
                 mission.status = 'completed'
+                if self.journal is not None:
+                    self.journal.record(mission.status)
                 if decision['thought']:
                     self._emit(mission, 'thought', 'JARVIS decided', decision['thought'], step)
                 self._emit(mission, 'answer', 'Mission complete', decision['answer'], step)
@@ -458,6 +506,18 @@ class AgentRuntime:
                                  failure_observation(tool.name, str(problem))})
                 continue
 
+            if mission.pending_readback and not tool.read_only:
+                errors += 1
+                detail = 'Verify the previous action in the same window before requesting another change.'
+                self._emit(mission, 'error', 'App readback required', detail, step)
+                if errors >= MAX_RECOVERABLE_ERRORS:
+                    return self._fail(mission, 'App outcome unverified', _UNVERIFIED_CHANGE)
+                messages.extend([
+                    {'role': 'assistant', 'content': raw},
+                    {'role': 'user', 'content': failure_observation(tool.name, detail)},
+                ])
+                continue
+
             if decision['thought']:
                 self._emit(mission, 'thought', 'JARVIS decided', decision['thought'], step)
             summary = tool.summary(arguments)
@@ -468,7 +528,14 @@ class AgentRuntime:
             def invoke(checked):
                 nonlocal write_started
                 checkpoint()
+                if self.journal is not None and not tool.read_only:
+                    self.journal.before_write(step, tool.name)
+                    checkpoint()
                 write_started = not tool.read_only
+                if tool.needs_window_readback:
+                    mission.pending_readback = {
+                        'tool': tool.name, 'process_id': checked['process_id'], 'title': checked['title'],
+                    }
                 result = (tool.run(checked, checkpoint) if tool.accepts_checkpoint
                           else tool.run(checked))
                 checkpoint()
@@ -541,6 +608,14 @@ class AgentRuntime:
                 return self._fail(mission, f'{tool.name} could not complete',
                                   'No further step was taken.')
 
+            pending = mission.pending_readback
+            if tool.verifies_window and pending and (
+                    arguments['process_id'], arguments['title']) == (
+                        pending['process_id'], pending['title']):
+                mission.pending_readback = None
+            if self.journal is not None:
+                self.journal.after_response(step, tool.name,
+                                            awaiting_readback=mission.pending_readback is not None)
             self._emit(mission, 'result', f'{tool.name} finished', text[:400], step)
             mission.tools_used.append({'tool': tool.name, 'summary': summary, 'result': text[:400]})
             messages.append({'role': 'assistant', 'content': raw})

@@ -496,3 +496,65 @@ def test_mission_metrics_outlive_bounded_hud_event_history(registry, gateway):
     assert len(mission.events) == MAX_EVENTS
     assert mission.metrics['tool_attempts'] == MAX_EVENTS + 7
     assert mission.metrics['tool_attempts_without_result'] == MAX_EVENTS + 7
+
+
+@pytest.mark.parametrize('right_window', [False, True])
+def test_app_readback_binds_to_the_approved_window(registry, gateway, right_window):
+    schema = {'type': 'object', 'properties': {
+        'process_id': {'type': 'integer'}, 'title': {'type': 'string'},
+    }, 'required': ['process_id', 'title']}
+    dispatched = []
+    registry.register(Tool('click', 'Dispatch a click.', schema, False,
+                           lambda args: dispatched.append(args) or 'Dispatched',
+                           needs_window_readback=True))
+    registry.register(Tool('check_window', 'Observe a condition.', schema, True,
+                           lambda _: 'Observed', verifies_window=True))
+    proposed = {'process_id': 7, 'title': 'Editor'}
+    approved = {'process_id': 8, 'title': 'Preview'}
+    planner = FakePlanner([
+        tool_call('click', proposed),
+        tool_call('click', proposed),
+        tool_call('check_window', approved if right_window else proposed),
+        final_answer('Done.'),
+    ])
+    result = runtime_for(registry, gateway, planner).run(
+        'Click and verify.', confirm=lambda _: approved)
+    assert dispatched == [approved]
+    assert result.status == ('completed' if right_window else 'failed')
+    assert result.pending_readback == (None if right_window else {'tool': 'click', **approved})
+    assert any(event.label == 'App readback required' for event in result.events)
+    if not right_window:
+        assert result.answer != 'Done.'
+
+
+def test_activity_keeps_pre_dispatch_receipt_after_restart(tmp_path, registry, gateway):
+    from core.mission import MissionJournal
+
+    path = tmp_path / 'activity.sqlite3'
+    journal = MissionJournal(Store(path))
+    registry.register(Tool(
+        'edit', 'Edit a field.', {'type': 'object', 'properties': {'text': {'type': 'string'}}},
+        False, lambda _: (_ for _ in ()).throw(KeyboardInterrupt()),
+    ))
+    planner = FakePlanner([tool_call('edit', {'text': 'private draft'})])
+    with pytest.raises(KeyboardInterrupt):
+        runtime_for(registry, gateway, planner, journal=journal).run(
+            'private goal', confirm=lambda _: True)
+    entry = Store(path).tasks()[0]
+    assert entry['status'] == 'interrupted'
+    assert entry['detail'] == 'Check before retrying: step 1, edit'
+    assert 'private' not in str(entry)
+
+
+def test_activity_records_last_tool_response_on_completion(tmp_path, registry, gateway):
+    from core.mission import MissionJournal
+
+    store = Store(tmp_path / 'activity.sqlite3')
+    journal = MissionJournal(store)
+    planner = FakePlanner([tool_call('change_thing'), final_answer()])
+    mission = runtime_for(registry, gateway, planner, journal=journal).run(
+        'a private goal', confirm=lambda _: True)
+    assert mission.completed
+    entry = store.tasks()[0]
+    assert entry['status'] == 'completed'
+    assert entry['detail'] == 'Last tool response: step 1, change_thing'
