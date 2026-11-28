@@ -487,7 +487,8 @@ test('the page keeps the work that cannot be sent and sends it later', async () 
   element('lookNow').press();
   await waitFor(() => requests.some((request) => request.body?.includes('இது என்ன?')),
     'asked what the camera sees');
-  assert.equal(window.location.hash, 'chatPanel');
+  assert.equal(window.location.hash, '', 'section navigation must not rewrite the pairing URL');
+  assert.match(element('cameraStatus').textContent, /See the answer in Chat/);
   element('checkDisk').press();
   await waitFor(() => requests.some((request) => request.url.endsWith('/api/jobs')
     && request.body?.includes('check_disk_space')), 'sent the command as a desktop job');

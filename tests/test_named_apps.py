@@ -158,10 +158,10 @@ def test_short_editor_commands_require_an_app_context(command, control):
         'mouse_click', control=control)
 
 
-def test_clip_selection_requires_a_named_control():
+def test_named_clip_selection_is_distinct_from_pointed_selection():
     assert named_apps.parse('Select Clip 3', has_selection=True) == named_apps.Request(
         'select_control', control='Clip 3')
-    assert named_apps.parse('select this', has_selection=True) is None
+    assert named_apps.parse('select this', has_selection=True) == named_apps.Request('select_pointed')
 
 
 @pytest.mark.parametrize(('command', 'verb', 'selecting', 'status'), [

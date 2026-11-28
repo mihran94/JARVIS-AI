@@ -187,7 +187,7 @@ def run_local_tests(folder, command: str, timeout: int = 1800, cancel=None, obse
             raise
         end = output.seek(0, 2)
         output.seek(max(0, end - 32000))
-        tail = output.read().decode(errors='replace')[-8000:]
+        tail = output.read().decode(errors='replace').replace('\r\n', '\n')[-8000:]
         if timed_out:
             return 'failed', f'Tests timed out after {timeout:g} seconds.\n{tail}'
         return ('passed' if process.returncode == 0 else 'failed'), tail
