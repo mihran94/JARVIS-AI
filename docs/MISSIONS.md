@@ -11,7 +11,7 @@ owner goal  →  JARVIS proposes one action  →  JARVIS checks it  →  the too
 ```
 
 The owner watches every step in **Mission Control** (the desktop page),
-and the whole loop is bounded: at most six steps and three minutes.
+and the whole loop is bounded: at most ten decisions and three minutes.
 
 ## The rules
 
@@ -24,6 +24,7 @@ and the whole loop is bounded: at most six steps and three minutes.
 | An emergency stop cancels the mission at the next step | `security/policy.py` through the runtime check | `test_an_emergency_stop_cancels_the_mission` |
 | The mission cannot run for ever | `MAX_STEPS` and `BUDGET_SECONDS` | `test_a_mission_cannot_run_for_ever` |
 | Only a real tool result is evidence | `mission.tools_used` is written only after the tool returned | `test_a_tool_that_fails_is_not_counted_as_evidence` |
+| A change with an unverified outcome is not automatically retried | The runtime stops if a mutating tool was entered but could not return a usable result | `test_unconfirmed_mutation_is_never_replayed` |
 
 ## The tool catalogue
 
@@ -77,14 +78,17 @@ mission.
   one returned, and the final answer. When nothing ran, it says *no
   tool ran*.
 
-The counter says **Step N of 6** — the mission's Nth step of at most
-six. There is no percentage and no estimate, because neither is known,
+The counter says **Step N of 10** by default. There is no percentage
+and no estimate, because neither is known,
 and the number means the same thing before and after the mission. The
 evidence line counts the tool results separately, so the two numbers
 never stand for the same thing.
 
-A tool that failed is not on the evidence line, and the mission never
-says that something happened that did not happen.
+A dispatched input is not proof that an app changed. Check the target
+state before calling an important action complete. If a mutating tool
+started but its outcome could not be confirmed, the mission stops and
+asks the owner to inspect the current state before retrying. Emergency
+Stop stops further actions; it does not undo a change that already happened.
 
 ## Where it runs
 
