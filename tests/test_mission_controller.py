@@ -163,7 +163,7 @@ def test_a_refused_tool_does_not_run(window):
     proposed = answer_proposal(window, approve=False)
     assert proposed is not None
     assert wait_for(lambda: window.mission_panel.status.text() == 'FAILED')
-    assert window.mission_panel.evidence_column.count.text() == 'no tool ran'
+    assert window.mission_panel.evidence_column.count.text() == 'no tool result recorded'
     labels = ' '.join(entry['label'] for entry in window.mission_panel.timeline.entries())
     assert 'did not allow' in labels
 
