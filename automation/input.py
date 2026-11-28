@@ -240,33 +240,24 @@ def click_at(x: int, y: int, target: InputTarget, *, foreground=None, dialogs=No
 
 
 def scroll(amount: int, target: InputTarget, *, foreground=None, dialogs=None) -> str:
-    """Scroll inside the window, after checking the focus again."""
-    if not isinstance(amount, int) or not (-50 <= amount <= 50):
+    """Scroll the validated foreground window and check Windows accepted it.
+
+    A successful request means Windows accepted the input event; it does not
+    prove the application actually scrolled. Inspect the window to verify.
+    """
+    if not isinstance(amount, int) or isinstance(amount, bool) or not (-50 <= amount <= 50):
         raise InputRefused('The scroll must be between 50 steps up and 50 steps down.')
+    if amount == 0:
+        raise InputRefused('Choose a nonzero scroll amount.')
     validate_focus(target, foreground=foreground, dialogs=dialogs)
-    _windows_only()
-    import ctypes
-    from ctypes import wintypes
-
-    WHEEL_DELTA = 120
-
-    class MOUSEINPUT(ctypes.Structure):
-        _fields_ = [('dx', wintypes.LONG), ('dy', wintypes.LONG),
-                    ('mouseData', wintypes.DWORD), ('dwFlags', wintypes.DWORD),
-                    ('time', wintypes.DWORD), ('dwExtraInfo', ctypes.POINTER(ctypes.c_ulong))]
-
-    class INPUT(ctypes.Structure):
-        class _U(ctypes.Union):
-            _fields_ = [('mi', MOUSEINPUT)]
-        _anonymous_ = ('u',)
-        _fields_ = [('type', wintypes.DWORD), ('u', _U)]
-
-    user32 = ctypes.WinDLL('user32', use_last_error=True)
-    event = INPUT(type=0)
-    event.mi = MOUSEINPUT(0, 0, amount * WHEEL_DELTA, 0x0800, 0, None)
-    user32.SendInput(1, ctypes.byref(event), ctypes.sizeof(INPUT))
+    wheel_delta = ctypes.c_uint32(amount * 120).value
+    event = _INPUT(0, _INPUT_UNION(
+        mi=_MOUSEINPUT(0, 0, wheel_delta, 0x0800, 0, 0)))
+    if send_input([event]) != 1:
+        raise InputRefused('Windows did not accept the mouse scroll.')
     time.sleep(SETTLE_SECONDS)
-    return f'{amount} scroll steps were sent to {target.describe()}.'
+    return (f'Windows accepted {amount} scroll steps for {target.describe()}. '
+            'Inspect the window to verify its position.')
 
 
 def activate_window(process_id: int, *, foreground=None, title=None) -> str:
