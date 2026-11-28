@@ -374,3 +374,55 @@ def test_expired_approval_cannot_dispatch(registry, gateway, monkeypatch):
     assert called and mission.status == 'failed'
     assert 'time limit' in mission.events[-1].detail
     assert not mission.tools_used
+
+
+# ── ReAct reliability and evaluation metrics ────────────────────────────
+
+def test_ten_step_mission_keeps_bounded_action_evidence(registry, gateway):
+    # Nine real read-only actions plus the final model answer: a slightly
+    # longer observation/action workflow fits without removing the time limit.
+    decisions = [tool_call('read_thing', {'name': str(index)}) for index in range(9)]
+    decisions.append(final_answer('All nine observations were returned.'))
+    mission = runtime_for(registry, gateway, FakePlanner(decisions)).run('Inspect nine items.')
+    assert mission.status == 'completed'
+    assert mission.steps == 10
+    assert len(mission.evidence) == 9
+    assert mission.metrics['tool_attempts'] == 9
+    assert mission.metrics['tool_results_recorded'] == 9
+    assert mission.metrics['tool_attempts_without_result'] == 0
+
+
+def test_metrics_count_real_tool_results_not_just_proposals(registry, gateway):
+    planner = FakePlanner([
+        tool_call('broken_thing'),
+        final_answer('The attempted lookup failed.'),
+    ])
+    mission = runtime_for(registry, gateway, planner).run('Try to look it up.')
+    metrics = mission.as_dict()['metrics']
+    assert metrics['tool_attempts'] == 1
+    assert metrics['tool_results_recorded'] == 0
+    assert metrics['tool_attempts_without_result'] == 1
+    assert metrics['errors_reported'] == 1
+    assert mission.evidence == []
+
+
+def test_skipped_work_is_explicit_in_mission_metrics(registry, gateway):
+    skipped = json.dumps({'action': 'skip', 'reason': 'No matching desktop control.'})
+    mission = runtime_for(registry, gateway,
+                          FakePlanner([skipped, final_answer('This step was blocked.')])).run(
+                              'Use the unavailable desktop control.')
+    assert mission.metrics['skipped_steps'] == 1
+    assert mission.metrics['tool_results_recorded'] == 0
+    assert mission.as_dict()['metrics']['skipped_steps'] == 1
+
+
+def test_mission_metrics_outlive_bounded_hud_event_history(registry, gateway):
+    from core.mission import MAX_EVENTS, Mission
+
+    runtime = runtime_for(registry, gateway, FakePlanner([]))
+    mission = Mission(id='test', goal='Count events')
+    for index in range(MAX_EVENTS + 7):
+        runtime._emit(mission, 'tool', f'Attempt {index}')
+    assert len(mission.events) == MAX_EVENTS
+    assert mission.metrics['tool_attempts'] == MAX_EVENTS + 7
+    assert mission.metrics['tool_attempts_without_result'] == MAX_EVENTS + 7
