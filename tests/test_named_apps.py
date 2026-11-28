@@ -145,3 +145,20 @@ def test_physical_mouse_and_keyboard_commands_bind_selected_window(tmp_path, mon
     with pytest.raises(InputRefused, match='window changed'):
         named_apps.run(request, gateway, lambda _: True, lambda: None, selected=selected)
     assert keyboard.call_count == 1
+
+
+@pytest.mark.parametrize(('command', 'control'), [
+    ('Hey Jarvis, Play pannu.', 'Play'),
+    ('டைம்லைன் ஓபன் பண்ணு', 'Timeline'),
+    ('split at playhead', 'Split'),
+])
+def test_short_editor_commands_require_an_app_context(command, control):
+    assert named_apps.parse(command) is None
+    assert named_apps.parse(command, has_selection=True) == named_apps.Request(
+        'mouse_click', control=control)
+
+
+def test_clip_selection_requires_a_named_control():
+    assert named_apps.parse('Select Clip 3', has_selection=True) == named_apps.Request(
+        'select_control', control='Clip 3')
+    assert named_apps.parse('select this', has_selection=True) is None

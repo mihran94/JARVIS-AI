@@ -77,6 +77,23 @@ def parse(message, *, has_selection=False):
 
 
 def input_command(text, app=''):
+    spoken = re.sub(r'\s+', ' ', text.casefold().strip(' .!?'))
+    actions = {
+        'play this': 'Play', 'play': 'Play', 'play pannu': 'Play',
+        'ப்ளே பண்ணு': 'Play', 'இதை ப்ளே பண்ணு': 'Play',
+        'pause': 'Pause', 'pause pannu': 'Pause', 'பாஸ் பண்ணு': 'Pause',
+        'open timeline': 'Timeline', 'timeline open pannu': 'Timeline',
+        'டைம்லைன் ஓபன் பண்ணு': 'Timeline',
+        'split at playhead': 'Split', 'playhead-la split pannu': 'Split',
+        'playhead-ல கட் பண்ணு': 'Split',
+    }
+    if spoken in actions:
+        return Request('mouse_click', app, actions[spoken])
+    selection = re.fullmatch(r'select (.+)|(.+?) (?:select pannu|செலக்ட் பண்ணு)', text.rstrip(' .!?'), re.I)
+    if selection:
+        label = (selection[1] or selection[2]).strip()
+        if label.casefold() not in {'this', 'it', 'இதை', 'இத', 'அதை'}:
+            return Request('select_control', app, label)
     click = re.fullmatch(r'mouse click (.+)|(.+?) mouse click pannu', text, re.I)
     if click:
         return Request('mouse_click', app, (click[1] or click[2]).strip())
@@ -196,6 +213,8 @@ def run(request, gateway, confirm, checkpoint, *, selected=None):
         name, ident = request.control, ''
         if name.startswith('id='):
             name, ident = '', name[3:]
+        if request.verb == 'select_control':
+            return app_control.select_control(pid, title, name, ident, checkpoint=guard)
         if request.verb == 'mouse_click':
             return app_control.mouse_click(pid, title, name, ident, checkpoint=guard)
         if request.verb in ('keyboard_key', 'keyboard_text'):
@@ -210,6 +229,6 @@ def run(request, gateway, confirm, checkpoint, *, selected=None):
 
     status = {
         'click': 'dispatched', 'mouse_click': 'dispatched', 'keyboard_key': 'dispatched',
-        'set': 'verified', 'keyboard_text': 'verified', 'inspect': 'completed',
+        'select_control': 'verified', 'set': 'verified', 'keyboard_text': 'verified', 'inspect': 'completed',
     }[request.verb]
     return gateway.run(Action(f'app_{request.verb}', target), confirm, operate, completion_status=status)

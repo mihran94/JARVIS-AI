@@ -20,6 +20,7 @@ BLOCKED_PROCESSES = {
 }
 INVOKE_TYPES = {'Button', 'MenuItem', 'SplitButton'}
 EDIT_TYPES = {'Edit'}
+SELECT_TYPES = {'ListItem', 'DataItem', 'TabItem', 'TreeItem'}
 SENSITIVE_LABELS = (
     'password', 'passcode', 'secret', 'one-time code', 'security code', 'api key',
     'terminal', 'command prompt', 'powershell',
@@ -107,7 +108,7 @@ def see_controls(pid, title):
         results = []
         for control in controls:
             entry = _usable(control, pid)
-            if entry and entry[2] in INVOKE_TYPES | EDIT_TYPES and (entry[0] or entry[1]):
+            if entry and entry[2] in INVOKE_TYPES | EDIT_TYPES | SELECT_TYPES and (entry[0] or entry[1]):
                 name, automation_id, kind = entry
                 results.append(f'{kind} {name[:100]!r} (id={automation_id[:100]!r})')
         check()
@@ -137,7 +138,7 @@ def _selected_control(pid, title, name, automation_id, kinds, checkpoint):
             if not entry:
                 continue
             actual_name, actual_id, kind = entry
-            if kind in kinds and (not name or name == actual_name) and (
+            if kind in kinds and (not name or name.casefold() == actual_name.casefold()) and (
                     not automation_id or automation_id == actual_id):
                 matches.append((control, entry))
         if len(matches) != 1:
@@ -177,6 +178,20 @@ def use_control(pid, title, name, automation_id='', *, text=None, checkpoint=lam
         return f'Windows verified the text in {label!r}.'
 
 
+def select_control(pid, title, name, automation_id='', *, checkpoint=lambda: None):
+    from System.Windows.Automation import SelectionItemPattern
+
+    with _selected_control(pid, title, name, automation_id, SELECT_TYPES, checkpoint) as (
+            control, label, guard):
+        pattern = control.GetCurrentPattern(SelectionItemPattern.Pattern)
+        guard()
+        pattern.Select()
+        guard()
+        if not pattern.Current.IsSelected:
+            raise InputRefused('Windows did not verify the requested selection.')
+        return f'Windows verified that {label!r} is selected.'
+
+
 def _point_hits(control, x, y):
     from System.Windows import Point
 
@@ -186,7 +201,7 @@ def _point_hits(control, x, y):
 
 def mouse_click(pid, title, name, automation_id='', *, checkpoint=lambda: None):
     """Physically click the published point of exactly one visible control."""
-    with _selected_control(pid, title, name, automation_id, INVOKE_TYPES | EDIT_TYPES,
+    with _selected_control(pid, title, name, automation_id, INVOKE_TYPES | EDIT_TYPES | SELECT_TYPES,
                            checkpoint) as (control, label, guard):
         point = control.GetClickablePoint()
         x, y = round(point.X), round(point.Y)
