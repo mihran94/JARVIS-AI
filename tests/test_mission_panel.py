@@ -25,7 +25,7 @@ import pytest
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QApplication
 
-from core.mission import Mission, MissionEvent
+from core.mission import BUDGET_SECONDS, MAX_STEPS, Mission, MissionEvent
 from desktop.mission_panel import GaugeRing, MissionPanel, TelemetryColumn
 from desktop.prime_ui import PrimePalette
 
@@ -56,6 +56,15 @@ def test_the_console_starts_idle(panel):
     assert panel.timeline.entries() == []
     assert panel.evidence_column.count.text() == 'no tool ran'
     assert panel.evidence_column.answer.text() == 'No mission has run yet.'
+
+
+def test_the_default_run_limit_label_matches_the_runtime_budget(panel):
+    assert panel.run_limit.currentData() == (MAX_STEPS, BUDGET_SECONDS)
+    assert panel.run_limit.currentText() == f'{MAX_STEPS} steps · {BUDGET_SECONDS // 60} min'
+    assert [(panel.run_limit.itemText(index), panel.run_limit.itemData(index)) for index in (1, 2)] == [
+        ('12 steps · 6 min', (12, 360)),
+        ('24 steps · 12 min', (24, 720)),
+    ]
 
 
 def test_a_running_mission_says_so(panel):

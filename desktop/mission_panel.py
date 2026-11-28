@@ -613,9 +613,9 @@ class MissionPanel(QWidget):
         command.addWidget(self.goal, 1)
         self.run_limit = QComboBox()
         self.run_limit.setAccessibleName('Mission execution limits')
-        self.run_limit.addItem('6 steps · 3 min', (MAX_STEPS, BUDGET_SECONDS))
-        self.run_limit.addItem('12 steps · 6 min', (12, 360))
-        self.run_limit.addItem('24 steps · 12 min', (24, 720))
+        for steps, seconds in ((MAX_STEPS, BUDGET_SECONDS), (12, 360), (24, 720)):
+            duration = f'{seconds} s' if seconds % 60 else f'{seconds // 60} min'
+            self.run_limit.addItem(f'{steps} steps · {duration}', (steps, seconds))
         self.run_limit.setToolTip('Maximum planner steps and elapsed time for this mission')
         command.addWidget(self.run_limit)
         self.run_button = QPushButton('Start mission')
