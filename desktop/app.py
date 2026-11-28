@@ -387,6 +387,8 @@ class Window(QMainWindow):
         self.desktop_control_active = False
         self.desktop_control_ticket = None
         self.store = Store(self.root / 'history.sqlite3')
+        from core.reminders import Reminders
+        self.reminders = Reminders(self.store)
         saved_theme = self.store.get('omega:theme')
         self.interface_theme = saved_theme if isinstance(saved_theme, str) and saved_theme in OMEGA_THEMES else DEFAULT_THEME
         self.setStyleSheet(theme_sheet(self.interface_theme))
@@ -575,6 +577,9 @@ class Window(QMainWindow):
         self.maintenance_timer.timeout.connect(self.check_maintenance)
         self.maintenance_timer.start(60_000)
         self.enable_prime()
+        self.reminder_timer = QTimer(self)
+        self.reminder_timer.timeout.connect(self.deliver_reminders)
+        self.reminder_timer.start(1000)
         # The voice state in the HUD is read on a timer. A timer event is
         # served before the paint events, so the HUD stays true even when
         # the animation is keeping the machine busy.
@@ -1708,7 +1713,24 @@ class Window(QMainWindow):
         self.render_chat()
         return True
 
+    def deliver_reminders(self):
+        if self.policy.stopped:
+            return
+        for reminder in self.reminders.due():
+            self.store.message(self.session, 'system', 'Reminder · ' + reminder)
+            self.render_chat()
+            self.show_hud_text(reminder)
+            self.statusBar().showMessage(reminder, 20000)
+            if not self.voice_panel.muted:
+                QApplication.beep()
+                self.voice_panel.speak_response(reminder, local_only=True, queue_local=True)
+
     def route_interface_command(self, spoken):
+        if not self.policy.stopped:
+            reply = self.reminders.command(spoken)
+            if reply is not None:
+                self.show_local_system_reply(spoken, reply)
+                return True
         from core.conversation import web_search_argument
         from urllib.parse import urlencode
         query = web_search_argument(spoken)
