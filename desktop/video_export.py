@@ -4,7 +4,7 @@ import sys
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
+    QCheckBox, QDoubleSpinBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
     QLineEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
@@ -49,21 +49,27 @@ class PreviewInputs(MediaInputs):
             "Select one clip per shot. Save the JSX for File → Scripts → Run Script File, "
             "or send it to After Effects on Windows. Short clips hold their last frame."
         ) if timeline else (
-            "Select one clip per shot. JARVIS trims from the beginning, holds the last "
-            "frame for short clips and fits the image inside the vertical frame. "
+            "Select one clip per shot. Choose a source start if needed. Short clips hold their last "
+            "frame. JARVIS fits the image inside the vertical frame. "
             "Optional narration starts at the beginning and lowers the clip audio."
         ))
         note.setWordWrap(True)
         layout.addWidget(note)
         self.form = QFormLayout()
         layout.addLayout(self.form)
-        self.clips = [
-            self.add_file(
-                f"Shot {index} · {shot['start_ms'] / 1000:.2f}–{shot['end_ms'] / 1000:.2f}s",
-                "Video (*.mp4 *.mov *.m4v)",
-            )
-            for index, shot in enumerate(plan["shots"], 1)
-        ]
+        self.plan = plan
+        self.clips = []
+        self.source_starts = []
+        for index, shot in enumerate(plan["shots"], 1):
+            label = f"Shot {index} · {shot['start_ms'] / 1000:.2f}–{shot['end_ms'] / 1000:.2f}s"
+            self.clips.append(self.add_file(label, "Video (*.mp4 *.mov *.m4v)"))
+            start = QDoubleSpinBox()
+            start.setRange(0, 86400)
+            start.setDecimals(3)
+            start.setSuffix(" s")
+            start.setValue(shot.get("source_start_ms", 0) / 1000)
+            self.form.addRow(f"Shot {index} source start", start)
+            self.source_starts.append(start)
         self.narration = self.add_file("Narration (optional)", "Audio (*.wav *.mp3 *.m4a *.aac *.flac *.ogg)", clearable=True)
         self.script_only = None
         if timeline:
@@ -101,6 +107,13 @@ class PreviewInputs(MediaInputs):
         if self.script_only is not None:
             self.script_only.toggled.connect(self.refresh_ready)
         self.refresh_ready()
+
+    def selected_plan(self):
+        shots = []
+        for shot, field in zip(self.plan["shots"], self.source_starts):
+            offset = round(field.value() * 1000)
+            shots.append({**shot, "source_start_ms": offset})
+        return {**self.plan, "shots": shots}
 
     def refresh_ready(self):
         script_only = self.script_only is not None and self.script_only.isChecked()

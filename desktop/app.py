@@ -3563,6 +3563,7 @@ class Window(QMainWindow):
             clips = [field.text() for field in dialog.clips]
             output = dialog.target.text()
             narration = dialog.narration.text() or None
+            edit_plan = dialog.selected_plan()
             exporter, action, label = {
                 'CapCut Desktop': (export_capcut, 'export_for_capcut', 'Preparing CapCut export…'),
                 'DaVinci Resolve': (export_davinci, 'export_for_davinci', 'Preparing DaVinci Resolve export…'),
@@ -3572,7 +3573,7 @@ class Window(QMainWindow):
                 Action(action, output), self.confirm,
                 lambda: self.start_video_export(
                     output, label,
-                    lambda check: exporter(plan, clips, output, check, narration=narration)))
+                    lambda check: exporter(edit_plan, clips, output, check, narration=narration)))
 
         self.notify(operation)
 
@@ -3671,7 +3672,7 @@ class Window(QMainWindow):
             executable = None if dialog.script_only.isChecked() else timeline_executable(dialog.target.text())
             clips = [field.text() for field in dialog.clips]
             narration = dialog.narration.text() or None
-            script = timeline_script(plan, clips, narration)
+            script = timeline_script(dialog.selected_plan(), clips, narration)
             name = f'video-plans/{folder}/after-effects-timeline-{uuid.uuid4().hex}.jsx'
 
             def handoff():

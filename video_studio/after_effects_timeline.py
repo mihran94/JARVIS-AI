@@ -15,7 +15,9 @@ def timeline_script(plan, clips, narration=None):
         "shots": [
             {"path": local_media_path(path, CLIP_EXTENSIONS).as_posix(),
              "start": shot["start_ms"] / 1000, "end": shot["end_ms"] / 1000,
-             "caption": shot["english_subtitle"]}
+             "caption": shot["english_subtitle"],
+             **({"sourceStart": shot["source_start_ms"] / 1000}
+                if shot.get("source_start_ms") else {})}
             for path, shot in zip(clips, plan["shots"])
         ],
         "narration": local_media_path(narration, AUDIO_EXTENSIONS).as_posix() if narration else None,
@@ -56,13 +58,17 @@ _TIMELINE = """
             }
             layer = comp.layers.add(footage);
             layer.name = "Shot " + (index + 1);
-            layer.startTime = shot.start;
+            var sourceStart = shot.sourceStart || 0;
+            if (sourceStart < 0 || sourceStart >= footage.duration) {
+                throw new Error("Shot " + (index + 1) + " source start must be inside the clip.");
+            }
+            layer.startTime = shot.start - sourceStart;
             layer.inPoint = shot.start;
-            if (footage.duration < shot.end - shot.start) {
+            if (footage.duration - sourceStart < shot.end - shot.start) {
                 layer.timeRemapEnabled = true;
                 var remap = layer.property("ADBE Time Remapping");
                 var finalFrame = Math.max(0, footage.duration - footage.frameDuration);
-                remap.expression = "Math.max(0, Math.min(time - inPoint, " + finalFrame + "))";
+                remap.expression = "Math.max(0, Math.min(time - inPoint + " + sourceStart + ", " + finalFrame + "))";
             }
             layer.outPoint = shot.end;
             scale = Math.min(1080 / footage.width, 1920 / footage.height) * 100;
