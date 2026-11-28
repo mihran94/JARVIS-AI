@@ -277,7 +277,7 @@ def test_launch_requires_foreground_evidence(registry, monkeypatch, observed):
     request = windows.LaunchRequest('Notepad', 123)
     monkeypatch.setattr(windows, 'launch_app', lambda _: request)
     monkeypatch.setattr(windows, 'launch_is_foreground', lambda result: result is request and observed)
-    ticks = iter([0.0, 1.0])
+    ticks = iter([0.0, 5.0])
     monkeypatch.setattr('core.mission_tools.time.monotonic', lambda: next(ticks))
     tool = registry.get('launch_app')
     if observed:
@@ -285,6 +285,25 @@ def test_launch_requires_foreground_evidence(registry, monkeypatch, observed):
     else:
         with pytest.raises(ToolError, match='window could not be verified'):
             tool.run({'app': 'Notepad'})
+
+
+@pytest.mark.parametrize('visible', [True, False])
+def test_packaged_calculator_requires_native_foreground_display_not_launcher_pid(registry, monkeypatch, visible):
+    from types import SimpleNamespace
+    from automation import windows, calculator
+
+    request = windows.LaunchRequest('Calculator', 123)
+    monkeypatch.setattr(windows, 'launch_app', lambda _: request)
+    monkeypatch.setattr(windows, 'launch_is_foreground', lambda _: True)
+    target = (1, object(), SimpleNamespace(Current=SimpleNamespace(ProcessId=456)))
+    monkeypatch.setattr(calculator, 'foreground_calculator', lambda: target if visible else None)
+    ticks = iter([0.0, 5.0])
+    monkeypatch.setattr('core.mission_tools.time.monotonic', lambda: next(ticks))
+    if visible:
+        assert '(PID 456)' in registry.get('launch_app').run({'app': 'Calculator'})
+    else:
+        with pytest.raises(ToolError, match='window could not be verified'):
+            registry.get('launch_app').run({'app': 'Calculator'})
 
 
 def test_export_writes_tamil_without_overwriting(registry, root):

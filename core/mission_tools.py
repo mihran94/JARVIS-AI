@@ -295,9 +295,18 @@ def _launch_app(arguments: dict, editors=None) -> str:
     try:
         request = launch_editor(name, editors[name]) if editors and name in editors else launch_app(name)
         # Windows may return from process creation before its window is ready.
-        deadline = time.monotonic() + 1.0
+        deadline = time.monotonic() + 5.0
         while True:
-            if launch_is_foreground(request):
+            if name == 'Calculator':
+                # calc.exe is a launcher stub on modern Windows. Its PID is
+                # not the packaged Calculator's PID; require its visible,
+                # foreground UIA display and the native process identity.
+                from automation.calculator import foreground_calculator
+                calculator = foreground_calculator()
+                if calculator is not None:
+                    pid = calculator[2].Current.ProcessId
+                    return f'{name} opened. Windows confirmed its foreground Calculator display (PID {pid}).'
+            elif launch_is_foreground(request):
                 return f'{name} opened. Windows confirmed its foreground process (PID {request.pid}).'
             if time.monotonic() >= deadline:
                 break
