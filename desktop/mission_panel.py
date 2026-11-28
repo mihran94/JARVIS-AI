@@ -625,6 +625,9 @@ class MissionPanel(QWidget):
         self.run_button.setAccessibleName('Start mission')
         self.run_button.clicked.connect(self.request_run)
         command.addWidget(self.run_button)
+        self.recovery_button = QPushButton('Review interrupted mission')
+        self.recovery_button.hide()
+        command.addWidget(self.recovery_button)
         self.cancel_button = QPushButton('Cancel')
         self.cancel_button.setAccessibleName('Cancel mission')
         self.cancel_button.clicked.connect(self.cancel_requested.emit)
@@ -651,6 +654,7 @@ class MissionPanel(QWidget):
     def set_running(self, running: bool):
         """Show that a mission is running, or that it is not."""
         self.run_button.setEnabled(not running)
+        self.recovery_button.setEnabled(not running)
         self.cancel_button.setEnabled(running)
         self.goal.setEnabled(not running)
         self.run_limit.setEnabled(not running)

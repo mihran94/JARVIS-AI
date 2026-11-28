@@ -30,6 +30,8 @@ import uuid
 
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 
+from PySide6.QtWidgets import QInputDialog
+
 from core.engines import EngineUnavailable
 from core.mission import AgentRuntime, MissionError, MissionEvent, MissionJournal, MAX_STEPS, parse_decision
 from core.mission_tools import build_registry
@@ -89,10 +91,28 @@ class MissionController(QObject):
         self.bridge = ApprovalBridge(window)
         panel.run_requested.connect(self.start)
         panel.cancel_requested.connect(self.cancel)
+        panel.recovery_button.clicked.connect(self.review_interrupted)
+        self.refresh_recovery()
+
+    def refresh_recovery(self):
+        self.panel.recovery_button.setVisible(self.window.store.interrupted_mission() is not None)
+
+    def review_interrupted(self):
+        entry = self.window.store.interrupted_mission()
+        if entry is None:
+            self.refresh_recovery()
+            return
+        goal, accepted = QInputDialog.getText(
+            self.window, 'Continue interrupted mission',
+            f"Checkpoint from {entry['created']} UTC\n{entry['detail']}\n\n"
+            "Check the current app or output. Enter only the work still needed:")
+        if accepted and goal.strip():
+            self.start(goal.strip(), continue_from=entry['id'])
+            self.refresh_recovery()
 
     # ------------------------------------------------------------------
 
-    def start(self, goal: str, *, from_chat: bool = False):
+    def start(self, goal: str, *, from_chat: bool = False, continue_from=None):
         """Start one mission with the goal the owner typed.
 
         `from_chat` means the goal came from the conversation, so the
@@ -112,7 +132,7 @@ class MissionController(QObject):
             model = window.selected_model(provider)
             self._key = window.get_key(provider)
             ticket = window.policy.ticket()
-            self._journal = MissionJournal(window.store)
+            self._journal = MissionJournal(window.store, continue_from=continue_from)
         except Exception as error:
             self._key = ''
             self.panel.set_running(False)

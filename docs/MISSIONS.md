@@ -136,3 +136,9 @@ action. If the app closes unexpectedly, the next launch marks the mission
 interrupted. Review the app or output before retrying. The checkpoint records
 the step number and tool name. It does not include command arguments, window
 titles, screen contents, or provider responses.
+
+After restarting JARVIS, choose **Review interrupted mission** in Mission Control.
+It shows the latest interrupted checkpoint. Inspect the app or output, then enter
+only the remaining work. Cancel leaves the checkpoint available. Submitting starts
+a new planning run with fresh approvals and marks the reviewed entry as continued.
+Earlier tool arguments and the original goal are never loaded for execution.

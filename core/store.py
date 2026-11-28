@@ -88,6 +88,27 @@ class Store:
                        (ident, kind, 'pending', detail))
         return ident
 
+    def interrupted_mission(self):
+        with self.connect() as db:
+            row = db.execute("""SELECT id, created, detail FROM tasks
+                                WHERE kind='mission' AND status='interrupted'
+                                ORDER BY rowid DESC LIMIT 1""").fetchone()
+            return dict(row) if row else None
+
+    def continue_mission(self, ident):
+        """Claim a reviewed checkpoint once and create its successor atomically."""
+        successor = uuid.uuid4().hex
+        with self.connect() as db:
+            claimed = db.execute("""UPDATE tasks SET status='continued'
+                                    WHERE id=? AND kind='mission' AND status='interrupted'""",
+                                 (ident,))
+            if claimed.rowcount != 1:
+                raise ValueError('This mission checkpoint is no longer available.')
+            db.execute("""INSERT INTO tasks(id,kind,status,detail)
+                          SELECT ?,kind,'pending',detail FROM tasks WHERE id=?""",
+                       (successor, ident))
+        return successor
+
     def finish(self, ident, status, detail=None):
         with self.connect() as db:
             if detail is None:

@@ -316,9 +316,10 @@ def coerce_edit(tool, arguments: dict) -> dict:
 class MissionJournal:
     """Persist action receipts in Activity, without saving the request or results."""
 
-    def __init__(self, store):
+    def __init__(self, store, *, continue_from=None):
         self.store = store
-        self.task_id = store.task('mission', 'Mission started')
+        self.task_id = (store.continue_mission(continue_from) if continue_from is not None
+                        else store.task('mission', 'Mission started'))
         self.last_response = None
         self.pending_action = None
 

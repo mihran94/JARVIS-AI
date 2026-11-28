@@ -207,3 +207,34 @@ def test_a_mission_can_be_cancelled(window):
     assert wait_for(lambda: window.mission_panel.status.text() in
                     ('CANCELLED', 'FAILED', 'COMPLETE'))
     assert window.mission_panel.status.text() != 'COMPLETE'
+
+
+def test_review_interrupted_mission_runs_only_remaining_goal(window, monkeypatch):
+    from PySide6.QtWidgets import QInputDialog
+
+    store = window.store
+    old = store.task('mission', 'original private goal')
+    receipt = 'Check before retrying: step 3, click_app_control'
+    store.finish(old, 'interrupted', receipt)
+    controller = window.mission_controller
+    controller.refresh_recovery()
+    button = window.mission_panel.recovery_button
+    assert not button.isHidden()
+    responses = iter([('ignored', False), ('  inspect the output  ', True)])
+
+    def review(parent, title, prompt):
+        assert receipt in prompt
+        return next(responses)
+
+    monkeypatch.setattr(QInputDialog, 'getText', review)
+    button.click()
+    assert store.interrupted_mission()['id'] == old
+    connect(window, [final('Reviewed.')])
+    button.click()
+    assert wait_for(lambda: window.mission_panel.status.text() == 'COMPLETE')
+    assert window.mission_panel.title.text() == 'inspect the output'
+    assert not window.automation_panel.cards()
+    assert button.isHidden()
+    assert next(row for row in store.tasks() if row['id'] == old)['status'] == 'continued'
+    with pytest.raises(ValueError):
+        store.continue_mission(old)
