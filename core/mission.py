@@ -313,6 +313,36 @@ def coerce_edit(tool, arguments: dict) -> dict:
     return converted
 
 
+class MissionJournal:
+    """Persist action receipts in Activity, without saving the request or results."""
+
+    def __init__(self, store):
+        self.store = store
+        self.task_id = store.task('mission', 'Mission started')
+        self.last_response = None
+        self.pending_action = None
+
+    def before_write(self, step, name):
+        self.pending_action = (step, name)
+        self.record('running')
+
+    def after_response(self, step, name, *, awaiting_readback):
+        self.last_response = (step, name)
+        if not awaiting_readback:
+            self.pending_action = None
+        self.record('running')
+
+    def record(self, status):
+        parts = []
+        if self.last_response:
+            step, name = self.last_response
+            parts.append(f'Last tool response: step {step}, {name}')
+        if self.pending_action:
+            step, name = self.pending_action
+            parts.append(f'Check before retrying: step {step}, {name}')
+        self.store.finish(self.task_id, status, ' · '.join(parts) or 'No tool response recorded')
+
+
 class AgentRuntime:
     """Runs one mission: propose, check, run, observe, repeat.
 
@@ -324,7 +354,8 @@ class AgentRuntime:
     """
 
     def __init__(self, registry, gateway, planner, *, max_steps=MAX_STEPS,
-                 budget_seconds=BUDGET_SECONDS, on_event=None, check=None, compact_tools=False):
+                 budget_seconds=BUDGET_SECONDS, on_event=None, check=None, compact_tools=False,
+                 journal=None):
         self.registry = registry
         self.gateway = gateway
         self.planner = planner
@@ -332,6 +363,7 @@ class AgentRuntime:
         self.budget_seconds = max(1, int(budget_seconds))
         self.on_event = on_event
         self.compact_tools = compact_tools
+        self.journal = journal
         #: Raised by the caller's check when an emergency stop is active.
         self.check = check or (lambda: None)
 
@@ -349,11 +381,15 @@ class AgentRuntime:
 
     def _stop(self, mission: Mission, label: str, detail: str = '') -> Mission:
         mission.status = 'cancelled'
+        if self.journal is not None:
+            self.journal.record(mission.status)
         self._emit(mission, 'cancelled', label, detail)
         return mission
 
     def _fail(self, mission: Mission, label: str, detail: str = '') -> Mission:
         mission.status = 'failed'
+        if self.journal is not None:
+            self.journal.record(mission.status)
         self._emit(mission, 'error', label, detail)
         return mission
 
@@ -373,6 +409,8 @@ class AgentRuntime:
             raise MissionError('A mission needs a goal.')
         check = check or self.check
         mission = Mission(id=uuid.uuid4().hex, goal=goal)
+        if self.journal is not None:
+            self.journal.record('running')
         self._emit(mission, 'goal', 'Mission started', goal)
 
         messages = [
@@ -430,6 +468,8 @@ class AgentRuntime:
             if decision['action'] == 'answer':
                 mission.answer = decision['answer']
                 mission.status = 'completed'
+                if self.journal is not None:
+                    self.journal.record(mission.status)
                 if decision['thought']:
                     self._emit(mission, 'thought', 'JARVIS decided', decision['thought'], step)
                 self._emit(mission, 'answer', 'Mission complete', decision['answer'], step)
@@ -487,6 +527,9 @@ class AgentRuntime:
             def invoke(checked):
                 nonlocal write_started
                 checkpoint()
+                if self.journal is not None and not tool.read_only:
+                    self.journal.before_write(step, tool.name)
+                    checkpoint()
                 write_started = not tool.read_only
                 if tool.needs_window_readback:
                     mission.pending_readback = {
@@ -569,6 +612,9 @@ class AgentRuntime:
                     arguments['process_id'], arguments['title']) == (
                         pending['process_id'], pending['title']):
                 mission.pending_readback = None
+            if self.journal is not None:
+                self.journal.after_response(step, tool.name,
+                                            awaiting_readback=mission.pending_readback is not None)
             self._emit(mission, 'result', f'{tool.name} finished', text[:400], step)
             mission.tools_used.append({'tool': tool.name, 'summary': summary, 'result': text[:400]})
             messages.append({'role': 'assistant', 'content': raw})

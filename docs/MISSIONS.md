@@ -127,3 +127,12 @@ scroll it one increment. JARVIS reads the Windows UI Automation scroll
 position before and after, and records the movement only when it matches the
 requested direction. Reaching an edge or losing the target ends the action
 without a repeat attempt.
+
+### Review an interrupted mission
+
+The Activity history keeps the last recorded tool response and any write that
+may need checking. JARVIS records the write checkpoint before dispatching the
+action. If the app closes unexpectedly, the next launch marks the mission
+interrupted. Review the app or output before retrying. The checkpoint records
+the step number and tool name. It does not include command arguments, window
+titles, screen contents, or provider responses.

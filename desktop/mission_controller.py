@@ -24,13 +24,14 @@ WHAT THIS IS NOT
 from __future__ import annotations
 
 import json
+import sqlite3
 import threading
 import uuid
 
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 
 from core.engines import EngineUnavailable
-from core.mission import AgentRuntime, MissionError, MissionEvent, MAX_STEPS, parse_decision
+from core.mission import AgentRuntime, MissionError, MissionEvent, MissionJournal, MAX_STEPS, parse_decision
 from core.mission_tools import build_registry
 from desktop.mission_panel import MissionWorker
 from security.policy import Action, Stopped
@@ -84,6 +85,7 @@ class MissionController(QObject):
         self._from_chat = False
         self._step = 0
         self._waiting = {}
+        self._journal = None
         self.bridge = ApprovalBridge(window)
         panel.run_requested.connect(self.start)
         panel.cancel_requested.connect(self.cancel)
@@ -110,6 +112,7 @@ class MissionController(QObject):
             model = window.selected_model(provider)
             self._key = window.get_key(provider)
             ticket = window.policy.ticket()
+            self._journal = MissionJournal(window.store)
         except Exception as error:
             self._key = ''
             self.panel.set_running(False)
@@ -137,6 +140,7 @@ class MissionController(QObject):
             on_event=self.on_event,
             check=lambda: window.policy.check(ticket),
             compact_tools=True,
+            journal=self._journal,
         )
         worker = MissionWorker(runtime, goal, confirm=self._confirm, parent=self)
         worker.event.connect(self.on_event)
@@ -306,7 +310,9 @@ class MissionController(QObject):
         """The mission finished."""
         self._key = ''
         self.panel.set_running(False)
+        self._journal = None
         self.panel.show_result(mission)
+        self.window.refresh_history()
         if self._from_chat:
             self._from_chat = False
             self.window.mission_answered(mission)
@@ -317,6 +323,14 @@ class MissionController(QObject):
         self._key = ''
         self.panel.set_running(False)
         self.panel.set_status('failed')
+        if self._journal is not None:
+            try:
+                self._journal.record('failed')
+                self.window.refresh_history()
+            except (OSError, sqlite3.Error):
+                pass
+            finally:
+                self._journal = None
         self.panel.append_event(MissionEvent('error', 'Mission failed', message))
         if self._from_chat:
             self._from_chat = False
