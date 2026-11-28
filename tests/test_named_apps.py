@@ -119,3 +119,29 @@ def test_selected_app_survives_voice_turn_and_releases_on_stop(tmp_path, monkeyp
         window.close()
         window.deleteLater()
         app.processEvents()
+
+
+def test_physical_mouse_and_keyboard_commands_bind_selected_window(tmp_path, monkeypatch):
+    selected = named_apps.SelectedWindow(7, 'My edit', 123, 41)
+    monkeypatch.setattr(named_apps.psutil, 'Process', lambda _: SimpleNamespace(create_time=lambda: 123))
+    monkeypatch.setattr(named_apps.app_control, 'focus_selected', lambda *_: None)
+    foreground = [41]
+    monkeypatch.setattr(named_apps.app_control.win_controls, 'foreground_window', lambda: foreground[0])
+    mouse = Mock(return_value='Clicked')
+    keyboard = Mock(return_value='Typed')
+    monkeypatch.setattr(named_apps.app_control, 'mouse_click', mouse)
+    monkeypatch.setattr(named_apps.app_control, 'keyboard_input', keyboard)
+    gateway = Gateway(Policy(), Store(tmp_path / 'history.db'))
+
+    assert named_apps.parse('Notepad app open pannu').app == 'Notepad'
+    assert named_apps.parse('mouse click Editor') is None
+    assert named_apps.parse('in app Notepad, keyboard press tab in Editor').value == 'tab'
+    for command in ('mouse click Editor', 'keyboard type in Editor = வணக்கம்'):
+        request = named_apps.parse(command, has_selection=True)
+        named_apps.run(request, gateway, lambda _: True, lambda: None, selected=selected)
+    assert mouse.call_args.args[:3] == (7, 'My edit', 'Editor')
+    assert keyboard.call_args.kwargs['text'] == 'வணக்கம்'
+    foreground[0] = 42
+    with pytest.raises(InputRefused, match='window changed'):
+        named_apps.run(request, gateway, lambda _: True, lambda: None, selected=selected)
+    assert keyboard.call_count == 1

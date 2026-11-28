@@ -40,7 +40,7 @@ def parse(message, *, has_selection=False):
         return Request('select', (match[1] or match[2]).strip())
     if text.casefold() in ('release selected app', 'app release pannu'):
         return Request('release')
-    for pattern in (r'open installed app (.+)', r'installed app (.+?) open pannu'):
+    for pattern in (r'open (?:installed )?app (.+)', r'(.+?) app open pannu', r'installed app (.+?) open pannu'):
         match = re.fullmatch(pattern, text, re.I)
         if match:
             return Request('open', match[1].strip())
@@ -58,7 +58,13 @@ def parse(message, *, has_selection=False):
         field, sep, value = label.partition(' = ')
         if sep:
             return Request('set', app.strip(), field.strip(), value)
+    target = re.fullmatch(r'in app (.+?), (.+)', text, re.I)
+    if target:
+        return input_command(target[2], target[1].strip())
     if has_selection:
+        direct = input_command(text)
+        if direct:
+            return direct
         if text.casefold() in ('show controls', 'controls kaattu'):
             return Request('inspect')
         match = re.fullmatch(r'click (.+)|(.+?) click pannu', text, re.I)
@@ -67,6 +73,19 @@ def parse(message, *, has_selection=False):
         match = re.fullmatch(r'set (.+?) = (.+)', text, re.I)
         if match:
             return Request('set', control=match[1].strip(), value=match[2])
+    return None
+
+
+def input_command(text, app=''):
+    click = re.fullmatch(r'mouse click (.+)|(.+?) mouse click pannu', text, re.I)
+    if click:
+        return Request('mouse_click', app, (click[1] or click[2]).strip())
+    key = re.fullmatch(r'(?:keyboard )?press (\S+) in (.+)', text, re.I)
+    if key:
+        return Request('keyboard_key', app, key[2].strip(), key[1].casefold())
+    typed = re.fullmatch(r'(?:keyboard )?type in (.+?) = (.+)', text, re.I)
+    if typed:
+        return Request('keyboard_text', app, typed[1].strip(), typed[2])
     return None
 
 
@@ -157,7 +176,7 @@ def run(request, gateway, confirm, checkpoint, *, selected=None):
     target = f'{title} (PID {pid})'
     if request.control:
         target += f' — {request.control}'
-    if request.verb == 'set':
+    if request.verb in ('set', 'keyboard_key', 'keyboard_text'):
         target += f' = {request.value}'
 
     def operate():
@@ -177,9 +196,20 @@ def run(request, gateway, confirm, checkpoint, *, selected=None):
         name, ident = request.control, ''
         if name.startswith('id='):
             name, ident = '', name[3:]
+        if request.verb == 'mouse_click':
+            return app_control.mouse_click(pid, title, name, ident, checkpoint=guard)
+        if request.verb in ('keyboard_key', 'keyboard_text'):
+            return app_control.keyboard_input(
+                pid, title, name, ident,
+                text=request.value if request.verb == 'keyboard_text' else None,
+                key=request.value if request.verb == 'keyboard_key' else None,
+                checkpoint=guard)
         return app_control.use_control(pid, title, name, ident,
                                        text=request.value if request.verb == 'set' else None,
                                        checkpoint=guard)
 
-    status = {'click': 'dispatched', 'set': 'verified', 'inspect': 'completed'}[request.verb]
+    status = {
+        'click': 'dispatched', 'mouse_click': 'dispatched', 'keyboard_key': 'dispatched',
+        'set': 'verified', 'keyboard_text': 'verified', 'inspect': 'completed',
+    }[request.verb]
     return gateway.run(Action(f'app_{request.verb}', target), confirm, operate, completion_status=status)
