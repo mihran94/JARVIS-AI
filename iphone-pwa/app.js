@@ -264,6 +264,17 @@ async function sendMessage(text, { images } = {}) {
   }
   const call = state.call;
   const command = message.toLowerCase().replace(/[.!?]+$/, '');
+  const appRequest = /^(?:(?:hey jarvis[,:]? )?(?:open (?:installed )?app|PC-la open) +(.+)|(?:hey jarvis[,:]? )?(.+?) +app open pannu)[.!?]*$/iu.exec(message);
+  const appName = appRequest && (appRequest[1] || appRequest[2]).replace(/[.!?]+$/, '').trim();
+  if (!images && appName) {
+    if (appName.length > 80) {
+      setStatus('chatStatus', 'Enter the Windows app name in 80 characters or fewer.', 'error');
+      return;
+    }
+    await submitTaskRequest({ kind: 'CUSTOM', title: 'Open ' + appName,
+      payload: JSON.stringify({ action: 'open_installed_app', app: appName }), requireApproval: true });
+    return;
+  }
   const asksToLook = /^(?:look|look at this|look through the camera|what is this|what do you see|what object is this|ithu enna|இந்தப் பொருள் என்ன|இந்த பொருள் என்ன|பார்|பாரு|இதைப் பார்|இதை பாரு|இது என்ன|நான் என்ன காட்டுறேன்|camera paaru|கேமராவில் பார்)[.!?]*$/iu.test(message);
   if (!images && (asksToLook || (call?.mode === 'video' && !CHAT_COMMANDS.has(command)))) {
     const view = $('liveCameraView');

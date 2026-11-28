@@ -35,12 +35,13 @@ JOB_STATES = (
 )
 
 DISK_SPACE_ACTION = 'check_disk_space'
+OPEN_APP_ACTION = 'open_installed_app'
 #: The phone asks the desktop to back up the history.
 HISTORY_BACKUP_ACTION = 'backup_history'
 #: The phone asks the desktop to restore a backup it named.
 HISTORY_RESTORE_ACTION = 'restore_history'
 #: The actions a phone may ask for.
-SUPPORTED_ACTIONS = (DISK_SPACE_ACTION, HISTORY_BACKUP_ACTION, HISTORY_RESTORE_ACTION)
+SUPPORTED_ACTIONS = (DISK_SPACE_ACTION, HISTORY_BACKUP_ACTION, HISTORY_RESTORE_ACTION, OPEN_APP_ACTION)
 
 
 def operation_kind(operation) -> str:
@@ -129,6 +130,14 @@ class JobStore:
                 data = None
             if isinstance(data, dict) and data.get('action') in SUPPORTED_ACTIONS:
                 operation = data['action']
+                if operation == OPEN_APP_ACTION:
+                    name = data.get('app')
+                    if (not isinstance(name, str) or not 1 <= len(name.strip()) <= 80
+                            or not name.isprintable() or any(c in name for c in '/\\:')):
+                        operation = None
+                    else:
+                        operation = f'{OPEN_APP_ACTION}:{name.strip()}'
+                        title = f'Open {name.strip()}'
                 if operation == HISTORY_RESTORE_ACTION:
                     name = data.get('backup', '')
                     # Only a plain file name is accepted, so a phone can
@@ -199,7 +208,7 @@ class JobStore:
             job = self._replace(
                 job, state='FAILED' if error else 'SUCCEEDED',
                 progress=0.0 if error else 1.0, error=error,
-                logs=[*job.logs, 'Verification failed.' if error else 'Disk capacity verified.'],
+                logs=[*job.logs, 'Action failed.' if error else 'Action completed.'],
                 outputs=[result] if result else [],
                 finished_at=int(self._now() * 1000))
             self._jobs[job_id] = job
