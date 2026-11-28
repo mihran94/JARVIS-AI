@@ -67,6 +67,11 @@ def sign(method: str, path: str, timestamp: str, body: str, secret: str, nonce: 
     return hmac.new(secret.encode('utf-8'), canonical.encode('utf-8'), hashlib.sha256).hexdigest()
 
 
+def wake_secret(secret: str) -> str:
+    """Domain-separated key accepted only for the phone wake endpoint."""
+    return hmac.new(secret.encode(), b'JARVIS/iphone/wake/v1', hashlib.sha256).hexdigest()
+
+
 def verify(method: str, path: str, timestamp: str, body: str, secret: str, nonce: str,
            provided: str) -> None:
     """Raise `ProtocolError` unless the signature matches exactly."""

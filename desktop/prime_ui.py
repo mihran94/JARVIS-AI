@@ -218,9 +218,8 @@ class CoreMark(QLabel):
 class PrimeOrb(QWidget):
     """The assistant, painted rather than assembled.
 
-    The orb is a ring of arcs around a core that breathes. Its colour
-    says what JARVIS is doing, and the whole thing is drawn in one
-    `paintEvent`, so it is smooth at any size and at any scaling.
+    The angular M is suspended above a projection ring. Its highlights and
+    audio meter follow the assistant state and current input or output level.
     """
 
     def __init__(self, palette: PrimePalette, parent=None):
@@ -321,38 +320,62 @@ class PrimeOrb(QWidget):
         painter.drawEllipse(centre, radius * 0.98, radius * 0.98)
 
         painter.translate(centre)
-        tilt = 0.20 * math.sin(self._phase)
-        scale = radius * (1 + 0.10 * pulse)
-        painter.scale(scale, scale)
+        painter.scale(radius, radius)
+        phase = self._phase if self._motion else 0.0
 
-        # Each screen-width stroke is a fibre of the same folded glass ribbon.
-        spectrum = QLinearGradient(-0.8, -0.55, 0.8, 0.5)
-        spectrum.setColorAt(0.0, deep.lighter(165))
-        spectrum.setColorAt(0.28, bright.lighter(145))
-        spectrum.setColorAt(0.51, bright.darker(140))
-        spectrum.setColorAt(0.73, QColor('#f0fcff') if self.palette_.dark else bright.darker(130))
-        spectrum.setColorAt(1.0, bright)
+        # A shallow pool of projected light anchors the suspended glass mark.
+        base = QRectF(-0.71, 0.68, 1.42, 0.16)
+        painter.save()
+        painter.translate(0, base.center().y())
+        painter.scale(base.width() / 2, base.height() / 2)
+        pool = QRadialGradient(QPointF(0, 0), 1)
+        pool.setColorAt(0, _alpha(bright.name(), 125 + round(50 * signal)))
+        pool.setColorAt(0.6, _alpha(deep.name(), 40))
+        pool.setColorAt(1, _alpha(deep.name(), 0))
+        painter.setBrush(pool)
+        painter.drawEllipse(QPointF(0, 0), 1, 1)
+        painter.restore()
+
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        for index in range(38):
-            t = (index - 18.5) / 18.5
-            twist = t * (0.12 + 0.03 * pulse) + tilt * 0.08
-            ribbon = QPainterPath(QPointF(-0.74 + twist, 0.49 - t * 0.13))
-            ribbon.cubicTo(-0.61 + twist, 0.32, -0.65 - twist, -0.50, -0.60 - twist, -0.60)
-            ribbon.cubicTo(-0.53 - twist, -0.73, -0.21 + twist, -0.08, 0.02 + twist, 0.24 + t * 0.12)
-            ribbon.cubicTo(0.26 + twist, 0.18, 0.47 - twist, -0.68, 0.65 - twist, -0.60 - t * 0.10)
-            ribbon.cubicTo(0.72 - twist, -0.58, 0.58 + twist, 0.30, 0.76 + twist, 0.49 + t * 0.12)
-            painter.setOpacity(0.70 if index in (0, 37) else 0.26 + (1 - abs(t)) * 0.24)
-            painter.setPen(QPen(QBrush(spectrum), 0.012 if index in (0, 37) else 0.005))
-            painter.drawPath(ribbon)
+        painter.setPen(QPen(_alpha(bright.name(), 105), 0.012))
+        painter.drawArc(base, 15 * 16, 148 * 16)
+        painter.drawArc(base, 194 * 16, 141 * 16)
+        if side >= 100:
+            orbit = QRectF(-0.84, -0.82, 1.68, 1.52)
+            angle = round(math.degrees(phase) * 16)
+            painter.setPen(QPen(_alpha(bright.name(), 48), 0.009))
+            for offset in (20, 140, 260):
+                painter.drawArc(orbit, angle + offset * 16, 44 * 16)
 
-        painter.setOpacity(1)
-        projection = QRadialGradient(QPointF(0, 0.82), 0.74)
-        projection.setColorAt(0.0, _alpha(bright.name(), round(130 + pulse * 80)))
-        projection.setColorAt(0.5, _alpha(bright.name(), 25))
-        projection.setColorAt(1.0, _alpha(deep.name(), 0))
-        painter.setPen(QPen(_alpha(bright.name(), 62), 0.008))
-        painter.setBrush(QBrush(projection))
-        painter.drawEllipse(QRectF(-0.82, 0.73, 1.64, 0.18))
+        painter.save()
+        painter.translate(0.012 * math.sin(phase), -0.06 - 0.022 * math.cos(phase))
+        # Four bevelled strokes follow the angular silhouette of the native M icon.
+        vertices = [(-0.60, 0.48), (-0.60, -0.50), (0, 0.10),
+                    (0.60, -0.50), (0.60, 0.48)]
+        mark = QPainterPath(QPointF(*vertices[0]))
+        for vertex in vertices[1:]:
+            mark.lineTo(QPointF(*vertex))
+
+        def stroke(brush, width):
+            painter.setPen(QPen(QBrush(brush), width, Qt.PenStyle.SolidLine,
+                                Qt.PenCapStyle.FlatCap, Qt.PenJoinStyle.MiterJoin))
+            painter.drawPath(mark)
+
+        stroke(_alpha(bright.name(), 22 + round(30 * signal)), 0.23)
+        painter.save()
+        painter.translate(0.038, 0.046)
+        stroke(deep.darker(155), 0.145)
+        painter.restore()
+        glass = QLinearGradient(-0.69, -0.40, 0.68, 0.48)
+        shine = 0.48 + 0.18 * math.sin(phase)
+        glass.setColorAt(0, bright.lighter(145))
+        glass.setColorAt(shine - 0.17, deep)
+        glass.setColorAt(shine, QColor('#dcffff') if self.palette_.dark else bright)
+        glass.setColorAt(shine + 0.14, bright.darker(135))
+        glass.setColorAt(1, bright)
+        stroke(glass, 0.14)
+        stroke(_alpha(bright.lighter(175).name(), 195), 0.014)
+        painter.restore()
 
         if self.state in ('listening', 'speaking'):
             for index in range(9):
@@ -638,6 +661,15 @@ class PrimeAssistant(QWidget):
 
     def set_state(self, state: str):
         self.orb.set_state(state)
+        hint = {
+            'idle': 'Type a message or choose a voice mode.',
+            'standby': 'Say “Hey Jarvis” to wake me.',
+            'listening': 'Speak your question.',
+            'approval': 'Review the action in Chat.',
+            'stopped': 'Resume when you are ready.',
+        }.get(state, '')
+        self.hint.setText(hint)
+        self.hint.setVisible(bool(hint))
         if state != 'idle':
             self.title.setText(STATES[state][0])
         else:
@@ -772,6 +804,8 @@ class PrimeChat(QWidget):
         from desktop.youtube_panel import YouTubePanel
         self.youtube = YouTubePanel()
         self.displays.addWidget(self.youtube)
+        from desktop.web_panel import BrowserWindow
+        self.web_panel = BrowserWindow(window)
         self.display_buttons = {}
         for key, label in (('hologram', 'Hologram'), ('media', 'Media')):
             button = QPushButton(label)
@@ -807,6 +841,18 @@ class PrimeChat(QWidget):
         terminal_header.addWidget(history_button)
         terminal_header.addWidget(window.mission_mode)
         terminal_layout.addLayout(terminal_header)
+        self.target_bar = QWidget()
+        target_layout = QHBoxLayout(self.target_bar)
+        target_layout.setContentsMargins(0, 0, 0, 0)
+        self.target_label = QLabel()
+        self.target_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.target_label.setWordWrap(True)
+        target_layout.addWidget(self.target_label, 1)
+        self.release_target = QPushButton('Release app')
+        self.release_target.clicked.connect(lambda: window.route_interface_command('release selected app'))
+        target_layout.addWidget(self.release_target)
+        self.target_bar.hide()
+        terminal_layout.addWidget(self.target_bar)
         self.work_state = QLabel()
         self.work_state.setWordWrap(True)
         self.work_state.setTextFormat(Qt.TextFormat.PlainText)
@@ -1100,6 +1146,11 @@ class PrimeChat(QWidget):
         self.window_ref.prime_shell.mark_active('JARVIS Chat')
         self.update_workspace_visibility()
 
+    def open_browser(self, url=''):
+        self.window_ref.prime_shell.close_drawer()
+        self.window_ref.open_section('JARVIS Chat')
+        self.web_panel.open_url(url)
+
     def play_youtube(self, url):
         self.displays.setCurrentWidget(self.youtube)
         self.display_buttons['media'].setChecked(True)
@@ -1188,6 +1239,10 @@ class PrimeChat(QWidget):
         self.conversation.setVisible(bool(messages))
         self.empty_history.setVisible(not messages)
         self.conversation.render(messages)
+
+    def show_selected_app(self, target):
+        self.target_bar.setVisible(target is not None)
+        self.target_label.setText(f'Selected window · {target.title}' if target else '')
 
     def set_state(self, state: str):
         self.assistant.set_state(state)
@@ -1444,9 +1499,8 @@ class PrimeShell(QWidget):
         self.clock_label.setText(now.strftime('%H:%M:%S'))
         self.date_label.setText(now.strftime('%A, %d %b %Y'))
         live = getattr(self.window_ref, 'live_voice', None)
-        engine = 'GEMINI LIVE' if live is not None else self.window_ref.provider.currentText().upper()
-        mic = 'MUTED' if self.window_ref.voice_panel.microphone_muted else (
-            'LIVE' if live is not None else 'READY')
+        engine = 'GEMINI LIVE' if live is not None and live.active else self.window_ref.chat_provider.currentText().upper()
+        mic = self.window_ref.mic_status_label()
         control = 'CONTROL ACTIVE' if self.window_ref.desktop_control_active else 'M-CORE'
         self.footer_status.setText(f'● ENGINE · {engine}     ● MIC · {mic}     ● {control}')
 
@@ -1491,6 +1545,7 @@ class PrimeShell(QWidget):
         plugins.clicked.connect(self.window_ref.open_plugins)
         menu_layout.addWidget(plugins)
         for title, action in (
+            ('Browser', lambda: self.window_ref.prime_chat.open_browser()),
             ('Desktop Control', lambda: self.window_ref.open_setting_category('Desktop Control')),
             ('Files & Folders', lambda: self.open_section('Files & Folders')),
             ('Remote Control', lambda: self.window_ref.open_setting_category('Remote Control')),

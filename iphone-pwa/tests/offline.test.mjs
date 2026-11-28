@@ -488,6 +488,24 @@ test('the page keeps the work that cannot be sent and sends it later', async () 
   assert.equal(stopped, true);
   assert.equal(view.srcObject, null);
   assert.match(element('callStatus').textContent, /Call ended/);
+  const storage = new Map();
+  globalThis.localStorage = {
+    setItem: (key, value) => storage.set(key, value),
+    getItem: (key) => storage.get(key),
+    removeItem: (key) => storage.delete(key),
+  };
+  globalThis.location = new URL(element('url').value);
+  globalThis.history = { replaceState() { location.hash = ''; } };
+  element('siriLink').select = () => {};
+  element('enableSiriWake').press();
+  await waitFor(() => element('siriLink').value, 'created a Siri wake link');
+  assert.equal(element('siriLink').value, 'https://pc.example.lan/#wake');
+  assert.equal(storage.size, 1);
+  assert.ok(![...storage.values()][0].includes(element('secret').value));
+  location.hash = 'wake';
+  for (const handler of windowListeners.hashchange) await handler();
+  assert.equal(requests.filter(r => r.url.endsWith('/api/wake')).length, 1);
+  assert.equal(location.hash, '');
   // Let the page finish the work it started, so nothing is left running when
   // the test ends.
   await settle();

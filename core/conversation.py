@@ -125,3 +125,17 @@ SUGGESTION_GUIDANCE = (
     'Use the apps the user requested. Include only app launches, without typing, '
     'filenames, URLs or extra actions. Otherwise omit that line. '
 )
+
+
+_WEB_PREFIX = re.compile(
+    r'^(?:/search|search the web(?: for)?|google search(?: for)?|web search|'
+    r'இணையத்தில் தேடு)(?:\s+(.+))?$', re.I)
+_WEB_SUFFIX = re.compile(
+    r'^(?:google(?:la| la)|கூகுளில்|இணையத்தில்)\s+(.+?)\s+'
+    r'(?:search pannu|தேடு|தேடுங்க)$', re.I)
+
+
+def web_search_argument(text):
+    request = addressed_request(text)
+    match = _WEB_SUFFIX.fullmatch(request) or _WEB_PREFIX.fullmatch(request)
+    return (match[1] or '').strip() if match else None

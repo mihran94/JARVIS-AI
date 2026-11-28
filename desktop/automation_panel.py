@@ -27,7 +27,7 @@ import uuid
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+    QComboBox, QCheckBox, QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
     QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 
@@ -253,9 +253,7 @@ class AutomationPanel(QWidget):
         layout.addWidget(note)
 
         row = QVBoxLayout()
-        self.windows = QPlainTextEdit()
-        self.windows.setReadOnly(True)
-        self.windows.setMaximumHeight(120)
+        self.windows = QComboBox()
         self.windows.setAccessibleName('Open applications')
         self.windows.setPlaceholderText('No application has been listed yet.')
         layout.addWidget(self.windows)
@@ -263,10 +261,10 @@ class AutomationPanel(QWidget):
         self.refresh_button.setAccessibleName('Refresh the list of open applications')
         self.refresh_button.clicked.connect(self.refresh_requested.emit)
         row.addWidget(self.refresh_button)
-        self.inspect_button = QPushButton('Inspect the app in front')
-        self.inspect_button.setAccessibleName('Inspect the application in front')
+        self.inspect_button = QPushButton('Inspect selected app')
+        self.inspect_button.setAccessibleName('Inspect the selected application')
         self.inspect_button.clicked.connect(
-            lambda: self.inspect_requested.emit(self.windows.toPlainText()))
+            lambda: self.inspect_requested.emit(self.windows.currentText()))
         row.addWidget(self.inspect_button)
         layout.addLayout(row)
 
@@ -276,6 +274,7 @@ class AutomationPanel(QWidget):
         self.controls.setAccessibleName('Controls of the inspected application')
         self.controls.setPlaceholderText('The controls of an inspected application appear here.')
         layout.addWidget(self.controls)
+        self.windows.currentIndexChanged.connect(lambda _: self.set_controls(''))
         return box
 
     def _build_proposals(self) -> QWidget:
@@ -317,7 +316,15 @@ class AutomationPanel(QWidget):
 
     def set_windows(self, text: str):
         """Show the applications that are open."""
-        self.windows.setPlainText(text or '')
+        selected = self.windows.currentText()
+        self.windows.clear()
+        self.windows.addItems((text or '').splitlines())
+        index = self.windows.findText(selected)
+        if index >= 0:
+            self.windows.setCurrentIndex(index)
+        elif self.windows.count():
+            self.windows.setCurrentIndex(0)
+        self.set_controls('')
 
     def set_controls(self, text: str):
         """Show the controls of the application that was inspected."""

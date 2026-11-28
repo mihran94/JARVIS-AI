@@ -251,3 +251,31 @@ def test_explicit_exit_button_closes_even_when_normal_close_uses_tray(app, tmp_p
         window.close()
         window.deleteLater()
         app.processEvents()
+
+
+def test_browser_merge_preserves_saved_gemini_mode_and_reconnect_consent(app, tmp_path, monkeypatch):
+    from desktop.app import Window
+
+    Store(tmp_path / 'history.sqlite3').set('voice:auto_gemini', True)
+    window = Window(tmp_path)
+    started = []
+    monkeypatch.setattr(window, 'toggle_live_voice', lambda: started.append(True))
+    try:
+        assert window.store.get('voice:auto_gemini') is True
+        window.voice_panel.allow.setChecked(False)
+        window.start_automatic_voice()
+        assert started == []
+        window.voice_panel.allow.setChecked(True)
+        window.set_microphone_muted(False)
+        assert started == [True]
+        window.schedule_live_reconnect()
+        assert window.live_reconnect_timer.isActive()
+        assert window.live_reconnect_attempts == 1
+        window.set_microphone_muted(True)
+        assert not window.live_reconnect_timer.isActive()
+        window.schedule_live_reconnect()
+        assert not window.live_reconnect_timer.isActive()
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()

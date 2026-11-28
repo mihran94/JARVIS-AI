@@ -41,6 +41,11 @@ class Step:
 
     @property
     def label(self):
+        if self.typing and self.typing.app == 'Calculator':
+            label = f'Calculate {self.typing.text}'
+            if self.typing.note_filename:
+                label += f' and save the Notepad result as {self.typing.note_filename}'
+            return label
         if self.typing:
             return f'{self.app}: {"open and type" if self.typing.launch else "type"} {len(self.typing.text)} characters'
         return f'Open {self.app}'

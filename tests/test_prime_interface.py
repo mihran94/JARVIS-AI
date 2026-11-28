@@ -506,7 +506,7 @@ def test_packaged_revision_reads_the_installed_build(tmp_path, monkeypatch):
     assert ui.build_commit() == '0123456'
 
 
-def test_wake_summons_the_window_and_animates_the_m_after_consent(tmp_path, monkeypatch):
+def test_wake_displays_only_the_m_until_the_owner_requests_the_app(tmp_path, monkeypatch):
     app, window = make_window(tmp_path)
     summoned = []
     monkeypatch.setattr(window, 'isActiveWindow', lambda: False)
@@ -515,10 +515,17 @@ def test_wake_summons_the_window_and_animates_the_m_after_consent(tmp_path, monk
         window.on_wake_detected('Hey Jarvis', '')
         assert summoned == []
         window.voice_panel.allow.setChecked(True)
+        monkeypatch.setattr(window.voice_panel, 'speak_response', lambda *_: None)
+        window.hide()
+        window.on_wake_detected('Someone mentioned Jarvis', '')
+        assert window.wake_overlay is None
         window.on_wake_detected('Hey Jarvis', '')
+        assert not window.isVisible()
+        assert summoned == []
+        assert window.wake_overlay.isVisible()
+        window.on_wake_detected('Hey Jarvis', 'Jarvis app open pannu')
         assert summoned == [True]
-        assert window.pages.currentWidget() is window.prime_chat
-        assert window.prime_chat.assistant.orb._wake_timer.isActive()
+        assert not window.wake_overlay.isVisible()
     finally:
         window.close()
 
@@ -774,5 +781,39 @@ def test_reference_panels_show_real_status_and_keep_upload_with_command(tmp_path
         assert chat.command_panel.isAncestorOf(window.send_button)
         assert chat.chat_history.isAncestorOf(chat.conversation)
         assert window.prime_shell.clock_label.text().count(':') == 2
+    finally:
+        window.close()
+
+
+def test_phone_wake_only_displays_m_and_requests_local_speech(tmp_path, monkeypatch):
+    app, window = make_window(tmp_path)
+    spoken = []
+    monkeypatch.setattr(window.voice_panel, 'speak_response', lambda *a, **kw: spoken.append((a, kw)))
+    try:
+        window.hide()
+        assert not window.voice_panel.consent.listening
+        assert window.bridge.bridge.wake()
+        app.processEvents()
+        assert window.wake_overlay.isVisible() and not window.isVisible()
+        assert not window.voice_panel.consent.listening
+        assert spoken == [(('சொல்லுங்க, பாஸ்.',), {'local_only': True, 'queue_local': True})]
+        window.stop()
+        assert not window.bridge.bridge.wake()
+    finally:
+        window.close()
+
+
+def test_inactive_live_session_never_labels_the_mic_live(tmp_path):
+    app, window = make_window(tmp_path)
+    try:
+        window.voice_session()
+        window.prime_shell.refresh_clock()
+        text = window.prime_shell.footer_status.text()
+        assert 'GEMINI LIVE' not in text
+        assert 'MIC · OFF' in text
+        window.voice_panel.allow.setChecked(True)
+        assert window.mic_status_label() == 'READY'
+        window.prime_shell.refresh_clock()
+        assert 'MIC · READY' in window.prime_shell.footer_status.text()
     finally:
         window.close()

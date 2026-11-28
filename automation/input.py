@@ -269,7 +269,7 @@ def scroll(amount: int, target: InputTarget, *, foreground=None, dialogs=None) -
     return f'{amount} scroll steps were sent to {target.describe()}.'
 
 
-def activate_window(process_id: int, *, foreground=None) -> str:
+def activate_window(process_id: int, *, foreground=None, title=None) -> str:
     """Bring a window forward, by the process it belongs to.
 
     This is the one action that does not need the focus to be already
@@ -285,12 +285,21 @@ def activate_window(process_id: int, *, foreground=None) -> str:
 
     user32 = ctypes.WinDLL('user32', use_last_error=True)
     found = []
+    user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetWindowTextW.restype = ctypes.c_int
+    user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.SetForegroundWindow.argtypes = [wintypes.HWND]
 
     @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
     def collect(hwnd, _):
         pid = wintypes.DWORD()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
         if pid.value == process_id and user32.IsWindowVisible(hwnd):
+            if title is not None:
+                label = ctypes.create_unicode_buffer(32768)
+                user32.GetWindowTextW(hwnd, label, len(label))
+                if label.value != title:
+                    return True
             found.append(hwnd)
         return True
 

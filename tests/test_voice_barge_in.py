@@ -64,3 +64,34 @@ def test_playback_copy_is_suppressed_but_new_speech_passes_through():
     assert np.array_equal(echo.filter(user, 2000), user)
     mixed = (copied.astype(np.int32) + user).astype(np.int16)
     assert np.array_equal(echo.filter(mixed, 2000), mixed)
+
+
+def test_replacement_command_survives_late_interruption_marker():
+    app = QApplication.instance() or QApplication([])
+    live = LiveVoice()
+    live.player = type('Speaker', (), {'reset': lambda _: None, 'start': lambda _: object()})()
+    live.transcript = ['open Calculator', 'old response']
+    live.set_state('speaking')
+    turns = []
+    live.turn_finished.connect(lambda question, reply: turns.append((question, reply)))
+    for packet in (
+        {'inputTranscription': {'text': 'Notepad'}},
+        {'interrupted': True, 'turnComplete': True, 'outputTranscription': {'text': 'old audio'}},
+        {'inputTranscription': {'text': ' திற'}, 'outputTranscription': {'text': 'சரி'}},
+        {'turnComplete': True},
+    ):
+        live.receive(json.dumps({'serverContent': packet}))
+    assert turns == [('Notepad திற', 'சரி')]
+
+
+def test_stopped_reply_cannot_dispatch_the_abandoned_command():
+    app = QApplication.instance() or QApplication([])
+    live = LiveVoice()
+    live.player = type('Speaker', (), {'reset': lambda _: None, 'start': lambda _: object()})()
+    live.transcript = ['open Calculator', 'old response']
+    live.set_state('speaking')
+    turns = []
+    live.turn_finished.connect(lambda *turn: turns.append(turn))
+    live.interrupt()
+    live.receive('{"serverContent":{"outputTranscription":{"text":"late text"},"turnComplete":true}}')
+    assert turns == []

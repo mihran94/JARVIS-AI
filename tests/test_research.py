@@ -326,3 +326,23 @@ def test_the_private_address_is_refused_before_the_page_is_read():
         fetch('https://pc.local/page', client=client,
               resolver=a_resolver_that_gives('192.168.1.20'))
     assert client.requested == []
+
+
+def test_long_page_retains_late_relevant_tamil_evidence():
+    page = Page('https://example.com', 'Guide', ('Introduction. ' * 1500)
+                + '\nமுன்பதிவு நேரம் காலை பத்து மணி.')
+    prompt = build_prompt('முன்பதிவு நேரம்?', page, max_characters=1000)
+    assert 'Introduction.' in prompt[1]['content']
+    assert 'காலை பத்து மணி' in prompt[1]['content']
+
+
+@pytest.mark.parametrize(('command', 'expected'), [
+    ('Hey Jarvis, search the web for C++ & Qt', 'C++ & Qt'),
+    ('Googlela Amiens météo search pannu', 'Amiens météo'),
+    ('இணையத்தில் தமிழ் பாடல்கள் தேடு', 'தமிழ் பாடல்கள்'),
+    ('/search', ''),
+    ('Explain how to search the web for French news', None),
+])
+def test_explicit_search_commands(command, expected):
+    from core.conversation import web_search_argument
+    assert web_search_argument(command) == expected

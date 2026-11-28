@@ -95,6 +95,12 @@ def _usable(control, pid):
     return name, automation_id, kind
 
 
+def focus_selected(pid, title):
+    _application(pid)
+    if win_controls.foreground_process() == os.getpid():
+        activate_window(pid, title=title)
+
+
 def see_controls(pid, title):
     """Return action labels and IDs without reading editable values."""
     with _foreground_app(pid, title) as (controls, check):
@@ -123,7 +129,7 @@ def _selected_control(pid, title, name, automation_id, kinds, checkpoint):
     if win_controls.foreground_process() == os.getpid():
         _application(pid)
         checkpoint()
-        activate_window(pid)
+        activate_window(pid, title=title)
     with _foreground_app(pid, title) as (controls, check):
         matches = []
         for control in controls:

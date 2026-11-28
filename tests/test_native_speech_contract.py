@@ -77,7 +77,7 @@ def fake_system_speech(monkeypatch):
         def Recognize(self, timeout):
             assert self.microphone is True
             self.recognized_with = timeout
-            return SimpleNamespace(Text="Hey Jarvis")
+            return SimpleNamespace(Text="Hey Jarvis", Confidence=0.96)
 
         def Dispose(self):
             self.disposed = True
@@ -128,7 +128,7 @@ def test_native_wake_uses_real_grammar_object(fake_system_speech):
     assert engine.recognized_with == ("seconds", 2.0)
     grammar = engine.loaded[0]
     assert isinstance(grammar, fake_system_speech.grammar)
-    assert grammar.builder.choices.items
+    assert grammar.builder.choices.items == ["Hey Jarvis"]
     assert grammar.builder.Culture.Name == "en-US"
     adapter.stop()
 
@@ -284,3 +284,13 @@ def test_sapi_interruptible_speech_finishes_without_cancellation():
     speaker._voice = Voice()
     speaker.speak_interruptibly('Safe voice response', lambda: False)
     assert calls == [('speak', 'Safe voice response', 1), ('poll', 120)]
+
+@pytest.mark.parametrize('words,confidence', [('Jarvis', 1.0), ('I said Hey Jarvis', 0.99),
+                                             ('Hey Jarvis', 0.4), ('background music', 1.0)])
+def test_standby_ignores_other_speech_and_weak_matches(fake_system_speech, monkeypatch, words, confidence):
+    permission = VoiceConsent()
+    permission.grant()
+    adapter = WindowsSpeechRecognizer(permission)
+    monkeypatch.setattr(adapter, '_recognize', lambda _: SimpleNamespace(Text=words, Confidence=confidence))
+    assert adapter.wait_for_wake_phrase() == ('', '')
+    adapter.stop()

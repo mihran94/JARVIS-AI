@@ -59,6 +59,9 @@ def inspect_windows(timeout=3):
         raise RuntimeError('Window inspection requires Windows.')
     if not 0 < timeout <= 10:
         raise ValueError('Inspection timeout must be between 0 and 10 seconds.')
+    if getattr(sys, 'frozen', False):
+        # A packaged windowed executable cannot run the Python child script.
+        return _windows_child()
     try:
         result = subprocess.run(
             [sys.executable, '-I', str(Path(__file__).resolve()), '--child'],

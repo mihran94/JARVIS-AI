@@ -7,6 +7,7 @@ obtain explicit owner approval for the exact text before invoking this module.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import PureWindowsPath
 import ctypes
 import re
 import sys
@@ -35,6 +36,32 @@ class DesktopTask:
     app: str
     text: str
     launch: bool = False
+    note_filename: str = ''
+
+
+_NOTE_COMMANDS = (
+    r'(?:calculator-la\s+)?{expr}\s+calculate\s+panni,?\s+'
+    r"(?:[‘']?விடை[’']?ன்னு\s+போட்டு\s+)?result-a\s+{name}-la\s+save\s+pannu",
+    r'calculate\s+{expr}\s+and\s+save\s+(?:the\s+)?result\s+as\s+{name}',
+    r'{expr}\s+கணக்கிட்டு\s+விடையை\s+{name}\s+என்று\s+சேமி',
+)
+_NOTE_EXPRESSION = r'([0-9]{1,6})\s*(times|plus|minus|பெருக்கல்|கூட்டல்|கழித்தல்|[+*×−-])\s*([0-9]{1,6})'
+_NOTE_FILENAME = r'([\w\u0b80-\u0bff-]{1,80}\.txt)'
+_NOTE_OPERATORS = {'times': '*', 'plus': '+', 'minus': '-', '×': '*', '−': '-',
+                   'பெருக்கல்': '*', 'கூட்டல்': '+', 'கழித்தல்': '-'}
+
+
+def parse_calculation_note(text):
+    for template in _NOTE_COMMANDS:
+        pattern = template.format(expr=_NOTE_EXPRESSION, name=_NOTE_FILENAME)
+        match = re.fullmatch(pattern, text.strip().rstrip('.'), flags=re.IGNORECASE)
+        if match:
+            left, op, right, filename = match.groups()
+            if PureWindowsPath(filename).is_reserved():
+                raise ValueError('Choose a regular .txt filename.')
+            expression = f'{int(left)} {_NOTE_OPERATORS.get(op.casefold(), op)} {int(right)}'
+            return DesktopTask('Calculator', expression, True, filename)
+    return None
 
 
 def parse_desktop_task(message: str) -> DesktopTask | None:
@@ -46,6 +73,9 @@ def parse_desktop_task(message: str) -> DesktopTask | None:
     if not isinstance(message, str):
         return None
     cleaned = addressed_request(message)
+    note = parse_calculation_note(cleaned)
+    if note is not None:
+        return note
     calculation = re.fullmatch(r'open\s+calculator\s+and\s+calculate\s*:\s*([\s\S]*)',
                                cleaned, flags=re.IGNORECASE)
     if calculation:
@@ -92,6 +122,24 @@ def target_is_foreground(app: str) -> bool:
         return False
 
 
+def activate_launched_notepad(request):
+    """Attempt one approved handoff to the exact newly launched Notepad process."""
+    from automation.windows import LaunchRequest
+    from automation.input import activate_window, InputRefused
+
+    if not isinstance(request, LaunchRequest) or getattr(request, 'started', None) is None:
+        return False
+    try:
+        process = psutil.Process(request.pid)
+        if (process.name().casefold() != TARGETS['Notepad']
+                or process.create_time() != request.started):
+            return False
+        activate_window(request.pid)
+        return True
+    except (psutil.Error, InputRefused, OSError):
+        return False
+
+
 def _events(text: str) -> list[_INPUT]:
     """Build UTF-16 keyboard events; support Tamil and non-BMP characters."""
     events = []
@@ -109,7 +157,7 @@ def _events(text: str) -> list[_INPUT]:
     return events
 
 
-def type_into_target(app: str, text: str) -> str:
+def type_into_target(app: str, text: str, *, empty_only=False) -> str:
     """Send literal keystrokes only when the expected app is foreground.
 
     A successful SendInput result verifies input dispatch, *not* that an editor
@@ -125,6 +173,8 @@ def type_into_target(app: str, text: str) -> str:
     if hwnd is None:
         raise RuntimeError('Click inside the document editor and try again. No text was sent.')
     expected = win_controls.expected_edit(hwnd, text)
+    if empty_only and (expected != text or win_controls.contents(hwnd) != ''):
+        raise RuntimeError('A blank Notepad document is required for the calculation note.')
     # Do not send while a system shortcut modifier is being held down.
     user32 = ctypes.windll.user32
     for key in (0x10, 0x11, 0x12, 0x5B, 0x5C):

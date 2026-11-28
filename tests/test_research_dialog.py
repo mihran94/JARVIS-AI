@@ -93,3 +93,22 @@ def test_the_automation_page_offers_the_research_window(tmp_path):
         window.close()
         window.deleteLater()
         app.processEvents()
+
+
+def test_chat_search_opens_encoded_query_only_after_approval(tmp_path, monkeypatch, app):
+    from desktop.app import Window, QDesktopServices
+    from urllib.parse import parse_qs, urlsplit
+    window = Window(tmp_path)
+    opened = []
+    monkeypatch.setattr(QDesktopServices, 'openUrl', lambda url: opened.append(url.toString()) or True)
+    try:
+        for approved in (False, True):
+            monkeypatch.setattr(window, 'confirm', lambda *_: approved)
+            window.prompt.setPlainText('/search C++ & தமிழ்')
+            window.send()
+            assert len(opened) == int(approved)
+        parts = urlsplit(opened[0])
+        assert parts.hostname == 'www.google.com'
+        assert parse_qs(parts.query) == {'q': ['C++ & தமிழ்']}
+    finally:
+        window.close()

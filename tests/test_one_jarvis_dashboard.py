@@ -134,10 +134,10 @@ def test_the_hud_says_listening_while_the_microphone_is_listening(tmp_path, monk
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             app.processEvents()
-            if window.hud_voice_status.text() == 'LISTENING':
+            if window.hud_voice_status.text() == 'WAKE STANDBY':
                 break
             time.sleep(0.01)
-        assert window.hud_voice_status.text() == 'LISTENING', (
+        assert window.hud_voice_status.text() == 'WAKE STANDBY', (
             'the HUD did not show LISTENING while the microphone was listening')
     finally:
         release.set()
@@ -280,7 +280,7 @@ def test_hud_continuous_voice_waits_for_playback_before_listening_again(tmp_path
         # The status arrives from the voice worker on its own thread, so the
         # event loop has to deliver it. Waiting for it is what the test is
         # about; the other states below are waited for the same way.
-        wait_for(lambda: window.hud_voice_status.text() == 'LISTENING')
+        wait_for(lambda: window.hud_voice_status.text() == 'WAKE STANDBY')
         release_input.set()
         wait_for(playback_started.is_set)
         wait_for(lambda: window.hud_voice_status.text() == 'SPEAKING')
