@@ -170,6 +170,10 @@ class BridgePanel(QWidget):
         self.listener_status = QLabel('Stopped')
         self.listener_status.setWordWrap(True)
         listener_layout.addRow('Status', self.listener_status)
+        self.private_startup = QCheckBox('Start the verified private Tailscale listener with JARVIS')
+        self.private_startup.setChecked(bool(self.store.get('bridge:private_startup', False)))
+        self.private_startup.toggled.connect(lambda enabled: self.store.set('bridge:private_startup', enabled))
+        listener_layout.addRow(self.private_startup)
 
         pairing_box = QGroupBox('Paired devices')
         pairing_layout = QVBoxLayout(pairing_box)
@@ -345,6 +349,24 @@ class BridgePanel(QWidget):
         raw = self.peer_hosts.text() if hasattr(self, 'peer_hosts') else ''
         return tuple(part.strip() for part in raw.replace(';', ',').split(',')
                      if part.strip())
+
+    def restore_private_listener(self):
+        if not self.store.get('bridge:private_startup', False) or self.policy.stopped:
+            return False
+        from remote.private_tunnel import discover_private_origin
+        origin = discover_private_origin()
+        self.listener._config = ListenerConfig(
+            host='127.0.0.1', port=8765, allow_plaintext=True,
+            phone_web_root=Path(__file__).resolve().parents[1] / 'iphone-pwa')
+        self.bridge.set_allowed_hosts(())
+        self.listener.start()
+        self.host.setText('127.0.0.1')
+        self.port.setText('8765')
+        self.plaintext.setChecked(True)
+        self.phone_address.setText(origin)
+        self.store.set('bridge:phone_origin', origin)
+        self.refresh()
+        return True
 
     def start_listener(self):
         def operation():

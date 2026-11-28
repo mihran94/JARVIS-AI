@@ -495,8 +495,15 @@ function toggleListening() {
   }
   try {
     const call = state.call;
+    globalThis.speechSynthesis?.cancel();
     state.listening = startListening({
       lang: chosenVoiceLanguage(),
+      onPartial: (text) => {
+        if (!call || state.call === call) {
+          $('message').value = text;
+          setStatus('chatStatus', text ? `Heard: ${text}` : 'Listening…');
+        }
+      },
       onResult: (text) => {
         state.listening = null;
         $('listen').textContent = 'Listen';

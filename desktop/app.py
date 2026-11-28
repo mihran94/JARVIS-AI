@@ -1098,6 +1098,14 @@ class Window(QMainWindow):
             self.restore_startup_microphone()
 
     def begin_first_run(self):
+        if self.store.get('bridge:private_startup', False):
+            try:
+                if self.bridge.restore_private_listener() and self.store.get('bridge:show_pairing_once', False):
+                    self.store.set('bridge:show_pairing_once', False)
+                    self.open_section('Phone Remote')
+                    self.bridge.pair_browser_device()
+            except (OSError, ValueError, RuntimeError) as error:
+                self.statusBar().showMessage('Phone Remote: ' + str(error), 20000)
         if not self.store.get('setup:complete', False):
             from keyring.errors import KeyringError
             from providers.registry import specs
