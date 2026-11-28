@@ -40,7 +40,7 @@ def parse(message, *, has_selection=False):
         return Request('select', (match[1] or match[2]).strip())
     if text.casefold() in ('release selected app', 'app release pannu'):
         return Request('release')
-    for pattern in (r'open installed app (.+)', r'installed app (.+?) open pannu'):
+    for pattern in (r'open (?:installed )?app (.+)', r'(.+?) app open pannu', r'installed app (.+?) open pannu'):
         match = re.fullmatch(pattern, text, re.I)
         if match:
             return Request('open', match[1].strip())
@@ -58,7 +58,25 @@ def parse(message, *, has_selection=False):
         field, sep, value = label.partition(' = ')
         if sep:
             return Request('set', app.strip(), field.strip(), value)
+    target = re.fullmatch(r'in app (.+?), (.+)', text, re.I)
+    if target:
+        return input_command(target[2], target[1].strip())
+    spoken = re.sub(r'\s+', ' ', text.casefold().strip(' .!?'))
+    if spoken in {'select this', 'select it', 'itha select pannu', 'idhai select pannu',
+                  'இதை செலக்ட் பண்ணு', 'இத செலக்ட் பண்ணு', 'இதைத் தேர்வு செய்'}:
+        return Request('select_pointed')
+    if spoken in {'click here', 'mouse click here', 'இங்கே கிளிக் பண்ணு', 'inga click pannu'}:
+        return Request('click_pointed')
     if has_selection:
+        drag = re.fullmatch(
+            r'drag (.+?) (?:into|to) (.+)|(.+?) to (.+?) (?:drag pannu|டிராக் பண்ணு)'
+            r'|(.+?)-ஐ (.+?)-க்கு டிராக் பண்ணு', text, re.I)
+        if drag:
+            source, destination = (value for value in drag.groups() if value is not None)
+            return Request('drag', control=source.strip(), value=destination.strip())
+        direct = input_command(text)
+        if direct:
+            return direct
         if text.casefold() in ('show controls', 'controls kaattu'):
             return Request('inspect')
         match = re.fullmatch(r'click (.+)|(.+?) click pannu', text, re.I)
@@ -67,6 +85,36 @@ def parse(message, *, has_selection=False):
         match = re.fullmatch(r'set (.+?) = (.+)', text, re.I)
         if match:
             return Request('set', control=match[1].strip(), value=match[2])
+    return None
+
+
+def input_command(text, app=''):
+    spoken = re.sub(r'\s+', ' ', text.casefold().strip(' .!?'))
+    actions = {
+        'play this': 'Play', 'play': 'Play', 'play pannu': 'Play',
+        'ப்ளே பண்ணு': 'Play', 'இதை ப்ளே பண்ணு': 'Play',
+        'pause': 'Pause', 'pause pannu': 'Pause', 'பாஸ் பண்ணு': 'Pause',
+        'open timeline': 'Timeline', 'timeline open pannu': 'Timeline',
+        'டைம்லைன் ஓபன் பண்ணு': 'Timeline',
+        'split at playhead': 'Split', 'playhead-la split pannu': 'Split',
+        'playhead-ல கட் பண்ணு': 'Split',
+    }
+    if spoken in actions:
+        return Request('mouse_click', app, actions[spoken])
+    selection = re.fullmatch(r'select (.+)|(.+?) (?:select pannu|செலக்ட் பண்ணு)', text.rstrip(' .!?'), re.I)
+    if selection:
+        label = (selection[1] or selection[2]).strip()
+        if label.casefold() not in {'this', 'it', 'இதை', 'இத', 'அதை'}:
+            return Request('select_control', app, label)
+    click = re.fullmatch(r'mouse click (.+)|(.+?) mouse click pannu', text, re.I)
+    if click:
+        return Request('mouse_click', app, (click[1] or click[2]).strip())
+    key = re.fullmatch(r'(?:keyboard )?press (\S+) in (.+)', text, re.I)
+    if key:
+        return Request('keyboard_key', app, key[2].strip(), key[1].casefold())
+    typed = re.fullmatch(r'(?:keyboard )?type in (.+?) = (.+)', text, re.I)
+    if typed:
+        return Request('keyboard_text', app, typed[1].strip(), typed[2])
     return None
 
 
@@ -155,10 +203,23 @@ def run(request, gateway, confirm, checkpoint, *, selected=None):
     else:
         raise InputRefused('Select an app first.')
     target = f'{title} (PID {pid})'
+    pointed = None
+    if request.verb in ('select_pointed', 'click_pointed'):
+        if not selected or app_control.win_controls.foreground_window() != selected.handle:
+            raise InputRefused('Select an app and point at a control in its foreground window.')
+        if psutil.Process(pid).create_time() != started:
+            raise InputRefused('The selected app restarted. Select it again.')
+        pointed = app_control.pointed_control(pid, title, selecting=request.verb == 'select_pointed')
+        checkpoint()
+        if app_control.win_controls.foreground_window() != selected.handle:
+            raise InputRefused('The selected window changed. Select the app again.')
+        target += ' — ' + (pointed[0] or pointed[1])
     if request.control:
         target += f' — {request.control}'
-    if request.verb == 'set':
+    if request.verb in ('set', 'keyboard_key', 'keyboard_text'):
         target += f' = {request.value}'
+    elif request.verb == 'drag':
+        target += f' → {request.value}'
 
     def operate():
         checkpoint()
@@ -174,12 +235,38 @@ def run(request, gateway, confirm, checkpoint, *, selected=None):
         guard()
         if request.verb == 'inspect':
             return app_control.see_controls(pid, title)
+        if pointed is not None:
+            name, ident, runtime_id = pointed
+            action = (app_control.select_control if request.verb == 'select_pointed'
+                      else app_control.mouse_click)
+            return action(pid, title, name, ident, checkpoint=guard, runtime_id=runtime_id)
         name, ident = request.control, ''
         if name.startswith('id='):
             name, ident = '', name[3:]
+        if request.verb == 'select_control':
+            return app_control.select_control(pid, title, name, ident, checkpoint=guard)
+        if request.verb == 'mouse_click':
+            return app_control.mouse_click(pid, title, name, ident, checkpoint=guard)
+        if request.verb in ('keyboard_key', 'keyboard_text'):
+            return app_control.keyboard_input(
+                pid, title, name, ident,
+                text=request.value if request.verb == 'keyboard_text' else None,
+                key=request.value if request.verb == 'keyboard_key' else None,
+                checkpoint=guard)
+        if request.verb == 'drag':
+            destination = request.value
+            destination_id = ''
+            if destination.startswith('id='):
+                destination, destination_id = '', destination[3:]
+            return app_control.drag_control(pid, title, name, ident, destination=destination,
+                                            destination_id=destination_id, checkpoint=guard)
         return app_control.use_control(pid, title, name, ident,
                                        text=request.value if request.verb == 'set' else None,
                                        checkpoint=guard)
 
-    status = {'click': 'dispatched', 'set': 'verified', 'inspect': 'completed'}[request.verb]
+    status = {
+        'click': 'dispatched', 'mouse_click': 'dispatched', 'keyboard_key': 'dispatched',
+        'select_control': 'verified', 'set': 'verified', 'keyboard_text': 'verified', 'inspect': 'completed',
+        'select_pointed': 'verified', 'click_pointed': 'dispatched', 'drag': 'verified',
+    }[request.verb]
     return gateway.run(Action(f'app_{request.verb}', target), confirm, operate, completion_status=status)

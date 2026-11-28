@@ -46,8 +46,9 @@ def test_the_catalogue_has_the_real_capabilities(registry):
     assert set(registry.names()) == {
         'current_time', 'system_status', 'evaluate_expression', 'research_fetch', 'discover_apps',
         'inspect_window', 'activate_window', 'observe_screen', 'read_calculator',
-        'list_app_windows', 'inspect_app_controls', 'click_app_control', 'set_app_field',
-        'mouse_click_app_control', 'type_app_text', 'press_app_navigation_key',
+        'list_app_windows', 'inspect_app_controls', 'verify_app_control', 'click_app_control', 'set_app_field',
+        'mouse_click_app_control', 'type_app_text', 'press_app_navigation_key', 'scroll_app_control',
+        'drag_app_control',
         'save_open_document', 'edit_image', 'render_timeline', 'apply_effects_changes',
         'verify_media',
         'launch_app', 'browser_draft', 'type_notepad', 'export_text', 'list_directory', 'read_text_file',
@@ -59,7 +60,7 @@ def test_only_the_tools_that_change_something_need_approval(registry):
     assert set(registry.read_only_names()) == {
         'current_time', 'system_status', 'evaluate_expression', 'research_fetch', 'discover_apps',
         'inspect_window', 'read_calculator', 'verify_media', 'list_directory',
-        'inspect_app_controls',
+        'inspect_app_controls', 'verify_app_control',
         'read_text_file', 'memory_search',
     }
     assert registry.get('launch_app').read_only is False
@@ -276,7 +277,7 @@ def test_launch_requires_foreground_evidence(registry, monkeypatch, observed):
     request = windows.LaunchRequest('Notepad', 123)
     monkeypatch.setattr(windows, 'launch_app', lambda _: request)
     monkeypatch.setattr(windows, 'launch_is_foreground', lambda result: result is request and observed)
-    ticks = iter([0.0, 1.0])
+    ticks = iter([0.0, 5.0])
     monkeypatch.setattr('core.mission_tools.time.monotonic', lambda: next(ticks))
     tool = registry.get('launch_app')
     if observed:
@@ -284,6 +285,25 @@ def test_launch_requires_foreground_evidence(registry, monkeypatch, observed):
     else:
         with pytest.raises(ToolError, match='window could not be verified'):
             tool.run({'app': 'Notepad'})
+
+
+@pytest.mark.parametrize('visible', [True, False])
+def test_packaged_calculator_requires_native_foreground_display_not_launcher_pid(registry, monkeypatch, visible):
+    from types import SimpleNamespace
+    from automation import windows, calculator
+
+    request = windows.LaunchRequest('Calculator', 123)
+    monkeypatch.setattr(windows, 'launch_app', lambda _: request)
+    monkeypatch.setattr(windows, 'launch_is_foreground', lambda _: True)
+    target = (1, object(), SimpleNamespace(Current=SimpleNamespace(ProcessId=456)))
+    monkeypatch.setattr(calculator, 'foreground_calculator', lambda: target if visible else None)
+    ticks = iter([0.0, 5.0])
+    monkeypatch.setattr('core.mission_tools.time.monotonic', lambda: next(ticks))
+    if visible:
+        assert '(PID 456)' in registry.get('launch_app').run({'app': 'Calculator'})
+    else:
+        with pytest.raises(ToolError, match='window could not be verified'):
+            registry.get('launch_app').run({'app': 'Calculator'})
 
 
 def test_export_writes_tamil_without_overwriting(registry, root):

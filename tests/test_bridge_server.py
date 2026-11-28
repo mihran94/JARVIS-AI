@@ -55,6 +55,27 @@ def test_an_unsigned_request_is_rejected():
     assert response.status == 403
 
 
+def test_screen_capture_requires_authentication_and_is_never_cached():
+    calls = []
+    server = make_server(screen_provider=lambda: calls.append(1) or {'image': 'frame'})
+    assert server.handle(BridgeRequest('POST', '/api/screen')).status == 403
+    assert calls == []
+    assert server.handle(signed_request(server, 'GET', '/api/screen')).status == 404
+    assert calls == []
+    response = server.handle(signed_request(server, 'POST', '/api/screen', nonce='screen-1'))
+    assert response.status == 200
+    assert response.payload == {'image': 'frame'}
+    assert calls == [1]
+    assert server.handle(signed_request(server, 'POST', '/api/screen', nonce='screen-2')).status == 200
+    assert calls == [1, 1]
+
+
+def test_screen_request_rejects_body_and_unavailable_provider():
+    server = make_server()
+    assert server.handle(signed_request(server, 'POST', '/api/screen')).status == 503
+    assert server.handle(signed_request(server, 'POST', '/api/screen', '{}', nonce='body')).status == 400
+
+
 def test_a_tampered_body_is_rejected():
     server = make_server()
     request = signed_request(server, 'POST', '/api/jobs', json.dumps({'kind': 'CUSTOM'}))

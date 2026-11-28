@@ -89,6 +89,7 @@ export function startListening({
   constructor = globalThis.SpeechRecognition || globalThis.webkitSpeechRecognition,
   lang = defaultLanguage(),
   onResult = () => {},
+  onPartial = () => {},
   onError = () => {},
   onEnd = () => {},
 } = {}) {
@@ -98,16 +99,15 @@ export function startListening({
   const recogniser = new constructor();
   recogniser.lang = lang;
   recogniser.continuous = false;
-  recogniser.interimResults = false;
+  recogniser.interimResults = true;
   let finished = false;
+  let finalText = '';
   recogniser.onresult = (event) => {
-    const results = event.results;
-    const last = results[results.length - 1];
-    if (!last) {
-      return;
-    }
-    const text = last[0] ? last[0].transcript : '';
-    onResult(text.trim(), lang);
+    if (finished) return;
+    const results = Array.from(event.results || []);
+    const textOf = (result) => result[0]?.transcript?.trim() || '';
+    finalText = results.filter((result) => result.isFinal !== false).map(textOf).filter(Boolean).join(' ');
+    onPartial(results.map(textOf).filter(Boolean).join(' '), lang);
   };
   recogniser.onerror = (event) => {
     finished = true;
@@ -116,12 +116,14 @@ export function startListening({
   recogniser.onend = () => {
     if (!finished) {
       finished = true;
+      if (finalText) onResult(finalText, lang);
       onEnd(lang);
     }
   };
   recogniser.start();
   return {
     stop() {
+      finished = true;
       try {
         recogniser.stop();
       } catch (error) {
@@ -144,6 +146,7 @@ export function speak(text, {
   synthesis = globalThis.speechSynthesis,
   lang = 'en-US',
   rate = 1,
+  onError = () => {},
 } = {}) {
   if (!synthesisSupported(synthesis)) {
     return false;
@@ -155,6 +158,7 @@ export function speak(text, {
   const utterance = new globalThis.SpeechSynthesisUtterance(text);
   utterance.lang = lang;
   utterance.rate = rate;
+  utterance.onerror = (event) => onError(event.error || 'unavailable');
   synthesis.speak(utterance);
   return true;
 }

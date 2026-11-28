@@ -214,12 +214,47 @@ button[disabled] { opacity: .5; }
 footer { color: var(--muted); font-size: 12px; text-align: center; padding: 8px 4px 0; }
 footer p { margin: 4px 0; }
 
-@media (prefers-color-scheme: light) {
-  :root { --bg: #f2f6fc; --panel: #ffffff; --line: #d4dfef; --text: #10233d; --muted: #4f6584; }
-  input[type="text"], input[type="url"], input[type="password"], textarea,
-  .stats > div, .jobs li, .memory li, .notifications li, .transcript { background: #f7faff; }
-  button { background: #e3ecf8; }
-  button.primary { background: #1d5fa8; color: #fff; }
-  button.ghost { background: transparent; }
-  .line-jarvis { color: #1c4f8f; }
-}
+
+:root { color-scheme: dark; --bg:#030b12; --panel:#081925; --line:#1c3949; --accent:#53e6eb; }
+[hidden] { display:none !important; }
+main { max-width:880px; }
+.bar { padding:16px 0 20px; }
+.titles { flex:1; }
+.titles h1 { letter-spacing:.2em; }
+.titles small { font-size:10px; letter-spacing:.13em; }
+.connection-badge,.privacy-pill { font-size:11px; border:1px solid var(--line); border-radius:30px; padding:6px 9px; color:var(--muted); }
+.connection-badge[data-connected="true"] { color:var(--good); border-color:#245747; }
+.remote-nav { background:#07141f; border-radius:16px; padding:5px; gap:3px; scrollbar-width:thin; }
+.remote-nav a { border-radius:11px; font-size:13px; padding:11px 10px; }
+.remote-nav a[aria-current="page"] { background:#123443; color:var(--accent); box-shadow:inset 0 0 0 1px #286375; }
+.panel { padding:20px; background:linear-gradient(145deg,#0b202d,#06121d); border-radius:20px; }
+.section-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.eyebrow { display:block; color:var(--muted); letter-spacing:.12em; font-size:10px; margin-bottom:10px; }
+#chatPanel h2 { font-size:22px; letter-spacing:-.03em; color:var(--text); }
+.transcript { min-height:240px; max-height:48dvh; background:#040e17; padding:14px; border-color:#153142; }
+.transcript:empty::before { content:"Ready when you are. Ask a question, start a voice turn, or show me something."; display:block; max-width:240px; margin:60px auto; text-align:center; color:var(--muted); font-size:14px; }
+.line { width:fit-content; max-width:92%; padding:11px 14px; border-radius:14px; background:#102535; margin-bottom:12px; }
+.line-person { margin-left:auto; background:#0a3a46; border:1px solid #225f6b; }
+.line-jarvis { color:var(--text); }
+.line-system { background:transparent; }
+.composer { flex-wrap:nowrap; padding:5px; border:1px solid #285062; border-radius:16px; background:#06131e; }
+.composer input[type="text"] { min-width:0; flex:1; border:0; background:transparent; }
+.composer button { flex-shrink:0; }
+button { cursor:pointer; transition:background .15s; }
+button.primary { background:#125464; border-color:#267b88; }
+button:hover:not(:disabled) { background:#194556; }
+button:disabled { cursor:default; }
+.call-tools { display:grid; grid-template-columns:1fr 1fr 1fr; margin-top:14px; }
+.call-tools button { padding:11px 7px; font-size:14px; }
+.options { margin:12px 0; padding:12px; border:1px solid var(--line); border-radius:12px; }
+summary { cursor:pointer; color:var(--muted); font-size:13px; min-height:25px; }
+.options[open] summary { margin-bottom:12px; }
+select { font:inherit; padding:9px; border-radius:8px; background:#081925; color:var(--text); border:1px solid var(--line); }
+#liveCameraView { width:100%; max-height:42dvh; object-fit:contain; border:1px solid var(--line); border-radius:14px; background:#000; }
+.screen-stage { background:#000; border:1px solid var(--line); border-radius:14px; overflow:hidden; min-height:190px; display:grid; place-items:center; }
+.screen-stage img { width:100%; height:auto; display:block; }
+.screen-stage p { padding:30px; color:var(--muted); text-align:center; font-size:13px; }
+.status:empty { display:none; }
+footer { padding:15px; }
+@media(max-width:400px) { main { padding-left:9px; padding-right:9px; } .panel { padding:14px; } .privacy-pill { display:none; } .connection-badge { font-size:10px; } }
+@media(prefers-reduced-motion:reduce) { button { transition:none; } }

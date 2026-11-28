@@ -342,3 +342,36 @@ def test_qr_pixmap_has_every_module_and_its_quiet_zone(tmp_path):
             expected = QColor('black' if dark else 'white')
             assert image.pixelColor(x * module_size, y * module_size) == expected
     panel.close()
+
+
+def test_phone_open_app_dispatches_only_after_owner_approval(tmp_path, monkeypatch):
+    from automation import named_apps
+
+    app, panel = make_panel(tmp_path, lambda _: False)
+    dispatched = []
+
+    class InstalledApp:
+        Name = 'Notepad'
+        Path = 'Notepad.App'
+
+        def InvokeVerb(self):
+            dispatched.append(self.Name)
+
+    monkeypatch.setattr(named_apps, 'installed', lambda *_: InstalledApp())
+    job = panel.bridge.jobs.submit('CUSTOM', 'Misleading title',
+                                   '{"action":"open_installed_app","app":"Notepad"}', False)
+    assert job.title == 'Open Notepad'
+    assert job.requires_approval
+    panel.refresh()
+    panel.jobs.setCurrentCell(0, 0)
+    panel.approve_job()
+    assert dispatched == []
+    assert panel.bridge.jobs.get(job.id).state == 'QUEUED'
+    panel.confirm = lambda _: True
+    panel.jobs.setCurrentCell(0, 0)
+    panel.approve_job()
+    assert dispatched == ['Notepad']
+    result = panel.bridge.jobs.get(job.id)
+    assert result.state == 'SUCCEEDED'
+    assert 'received the launch request' in result.outputs[0]
+    panel.close()

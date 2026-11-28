@@ -35,11 +35,12 @@ from desktop.bridge_pairing import (
     pairing_matrix, pairing_payload,
 )
 from desktop.bridge_status import PlatformMetrics
+from desktop.bridge_screen import PhoneScreen
 from providers.registry import specs
 from remote import certificate
 from remote.jobs import (
     DISK_SPACE_ACTION, HISTORY_BACKUP_ACTION, HISTORY_RESTORE_ACTION,
-    operation_kind,
+    OPEN_APP_ACTION, operation_kind,
 )
 from remote.listener import BridgeListener, ListenerConfig, ListenerError
 from remote.pairing import PairingStore
@@ -88,6 +89,8 @@ class BridgePanel(QWidget):
             self.pairing, peer_id=platform.node() or 'windows',
             agent_version='0.3.0', allowed_hosts=('127.0.0.1', '::1'),
             status_provider=PlatformMetrics().snapshot)
+        self.screen = PhoneScreen(policy, self)
+        self.bridge.screen_provider = self.screen.frame
         self.listener = listener if listener is not None else BridgeListener(self.bridge)
         self.chat = BridgeChatService(router, store, vault, policy=policy) if router else None
         if self.chat is not None:
@@ -170,6 +173,11 @@ class BridgePanel(QWidget):
         self.listener_status = QLabel('Stopped')
         self.listener_status.setWordWrap(True)
         listener_layout.addRow('Status', self.listener_status)
+        self.private_startup = QCheckBox('Auto-start private listener')
+        self.private_startup.setToolTip('Start the verified private Tailscale listener with JARVIS.')
+        self.private_startup.setChecked(bool(self.store.get('bridge:private_startup', False)))
+        self.private_startup.toggled.connect(lambda enabled: self.store.set('bridge:private_startup', enabled))
+        listener_layout.addRow(self.private_startup)
 
         pairing_box = QGroupBox('Paired devices')
         pairing_layout = QVBoxLayout(pairing_box)
@@ -345,6 +353,24 @@ class BridgePanel(QWidget):
         raw = self.peer_hosts.text() if hasattr(self, 'peer_hosts') else ''
         return tuple(part.strip() for part in raw.replace(';', ',').split(',')
                      if part.strip())
+
+    def restore_private_listener(self):
+        if not self.store.get('bridge:private_startup', False) or self.policy.stopped:
+            return False
+        from remote.private_tunnel import discover_private_origin
+        origin = discover_private_origin()
+        self.listener._config = ListenerConfig(
+            host='127.0.0.1', port=8765, allow_plaintext=True,
+            phone_web_root=Path(__file__).resolve().parents[1] / 'iphone-pwa')
+        self.bridge.set_allowed_hosts(())
+        self.listener.start()
+        self.host.setText('127.0.0.1')
+        self.port.setText('8765')
+        self.plaintext.setChecked(True)
+        self.phone_address.setText(origin)
+        self.store.set('bridge:phone_origin', origin)
+        self.refresh()
+        return True
 
     def start_listener(self):
         def operation():
@@ -557,6 +583,11 @@ class BridgePanel(QWidget):
                                             lambda: self._execute_history_restore(job))
                 finally:
                     self.refresh()
+            if operation_kind(job.operation) == OPEN_APP_ACTION:
+                try:
+                    return self._open_phone_app(job)
+                finally:
+                    self.refresh()
             if job.operation != DISK_SPACE_ACTION:
                 if not self.confirm(Action('Reject unsupported phone task', job.id)):
                     return
@@ -659,6 +690,40 @@ class BridgePanel(QWidget):
         if jobs.finish(job_id, result=message).state == 'CANCELLED':
             raise Stopped('Phone task cancelled.') from None
         return message
+
+    def _open_phone_app(self, job):
+        from automation.named_apps import Request, run
+
+        jobs = self.bridge.jobs
+        ticket = self.policy.ticket()
+        name = job.operation.split(':', 1)[1]
+
+        def checkpoint():
+            self.policy.check(ticket)
+            if not self.store.get('automation:self_control', True):
+                raise RuntimeError('Enable PC control first.')
+            if jobs.get(job.id).state == 'CANCELLED':
+                raise Stopped('Phone task cancelled.')
+            if job.peer_id is not None and not any(
+                    device.peer_id == job.peer_id and not device.revoked
+                    for device in self.pairing.devices()):
+                raise Stopped('The requesting phone is no longer paired.')
+
+        def approve(action):
+            if not self.confirm(action):
+                return False
+            checkpoint()
+            jobs.start(job.id)
+            return True
+
+        try:
+            detail = run(Request('open', name), self.gateway, approve, checkpoint)
+        except Exception:
+            if jobs.get(job.id).state == 'RUNNING':
+                jobs.finish(job.id, error='Windows could not dispatch the app launch.')
+            raise
+        jobs.finish(job.id, result=detail)
+        return detail
 
     def _execute_disk_check(self, job):
         jobs = self.bridge.jobs

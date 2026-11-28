@@ -323,6 +323,8 @@ function fakeElement(id) {
   const listeners = {};
   return {
     id,
+    dataset: {},
+    removeAttribute() {},
     value: '',
     checked: false,
     textContent: '',
@@ -390,6 +392,7 @@ test('the page keeps the work that cannot be sent and sends it later', async () 
       return fakeElement(tag);
     },
     querySelector() { return null; },
+    querySelectorAll() { return []; },
     addEventListener() {},
   };
   globalThis.window = {
@@ -473,21 +476,25 @@ test('the page keeps the work that cannot be sent and sends it later', async () 
   view.videoHeight = 300;
   view.play = async () => {};
   element('consent').checked = true;
-  element('videoCall').press();
-  await waitFor(() => view.srcObject === stream, 'started a video call');
-  assert.match(element('callStatus').textContent, /Video call/);
-  element('message').value = 'What is that object?';
+  element('phoneCamera').press();
+  await waitFor(() => view.srcObject === stream, 'started the camera');
+  element('message').value = 'Look at this';
   element('send').press();
   await waitFor(() => requests.some((request) => request.body?.includes('"images":["frame"]')),
     'sent the frame with the question');
-  element('message').value = '/disk';
-  element('send').press();
+  globalThis.window.location = { hash: '' };
+  element('message').value = '';
+  element('lookNow').press();
+  await waitFor(() => requests.some((request) => request.body?.includes('இது என்ன?')),
+    'asked what the camera sees');
+  assert.equal(window.location.hash, '', 'section navigation must not rewrite the pairing URL');
+  assert.match(element('cameraStatus').textContent, /See the answer in Chat/);
+  element('checkDisk').press();
   await waitFor(() => requests.some((request) => request.url.endsWith('/api/jobs')
     && request.body?.includes('check_disk_space')), 'sent the command as a desktop job');
-  element('endCall').press();
+  element('phoneCamera').press();
   assert.equal(stopped, true);
   assert.equal(view.srcObject, null);
-  assert.match(element('callStatus').textContent, /Call ended/);
   const storage = new Map();
   globalThis.localStorage = {
     setItem: (key, value) => storage.set(key, value),

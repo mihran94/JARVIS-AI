@@ -197,6 +197,16 @@ class AutomationPanel(QWidget):
             'open https://…  ·  inspect  ·  fill Field label  ·  click Button name')
         self.browser_command.setAccessibleName('Browser command')
         layout.addWidget(self.browser_command)
+        self.browser_command.returnPressed.connect(self._request_browser)
+        toolbar = QHBoxLayout()
+        search = QPushButton('Search Google')
+        search.setToolTip('Search the words in the browser command field')
+        search.clicked.connect(self._search_browser)
+        toolbar.addWidget(search)
+        inspect = QPushButton('Inspect page')
+        inspect.clicked.connect(lambda: self.browser_requested.emit('inspect'))
+        toolbar.addWidget(inspect)
+        layout.addLayout(toolbar)
         self.browser_button = QPushButton('Run in the browser')
         self.browser_button.setObjectName('primary')
         self.browser_button.setAccessibleName('Run the browser command')
@@ -213,6 +223,14 @@ class AutomationPanel(QWidget):
         self.browser_status.setStyleSheet(f'color: {MUTED};')
         layout.addWidget(self.browser_status)
         return box
+
+    def _search_browser(self):
+        query = self.browser_command.text().strip()
+        if query:
+            self.browser_requested.emit('search ' + query)
+        else:
+            self.browser_command.setFocus()
+            self.set_browser_status('Enter the words to search for.')
 
     def _request_browser(self):
         command = self.browser_command.text().strip()

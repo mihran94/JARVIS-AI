@@ -456,3 +456,20 @@ def test_the_video_editor_page_stays_readable_at_narrow_desktop_size(tmp_path, m
         win.close()
         win.deleteLater()
         app.processEvents()
+
+
+def test_edit_commands_dispatch_to_native_editor_workflows(tmp_path, monkeypatch):
+    win, app = window(tmp_path, monkeypatch)
+    invoked = []
+    try:
+        win.video_plan = ('draft', parse_plan(json.dumps(detailed_draft())))
+        monkeypatch.setattr(win, 'edit_in_capcut', lambda: invoked.append('CapCut'))
+        monkeypatch.setattr(win, 'build_after_effects_timeline',
+                            lambda *, open_editor: invoked.append(('After Effects', open_editor)))
+        assert win.route_video_brief('CapCut edit pannu')
+        assert win.route_video_brief('Edit in After Effects')
+        assert invoked == ['CapCut', ('After Effects', True)]
+    finally:
+        win.close()
+        win.deleteLater()
+        app.processEvents()

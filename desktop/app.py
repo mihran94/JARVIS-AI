@@ -78,7 +78,7 @@ from desktop.video_export import AfterEffectsInputs, PreviewInputs, VideoExportW
 from video_studio.after_effects import after_effects_render
 from video_studio.after_effects_timeline import timeline_executable, timeline_script
 from video_studio.capcut import export_capcut
-from automation.capcut_export import capcut_launcher, new_mp4, save_open_capcut_export
+from automation.capcut_export import capcut_launcher, new_mp4, prepare_capcut_project, save_open_capcut_export
 from core.runtime_profile import APP_NAME, APP_VERSION, RESTART_EXIT_CODE, restart_supported
 from video_studio.preview import media_tools, render_preview
 from security.policy import Action, ApprovalMode, ApprovalScope, Denied, Policy, Stopped
@@ -387,6 +387,8 @@ class Window(QMainWindow):
         self.desktop_control_active = False
         self.desktop_control_ticket = None
         self.store = Store(self.root / 'history.sqlite3')
+        from core.reminders import Reminders
+        self.reminders = Reminders(self.store)
         saved_theme = self.store.get('omega:theme')
         self.interface_theme = saved_theme if isinstance(saved_theme, str) and saved_theme in OMEGA_THEMES else DEFAULT_THEME
         self.setStyleSheet(theme_sheet(self.interface_theme))
@@ -575,6 +577,9 @@ class Window(QMainWindow):
         self.maintenance_timer.timeout.connect(self.check_maintenance)
         self.maintenance_timer.start(60_000)
         self.enable_prime()
+        self.reminder_timer = QTimer(self)
+        self.reminder_timer.timeout.connect(self.deliver_reminders)
+        self.reminder_timer.start(1000)
         # The voice state in the HUD is read on a timer. A timer event is
         # served before the paint events, so the HUD stays true even when
         # the animation is keeping the machine busy.
@@ -1098,6 +1103,14 @@ class Window(QMainWindow):
             self.restore_startup_microphone()
 
     def begin_first_run(self):
+        if self.store.get('bridge:private_startup', False):
+            try:
+                if self.bridge.restore_private_listener() and self.store.get('bridge:show_pairing_once', False):
+                    self.store.set('bridge:show_pairing_once', False)
+                    self.open_section('Phone Remote')
+                    self.bridge.pair_browser_device()
+            except (OSError, ValueError, RuntimeError) as error:
+                self.statusBar().showMessage('Phone Remote: ' + str(error), 20000)
         if not self.store.get('setup:complete', False):
             from keyring.errors import KeyringError
             from providers.registry import specs
@@ -1403,6 +1416,17 @@ class Window(QMainWindow):
 
     def route_video_brief(self, text):
         command = text.casefold().strip(' .!?')
+        if command in ('edit in capcut', 'capcut edit pannu', 'capcut-ல் edit பண்ணு'):
+            self.open_section('Video Editor')
+            self.edit_in_capcut()
+            return True
+        if command in ('edit in after effects', 'after effects edit pannu', 'after effects-ல் edit பண்ணு'):
+            self.open_section('Video Editor')
+            if self.video_plan is None:
+                self.video_status.setText('Create a shot plan before opening the After Effects timeline.')
+            else:
+                self.build_after_effects_timeline(open_editor=True)
+            return True
         if command in ('import and export with capcut', 'capcut-ல் வீடியோவை இறக்குமதி செய்து export செய்'):
             self.open_section('Video Editor')
             self.save_capcut_export(import_video=True)
@@ -1567,7 +1591,8 @@ class Window(QMainWindow):
                   'Answer in friendly conversational Tamil with useful English terms. '
                   'Avoid repeating greetings or asking how to help after every turn. '
                   'Ask one short clarification only when an essential detail is missing. '
-                  'Describe only visible camera evidence and say when the view is unclear. '
+                  'When identifying an object, name it first and state the visible detail that supports it. '
+                  'If the object is unclear, say so and ask for a closer view. '
                   'explicit local commands separately. For a requested PC action, tell the '
                   'user to check for an approval in the app. Never claim the action ran. '
                   'The desktop can control supported apps with mouse and keyboard. '
@@ -1588,6 +1613,7 @@ class Window(QMainWindow):
         if self.live_voice is None:
             from desktop.live_voice import LiveVoice
             self.live_voice = LiveVoice(self)
+            self.live_voice.noise_reduction = bool(self.store.get('voice:noise_reduction', True))
             self.live_voice.reconnect_requested.connect(self.schedule_live_reconnect)
             self.live_voice.frame_provider = self.camera_panel.snapshot
             self.live_voice.status.connect(lambda text: self.statusBar().showMessage(text, 20000))
@@ -1692,8 +1718,9 @@ class Window(QMainWindow):
         camera_request = bool(re.search(
             r'(?:camera|கேமரா).{0,60}(?:look|see|paaru|paru|பாரு|பார்|காட்டு)', question))
         if not camera_request and question not in {
-            'look at this', 'what am i doing', 'what am i showing you', 'look through the camera',
+            'look at this', 'what is this', 'what object is this', 'what am i doing', 'what am i showing you', 'look through the camera',
             'பார்', 'பாரு', 'paaru', 'paru', 'இதைப் பார்', 'இதை பாரு',
+            'இது என்ன', 'இந்தப் பொருள் என்ன', 'இந்த பொருள் என்ன', 'ithu enna',
             'நான் என்ன செய்றேன்', 'நான் என்ன செய்கிறேன்',
             'நான் என்ன காட்டுறேன்', 'நான் காட்டியது என்ன', 'நான் காட்டுறது என்ன',
         }:
@@ -1706,7 +1733,42 @@ class Window(QMainWindow):
         self.render_chat()
         return True
 
+    def deliver_reminders(self):
+        if self.policy.stopped:
+            return
+        for reminder in self.reminders.due():
+            self.store.message(self.session, 'system', 'Reminder · ' + reminder)
+            self.render_chat()
+            self.show_hud_text(reminder)
+            self.statusBar().showMessage(reminder, 20000)
+            if not self.voice_panel.muted:
+                QApplication.beep()
+                self.voice_panel.speak_response(reminder, local_only=True, queue_local=True)
+
     def route_interface_command(self, spoken):
+        calendar = re.fullmatch(r'(?:google calendar|கூகுள் காலண்டர்) ([a-f0-9]{8})',
+                                addressed_request(spoken), re.I)
+        if calendar and not self.policy.stopped:
+            url = self.reminders.google_calendar_url(calendar[1].lower())
+            if url is None:
+                detail = 'Choose a saved reminder ID from “list reminders”.'
+            else:
+                try:
+                    def open_calendar():
+                        if not QDesktopServices.openUrl(QUrl(url)):
+                            raise RuntimeError('Could not open Google Calendar.')
+                        return 'Google Calendar opened. Review the event and tap Save.'
+                    detail = self.gateway.run(Action('open_google_calendar', 'Google Calendar event'),
+                                              self.confirm, open_calendar)
+                except RuntimeError as error:
+                    detail = str(error)
+            self.show_local_system_reply(spoken, detail, speak=False)
+            return True
+        if not self.policy.stopped:
+            reply = self.reminders.command(spoken)
+            if reply is not None:
+                self.show_local_system_reply(spoken, reply)
+                return True
         from core.conversation import web_search_argument
         from urllib.parse import urlencode
         query = web_search_argument(spoken)
@@ -1745,6 +1807,8 @@ class Window(QMainWindow):
                         raise Denied('The conversation or selected app changed.')
                     if not self.store.get('automation:self_control', True):
                         raise Denied('PC control is disabled.')
+                    if request.verb == 'drag' and not self.store.get('input:mouse', True):
+                        raise Denied('Mouse control is disabled in Mouse & Keyboard settings.')
 
                 if request.verb == 'release':
                     self.selected_app_window = None
@@ -3371,6 +3435,8 @@ class Window(QMainWindow):
         self.capcut_native_export_button = self.flexible_button(
             layout, 'Export current CapCut project', self.save_capcut_export)
         self.capcut_native_export_button.setEnabled(sys.platform == 'win32')
+        self.capcut_edit_button = self.flexible_button(layout, 'Edit in CapCut', self.edit_in_capcut)
+        self.capcut_edit_button.setEnabled(sys.platform == 'win32')
         self.capcut_import_export_button = self.flexible_button(
             layout, 'Import and export with CapCut',
             lambda: self.save_capcut_export(import_video=True))
@@ -3508,6 +3574,7 @@ class Window(QMainWindow):
             clips = [field.text() for field in dialog.clips]
             output = dialog.target.text()
             narration = dialog.narration.text() or None
+            edit_plan = dialog.selected_plan()
             exporter, action, label = {
                 'CapCut Desktop': (export_capcut, 'export_for_capcut', 'Preparing CapCut export…'),
                 'DaVinci Resolve': (export_davinci, 'export_for_davinci', 'Preparing DaVinci Resolve export…'),
@@ -3517,7 +3584,36 @@ class Window(QMainWindow):
                 Action(action, output), self.confirm,
                 lambda: self.start_video_export(
                     output, label,
-                    lambda check: exporter(plan, clips, output, check, narration=narration)))
+                    lambda check: exporter(edit_plan, clips, output, check, narration=narration)))
+
+        self.notify(operation)
+
+    def edit_in_capcut(self):
+        if self.worker is not None or self.policy.stopped:
+            return
+
+        def operation():
+            if sys.platform != 'win32' or not self.plugin_enabled('CapCut'):
+                raise ValueError('Enable CapCut in Settings → Plugins on Windows.')
+            executable = capcut_launcher(self.store.get('editor_path:CapCut', ''))
+            source, _ = QFileDialog.getOpenFileName(
+                self, 'Choose the video to edit in CapCut', '', 'Video (*.mp4 *.mov *.m4v *.mkv *.webm)')
+            if not source:
+                return
+            source = Path(source).resolve(strict=True)
+            ticket = self.policy.ticket()
+
+            def start():
+                def edit(check_cancelled):
+                    def check():
+                        check_cancelled()
+                        self.policy.check(ticket)
+                    return prepare_capcut_project(source, executable, check)
+
+                self.start_video_export(source, 'Opening the timeline in CapCut…', edit, result_prefix='')
+
+            self.gateway.run(Action('capcut_edit', f'{executable}\n{source}'),
+                             self.confirm, start)
 
         self.notify(operation)
 
@@ -3566,27 +3662,34 @@ class Window(QMainWindow):
 
         self.notify(operation)
 
-    def build_after_effects_timeline(self):
+    def build_after_effects_timeline(self, *, open_editor=False):
         if self.video_plan is None or self.worker is not None or self.policy.stopped:
             return
         folder, plan = self.video_plan
 
         def operation():
-            if sys.platform != 'win32':
-                raise ValueError('After Effects timeline handoff requires Windows.')
+            if open_editor and sys.platform != 'win32':
+                raise ValueError('Opening After Effects from JARVIS requires Windows.')
             dialog = PreviewInputs(plan, self, timeline=True)
+            configured = self.store.get('editor_path:After Effects', '')
+            if configured:
+                dialog.target.setText(configured)
+            if open_editor:
+                dialog.script_only.setChecked(False)
             if dialog.exec() != QDialog.DialogCode.Accepted:
                 return
             if self.video_plan != (folder, plan) or self.worker is not None:
                 raise ValueError('The shot plan changed. Open the timeline dialog again.')
-            executable = timeline_executable(dialog.target.text())
+            executable = None if dialog.script_only.isChecked() else timeline_executable(dialog.target.text())
             clips = [field.text() for field in dialog.clips]
             narration = dialog.narration.text() or None
-            script = timeline_script(plan, clips, narration)
+            script = timeline_script(dialog.selected_plan(), clips, narration)
             name = f'video-plans/{folder}/after-effects-timeline-{uuid.uuid4().hex}.jsx'
 
             def handoff():
                 self.workspace.save(name, script)
+                if executable is None:
+                    return f'JSX saved to {self.workspace.path(name)}'
                 # Adobe processes -r in its open application. The dispatch does
                 # not tell JARVIS whether the composition was created.
                 started, _ = QProcess.startDetached(
@@ -3595,7 +3698,8 @@ class Window(QMainWindow):
                     raise ValueError('After Effects could not start. The timeline script was saved in the workspace.')
                 return 'Timeline command sent. Check the composition in After Effects.'
 
-            target = '\n'.join([str(executable), *clips, *([narration] if narration else [])])
+            destination = str(executable) if executable else str(self.workspace.path(name))
+            target = '\n'.join([destination, *clips, *([narration] if narration else [])])
             result = self.gateway.run(
                 Action('build_after_effects_timeline', target, Workspace.digest(script)), self.confirm, handoff)
             self.video_status.setText(result)
@@ -3620,13 +3724,14 @@ class Window(QMainWindow):
 
         self.notify(operation)
 
-    def start_video_export(self, output, message, operation):
+    def start_video_export(self, output, message, operation, *, result_prefix='Video saved to '):
         if self.worker is not None:
             raise ValueError('Wait for the current request to finish.')
         self.worker_kind = 'video_export'
         self.chat_task = self.store.task('video_export', Path(output).name)
         self.store.finish(self.chat_task, 'running')
         self.worker = VideoExportWorker(operation, self)
+        self.video_result_prefix = result_prefix
         self.worker.result.connect(self.on_video_export_result)
         self.worker.finished.connect(self.on_finished)
         self.video_status.setText(message)
@@ -3642,7 +3747,7 @@ class Window(QMainWindow):
 
     def on_video_export_result(self, status, detail):
         self.store.finish(self.chat_task, status)
-        self.video_status.setText('Video saved to ' + detail if status == 'completed' else detail)
+        self.video_status.setText(self.video_result_prefix + detail if status == 'completed' else detail)
         self.refresh_history()
 
     def business_page(self):
@@ -4599,9 +4704,21 @@ class Window(QMainWindow):
         self.camera_panel = CameraPanel(self.store, self.policy, self.camera_toggle)
         self.camera_preview_choice = QCheckBox('Show camera preview in the HUD')
         self.camera_panel.layout().addWidget(self.camera_preview_choice)
+        look_now = QPushButton('Identify this object')
+        look_now.clicked.connect(lambda: self.route_camera_question('இது என்ன?'))
+        self.camera_panel.layout().addWidget(look_now)
         voice_advanced = QWidget()
         advanced_layout = QVBoxLayout(voice_advanced)
         advanced_layout.setContentsMargins(0, 0, 0, 0)
+        self.noise_reduction_choice = QCheckBox('Reduce microphone rumble and low-frequency noise')
+        self.noise_reduction_choice.setChecked(bool(self.store.get('voice:noise_reduction', True)))
+        def set_noise_reduction(enabled):
+            self.store.set('voice:noise_reduction', enabled)
+            if self.live_voice is not None:
+                self.live_voice.noise_reduction = enabled
+                self.live_voice.noise_filter.clear()
+        self.noise_reduction_choice.toggled.connect(set_noise_reduction)
+        advanced_layout.addWidget(self.noise_reduction_choice)
         self.automatic_gemini = QCheckBox('Start Gemini Live automatically with existing microphone permission')
         self.automatic_gemini.setChecked(bool(self.store.get('voice:auto_gemini', False)))
         self.automatic_gemini.toggled.connect(
@@ -5858,6 +5975,7 @@ class Window(QMainWindow):
         self.chat_task_card.show()
         self.chat_task_diff.setEnabled(bool(outcome and outcome.diff))
         self.chat_task_tests.setEnabled(bool(outcome and outcome.worktree))
+        self.chat_task_open.setText('Open changes in editor' if outcome and outcome.worktree else 'Open project')
         self.chat_task_open.setEnabled(True)
         # The owner accepts or rejects the change once there is one, and not
         # before, so the buttons cannot be pressed on a task that has not
@@ -6039,7 +6157,8 @@ class Window(QMainWindow):
         else:
             self.run_coding_step(step,
                                  lambda: open_project_in_editor(coding['editor'],
-                                                               coding['project'].path))
+                                                               coding['project'].path,
+                                                               self.coding_configured_launcher()))
 
     def run_coding_step(self, step, operation):
         """Run one approved routine action."""
@@ -6578,17 +6697,18 @@ class Window(QMainWindow):
             return
         project = coding['project']
         configured = self.coding_configured_launcher()
-        action = Action('open_project', f'{coding["editor"]} · {project.path}')
+        folder = self.coding_test_folder()
+        action = Action('open_project', f'{coding["editor"]} · {folder}')
 
         def operation():
             try:
-                return open_project_in_editor(coding['editor'], project.path, configured)
+                return open_project_in_editor(coding['editor'], folder, configured)
             except (ValueError, RuntimeError, OSError) as error:
                 return str(error)
 
         self.coding_action_gate(
             action, operation,
-            trusted=routine_allowed(self.store, 'open:' + project.name))
+            trusted=folder == project.folder and routine_allowed(self.store, 'open:' + project.name))
 
     # ── the review of prepared changes ─────────────────────────────────────
 
@@ -7609,6 +7729,7 @@ class Window(QMainWindow):
         self.video_render_button.setEnabled(ready and self.video_plan is not None)
         self.capcut_button.setEnabled(ready and self.video_plan is not None)
         self.capcut_native_export_button.setEnabled(ready and sys.platform == 'win32')
+        self.capcut_edit_button.setEnabled(ready and sys.platform == 'win32')
         self.capcut_import_export_button.setEnabled(ready and sys.platform == 'win32')
         self.davinci_button.setEnabled(ready and self.video_plan is not None)
         self.after_effects_button.setEnabled(ready)
