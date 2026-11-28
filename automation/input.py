@@ -239,34 +239,82 @@ def click_at(x: int, y: int, target: InputTarget, *, foreground=None, dialogs=No
     return f'The click was sent to {target.describe()} at {x}, {y}.'
 
 
-def scroll(amount: int, target: InputTarget, *, foreground=None, dialogs=None) -> str:
-    """Scroll inside the window, after checking the focus again."""
-    if not isinstance(amount, int) or not (-50 <= amount <= 50):
-        raise InputRefused('The scroll must be between 50 steps up and 50 steps down.')
-    validate_focus(target, foreground=foreground, dialogs=dialogs)
+def drag_between(start, end, target: InputTarget, *, foreground):
+    """Send one bounded left-button drag in a checked foreground window."""
     _windows_only()
-    import ctypes
     from ctypes import wintypes
 
-    WHEEL_DELTA = 120
+    user = ctypes.windll.user32
+    left, top, width, height = (user.GetSystemMetrics(index) for index in (76, 77, 78, 79))
+    points = [
+        tuple(round(origin + (destination - origin) * step / 8)
+              for origin, destination in zip(start, end))
+        for step in range(9)
+    ]
+    if width <= 1 or height <= 1 or any(
+            not (left <= x < left + width and top <= y < top + height) for x, y in points):
+        raise InputRefused('The drag must remain on the desktop.')
+    if max(abs(start[0] - end[0]), abs(start[1] - end[1])) < 12:
+        raise InputRefused('The drag source and destination are too close.')
 
-    class MOUSEINPUT(ctypes.Structure):
-        _fields_ = [('dx', wintypes.LONG), ('dy', wintypes.LONG),
-                    ('mouseData', wintypes.DWORD), ('dwFlags', wintypes.DWORD),
-                    ('time', wintypes.DWORD), ('dwExtraInfo', ctypes.POINTER(ctypes.c_ulong))]
+    def mouse(flags, x=0, y=0):
+        return _INPUT(0, _INPUT_UNION(mi=_MOUSEINPUT(x, y, 0, flags, 0, 0)))
 
-    class INPUT(ctypes.Structure):
-        class _U(ctypes.Union):
-            _fields_ = [('mi', MOUSEINPUT)]
-        _anonymous_ = ('u',)
-        _fields_ = [('type', wintypes.DWORD), ('u', _U)]
+    # Absolute virtual-desktop coordinates, with each move delivered separately.
+    moves = [
+        mouse(0xE001, ((x - left) * 65536 + width - 1) // width,
+              ((y - top) * 65536 + height - 1) // height)
+        for x, y in points[1:]
+    ]
+    release = mouse(0x0004)
+    validate_focus(target, foreground=foreground)
+    if any(user.GetAsyncKeyState(key) & 0x8000 for key in (0x01, 0x10, 0x11, 0x12)):
+        raise InputRefused('Release the left mouse button and modifier keys before dragging.')
+    if not user.SetCursorPos(*start):
+        raise InputRefused('Windows could not position the cursor for the drag.')
+    window_from_point = user.WindowFromPoint
+    window_from_point.argtypes = [wintypes.POINT]
+    window_from_point.restype = wintypes.HWND
+    get_ancestor = user.GetAncestor
+    get_ancestor.argtypes = [wintypes.HWND, wintypes.UINT]
+    get_ancestor.restype = wintypes.HWND
+    from automation.win_controls import foreground_window
 
-    user32 = ctypes.WinDLL('user32', use_last_error=True)
-    event = INPUT(type=0)
-    event.mi = MOUSEINPUT(0, 0, amount * WHEEL_DELTA, 0x0800, 0, None)
-    user32.SendInput(1, ctypes.byref(event), ctypes.sizeof(INPUT))
+    handle = foreground_window()
+    if not handle or any(get_ancestor(window_from_point(wintypes.POINT(x, y)), 2) != handle
+                         for x, y in points):
+        raise InputRefused('The drag path crosses another window.')
+    validate_focus(target, foreground=foreground)
+    cursor = wintypes.POINT()
+    if not user.GetCursorPos(ctypes.byref(cursor)) or (cursor.x, cursor.y) != start:
+        raise InputRefused('The cursor moved before the drag.')
+    events = [mouse(0x0002), *moves, release]
+    sent = send_input(events)
+    if sent != len(events):
+        if sent:
+            send_input([release])
+        raise InputRefused('Windows did not accept the complete drag. Check the app before retrying.')
+
+
+def scroll(amount: int, target: InputTarget, *, foreground=None, dialogs=None) -> str:
+    """Scroll the validated foreground window and check Windows accepted it.
+
+    A successful request means Windows accepted the input event; it does not
+    prove the application actually scrolled. Inspect the window to verify.
+    """
+    if not isinstance(amount, int) or isinstance(amount, bool) or not (-50 <= amount <= 50):
+        raise InputRefused('The scroll must be between 50 steps up and 50 steps down.')
+    if amount == 0:
+        raise InputRefused('Choose a nonzero scroll amount.')
+    validate_focus(target, foreground=foreground, dialogs=dialogs)
+    wheel_delta = ctypes.c_uint32(amount * 120).value
+    event = _INPUT(0, _INPUT_UNION(
+        mi=_MOUSEINPUT(0, 0, wheel_delta, 0x0800, 0, 0)))
+    if send_input([event]) != 1:
+        raise InputRefused('Windows did not accept the mouse scroll.')
     time.sleep(SETTLE_SECONDS)
-    return f'{amount} scroll steps were sent to {target.describe()}.'
+    return (f'Windows accepted {amount} scroll steps for {target.describe()}. '
+            'Inspect the window to verify its position.')
 
 
 def activate_window(process_id: int, *, foreground=None, title=None) -> str:

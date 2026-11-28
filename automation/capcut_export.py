@@ -2,6 +2,7 @@
 import ctypes
 from contextlib import contextmanager
 from ctypes import wintypes
+import math
 import os
 from pathlib import Path, PureWindowsPath
 import sys
@@ -632,19 +633,31 @@ def prepare_capcut_project(source, executable, check_cancelled):
     return f'CapCut project opened and timeline insert requested for {source.name}. Review it in CapCut.'
 
 
+def _verify_export(output, source_info):
+    result = verify_media(
+        output, expect_duration=source_info.duration if source_info else None,
+        expect_audio=True if source_info and source_info.has_audio else None)
+    if result.ok:
+        info = result.info
+        if ('mp4' not in info.format_name.split(',') or not math.isfinite(info.duration)
+                or info.duration <= 0 or min(info.width, info.height) <= 0):
+            raise RuntimeError('CapCut produced a file without a verified MP4 video timeline.')
+    return result
+
+
 def save_open_capcut_export(path, check_cancelled, *, source=None, executable=None):
     """Export an open project or build a fresh one from a single approved clip."""
     if sys.platform != 'win32':
         raise RuntimeError('CapCut Desktop export is available on Windows only.')
     output = new_mp4(path)
     ffprobe_executable()
-    duration = None
+    source_info = None
     if source is not None:
         source = Path(source).resolve(strict=True)
         info = probe(source)
-        if not info.has_video or info.duration <= 0:
+        if not info.has_video or not math.isfinite(info.duration) or info.duration <= 0:
             raise ValueError('Choose a playable local source video.')
-        duration = info.duration
+        source_info = info
     with _capcut_ui(check_cancelled) as ui:
         if source is None:
             ui.bind_existing()
@@ -661,7 +674,7 @@ def save_open_capcut_export(path, check_cancelled, *, source=None, executable=No
         if output.is_file():
             size = output.stat().st_size
             if size and size == last_size:
-                verified = verify_media(output, expect_duration=duration)
+                verified = _verify_export(output, source_info)
                 if verified.ok:
                     check_cancelled()
                     return output

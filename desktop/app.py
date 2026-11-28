@@ -1807,6 +1807,8 @@ class Window(QMainWindow):
                         raise Denied('The conversation or selected app changed.')
                     if not self.store.get('automation:self_control', True):
                         raise Denied('PC control is disabled.')
+                    if request.verb == 'drag' and not self.store.get('input:mouse', True):
+                        raise Denied('Mouse control is disabled in Mouse & Keyboard settings.')
 
                 if request.verb == 'release':
                     self.selected_app_window = None

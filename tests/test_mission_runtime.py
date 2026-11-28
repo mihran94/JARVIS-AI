@@ -241,6 +241,75 @@ def test_a_tool_that_raises_something_unexpected_ends_the_mission(registry, gate
     assert 'secret internal detail' not in json.dumps(mission.as_dict())
 
 
+@pytest.mark.parametrize('error_type', [ToolError, RuntimeError, Stopped])
+def test_unconfirmed_mutation_is_never_replayed(registry, gateway, error_type):
+    changes = []
+    asked = []
+
+    def change_and_fail(arguments):
+        changes.append('mutated')
+        raise error_type('private diagnostic')
+
+    def confirm(action):
+        asked.append(action)
+        return True
+
+    registry.register(Tool(
+        name='partial_change',
+        description='Change a thing; verification might fail.',
+        parameters={'type': 'object', 'properties': {}},
+        read_only=False,
+        run=change_and_fail,
+    ))
+    planner = FakePlanner([tool_call('partial_change'), tool_call('partial_change')])
+    mission = runtime_for(registry, gateway, planner).run('Change it.', confirm=confirm)
+
+    assert len(asked) == 1
+    assert changes == ['mutated']
+    assert len(planner.calls) == 1
+    assert mission.status == ('cancelled' if error_type is Stopped else 'failed')
+    assert mission.evidence == []
+    assert 'may already have changed' in mission.events[-1].detail
+    assert 'check the current state before retrying' in mission.events[-1].detail
+    assert 'private diagnostic' not in json.dumps(mission.as_dict())
+
+
+@pytest.mark.parametrize('expired', [False, True])
+def test_mission_stops_after_a_mutation_even_if_the_tool_returned(
+        registry, gateway, monkeypatch, expired):
+    clock = [0.0]
+    changed = []
+    monkeypatch.setattr('core.mission.time.monotonic', lambda: clock[0])
+
+    def change(arguments):
+        changed.append(True)
+        if expired:
+            clock[0] = 9999.0
+        return 'the tool returned; external state was not verified'
+
+    def check():
+        if changed and not expired:
+            raise Stopped('Emergency stop.')
+
+    registry.register(Tool(
+        name='change_before_checkpoint',
+        description='Change a thing before the next checkpoint.',
+        parameters={'type': 'object', 'properties': {}},
+        read_only=False,
+        run=change,
+    ))
+    planner = FakePlanner([tool_call('change_before_checkpoint'), final_answer('Done.')])
+    mission = runtime_for(registry, gateway, planner, check=check).run(
+        'Change it.', confirm=lambda action: True)
+
+    assert changed == [True]
+    assert len(planner.calls) == 1
+    assert mission.status == ('failed' if expired else 'cancelled')
+    assert mission.evidence == []
+    assert 'may already have changed' in mission.events[-1].detail
+    assert ('time limit' in mission.events[-1].detail) is expired
+
+
 # ── the bounds ─────────────────────────────────────────────────────────────
 
 def test_an_answer_that_cannot_be_read_stops_the_mission_after_two_turns(registry, gateway):
@@ -373,4 +442,119 @@ def test_expired_approval_cannot_dispatch(registry, gateway, monkeypatch):
     mission = runtime_for(registry, gateway, planner).run('Work', confirm=approve)
     assert called and mission.status == 'failed'
     assert 'time limit' in mission.events[-1].detail
+    assert 'may already have changed' not in mission.events[-1].detail
     assert not mission.tools_used
+
+
+# ── ReAct reliability and evaluation metrics ────────────────────────────
+
+def test_ten_step_mission_keeps_bounded_action_evidence(registry, gateway):
+    # Nine real read-only actions plus the final model answer: a slightly
+    # longer observation/action workflow fits without removing the time limit.
+    decisions = [tool_call('read_thing', {'name': str(index)}) for index in range(9)]
+    decisions.append(final_answer('All nine observations were returned.'))
+    mission = runtime_for(registry, gateway, FakePlanner(decisions)).run('Inspect nine items.')
+    assert mission.status == 'completed'
+    assert mission.steps == 10
+    assert len(mission.evidence) == 9
+    assert mission.metrics['tool_attempts'] == 9
+    assert mission.metrics['tool_results_recorded'] == 9
+    assert mission.metrics['tool_attempts_without_result'] == 0
+
+
+def test_metrics_count_real_tool_results_not_just_proposals(registry, gateway):
+    planner = FakePlanner([
+        tool_call('broken_thing'),
+        final_answer('The attempted lookup failed.'),
+    ])
+    mission = runtime_for(registry, gateway, planner).run('Try to look it up.')
+    metrics = mission.as_dict()['metrics']
+    assert metrics['tool_attempts'] == 1
+    assert metrics['tool_results_recorded'] == 0
+    assert metrics['tool_attempts_without_result'] == 1
+    assert metrics['errors_reported'] == 1
+    assert mission.evidence == []
+
+
+def test_skipped_work_is_explicit_in_mission_metrics(registry, gateway):
+    skipped = json.dumps({'action': 'skip', 'reason': 'No matching desktop control.'})
+    mission = runtime_for(registry, gateway,
+                          FakePlanner([skipped, final_answer('This step was blocked.')])).run(
+                              'Use the unavailable desktop control.')
+    assert mission.metrics['skipped_steps'] == 1
+    assert mission.metrics['tool_results_recorded'] == 0
+    assert mission.as_dict()['metrics']['skipped_steps'] == 1
+
+
+def test_mission_metrics_outlive_bounded_hud_event_history(registry, gateway):
+    from core.mission import MAX_EVENTS, Mission
+
+    runtime = runtime_for(registry, gateway, FakePlanner([]))
+    mission = Mission(id='test', goal='Count events')
+    for index in range(MAX_EVENTS + 7):
+        runtime._emit(mission, 'tool', f'Attempt {index}')
+    assert len(mission.events) == MAX_EVENTS
+    assert mission.metrics['tool_attempts'] == MAX_EVENTS + 7
+    assert mission.metrics['tool_attempts_without_result'] == MAX_EVENTS + 7
+
+
+@pytest.mark.parametrize('right_window', [False, True])
+def test_app_readback_binds_to_the_approved_window(registry, gateway, right_window):
+    schema = {'type': 'object', 'properties': {
+        'process_id': {'type': 'integer'}, 'title': {'type': 'string'},
+    }, 'required': ['process_id', 'title']}
+    dispatched = []
+    registry.register(Tool('click', 'Dispatch a click.', schema, False,
+                           lambda args: dispatched.append(args) or 'Dispatched',
+                           needs_window_readback=True))
+    registry.register(Tool('check_window', 'Observe a condition.', schema, True,
+                           lambda _: 'Observed', verifies_window=True))
+    proposed = {'process_id': 7, 'title': 'Editor'}
+    approved = {'process_id': 8, 'title': 'Preview'}
+    planner = FakePlanner([
+        tool_call('click', proposed),
+        tool_call('click', proposed),
+        tool_call('check_window', approved if right_window else proposed),
+        final_answer('Done.'),
+    ])
+    result = runtime_for(registry, gateway, planner).run(
+        'Click and verify.', confirm=lambda _: approved)
+    assert dispatched == [approved]
+    assert result.status == ('completed' if right_window else 'failed')
+    assert result.pending_readback == (None if right_window else {'tool': 'click', **approved})
+    assert any(event.label == 'App readback required' for event in result.events)
+    if not right_window:
+        assert result.answer != 'Done.'
+
+
+def test_activity_keeps_pre_dispatch_receipt_after_restart(tmp_path, registry, gateway):
+    from core.mission import MissionJournal
+
+    path = tmp_path / 'activity.sqlite3'
+    journal = MissionJournal(Store(path))
+    registry.register(Tool(
+        'edit', 'Edit a field.', {'type': 'object', 'properties': {'text': {'type': 'string'}}},
+        False, lambda _: (_ for _ in ()).throw(KeyboardInterrupt()),
+    ))
+    planner = FakePlanner([tool_call('edit', {'text': 'private draft'})])
+    with pytest.raises(KeyboardInterrupt):
+        runtime_for(registry, gateway, planner, journal=journal).run(
+            'private goal', confirm=lambda _: True)
+    entry = Store(path).tasks()[0]
+    assert entry['status'] == 'interrupted'
+    assert entry['detail'] == 'Check before retrying: step 1, edit'
+    assert 'private' not in str(entry)
+
+
+def test_activity_records_last_tool_response_on_completion(tmp_path, registry, gateway):
+    from core.mission import MissionJournal
+
+    store = Store(tmp_path / 'activity.sqlite3')
+    journal = MissionJournal(store)
+    planner = FakePlanner([tool_call('change_thing'), final_answer()])
+    mission = runtime_for(registry, gateway, planner, journal=journal).run(
+        'a private goal', confirm=lambda _: True)
+    assert mission.completed
+    entry = store.tasks()[0]
+    assert entry['status'] == 'completed'
+    assert entry['detail'] == 'Last tool response: step 1, change_thing'
