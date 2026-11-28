@@ -368,3 +368,85 @@ def test_pointer_hit_must_be_an_accessible_control_in_the_selected_window(monkey
     properties = None
     with pytest.raises(app_control.InputRefused, match='Point at a named control'):
         app_control.pointed_control(7, 'Editor', selecting=True)
+
+
+def test_drag_releases_mouse_after_partial_delivery_and_checks_path(monkeypatch):
+    from unittest.mock import Mock
+    from types import SimpleNamespace
+    from automation import input as desktop_input
+    from automation import win_controls
+
+    metrics = {76: -100, 77: 0, 78: 200, 79: 100}
+    user = SimpleNamespace(
+        GetSystemMetrics=metrics.__getitem__, GetAsyncKeyState=lambda _: 0,
+        SetCursorPos=lambda *_: True, GetCursorPos=lambda ref: True,
+        WindowFromPoint=Mock(return_value=11), GetAncestor=Mock(return_value=10),
+    )
+
+    def cursor(ref):
+        ref._obj.x, ref._obj.y = -25, 30
+        return True
+
+    user.GetCursorPos = cursor
+    monkeypatch.setattr(desktop_input.ctypes, 'windll', SimpleNamespace(user32=user), raising=False)
+    monkeypatch.setattr(desktop_input, '_windows_only', lambda: None)
+    monkeypatch.setattr(win_controls, 'foreground_window', lambda: 10)
+    sent = Mock(side_effect=[2, 1])
+    monkeypatch.setattr(desktop_input, 'send_input', sent)
+    target = desktop_input.InputTarget(7, 'Editor')
+    with pytest.raises(desktop_input.InputRefused, match='complete drag'):
+        desktop_input.drag_between((-25, 30), (25, 30), target, foreground=lambda: 7)
+    drag, cleanup = [call.args[0] for call in sent.call_args_list]
+    assert len(drag) == 10
+    assert drag[0].data.mi.dwFlags == 0x0002
+    assert drag[-1].data.mi.dwFlags == cleanup[0].data.mi.dwFlags == 0x0004
+    assert drag[-2].data.mi.dx == 40960
+    sent.reset_mock()
+    user.GetAncestor.return_value = 12
+    with pytest.raises(desktop_input.InputRefused, match='crosses another window'):
+        desktop_input.drag_between((-25, 30), (25, 30), target, foreground=lambda: 7)
+    sent.assert_not_called()
+
+
+@pytest.mark.parametrize('moves', [True, False])
+def test_drag_requires_original_item_inside_destination(monkeypatch, moves):
+    import sys
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    from automation import app_control
+
+    class Items(list):
+        @property
+        def Count(self):
+            return len(self)
+
+    monkeypatch.setitem(sys.modules, 'System.Windows.Automation', SimpleNamespace(
+        TreeScope=SimpleNamespace(Descendants=1), Condition=SimpleNamespace(TrueCondition=1)))
+    source = SimpleNamespace(GetRuntimeId=lambda: [1, 2],
+                             GetClickablePoint=lambda: SimpleNamespace(X=15, Y=15))
+    duplicate = SimpleNamespace(GetRuntimeId=lambda: [1, 3])
+    placed = Items()
+    container = SimpleNamespace(FindAll=lambda *_: placed, GetRuntimeId=lambda: [1, 4],
+                                GetClickablePoint=lambda: SimpleNamespace(X=55, Y=55))
+    dispatches = []
+
+    @contextmanager
+    def selected(pid, title, name, _, kinds, checkpoint, **options):
+        yield (source if name == 'Clip A' else container), name, checkpoint
+
+    def dispatch(start, end, target, *, foreground):
+        assert start == (15, 15) and end == (55, 55)
+        assert foreground() == target.process_id
+        dispatches.append(True)
+        placed.append(source if moves else duplicate)
+
+    monkeypatch.setattr(app_control, '_selected_control', selected)
+    monkeypatch.setattr(app_control, '_point_hits', lambda *_: True)
+    monkeypatch.setattr(app_control.desktop_input, 'drag_between', dispatch)
+    monkeypatch.setattr(app_control, 'time', SimpleNamespace(monotonic=iter((0, 2)).__next__))
+    if moves:
+        assert "moved into 'Bins'" in app_control.drag_control(7, 'Editor', 'Clip A', destination='Bins')
+    else:
+        with pytest.raises(app_control.InputRefused, match='could not verify'):
+            app_control.drag_control(7, 'Editor', 'Clip A', destination='Bins')
+    assert dispatches == [True]

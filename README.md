@@ -59,6 +59,12 @@ selected. To press a published button, point at it and say `click here`.
 Moving the pointer during approval keeps the original target. If that target is
 no longer available, point at the control again and repeat the command.
 
+For items the selected app exposes to Windows, say `drag Clip A into Project bin`
+or `Clip A to Project bin drag pannu`. Use the labels from `controls kaattu`.
+JARVIS asks for approval and checks that the same item appears inside the
+destination. Missing or unverified results require checking the app before
+retrying. This applies to a drop into a container in the selected window.
+
 Review the app, control and proposed change in the approval dialog. Text edits
 are checked by reading the value back. For a click, inspect the updated window
 to confirm what the app did. Custom canvases, elevated windows and controls

@@ -830,6 +830,18 @@ def build_registry(*, root=None, memory=None, editor_paths=None, input_allowed=N
         returns='The before and after vertical scroll positions reported by Windows.',
     ))
     registry.register(Tool(
+        name='drag_app_control',
+        description='With approval, drag one named item into a named container in the same foreground window.',
+        parameters={'type': 'object', 'properties': {
+            **control_arguments, 'destination': {'type': 'string'}, 'destination_id': {'type': 'string'},
+        }, 'required': [*window_required, 'name', 'destination']},
+        read_only=False, run=lambda args, check: use_app_control(
+            args, check, app_control.drag_control, destination=args['destination'],
+            destination_id=args.get('destination_id', '')),
+        accepts_checkpoint=True, full_approval_details=True,
+        returns='Windows UI Automation confirmation that the same item appeared inside the destination.',
+    ))
+    registry.register(Tool(
         name='set_app_field',
         description='With owner approval, replace a field with up to 240 printable characters. Never enter secrets.',
         parameters={'type': 'object',

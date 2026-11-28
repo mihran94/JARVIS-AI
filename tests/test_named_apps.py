@@ -158,3 +158,29 @@ def test_pointed_voice_command_keeps_original_target(tmp_path, monkeypatch, comm
         window.close()
         window.deleteLater()
         app.processEvents()
+
+
+def test_selected_window_drag_shows_both_targets_and_requires_approval(tmp_path, monkeypatch):
+    store = Store(tmp_path / 'history.db')
+    gateway = Gateway(Policy(), store)
+    current = named_apps.SelectedWindow(7, 'My edit', 123, 41)
+    monkeypatch.setattr(named_apps.psutil, 'Process', lambda _: SimpleNamespace(create_time=lambda: 123))
+    monkeypatch.setattr(named_apps.app_control, 'focus_selected', lambda *_: None)
+    monkeypatch.setattr(named_apps.app_control.win_controls, 'foreground_window', lambda: 41)
+    drag = Mock(return_value='Verified')
+    monkeypatch.setattr(named_apps.app_control, 'drag_control', drag)
+    request = named_apps.parse('Clip A to Project bin drag pannu', has_selection=True)
+    assert named_apps.parse('drag Clip A into Project bin', has_selection=True) == request
+    assert named_apps.parse('Clip A-ஐ Project bin-க்கு டிராக் பண்ணு', has_selection=True) == request
+
+    def approve(action, answer):
+        assert action.target.endswith('Clip A → Project bin')
+        return answer
+
+    with pytest.raises(Denied):
+        named_apps.run(request, gateway, lambda a: approve(a, False), lambda: None, selected=current)
+    drag.assert_not_called()
+    named_apps.run(request, gateway, lambda a: approve(a, True), lambda: None, selected=current)
+    assert drag.call_args.args == (7, 'My edit', 'Clip A', '')
+    assert drag.call_args.kwargs['destination'] == 'Project bin'
+    assert store.tasks()[0]['status'] == 'verified'

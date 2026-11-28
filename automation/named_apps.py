@@ -65,6 +65,12 @@ def parse(message, *, has_selection=False):
     if spoken in {'click here', 'mouse click here', 'இங்கே கிளிக் பண்ணு', 'inga click pannu'}:
         return Request('click_pointed')
     if has_selection:
+        drag = re.fullmatch(
+            r'drag (.+?) (?:into|to) (.+)|(.+?) to (.+?) (?:drag pannu|டிராக் பண்ணு)'
+            r'|(.+?)-ஐ (.+?)-க்கு டிராக் பண்ணு', text, re.I)
+        if drag:
+            source, destination = (value for value in drag.groups() if value is not None)
+            return Request('drag', control=source.strip(), value=destination.strip())
         if text.casefold() in ('show controls', 'controls kaattu'):
             return Request('inspect')
         match = re.fullmatch(r'click (.+)|(.+?) click pannu', text, re.I)
@@ -176,6 +182,8 @@ def run(request, gateway, confirm, checkpoint, *, selected=None):
         target += f' — {request.control}'
     if request.verb == 'set':
         target += f' = {request.value}'
+    elif request.verb == 'drag':
+        target += f' → {request.value}'
 
     def operate():
         checkpoint()
@@ -199,12 +207,19 @@ def run(request, gateway, confirm, checkpoint, *, selected=None):
         name, ident = request.control, ''
         if name.startswith('id='):
             name, ident = '', name[3:]
+        if request.verb == 'drag':
+            destination = request.value
+            destination_id = ''
+            if destination.startswith('id='):
+                destination, destination_id = '', destination[3:]
+            return app_control.drag_control(pid, title, name, ident, destination=destination,
+                                            destination_id=destination_id, checkpoint=guard)
         return app_control.use_control(pid, title, name, ident,
                                        text=request.value if request.verb == 'set' else None,
                                        checkpoint=guard)
 
     status = {
         'click': 'dispatched', 'set': 'verified', 'inspect': 'completed',
-        'select_pointed': 'verified', 'click_pointed': 'dispatched',
+        'select_pointed': 'verified', 'click_pointed': 'dispatched', 'drag': 'verified',
     }[request.verb]
     return gateway.run(Action(f'app_{request.verb}', target), confirm, operate, completion_status=status)

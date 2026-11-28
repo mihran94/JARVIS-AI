@@ -303,6 +303,62 @@ def mouse_click(pid, title, name, automation_id='', *, checkpoint=lambda: None, 
         return f'Mouse clicked {label!r}. Inspect the app to verify its response.'
 
 
+def drag_control(pid, title, name, automation_id='', *, destination, destination_id='',
+                 checkpoint=lambda: None):
+    """Move a published item into a same-window container and verify its identity."""
+    with _selected_control(pid, title, name, automation_id, SELECT_TYPES, checkpoint) as (
+            source, source_label, guard_source), _selected_control(
+                pid, title, destination, destination_id, SCROLL_TYPES, checkpoint,
+                restore_focus=False) as (container, destination_label, guard_container):
+        from System.Windows.Automation import TreeScope, Condition
+
+        runtime_id = tuple(source.GetRuntimeId() or ())
+        container_id = tuple(container.GetRuntimeId() or ())
+        if not runtime_id or not container_id or runtime_id == container_id:
+            raise InputRefused('Windows did not identify two distinct drag controls.')
+
+        def contains_source():
+            if tuple(container.GetRuntimeId() or ()) != container_id:
+                raise InputRefused('The drag destination changed.')
+            items = container.FindAll(TreeScope.Descendants, Condition.TrueCondition)
+            if items.Count > 800:
+                raise InputRefused('The destination exposes too many items to verify.')
+            return any(tuple(item.GetRuntimeId() or ()) == runtime_id for item in items)
+
+        def position(control):
+            point = control.GetClickablePoint()
+            return round(point.X), round(point.Y)
+
+        if contains_source():
+            raise InputRefused('The source is already inside that destination.')
+        start, end = position(source), position(container)
+
+        def before_drag():
+            guard_source()
+            guard_container()
+            if (tuple(source.GetRuntimeId() or ()) != runtime_id
+                    or tuple(container.GetRuntimeId() or ()) != container_id
+                    or not _point_hits(source, *start) or not _point_hits(container, *end)):
+                raise InputRefused('The source or destination changed or is covered.')
+            return pid
+
+        desktop_input.drag_between(start, end, InputTarget(pid, title), foreground=before_drag)
+        deadline = time.monotonic() + 1.0
+        while True:
+            try:
+                guard_container()
+                moved = contains_source()
+            except InputRefused as error:
+                raise InputRefused('The drag was sent, but Windows could not verify the result. '
+                                   'Check the app before retrying.') from error
+            if moved:
+                return f'Windows verified that {source_label!r} moved into {destination_label!r}.'
+            if time.monotonic() >= deadline:
+                raise InputRefused('The drag was sent, but Windows could not verify the result. '
+                                   'Check the app before retrying.')
+            time.sleep(0.05)
+
+
 def keyboard_input(pid, title, name, automation_id='', *, text=None, key=None, checkpoint=lambda: None):
     """Send literal text or a navigation key to the specified focused field."""
     if text is None and key not in NAVIGATION_KEYS:
