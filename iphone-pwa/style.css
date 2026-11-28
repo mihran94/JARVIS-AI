@@ -223,3 +223,34 @@ footer p { margin: 4px 0; }
   button.ghost { background: transparent; }
   .line-jarvis { color: #1c4f8f; }
 }
+
+.connection {
+  margin-inline-start: auto;
+  padding: 10px 12px;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 14px;
+}
+
+details > summary {
+  display: list-item;
+  padding: 8px 0;
+  color: var(--text);
+  cursor: pointer;
+}
+details[open] > summary { margin-bottom: 8px; }
+.panel > details { margin: 8px 0; }
+#morePanel section + section { margin-top: 18px; }
+#chatPanel { border-color: #398798; }
+#liveCameraView { max-width: 100%; border-radius: 12px; }
+button.stop { border-color: #b75c62; color: var(--bad); }
+.status:empty { display: none; }
+
+@media (max-width: 460px) {
+  .composer { display: grid; grid-template-columns: 1fr 1fr; }
+  .composer input { grid-column: 1 / -1; min-width: 0; }
+  .remote-nav a { padding-inline: 6px; }
+}

@@ -15,7 +15,7 @@ def export_capcut(plan, clips, destination, check_cancelled, *, narration=None):
         package.mkdir()
         render_preview(
             plan, clips, package / "video.mp4", check_cancelled,
-            narration=narration, burn_captions=False,
+            narration=narration, burn_captions=False, editing_export=True,
         )
         (package / "english.srt").write_text(english_srt(plan), encoding="utf-8")
         check_cancelled()

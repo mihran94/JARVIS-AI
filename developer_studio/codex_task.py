@@ -41,6 +41,7 @@ import os
 from pathlib import Path
 import shlex
 import subprocess
+from tempfile import TemporaryFile
 import time
 import uuid
 
@@ -154,27 +155,42 @@ def run_local_tests(folder, command: str, timeout: int = 1800, cancel=None, obse
         arguments = command.split()
     if not arguments:
         return 'not configured', 'The configured test command was empty.'
-    try:
-        process = subprocess.Popen(
-            arguments, cwd=str(folder), stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, text=True,
-            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-    except (OSError, subprocess.SubprocessError) as error:
-        return 'could not run', str(error)
-    if observer is not None:
-        observer(process)
-    try:
-        while True:
+    with TemporaryFile() as output:
+        try:
+            process = subprocess.Popen(
+                arguments, cwd=str(folder), stdin=subprocess.DEVNULL,
+                stdout=output, stderr=subprocess.STDOUT,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        except (OSError, subprocess.SubprocessError) as error:
+            return 'could not run', str(error)
+        deadline = time.monotonic() + timeout
+        timed_out = False
+        try:
+            if observer is not None:
+                observer(process)
+            while process.poll() is None:
+                if cancel is not None:
+                    cancel()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    timed_out = True
+                    _stop_process(process)
+                    break
+                try:
+                    process.wait(timeout=min(remaining, 0.1))
+                except subprocess.TimeoutExpired:
+                    pass
             if cancel is not None:
                 cancel()
-            if process.poll() is not None:
-                break
-            time.sleep(0.1)
-    except BaseException:
-        _stop_process(process)
-        raise
-    output = process.stdout.read() if process.stdout else ''
-    return ('passed' if process.returncode == 0 else 'failed'), (output or '')[-8000:]
+        except BaseException:
+            _stop_process(process)
+            raise
+        end = output.seek(0, 2)
+        output.seek(max(0, end - 32000))
+        tail = output.read().decode(errors='replace').replace('\r\n', '\n')[-8000:]
+        if timed_out:
+            return 'failed', f'Tests timed out after {timeout:g} seconds.\n{tail}'
+        return ('passed' if process.returncode == 0 else 'failed'), tail
 
 
 def _stop_process(process):
@@ -246,7 +262,8 @@ def build_prompt(project, change: str, protection=None, findings: str = '') -> s
         "the structure that is already there, and do not add anything that was not asked "
         "for. Do not install packages, do not push, do not merge, and do not reach the "
         "network. If the request is ambiguous, make the most reasonable reading of it and "
-        "say in your answer what you assumed."
+        "say in your answer what you assumed. Report the affected user workflow, "
+        "the files you changed and the checks you actually performed."
         + (f"\n\n{notice}" if notice else "")
         + found
     )

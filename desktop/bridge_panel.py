@@ -39,7 +39,7 @@ from providers.registry import specs
 from remote import certificate
 from remote.jobs import (
     DISK_SPACE_ACTION, HISTORY_BACKUP_ACTION, HISTORY_RESTORE_ACTION,
-    operation_kind,
+    OPEN_APP_ACTION, operation_kind,
 )
 from remote.listener import BridgeListener, ListenerConfig, ListenerError
 from remote.pairing import PairingStore
@@ -557,6 +557,11 @@ class BridgePanel(QWidget):
                                             lambda: self._execute_history_restore(job))
                 finally:
                     self.refresh()
+            if operation_kind(job.operation) == OPEN_APP_ACTION:
+                try:
+                    return self._open_phone_app(job)
+                finally:
+                    self.refresh()
             if job.operation != DISK_SPACE_ACTION:
                 if not self.confirm(Action('Reject unsupported phone task', job.id)):
                     return
@@ -659,6 +664,40 @@ class BridgePanel(QWidget):
         if jobs.finish(job_id, result=message).state == 'CANCELLED':
             raise Stopped('Phone task cancelled.') from None
         return message
+
+    def _open_phone_app(self, job):
+        from automation.named_apps import Request, run
+
+        jobs = self.bridge.jobs
+        ticket = self.policy.ticket()
+        name = job.operation.split(':', 1)[1]
+
+        def checkpoint():
+            self.policy.check(ticket)
+            if not self.store.get('automation:self_control', True):
+                raise RuntimeError('Enable PC control first.')
+            if jobs.get(job.id).state == 'CANCELLED':
+                raise Stopped('Phone task cancelled.')
+            if job.peer_id is not None and not any(
+                    device.peer_id == job.peer_id and not device.revoked
+                    for device in self.pairing.devices()):
+                raise Stopped('The requesting phone is no longer paired.')
+
+        def approve(action):
+            if not self.confirm(action):
+                return False
+            checkpoint()
+            jobs.start(job.id)
+            return True
+
+        try:
+            detail = run(Request('open', name), self.gateway, approve, checkpoint)
+        except Exception:
+            if jobs.get(job.id).state == 'RUNNING':
+                jobs.finish(job.id, error='Windows could not dispatch the app launch.')
+            raise
+        jobs.finish(job.id, result=detail)
+        return detail
 
     def _execute_disk_check(self, job):
         jobs = self.bridge.jobs

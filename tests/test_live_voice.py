@@ -165,3 +165,42 @@ def test_completed_audio_turn_delivers_both_transcripts_once(monkeypatch):
     assert struct.unpack('<8h', playback_pcm(raw, 48000, 2)) == (
         -100, -100, 550, 550, 1200, 1200, 1200, 1200,
     )
+
+
+def test_fragmented_playback_buffers_briefly_but_releases_short_replies(monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    live = LiveVoice()
+    fmt = QAudioFormat()
+    fmt.setChannelCount(1)
+    fmt.setSampleRate(24000)
+    fmt.setSampleFormat(QAudioFormat.SampleFormat.Int16)
+    live.output_format = fmt
+    writes = []
+    live.output = type('Output', (), {'write': lambda _, data: writes.append(data) or len(data)})()
+    live.player = type('Sink', (), {'state': lambda _: QAudio.State.IdleState,
+                                     'bytesFree': lambda _: 10000})()
+    now = [0.0]
+    monkeypatch.setattr('desktop.live_voice.monotonic', lambda: now[0])
+    packet = bytes(960)
+    live.queue_audio(packet)
+    assert not writes
+    now[0] = 0.11
+    live.flush_audio()
+    assert writes == [packet]
+    for _ in range(5):
+        live.queue_audio(packet)
+    assert writes[1:] == [5 * packet]
+
+
+def test_noise_reduction_preserves_nearby_voice_after_quiet_background():
+    import numpy as np
+    from desktop.audio_echo import BackgroundNoiseReducer
+
+    reducer = BackgroundNoiseReducer()
+    background = np.full(320, 45, dtype=np.int16)
+    for _ in range(30):
+        quiet = reducer.filter(background, 16000)
+    assert 0 < int(quiet.max()) < int(background.max()) / 2
+    voice = np.full(320, 1200, dtype=np.int16)
+    reducer.filter(voice, 16000)
+    assert np.array_equal(reducer.filter(voice, 16000), voice)

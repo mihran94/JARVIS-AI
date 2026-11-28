@@ -480,8 +480,13 @@ test('the page keeps the work that cannot be sent and sends it later', async () 
   element('send').press();
   await waitFor(() => requests.some((request) => request.body?.includes('"images":["frame"]')),
     'sent the frame with the question');
-  element('message').value = '/disk';
-  element('send').press();
+  globalThis.window.location = { hash: '' };
+  element('message').value = '';
+  element('lookNow').press();
+  await waitFor(() => requests.some((request) => request.body?.includes('இது என்ன?')),
+    'asked what the camera sees');
+  assert.equal(window.location.hash, 'chatPanel');
+  element('checkDisk').press();
   await waitFor(() => requests.some((request) => request.url.endsWith('/api/jobs')
     && request.body?.includes('check_disk_space')), 'sent the command as a desktop job');
   element('endCall').press();

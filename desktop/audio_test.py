@@ -207,8 +207,10 @@ class AudioTest(QGroupBox):
             self.level.setValue(level)
             self.peak = max(self.peak, level)
             if monotonic() >= self.deadline:
-                self.finish(f'Microphone peak: {self.peak}%.' if self.peak >= 2
-                            else 'No clear input detected. Check the microphone and input volume.')
+                message = f'Microphone peak: {self.peak}%.'
+                if self.peak < 10:
+                    message += ' Weak input. Check the selected microphone and Windows input volume.'
+                self.finish(message)
         elif self.stream.state() == QAudio.State.IdleState and self.buffer.atEnd():
             self.finish('Tone played. If you heard it, the default audio output is working.')
         elif monotonic() >= self.deadline:

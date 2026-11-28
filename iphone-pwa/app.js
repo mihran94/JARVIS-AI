@@ -96,6 +96,7 @@ async function connect() {
     setStatus('pairStatus', error.message, 'error');
     return;
   }
+  $('connectionLabel').textContent = 'Connecting…';
   setStatus('pairStatus', 'Checking the PC…');
   try {
     const status = await state.client.status();
@@ -106,6 +107,7 @@ async function connect() {
     await flushOutbox();
     await refreshAll();
   } catch (error) {
+    $('connectionLabel').textContent = 'Reconnect PC';
     setStatus('pairStatus', error.message, 'error');
     say(error.message);
   }
@@ -160,6 +162,7 @@ function forgetSecret() {
   endPhoneCall();
   state.client = null;
   $('secret').value = '';
+  $('connectionLabel').textContent = 'Connect PC';
   setStatus('pairStatus', 'The secret was cleared from this page.');
   stopWatching();
 }
@@ -199,6 +202,7 @@ async function scanPairing(file) {
 // ------------------------------------------------------------------- status
 
 function showStatus(status) {
+  $('connectionLabel').textContent = status.state === 'stopped' ? 'PC stopped' : 'PC connected';
   const fields = {
     state: status.state || '—',
     hostname: status.hostname || '—',
@@ -226,6 +230,7 @@ async function refreshStatus() {
     showStatus(status);
     state.lastError = '';
   } catch (error) {
+    $('connectionLabel').textContent = 'PC unavailable';
     handleFailure(error, 'status');
   }
 }
@@ -259,7 +264,18 @@ async function sendMessage(text, { images } = {}) {
   }
   const call = state.call;
   const command = message.toLowerCase().replace(/[.!?]+$/, '');
-  const asksToLook = /^(?:look|look at this|look through the camera|what is this|what do you see|பார்|பாரு|இதைப் பார்|இதை பாரு|இது என்ன|நான் என்ன காட்டுறேன்|camera paaru|கேமராவில் பார்)[.!?]*$/iu.test(message);
+  const appRequest = /^(?:(?:hey jarvis[,:]? )?(?:open (?:installed )?app|PC-la open) +(.+)|(?:hey jarvis[,:]? )?(.+?) +app open pannu)[.!?]*$/iu.exec(message);
+  const appName = appRequest && (appRequest[1] || appRequest[2]).replace(/[.!?]+$/, '').trim();
+  if (!images && appName) {
+    if (appName.length > 80) {
+      setStatus('chatStatus', 'Enter the Windows app name in 80 characters or fewer.', 'error');
+      return;
+    }
+    await submitTaskRequest({ kind: 'CUSTOM', title: 'Open ' + appName,
+      payload: JSON.stringify({ action: 'open_installed_app', app: appName }), requireApproval: true });
+    return;
+  }
+  const asksToLook = /^(?:look|look at this|look through the camera|what is this|what do you see|what object is this|ithu enna|இந்தப் பொருள் என்ன|இந்த பொருள் என்ன|பார்|பாரு|இதைப் பார்|இதை பாரு|இது என்ன|நான் என்ன காட்டுறேன்|camera paaru|கேமராவில் பார்)[.!?]*$/iu.test(message);
   if (!images && (asksToLook || (call?.mode === 'video' && !CHAT_COMMANDS.has(command)))) {
     const view = $('liveCameraView');
     if (!state.camera || !view.videoWidth) {
@@ -982,20 +998,23 @@ function installListeners() {
   $('endCall').addEventListener('click', endPhoneCall);
   $('phoneCamera').addEventListener('click', togglePhoneCamera);
   $('lookNow').addEventListener('click', () => {
-    const question = $('message').value.trim();
-    if (!question) {
-      sendMessage('பார்');
+    if (!state.client) {
+      setStatus('cameraStatus', 'Connect to the PC first.', 'error');
       return;
     }
+    const question = $('message').value.trim();
     const view = $('liveCameraView');
     if (!state.camera || !view.videoWidth || !$('consent').checked) {
-      setStatus('chatStatus', 'Turn on the camera and allow Gemini to ask about this view.', 'error');
+      setStatus('cameraStatus', 'Turn on the camera and allow Gemini in Chat.', 'error');
       return;
     }
     try {
-      sendMessage(question, { images: [cameraFrame(view, view.videoWidth, view.videoHeight)] });
+      const images = [cameraFrame(view, view.videoWidth, view.videoHeight)];
+      setStatus('cameraStatus', 'See the answer in Chat.');
+      window.location.hash = 'chatPanel';
+      sendMessage(question || 'இது என்ன?', { images });
     } catch {
-      setStatus('chatStatus', 'Could not read the current camera frame. Try again.', 'error');
+      setStatus('cameraStatus', 'Could not read the current camera frame. Try again.', 'error');
     }
   });
   window.addEventListener('pagehide', endPhoneCall);
@@ -1015,6 +1034,17 @@ function installListeners() {
     if (!synthesisSupported()) {
       setStatus('chatStatus', 'This browser cannot speak.', 'error');
     }
+  });
+  $('moreNav').addEventListener('click', () => { $('morePanel').open = true; });
+  $('checkDisk').addEventListener('click', async () => {
+    if (!state.client) {
+      setStatus('taskStatus', 'Connect to the PC first.', 'error');
+      return;
+    }
+    setStatus('taskStatus', 'Sending disk check…');
+    const submitted = await submitTaskRequest(CHAT_COMMANDS.get('/disk')());
+    setStatus('taskStatus', submitted ? 'Sent. Approve it on the PC.' : 'Check the connection message.',
+      submitted ? 'ok' : '');
   });
   $('submitTask').addEventListener('click', submitTask);
   $('refreshJobs').addEventListener('click', refreshJobs);

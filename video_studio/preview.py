@@ -63,7 +63,7 @@ def local_media_path(path, extensions):
     return path
 
 
-def render_preview(plan, clips, output, check_cancelled, *, narration=None, burn_captions=True):
+def render_preview(plan, clips, output, check_cancelled, *, narration=None, burn_captions=True, editing_export=False):
     """Trim in shot order, freeze short clips and mix narration."""
     shots = plan["shots"]
     if len(clips) != len(shots):
@@ -85,15 +85,24 @@ def render_preview(plan, clips, output, check_cancelled, *, narration=None, burn
         graph = []
         pairs = []
         for index, (clip, shot) in enumerate(zip(clips, shots)):
-            streams = json.loads(run_media_command(
-                [ffprobe, "-v", "error", *options, "-show_entries", "stream=codec_type",
+            media_info = json.loads(run_media_command(
+                [ffprobe, "-v", "error", *options, "-show_entries", "stream=codec_type,duration:format=duration",
                  "-of", "json", str(clip)], work, check_cancelled,
-            ))["streams"]
+            ))
+            streams = media_info["streams"]
             kinds = {stream.get("codec_type") for stream in streams}
             if "video" not in kinds:
                 raise ValueError(f"Shot {index + 1} needs a video clip.")
             frames = round(shot["end_ms"] * FPS / 1000) - round(shot["start_ms"] * FPS / 1000)
             duration = f"{frames / FPS:.9f}"
+            offset = shot.get("source_start_ms", 0) / 1000
+            if offset:
+                video = next(stream for stream in streams if stream.get("codec_type") == "video")
+                media_duration = video.get("duration") or media_info.get("format", {}).get("duration")
+                if offset < 0 or (media_duration and media_duration != "N/A"
+                                  and offset >= float(media_duration)):
+                    raise ValueError(f"Shot {index + 1} source start must be inside the clip.")
+                args.extend(["-ss", f"{offset:.3f}"])
             args.extend(["-threads", "2", *options, "-i", str(clip)])
             graph.append(
                 f"[{index}:v:0]fps={FPS},scale=1080:1920:force_original_aspect_ratio=decrease:"
@@ -122,11 +131,14 @@ def render_preview(plan, clips, output, check_cancelled, *, narration=None, burn
                 "[bed][voice]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95:latency=1[mixed]",
             ])
             audio_map = "[mixed]"
+        preset = "fast" if editing_export else "veryfast"
+        crf = "16" if editing_export else "21"
+        audio_bitrate = "256k" if editing_export else "160k"
         staged = work / "preview.mp4"
         run_media_command(
             [*args, "-filter_complex", ";".join(graph), "-map", video_map, "-map", audio_map,
-             "-t", str(DURATION_MS / 1000), "-c:v", "libx264", "-threads", "4", "-preset", "veryfast",
-             "-crf", "21", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(staged)],
+             "-t", str(DURATION_MS / 1000), "-c:v", "libx264", "-threads", "4", "-preset", preset,
+             "-crf", crf, "-c:a", "aac", "-b:a", audio_bitrate, "-movflags", "+faststart", str(staged)],
             work, check_cancelled,
         )
         check_cancelled()

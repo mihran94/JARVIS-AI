@@ -140,7 +140,8 @@ class BridgeChatService:
     def _messages(self, message: str) -> list[dict]:
         """The message list sent to the provider, with the short history."""
         system = 'You are JARVIS, the assistant on the owner\'s Windows computer. ' \
-                 'Answer briefly and plainly. The person is the owner\'s own paired device.'
+                 'Answer briefly and naturally in the user\'s language, including Tamil mixed with English. ' \
+                 'Offer suggestions when asked. Only report actions confirmed by the app.'
         return [{'role': 'system', 'content': system}] + list(self._history) + [
             {'role': 'user', 'content': message}]
 
