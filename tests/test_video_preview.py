@@ -78,3 +78,20 @@ def test_capcut_exports_separate_editable_captions(tmp_path):
     ])
     assert frame and max(frame) == 0
     assert not list(tmp_path.glob(".jarvis-capcut-*"))
+
+
+def test_capcut_readback_checks_container_and_preserves_source_audio(tmp_path):
+    from automation.capcut_export import _verify_export
+    from video_studio.verification import MediaInfo
+
+    path = tmp_path / 'export.mp4'
+    command = ['ffmpeg', '-y', '-v', 'error', '-f', 'lavfi', '-i',
+               'color=red:s=64x64:d=1', '-c:v', 'mpeg4']
+    subprocess.run([*command, '-f', 'matroska', str(path)], check=True)
+    with pytest.raises(RuntimeError, match='MP4 video timeline'):
+        _verify_export(path, None)
+    subprocess.run([*command, str(path)], check=True)
+    assert _verify_export(path, None).ok
+    result = _verify_export(path, MediaInfo(duration=1, has_audio=True))
+    assert not result.ok
+    assert 'no sound' in result.message
