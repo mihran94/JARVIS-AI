@@ -75,7 +75,7 @@ def main():
         print(f'{check.status:8} {check.name}: {check.detail}')
     print('')
     print(f'The report was written to {REPORT}')
-    return 0
+    return int(any(check.status == acceptance.FAIL for check in checks))
 
 
 if __name__ == '__main__':

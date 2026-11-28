@@ -248,3 +248,78 @@ def test_capcut_shortcut_uses_one_native_keyboard_batch(monkeypatch):
     assert [(event.data.ki.wVk, event.data.ki.dwFlags) for event in batches[0]] == [
         (0x11, 0), (0x45, 0), (0x45, 2), (0x11, 2),
     ]
+
+
+@pytest.mark.parametrize('outcome', ['verified', 'unverified', 'collision', 'cancel', 'chat_cancel', 'restart'])
+def test_calculation_note_handoff(tmp_path, monkeypatch, outcome):
+    from automation.desktop_tasks import VerifiedEdit
+    from desktop.voice_tasks import local_voice_request
+    from PySide6.QtCore import QStandardPaths
+
+    command = "Jarvis, 17 times 23 calculate panni, ‘விடை’ன்னு போட்டு result-a Kanakku.txt-la save pannu"
+    task = DesktopTask('Calculator', '17 * 23', True, 'Kanakku.txt')
+    assert local_voice_request(command) == ('desktop', task)
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
+    launches = []
+    output = tmp_path / 'Kanakku.txt'
+    monkeypatch.setattr(QStandardPaths, 'writableLocation', lambda _: str(tmp_path))
+    monkeypatch.setattr('desktop.app.launch_app', launches.append)
+    monkeypatch.setattr('automation.calculator.foreground_calculator', lambda: object())
+    monkeypatch.setattr('automation.calculator.calculate_in_window', lambda *a, **kw: '391')
+    monkeypatch.setattr('desktop.app.target_is_foreground', lambda app: app == 'Notepad')
+
+    def type_result(app, text, *, empty_only):
+        assert (app, text, empty_only) == ('Notepad', 'விடை 391', True)
+        return 'input only' if outcome == 'unverified' else VerifiedEdit('Contents verified')
+
+    monkeypatch.setattr('desktop.app.type_into_target', type_result)
+    try:
+        window.prompt.setPlainText(command)
+        window.send()
+        assert str(output) in window.chat_approval_label.text()
+        assert not launches and not output.exists()
+        window.finish_chat_launch(True)
+        window.complete_desktop_task()
+        assert launches == ['Calculator', 'Notepad']
+        progress_id = window.desktop_pending['progress']['id']
+        if outcome == 'restart':
+            from core.store import Store
+            reopened = Store(window.store.path)
+            record = next(row for row in reopened.tasks() if row['id'] == progress_id)
+            assert record['status'] == 'interrupted'
+            assert '17 * 23 = 391' in record['detail']
+            assert not output.exists()
+            return
+        if outcome == 'chat_cancel':
+            window.prompt.setPlainText('/cancel')
+            window.send()
+        if outcome == 'collision':
+            output.write_text('existing', encoding='utf-8')
+        if outcome == 'cancel':
+            window.policy.stop()
+        window.complete_desktop_task()
+        record = next(row for row in window.store.tasks() if row['id'] == progress_id)
+        assert '391' in record['detail']
+        assert record['status'] == {'verified': 'verified', 'cancel': 'cancelled',
+                                    'chat_cancel': 'cancelled'}.get(outcome, 'failed')
+        if outcome == 'verified':
+            assert output.read_text(encoding='utf-8') == 'விடை 391'
+            assert not window.desktop_open_button.isHidden()
+        elif outcome == 'collision':
+            assert output.read_text() == 'existing'
+            assert 'already exists' in window.desktop_result_label.text()
+        else:
+            assert not output.exists()
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_calculation_note_filename_and_locales():
+    assert parse_desktop_task('Calculate 3 plus 4 and save the result as Answer.txt').text == '3 + 4'
+    assert parse_desktop_task('3 பெருக்கல் 4 கணக்கிட்டு விடையை கணக்கு.txt என்று சேமி').text == '3 * 4'
+    assert parse_desktop_task('Calculate 3 plus 4 and save result as ../answer.txt') is None
+    with pytest.raises(ValueError):
+        parse_desktop_task('Calculate 3 plus 4 and save result as CON.txt')

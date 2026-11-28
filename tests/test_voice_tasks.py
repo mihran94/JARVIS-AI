@@ -30,3 +30,22 @@ def test_live_transcript_requests_approval_in_the_same_app(tmp_path):
         window.close()
         window.deleteLater()
         app.processEvents()
+
+
+def test_typed_tanglish_during_live_voice_uses_local_approval(tmp_path):
+    from desktop.live_voice import LiveVoice
+    app = QApplication.instance() or QApplication([])
+    window = Window(tmp_path)
+    try:
+        window.live_voice = LiveVoice(window)
+        window.live_voice.set_state('listening')
+        window.prompt.setPlainText('Jarvis, Calculator-la 17 times 23 calculate pannu')
+        window.send()
+        assert not window.live_voice.active
+        assert '17 * 23' in window.chat_approval_label.text()
+        assert window.chat_launch is not None
+        window.finish_chat_launch(False)
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()

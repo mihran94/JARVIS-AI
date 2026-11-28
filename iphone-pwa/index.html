@@ -17,19 +17,23 @@
 <body>
 <main>
   <header class="bar">
-    <div class="logo" aria-hidden="true">J</div>
+    <div class="logo" aria-hidden="true">M</div>
     <div class="titles">
       <h1>JARVIS</h1>
       <small>Phone Remote</small>
     </div>
     <button id="install" class="ghost" hidden>Add to Home Screen</button>
   </header>
+  <nav class="remote-nav" aria-label="Phone Remote sections">
+    <a href="#pairing">Pair</a><a href="#statusPanel">PC</a><a href="#chatPanel">Chat</a>
+    <a href="#taskPanel">Tasks</a><a href="#memoryPanel">Memory</a><a href="#notificationPanel">Alerts</a>
+  </nav>
 
   <p id="banner" class="banner" role="status" aria-live="polite" hidden></p>
   <p id="outboxStatus" class="status" role="status" aria-live="polite"></p>
 
   <section class="panel" id="pairing">
-    <h2>1 · Pair with the PC</h2>
+    <h2>Pair with the PC</h2>
     <p class="hint">The PC shows a pairing code. Scan it, or paste the code as
       text. The secret is held in this page's memory only: reloading the page
       clears it, and it is never written to storage.</p>
@@ -57,11 +61,13 @@
       <button id="connect" class="primary">Connect</button>
       <button id="disconnect" class="ghost">Forget secret</button>
     </div>
+    <button id="enableSiriWake" class="ghost">Set up Siri wake</button>
+    <input type="url" id="siriLink" aria-label="Siri wake link" readonly hidden>
     <p id="pairStatus" class="status" role="status" aria-live="polite">Not connected</p>
   </section>
 
   <section class="panel" id="statusPanel">
-    <h2>2 · PC status</h2>
+    <h2>PC status</h2>
     <div class="row">
       <button id="refresh" class="primary">Refresh</button>
       <label class="inline"><input id="autoRefresh" type="checkbox" checked> Keep watching</label>
@@ -81,7 +87,7 @@
   </section>
 
   <section class="panel" id="chatPanel">
-    <h2>3 · Voice &amp; Command Chat</h2>
+    <h2>Voice &amp; Command Chat</h2>
     <p class="hint">The message goes to your PC. The provider key stays on the
       PC and is never sent to the phone. If the PC cannot be reached, the
       message is kept on this phone and goes out when the app is open and the
@@ -129,7 +135,7 @@
   </section>
 
   <section class="panel" id="taskPanel">
-    <h2>4 · Tasks</h2>
+    <h2>Tasks</h2>
     <p class="hint">A task sent from here is queued on the PC. It runs only
       after you approve it there. If the PC cannot be reached, the task is
       kept on this phone and goes out when the app is open and the PC
@@ -151,7 +157,7 @@
   </section>
 
   <section class="panel" id="memoryPanel">
-    <h2>5 · Memory</h2>
+    <h2>Memory</h2>
     <p class="hint">Only what you allow is synchronised. The desktop decides
       whether to keep it. A memory entry is not queued when the PC is out of
       reach, because the desktop would store it a second time.</p>
@@ -164,7 +170,7 @@
   </section>
 
   <section class="panel" id="notificationPanel">
-    <h2>6 · Notifications</h2>
+    <h2>Notifications</h2>
     <div class="row">
       <button id="refreshNotifications" class="ghost">Refresh</button>
       <label class="inline"><input id="allowNotifications" type="checkbox"> Allow notifications</label>

@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 
 STATES = {
     'idle': ('Ready', 'good'),
+    'standby': ('Wake standby', 'accent'),
     'listening': ('Listening', 'good'),
     'thinking': ('Thinking', 'accent'),
     'responding': ('Answering', 'accent'),

@@ -118,9 +118,24 @@ def test_the_task_activity_is_shown(panel):
 
 def test_the_open_applications_are_shown(panel):
     panel.set_windows('notepad.exe (pid=1234): \'Untitled - Notepad\'')
-    assert 'pid=1234' in panel.windows.toPlainText()
+    assert 'pid=1234' in panel.windows.currentText()
 
 
 def test_the_controls_of_an_inspected_application_are_shown(panel):
     panel.set_controls("Button 'Save' (id='saveButton')")
     assert 'saveButton' in panel.controls.toPlainText()
+
+
+def test_inspection_uses_selected_window_and_clears_stale_controls(panel):
+    first = "Editor.exe (pid=10): 'First document'"
+    second = """Editor.exe (pid=10): "Boss's document" """
+    panel.set_windows(first + '\n' + second)
+    panel.set_controls("Button 'Export'")
+    chosen = []
+    panel.inspect_requested.connect(chosen.append)
+    panel.windows.setCurrentIndex(1)
+    panel.inspect_button.click()
+    assert chosen == [second]
+    assert not panel.controls.toPlainText()
+    from desktop.app import Window
+    assert Window._parse_window_row(chosen[0]) == (10, "Boss's document")

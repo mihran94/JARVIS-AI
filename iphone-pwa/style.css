@@ -1,10 +1,10 @@
 :root {
-  --bg: #081324;
-  --panel: #0f2039;
-  --line: #1d3557;
+  --bg: #041018;
+  --panel: #0b202b;
+  --line: #254552;
   --text: #eaf2ff;
   --muted: #9fb4d4;
-  --accent: #3fa9ff;
+  --accent: #60dfec;
   --good: #4ade80;
   --warn: #fbbf24;
   --bad: #f87171;
@@ -43,9 +43,34 @@ main {
   place-items: center;
   font-weight: 700;
   font-size: 20px;
-  background: linear-gradient(160deg, #1e4f8f, #0d2542);
+  color: var(--accent);
+  background: linear-gradient(145deg, #164857, #09212d);
   border: 1px solid var(--line);
 }
+
+.remote-nav {
+  position: sticky;
+  top: env(safe-area-inset-top, 0px);
+  z-index: 2;
+  display: flex;
+  overflow-x: auto;
+  margin-bottom: 14px;
+  padding: 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+}
+.remote-nav a {
+  flex: 1 0 auto;
+  padding: 12px 9px;
+  color: var(--text);
+  text-align: center;
+  text-decoration: none;
+  font-size: 14px;
+}
+.remote-nav a:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+.panel { scroll-margin-top: calc(56px + env(safe-area-inset-top, 0px)); }
+.panel:target { border-color: #398798; }
 
 .titles h1 { font-size: 19px; margin: 0; letter-spacing: .04em; }
 .titles small { color: var(--muted); font-size: 12px; }
@@ -81,7 +106,7 @@ input[type="text"], input[type="url"], input[type="password"], textarea {
   padding: 11px 12px;
   border-radius: 11px;
   border: 1px solid var(--line);
-  background: #0a1a30;
+  background: #071a23;
   color: var(--text);
   font: inherit;
   font-size: 16px;
@@ -108,14 +133,14 @@ button {
   padding: 11px 15px;
   border-radius: 11px;
   border: 1px solid var(--line);
-  background: #16304f;
+  background: #12313d;
   color: var(--text);
   font: inherit;
   font-size: 15px;
   min-height: 44px;
 }
 
-button.primary { background: #1d5fa8; border-color: #2f7fd4; }
+button.primary { background: #146273; border-color: #398798; }
 button.ghost { background: transparent; }
 button[disabled] { opacity: .5; }
 
@@ -135,12 +160,12 @@ button[disabled] { opacity: .5; }
 }
 
 .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 10px 0 0; }
-.stats > div { background: #0a1a30; border: 1px solid var(--line); border-radius: 11px; padding: 9px 11px; }
+.stats > div { background: #071a23; border: 1px solid var(--line); border-radius: 11px; padding: 9px 11px; }
 .stats dt { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
 .stats dd { margin: 3px 0 0; font-size: 15px; font-variant-numeric: tabular-nums; }
 
 .transcript {
-  background: #0a1a30;
+  background: #071a23;
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 10px 12px;
@@ -158,7 +183,7 @@ button[disabled] { opacity: .5; }
 
 .jobs, .memory, .notifications { list-style: none; margin: 10px 0 0; padding: 0; }
 .jobs li, .memory li, .notifications li {
-  background: #0a1a30;
+  background: #071a23;
   border: 1px solid var(--line);
   border-radius: 11px;
   padding: 10px 12px;

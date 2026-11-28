@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timezone
 from hashlib import sha256
 
-from PySide6.QtCore import QProcess, QThread, Signal, QTimer, Qt, QLockFile, QUrl, QEvent
+from PySide6.QtCore import QProcess, QThread, Signal, QTimer, Qt, QLockFile, QUrl, QEvent, QStandardPaths
 from PySide6.QtGui import QDesktopServices, QFont, QTextCursor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSizePolicy,
@@ -94,7 +94,8 @@ from automation.windows import (APPS, EDITOR_EXECUTABLES, LaunchRequest, editor_
                                 launch_editor, launch_is_foreground, open_path)
 from automation.organise import (OrganiseError, organise, plan_organise, plan_text,
                                  result_text)
-from automation.desktop_tasks import VerifiedEdit, parse_desktop_task, target_is_foreground, type_into_target
+from desktop.voice_tasks import parse_local_desktop_request
+from automation.desktop_tasks import DesktopTask, VerifiedEdit, target_is_foreground, type_into_target
 from automation.inspection import inspect_windows
 from developer_studio.workspace import Workspace
 from developer_studio.codex_cli import codex_executable, run_codex
@@ -375,11 +376,14 @@ class ChatPrompt(QPlainTextEdit):
 
 
 class Window(QMainWindow):
+    phone_wake = Signal(int)
+
     def __init__(self, data_root):
         super().__init__()
         self.setWindowTitle(APP_NAME)
         self.resize(1360, 790)
         self.root = Path(data_root)
+        self.selected_app_window = None
         self.desktop_control_active = False
         self.desktop_control_ticket = None
         self.store = Store(self.root / 'history.sqlite3')
@@ -506,6 +510,9 @@ class Window(QMainWindow):
             self.voice_panel.set_language(saved_language)
         self.voice_panel.language.currentTextChanged.connect(
             lambda name: self.store.set('voice_language', self.voice_panel.language_code))
+        self.wake_overlay = None
+        self.wake_chat_worker = None
+        self.voice_panel.wake_started.connect(self.show_wake_overlay)
         self.voice_panel.wake_detected.connect(self.on_wake_detected)
         self.voice_panel.utterance_detected.connect(self.on_voice_transcript)
         self.voice_panel.cycle_finished.connect(self.schedule_local_voice_rearm)
@@ -838,6 +845,7 @@ class Window(QMainWindow):
                 'approval': 'Waiting for an approval.',
                 'stopped': 'Emergency stop is active.',
             }.get(state, '')
+            chat.show_selected_app(self.selected_app_window)
             chat.work_state.setText(summary)
             chat.work_state.setVisible(bool(summary))
             chat.timeline.set_live_detail(detail)
@@ -889,7 +897,7 @@ class Window(QMainWindow):
             return 'thinking' if self.live_voice.state == 'connecting' else self.live_voice.state
         if self.voice_panel.speaking:
             return 'speaking'
-        if self.voice_panel.listening:
+        if self.voice_panel.listening and not self.voice_panel.waiting_for_wake:
             return 'listening'
         if self.ai_visual_state in ('thinking', 'responding'):
             return self.ai_visual_state
@@ -900,7 +908,7 @@ class Window(QMainWindow):
                 or self.browser.task is not None or self.desktop_pending is not None
                 or self.launch_verification is not None):
             return 'working'
-        return 'idle'
+        return 'standby' if self.voice_panel.waiting_for_wake else 'idle'
 
     def on_theme_chosen(self, name: str) -> None:
         if name not in OMEGA_THEMES:
@@ -1204,7 +1212,7 @@ class Window(QMainWindow):
         if suggestion_argument(text) is not None:
             return False
         try:
-            typing = parse_desktop_task(text)
+            typing = parse_local_desktop_request(text)
         except ValueError:
             return False
         if typing is None and parse_voice_command(text) is None:
@@ -1220,38 +1228,95 @@ class Window(QMainWindow):
             'Check or edit what JARVIS heard, then send it to preview the action.', 15000)
         return True
 
-    def on_wake_detected(self, transcript, command):
+    def queue_phone_wake(self):
+        try:
+            ticket = self.policy.ticket()
+        except Stopped:
+            return False
+        self.phone_wake.emit(ticket)
+        return True
+
+    def receive_phone_wake(self, ticket):
+        try:
+            self.policy.check(ticket)
+        except Stopped:
+            return
+        self.display_m_overlay('idle')
+        self.voice_panel.speak_response('சொல்லுங்க, பாஸ்.', local_only=True, queue_local=True)
+
+    def show_wake_overlay(self):
         if (self.policy.stopped or self.voice_panel.microphone_muted
                 or not self.voice_panel.consent.listening):
             return
-        if self.omega is not None and self.omega.mode == 'Island':
-            self.omega.switch('Omega')
-        if not self.isVisible() or self.isMinimized() or not self.isActiveWindow():
-            self.summon_from_hotkey()
-        self.open_section('JARVIS Chat')
-        self.prime_shell.pulse_wake()
+        self.display_m_overlay('listening')
+
+    def display_m_overlay(self, state):
+        if self.wake_overlay is None:
+            from desktop.prime_ui import PrimeOrb
+            overlay = self.wake_overlay = PrimeOrb(self.prime_palette)
+            overlay.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
+                                   | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowDoesNotAcceptFocus
+                                   | Qt.WindowType.WindowTransparentForInput)
+            overlay.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+            overlay.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+            overlay.setFixedSize(136, 136)
+            self.wake_overlay_timer = QTimer(overlay, singleShot=True, interval=12000)
+            self.wake_overlay_timer.timeout.connect(self.finish_wake_overlay)
+            self.voice_panel.audio_level.connect(overlay.set_level)
+        overlay = self.wake_overlay
+        overlay.set_motion(not self.store.get('omega:reduced', False))
+        overlay.set_state(state)
+        screen = self.screen().availableGeometry()
+        overlay.move(screen.right() - overlay.width() - 20, screen.bottom() - overlay.height() - 20)
+        overlay.show()
+        self.wake_overlay_timer.start(12000)
+
+    def finish_wake_overlay(self):
+        if self.wake_overlay.isVisible() and (self.voice_panel.playback_busy or self.wake_chat_worker is not None):
+            self.wake_overlay_timer.start(1500)
+        else:
+            self.wake_overlay.hide()
+
+    def on_wake_detected(self, transcript, command):
+        if not re.match(r'^hey\s+jarvis(?:$|[\s,.!?])', (transcript or '').strip(), re.I):
+            return
+        if (self.policy.stopped or self.voice_panel.microphone_muted
+                or not self.voice_panel.consent.listening):
+            return
+        self.show_wake_overlay()
         text = (command or '').strip()[:4000]
-        if text:
-            self.show_hud_text('Heard: ' + text)
+        request = addressed_request(text).casefold().strip(' .!?')
+        if request in {'open jarvis', 'open jarvis app', 'app open', 'app open pannu', 'app திற',
+                       'preview', 'show preview', 'show jarvis preview', 'preview kaattu', 'preview pannu', 'preview காட்டு',
+                       'jarvis app open pannu', 'jarvis preview kaattu', 'ஜார்விஸ் ஆப்பைத் திற'}:
+            self.wake_overlay.hide()
+            self.summon_from_hotkey()
+            self.open_section('JARVIS Chat')
+            return
+        if not text:
+            return
+        self.show_hud_text('Heard: ' + text)
         if self.draft_spoken_desktop_action(text):
             return
-        if (not self.suggestion_mode.isChecked() and suggestion_argument(text) is None
-                and (self.answer_spoken_system_command(text) or self.route_task(text))):
-            return
-        if (text and self.local_voice_allowed() and self.worker is None
+        if not self.suggestion_mode.isChecked() and suggestion_argument(text) is None:
+            reply = self.local_system_reply(text)
+            if reply is not None:
+                self.show_local_system_reply(text, reply, speak=False)
+                self.voice_panel.speak_response(reply)
+                return
+            if self.route_task(text):
+                return
+        if (not self.startup_microphone.isChecked() and self.local_voice_allowed() and self.worker is None
                 and not self.prompt.toPlainText().strip()):
             # Exact opt-in, local model only: no cloud API charges, no shell
             # execution, no implicit PC action approval, no model fallback.
             self.prompt.setPlainText(text)
             self.send(allow_notes=False)
             return
-        if text:
-            self.on_voice_transcript(text)
+        if self.startup_microphone.isChecked() and self.worker is None:
+            self.send_chat_reply(text, wake_question=True)
         else:
-            self.prompt.setFocus()
-            self.statusBar().showMessage(
-                'Hello! Say your request after Hey Jarvis. '
-                'PC actions always need approval.', 15000)
+            self.on_voice_transcript(text)
 
     def on_voice_transcript(self, transcript):
         """Draft spoken text on the main screen; never automatically send."""
@@ -1399,14 +1464,20 @@ class Window(QMainWindow):
                 self.live_voice.stop('Microphone muted. Live Voice ended.')
             self.voice_panel.audio_level.emit(0)
         self.voice_panel.refresh()
-        if not muted and self.store.get('voice:auto_gemini', False):
-            self.start_automatic_voice()
+        if not muted:
+            if self.store.get('voice:auto_gemini', False):
+                self.start_automatic_voice()
+            else:
+                self.restore_startup_microphone()
+        elif self.wake_overlay is not None:
+            self.wake_overlay.hide()
 
     def start_automatic_voice(self):
+        # An existing startup preference does not grant new microphone consent.
         if (self.policy.stopped or self.close_when_done or self.voice_panel.microphone_muted
+                or not self.voice_panel.consent.listening
                 or self.live_voice_starting or (self.live_voice and self.live_voice.active)):
             return
-        self.voice_panel.allow.setChecked(True)
         self.toggle_live_voice()
 
     def listen_to_user(self):
@@ -1424,6 +1495,8 @@ class Window(QMainWindow):
             self.voice_panel.listen('once')
 
     def on_live_mic_consent(self, allowed):
+        if not allowed and getattr(self, 'wake_overlay', None) is not None:
+            self.wake_overlay.hide()
         if not allowed and hasattr(self, 'startup_microphone'):
             self.startup_microphone.setChecked(False)
         if not allowed and self.live_voice is not None:
@@ -1564,8 +1637,8 @@ class Window(QMainWindow):
         if self.live_reconnect_attempts >= 3:
             self.statusBar().showMessage('Voice reconnection paused. Check the network and unmute to retry.', 15000)
             return
+        delay = 2000 * 2 ** self.live_reconnect_attempts
         self.live_reconnect_attempts += 1
-        delay = 2000 * 2 ** (self.live_reconnect_attempts - 1)
         self.live_reconnect_timer.start(delay)
         self.statusBar().showMessage(f'Voice disconnected. Reconnecting in {delay // 1000} seconds…', 15000)
 
@@ -1634,6 +1707,62 @@ class Window(QMainWindow):
         return True
 
     def route_interface_command(self, spoken):
+        from core.conversation import web_search_argument
+        from urllib.parse import urlencode
+        query = web_search_argument(spoken)
+        if query is not None:
+            if not query:
+                detail = 'What would you like to search for? Try /search followed by your question.'
+            elif not self.store.get('automation:self_control', True):
+                detail = 'Enable PC control in Settings to open search results in your browser.'
+            else:
+                url = 'https://www.google.com/search?' + urlencode({'q': query})
+                def open_results():
+                    if not QDesktopServices.openUrl(QUrl(url)):
+                        raise RuntimeError('Could not open the browser.')
+                    return 'Opened Google results for ' + query
+
+                try:
+                    detail = self.gateway.run(Action('web_search', 'Google Search · ' + query),
+                                              self.confirm, open_results)
+                except RuntimeError as error:
+                    detail = str(error)
+            self.show_local_system_reply(spoken, detail, speak=False)
+            return True
+        from automation import named_apps
+        request = named_apps.parse(spoken, has_selection=self.selected_app_window is not None)
+        if request is not None:
+            try:
+                if not self.store.get('automation:self_control', True):
+                    raise Denied('Enable PC control in Settings first.')
+                ticket = self.policy.ticket()
+                selected = self.selected_app_window
+                session = self.session
+
+                def checkpoint():
+                    self.policy.check(ticket)
+                    if self.session != session or self.selected_app_window is not selected:
+                        raise Denied('The conversation or selected app changed.')
+                    if not self.store.get('automation:self_control', True):
+                        raise Denied('PC control is disabled.')
+
+                if request.verb == 'release':
+                    self.selected_app_window = None
+                    detail = 'App selection released.'
+                elif request.verb == 'select':
+                    self.selected_app_window = None
+                    selected = None
+                    self.selected_app_window, detail = named_apps.select(
+                        request.app, self.gateway, self.confirm, checkpoint)
+                else:
+                    if request.app and selected is not None:
+                        self.selected_app_window = selected = None
+                    detail = named_apps.run(request, self.gateway, self.confirm, checkpoint, selected=selected)
+            except Exception as error:
+                detail = str(error)
+            self.show_local_system_reply(spoken, detail, speak=False)
+            self.refresh_prime_state()
+            return True
         text = addressed_request(spoken).casefold().strip(' .!?')
         text = re.sub(r'\s+', ' ', text)
         if text in {'open browser', 'browser open', 'browser open pannu',
@@ -1722,6 +1851,7 @@ class Window(QMainWindow):
         self.desktop_control_active = bool(enabled)
         self.desktop_control_ticket = self.policy.ticket() if enabled else None
         if not enabled:
+            self.selected_app_window = None
             preference = getattr(self, 'keep_desktop_control', None)
             if preference is not None and preference.isChecked():
                 preference.setChecked(False)
@@ -2137,6 +2267,21 @@ class Window(QMainWindow):
         self.ai_visual_state = state
         self.refresh_voice_hud()
 
+    def mic_status_label(self):
+        panel = self.voice_panel
+        if panel.microphone_muted:
+            return 'MUTED'
+        if self.policy.stopped or not panel.consent.listening:
+            return 'OFF'
+        if self.live_voice and self.live_voice.active and getattr(self.live_voice, 'input', None) is not None:
+            return 'LIVE'
+        if panel.waiting_for_wake:
+            return 'STANDBY'
+        audio_test = getattr(self, 'audio_test', None)
+        if panel.listening or (panel.audio_test_active and getattr(audio_test, 'mode', None) == 'microphone'):
+            return 'ACTIVE'
+        return 'READY'
+
     def refresh_voice_hud(self):
         if not self.voice_panel.consent.listening and self.hands_free_voice.isChecked():
             self.hands_free_voice.setChecked(False)
@@ -2157,8 +2302,12 @@ class Window(QMainWindow):
             'idle': 'IDLE', 'listening': 'LISTENING', 'thinking': 'THINKING',
             'responding': 'ANSWERING', 'speaking': 'SPEAKING', 'stopped': 'STOPPED',
         }[state]
-        self.orb.set_state(state)
-        self.hud_orb.set_state(state)
+        standby = state == 'listening' and self.voice_panel.waiting_for_wake
+        if standby:
+            label = 'WAKE STANDBY'
+        orb_state = 'idle' if standby else state
+        self.orb.set_state(orb_state)
+        self.hud_orb.set_state(orb_state)
         if self.chat_launch is not None and not self.policy.stopped:
             label = 'APPROVAL REQUIRED'
         self.orb_status.setText('JARVIS  /  ' + label)
@@ -2169,8 +2318,8 @@ class Window(QMainWindow):
         shell = getattr(self, 'prime_shell', None)
         if shell is not None:
             mic_action = 'Unmute mic' if muted else 'Mute mic'
-            shell.mic_mute_button.setText('MIC MUTED' if muted else (
-                'MIC ACTIVE' if self.voice_panel.consent.listening else 'MIC OFF'))
+            shell.mic_mute_button.setText('MIC ' + self.mic_status_label())
+            shell.refresh_clock()
             shell.mic_mute_button.setAccessibleName(mic_action)
             shell.mic_mute_button.setToolTip(mic_action)
             shell.output_mute_button.setChecked(output_muted)
@@ -2183,14 +2332,15 @@ class Window(QMainWindow):
             chat.assistant.refresh_caption()
         self.hud_voice_status.setText(label)
         if self.omega is not None:
-            self.omega.set_voice(state)
+            self.omega.set_voice(orb_state)
         self.hud_talk.setEnabled(not muted and state not in ('stopped', 'listening', 'speaking')
                                  and not self.voice_panel.playback_busy)
         hud = getattr(self, 'hud', None)
         if hud is not None:
             live_listening = self.live_voice is not None and self.live_voice.state == 'listening'
             microphone_open = self.voice_panel.listening or live_listening
-            mic_state = ('The microphone is listening.' if microphone_open else
+            mic_state = ('Waiting for Hey Jarvis.' if standby else
+                         'The microphone is listening.' if microphone_open else
                          self.voice_panel.consent.listener)
             hud.strip.set_mic('The microphone is muted.' if muted else mic_state, output_muted)
         self.refresh_prime_state(refresh_motion=False)
@@ -2204,13 +2354,13 @@ class Window(QMainWindow):
         self.show_local_system_reply(command, reply)
         return True
 
-    def show_local_system_reply(self, command, reply):
+    def show_local_system_reply(self, command, reply, *, speak=True):
         self.store.message(self.session, 'local command', command)
         self.store.message(self.session, 'system', reply)
         self.render_chat()
         self.refresh_archives()
         self.show_hud_text(reply)
-        if self.read_replies.isChecked():
+        if speak and self.read_replies.isChecked():
             self.read_with_gemini(reply)
 
     def show_hud_text(self, text):
@@ -2405,6 +2555,9 @@ class Window(QMainWindow):
         result_layout.addWidget(self.desktop_result_label)
         self.desktop_save_button = self.button(result_layout, 'Save inserted text as…',
                                                self.save_desktop_result)
+        self.desktop_open_button = self.button(
+            result_layout, 'Open saved file', lambda: self.notify(lambda: open_path(self.desktop_saved_path)))
+        self.desktop_open_button.hide()
         self.desktop_result_card.hide()
         layout.addWidget(self.desktop_result_card)
         self.prompt = ChatPrompt()
@@ -2814,6 +2967,8 @@ class Window(QMainWindow):
         self.bridge = BridgePanel(self.policy, self.store, self.vault, self.confirm, self.notify,
                                   router=self.router,
                                   history_path=self.root / 'history.sqlite3')
+        self.phone_wake.connect(self.receive_phone_wake, Qt.ConnectionType.QueuedConnection)
+        self.bridge.bridge.wake = self.queue_phone_wake
         self.phone_remote_popup = QDialog(self)
         self.phone_remote_popup.setWindowTitle('Phone Remote')
         screen = self.screen().availableGeometry()
@@ -2942,7 +3097,7 @@ class Window(QMainWindow):
 
     def request_suggestions(self, goal: str, *, explicit: bool, consume_draft=False, online=False):
         try:
-            typing = parse_desktop_task(goal)
+            typing = parse_local_desktop_request(goal)
         except ValueError as error:
             self.statusBar().showMessage(str(error), 10000)
             return
@@ -2964,6 +3119,8 @@ class Window(QMainWindow):
                       if typing.app == 'Calculator' else
                       'Review the exact text JARVIS would enter in Notepad:\n' + typing.text
                       + '\n\nTyping will not save a file.')
+            if typing.note_filename:
+                review += f'\nWrite விடை and the displayed result in blank Notepad and save {typing.note_filename} in Documents.'
             step = Step(typing.app, typing)
         self.show_local_system_reply(goal, review)
         self.show_suggested_steps((step,), detail=review)
@@ -2986,6 +3143,7 @@ class Window(QMainWindow):
                 'Refresh the list of windows and choose one of them first.')
             return
         try:
+            app_control.focus_selected(pid, title)
             text = app_control.see_controls(pid, title)
         except Exception as error:
             text = 'The controls could not be read: ' + str(error)
@@ -3000,8 +3158,13 @@ class Window(QMainWindow):
             head, _, tail = line.partition('): ')
             pid_text = head.split('pid=')[-1].strip()
             title = tail.strip()
-            if len(title) >= 2 and title[0] == "'" and title[-1] == "'":
-                title = title[1:-1]
+            from ast import literal_eval
+            try:
+                title = literal_eval(title)
+            except (ValueError, SyntaxError):
+                continue
+            if not isinstance(title, str):
+                continue
             try:
                 return int(pid_text), title
             except ValueError:
@@ -4180,6 +4343,7 @@ class Window(QMainWindow):
             self.conversation_plan.cancel('Conversation changed; remaining steps cancelled.')
             if self.chat_launch is not None:
                 self.finish_chat_launch(False)
+            self.selected_app_window = None
             self.session = session
             self.store.set('session', session)
             self.render_chat()
@@ -4414,19 +4578,13 @@ class Window(QMainWindow):
         self.startup_greeting.toggled.connect(
             lambda enabled: self.store.set('voice:startup_greeting', enabled))
         self.startup_microphone = QCheckBox('Hey Jarvis')
-        self.startup_microphone.setToolTip('Wake-word recognition stays on this PC.')
+        self.startup_microphone.setToolTip('Wait locally for Hey Jarvis. After the cue, one spoken question can be sent as text to your configured chat provider for a spoken answer.')
         self.startup_microphone.setChecked(bool(self.store.get('voice:local_on_startup', False)))
         self.startup_microphone.toggled.connect(self.save_startup_microphone)
         voice_controls.addWidget(self.startup_microphone)
-        auto_voice = QCheckBox('Start Gemini voice automatically')
-        auto_voice.setChecked(bool(self.store.get('voice:auto_gemini', False)))
-        auto_voice.setToolTip('Streams microphone audio to Google while unmuted. Provider charges may apply.')
-        auto_voice.toggled.connect(lambda enabled: self.store.set('voice:auto_gemini', enabled))
-        voice_controls.addWidget(auto_voice)
         wake_group = QGroupBox('Wake and startup')
         wake_layout = QVBoxLayout(wake_group)
         wake_layout.addWidget(self.startup_microphone)
-        wake_layout.addWidget(auto_voice)
         voice_links = QHBoxLayout()
         if sys.platform == 'win32':
             self.flexible_button(voice_links, 'Windows sound volume',
@@ -4444,6 +4602,11 @@ class Window(QMainWindow):
         voice_advanced = QWidget()
         advanced_layout = QVBoxLayout(voice_advanced)
         advanced_layout.setContentsMargins(0, 0, 0, 0)
+        self.automatic_gemini = QCheckBox('Start Gemini Live automatically with existing microphone permission')
+        self.automatic_gemini.setChecked(bool(self.store.get('voice:auto_gemini', False)))
+        self.automatic_gemini.toggled.connect(
+            lambda enabled: self.store.set('voice:auto_gemini', enabled))
+        advanced_layout.addWidget(self.automatic_gemini)
         for item in (self.read_replies, self.gemini_readout, self.startup_greeting, voice_models):
             advanced_layout.addWidget(item)
         for item in (self.hands_free_voice, self.voice_panel, conversation):
@@ -4874,36 +5037,65 @@ class Window(QMainWindow):
         scope = ApprovalScope.ROUTINE if calculator else ApprovalScope.ALWAYS
         if task.app == 'Notepad':
             scope = ApprovalScope.LOCAL_WRITE
+        destination = None
+        if task.note_filename:
+            folder = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation)
+            if not folder or not Path(folder).is_dir():
+                self.show_local_system_reply(command, 'Windows Documents folder is unavailable.')
+                return False
+            destination = Path(folder) / task.note_filename
+            if destination.exists():
+                self.show_local_system_reply(command, f'Choose a new filename. {destination} already exists.')
+                return False
+            step = f'calculate {task.text}, type விடை and the displayed result in blank Notepad, save to {destination}'
+            digest = sha256(step.encode('utf-8')).hexdigest()
+            scope = ApprovalScope.ALWAYS
         action = Action('desktop_plan_approval', f'{task.app}: {step}, {len(task.text)} chars',
                         digest, scope)
         automatic = not self.policy.requires_confirmation(action)
         self.chat_launch = (task.app, ticket, action, lambda: self.schedule_desktop_task(
-            task, ticket, digest, automatic_action=action if automatic else None))
+            task, ticket, digest, destination=destination, automatic_action=action if automatic else None))
         if automatic:
             self.finish_chat_launch(None)
             return True
         excerpt = task.text[:160] + ('…' if len(task.text) > 160 else '')
-        review = (f'Review desktop task: {step} in Calculator.\n{task.text}'
-                  if calculator else
-                  f'Review desktop task: {step} in {task.app}. '
-                  'The full text to be inserted follows; approve only if correct:\n'
-                  + task.text + '\nThe target window must be verified before typing.')
+        if destination is not None:
+            summary = (f'Calculate {task.text} in Calculator, write விடை and the displayed result '
+                       f'in blank Notepad, then save to {destination}')
+            review = summary
+        else:
+            summary = f'{step.capitalize()} in {task.app}\n{excerpt}'
+            review = (f'Review desktop task: {step} in Calculator.\n{task.text}'
+                      if calculator else
+                      f'Review desktop task: {step} in {task.app}. '
+                      'The full text to be inserted follows; approve only if correct:\n'
+                      + task.text + '\nThe target window must be verified before typing.')
         self.show_local_system_reply(command, review)
-        self.chat_approval_label.setText(
-            f'{step.capitalize()} in {task.app}\n{excerpt}')
+        self.chat_approval_label.setText(summary)
         self.chat_approval_label.setToolTip(f'Exact action content fingerprint: {digest}')
         self.chat_approval.show()
         self.refresh_voice_hud()
         return True
 
-    def schedule_desktop_task(self, task, ticket, digest, *, automatic_action=None):
+    def schedule_desktop_task(self, task, ticket, digest, *, automatic_action=None, destination=None, progress=None):
         """Schedule, never poll for a window on the Qt UI thread."""
         self.policy.check(ticket)
         if self.desktop_pending is not None:
             raise ValueError('A desktop task is already running.')
-        if task.launch:
-            launch_app(task.app)
-        self.desktop_pending = dict(task=task, ticket=ticket, digest=digest,
+        if destination is not None and progress is None:
+            detail = f'Waiting for Calculator to verify {task.text}. Destination: {destination}'
+            ident = self.store.task('calculation_note', detail)
+            progress = {'id': ident, 'detail': detail}
+            self.store.finish(ident, 'running')
+        try:
+            if task.launch:
+                launch_app(task.app)
+        except (RuntimeError, ValueError, OSError) as error:
+            if progress:
+                self.store.finish(progress['id'], 'failed', f"{progress['detail']} Launch failed: {error}")
+            raise
+        self.desktop_pending = dict(task=task, ticket=ticket, digest=digest, destination=destination,
+                                    progress=progress,
                                     automatic_action=automatic_action,
                                     deadline=time.monotonic() + 7.0)
         self.desktop_task_timer.start()
@@ -4911,6 +5103,7 @@ class Window(QMainWindow):
         return f'Desktop plan approved for {task.app}. Waiting for its foreground window.'
 
     def show_desktop_result(self, detail, verified_text=None):
+        self.desktop_open_button.hide()
         self.desktop_export_text = verified_text
         self.desktop_result_label.setText(detail)
         self.desktop_save_button.setVisible(verified_text is not None)
@@ -4939,27 +5132,41 @@ class Window(QMainWindow):
                 path = path.with_suffix('.txt')
             if path.suffix.lower() != '.txt':
                 raise ValueError('Choose a .txt filename.')
-            payload = text.encode('utf-8')
-
-            def write_verified():
-                try:
-                    with path.open('xb') as output:
-                        output.write(payload)
-                except FileExistsError:
-                    raise ValueError('That file already exists. Choose a new filename.') from None
-                with path.open('rb') as output:
-                    if output.read(len(payload) + 1) != payload:
-                        raise OSError('The saved file could not be verified.')
-                return f'Inserted text saved and verified in {path}'
-
-            ident = self.store.task('desktop_text_export', str(path))
-            detail = self.gateway.run(Action('desktop_text_export', str(path)),
-                                      lambda _action: True, write_verified,
-                                      task_id=ident, completion_status='verified')
+            detail = self.write_desktop_result(path, text)
             self.show_desktop_result(detail)
             self.show_local_system_reply('Save inserted text', detail)
 
         self.notify(save)
+
+    def write_desktop_result(self, path, text):
+        payload = text.encode('utf-8')
+
+        def write_verified():
+            try:
+                with path.open('xb') as output:
+                    output.write(payload)
+            except FileExistsError:
+                raise ValueError('That file already exists. Choose a new filename.') from None
+            with path.open('rb') as output:
+                if output.read(len(payload) + 1) != payload:
+                    raise OSError('The saved file could not be verified.')
+            return f'Inserted text saved and verified in {path}'
+
+        ident = self.store.task('desktop_text_export', str(path))
+        detail = self.gateway.run(Action('desktop_text_export', str(path)),
+                                  lambda _action: True, write_verified,
+                                  task_id=ident, completion_status='verified')
+        return detail
+
+    def stop_pending_desktop_task(self, reason):
+        self.desktop_task_timer.stop()
+        pending, self.desktop_pending = self.desktop_pending, None
+        progress = pending and pending.get('progress')
+        if progress:
+            detail = f"{progress['detail']} {reason}"
+            self.store.finish(progress['id'], 'cancelled', detail)
+            self.show_desktop_result(detail)
+            self.refresh_history()
 
     def complete_desktop_task(self):
         """Only type after Windows verifies the target foreground process."""
@@ -4968,21 +5175,15 @@ class Window(QMainWindow):
             self.desktop_task_timer.stop()
             return
         task = pending['task']
+        progress = pending.get('progress')
         try:
             self.policy.check(pending['ticket'])
             automatic = pending.get('automatic_action')
             if automatic is not None and self.policy.requires_confirmation(automatic):
                 raise Denied('Approval mode changed. Request the action again.')
             if time.monotonic() >= pending['deadline']:
-                self.desktop_task_timer.stop()
-                self.desktop_pending = None
-                self.show_local_system_reply('Desktop task',
-                    f'{task.app} did not become foreground in time. '
-                    'No text was entered. Activate the correct window and retry.')
-                self.show_desktop_result(
-                    f'{task.app} did not come to the foreground. No text was sent.')
-                self.conversation_plan.result(False, 'Target window did not become foreground in time.')
-                return
+                raise RuntimeError(f'{task.app} did not become foreground in time. '
+                                   'No text was entered. Activate the correct window and retry.')
             calculator = None
             if task.app == 'Calculator':
                 from automation.calculator import calculate_in_window, foreground_calculator
@@ -5005,29 +5206,58 @@ class Window(QMainWindow):
                 detail = f'Calculator display verified: {task.text} = {result}'
                 self.show_desktop_result(detail)
                 self.show_local_system_reply('Calculator result', detail)
+                if pending.get('destination') is not None:
+                    progress['detail'] = f'{detail}. Waiting for Notepad. Destination: {pending["destination"]}'
+                    self.store.finish(progress['id'], 'running', progress['detail'])
+                    note = DesktopTask('Notepad', f'விடை {result}', True)
+                    self.schedule_desktop_task(note, pending['ticket'], pending['digest'],
+                                               destination=pending['destination'], progress=progress)
+                    return
                 self.conversation_plan.result(True, detail, verified=True)
                 return
             action = Action('desktop_type', f'{task.app}: {len(task.text)} characters', pending['digest'])
             task_id = self.store.task(action.kind, action.target)
             result = self.gateway.run(
                 action, lambda _action: True,  # the exact text was approved in chat
-                lambda: type_into_target(task.app, task.text),
+                lambda: (type_into_target(task.app, task.text, empty_only=True)
+                         if pending.get('destination') else type_into_target(task.app, task.text)),
                 task_id=task_id, completion_status='dispatched')
             verified = isinstance(result, VerifiedEdit)
             status = 'verified' if verified else 'unverified'
-            detail = f'{task.app} foreground confirmed. {result} JARVIS did not save a file.'
+            detail = f'{task.app} foreground confirmed. {result}'
+            if not pending.get('destination'):
+                detail += ' JARVIS did not save a file.'
             self.store.finish(task_id, status, detail)
             self.show_desktop_result(
                 detail if verified else detail + ' Check the editor before trying again.',
                 task.text if verified else None)
             self.show_local_system_reply('Desktop task result', detail)
+            destination = pending.get('destination')
+            if destination is not None:
+                if not verified:
+                    raise RuntimeError('Notepad contents could not be verified. File save skipped.')
+                self.policy.check(pending['ticket'])
+                progress['detail'] = f'Calculator and Notepad verified: {task.text}. Saving to {destination}.'
+                self.store.finish(progress['id'], 'running', progress['detail'])
+                detail = self.write_desktop_result(destination, task.text)
+                self.store.finish(progress['id'], 'verified', f'{task.text}. {detail}')
+                self.show_desktop_result(detail)
+                self.desktop_saved_path = destination
+                self.desktop_open_button.show()
+                self.show_local_system_reply('Calculation note saved', f'Boss, சேமித்துவிட்டேன். {detail}')
             self.conversation_plan.result(True, detail, verified=verified)
         except (Denied, Stopped, RuntimeError, ValueError, OSError) as error:
             self.desktop_task_timer.stop()
             self.desktop_pending = None
             label = 'Calculation failed' if task.app == 'Calculator' else 'Typing failed'
-            self.show_desktop_result(f'{label}. {error}')
-            self.show_local_system_reply('Desktop task failed', str(error))
+            if pending.get('destination'):
+                label = 'Calculation note failed'
+            detail = f'{label}. {error}'
+            if progress:
+                detail = f"{progress['detail']} {detail}"
+                self.store.finish(progress['id'], 'cancelled' if isinstance(error, Stopped) else 'failed', detail)
+            self.show_desktop_result(detail)
+            self.show_local_system_reply('Desktop task failed', detail)
             self.conversation_plan.result(False, str(error))
         finally:
             self.refresh_prime_state()
@@ -6831,6 +7061,7 @@ class Window(QMainWindow):
         self.cancel_launch_verification()
         if self.chat_launch is not None:
             self.finish_chat_launch(False)
+        self.selected_app_window = None
         self.session = uuid.uuid4().hex
         self.store.set('session', self.session)
         self.clear_attachments()
@@ -6929,12 +7160,19 @@ class Window(QMainWindow):
             self.prompt.clear()
             return
         if self.live_voice is not None and self.live_voice.active:
-            if not text.startswith('/'):
-                self.store.message(self.session, 'user', text)
-                self.prompt.clear()
-                self.render_chat()
-                self.live_voice.send({'realtimeInput': {'text': text}})
-                return
+            cancel = addressed_request(text).casefold() in ('cancel task', 'task cancel pannu')
+            if not text.startswith('/') and not cancel:
+                try:
+                    desktop_request = parse_local_desktop_request(text)
+                except ValueError as error:
+                    self.show_local_system_reply(text, str(error))
+                    return
+                if desktop_request is None:
+                    self.store.message(self.session, 'user', text)
+                    self.prompt.clear()
+                    self.render_chat()
+                    self.live_voice.send({'realtimeInput': {'text': text}})
+                    return
             self.live_voice.stop('Running the Chat command.')
         if self.route_youtube(text):
             self.prompt.clear()
@@ -6951,8 +7189,7 @@ class Window(QMainWindow):
                 self.finish_chat_launch(False)
                 cancelled = True
             if not cancelled and self.desktop_pending is not None:
-                self.desktop_task_timer.stop()
-                self.desktop_pending = None
+                self.stop_pending_desktop_task('Cancelled in chat.')
                 cancelled = True
             self.show_local_system_reply(text, 'Pending desktop requests cancelled. Already opened apps remain open.'
                                          if cancelled else 'No pending conversation plan. Use Emergency Stop to cancel other active work.')
@@ -7039,13 +7276,13 @@ class Window(QMainWindow):
                 self.open_section('JARVIS Chat')
                 return
             try:
-                desktop_task = parse_desktop_task(text)
+                desktop_task = parse_local_desktop_request(text)
             except ValueError as error:
                 self.show_local_system_reply(text, str(error))
                 return
             if desktop_task is not None:
-                self.prompt.clear()
-                self.queue_desktop_task(text, desktop_task)
+                if self.queue_desktop_task(text, desktop_task):
+                    self.prompt.clear()
                 return
             coding = self.coding_request(text)
             if coding is not None:
@@ -7099,7 +7336,7 @@ class Window(QMainWindow):
         return True
 
     def send_chat_reply(self, text, *, analysis=None, use_notes=False, suggestion=False,
-                        suggestions_online=False):
+                        suggestions_online=False, wake_question=False):
         def operation():
             self.chat_ticket = self.policy.ticket()
             provider = 'Gemini' if suggestions_online else self.chat_provider.currentText()
@@ -7143,7 +7380,7 @@ class Window(QMainWindow):
             # A chosen path alone never uploads content. The app never saves
             # these file bytes in the conversation database.
             shared_files = ()
-            if not suggestion and self.files_share_once.isChecked():
+            if not wake_question and not suggestion and self.files_share_once.isChecked():
                 shared_files = tuple(self.attachments)
             if shared_files:
                 messages[-1]['content'] += '\n\n' + as_untrusted_context(shared_files)
@@ -7152,7 +7389,7 @@ class Window(QMainWindow):
             self.store.message(self.session, 'user', prompt)
             self.render_chat()
             self.transcript.appendPlainText('\nJARVIS\n')
-            if not (suggestion and self.automation_panel.isAncestorOf(self.suggestion_card)):
+            if not wake_question and not (suggestion and self.automation_panel.isAncestorOf(self.suggestion_card)):
                 self.prompt.clear()
             guidance = self.conversation_guidance()
             if suggestion:
@@ -7162,6 +7399,8 @@ class Window(QMainWindow):
             system = {'role': 'system', 'content': guidance}
             kind = 'suggestion' if suggestion else 'chat'
             self.start_worker(provider, model, key, [system] + messages, kind, backup=backup)
+            if wake_question:
+                self.wake_chat_worker = self.worker
             if suggestion:
                 self.use_notes.setChecked(False)
                 self.files_share_once.setChecked(False)
@@ -7171,7 +7410,14 @@ class Window(QMainWindow):
                     f'{len(shared_files)} file(s) shared with the chosen AI for this message only.',
                     12000)
             self.backup_consent.setChecked(False)
-        self.notify(operation)
+        if wake_question:
+            try:
+                operation()
+            except (RuntimeError, OSError, ValueError) as error:
+                self.statusBar().showMessage(str(error), 15000)
+                self.voice_panel.speak_response('Check the chat provider in JARVIS settings.')
+        else:
+            self.notify(operation)
 
     def on_chunk(self, text):
         if self.worker_kind not in ('chat', 'suggestion'):
@@ -7276,7 +7522,12 @@ class Window(QMainWindow):
                 self.store.message(self.session, 'assistant', text)
                 self.render_chat()
                 self.show_hud_text(text)
-                if self.read_replies.isChecked() and not self.policy.stopped:
+                if self.worker is not None and self.worker is self.wake_chat_worker and not self.policy.stopped:
+                    self.show_wake_overlay()
+                    if self.wake_overlay is not None:
+                        self.wake_overlay.set_state('speaking')
+                    self.voice_panel.speak_response(text)
+                elif self.read_replies.isChecked() and not self.policy.stopped:
                     self.read_with_gemini(text)
             else:
                 if status == 'cancelled':
@@ -7313,8 +7564,7 @@ class Window(QMainWindow):
     def on_finished(self):
         self.worker.deleteLater()
         self.worker = None
-        if self.store.get('voice:auto_gemini', False):
-            QTimer.singleShot(0, self.start_automatic_voice)
+        self.wake_chat_worker = None
         self.refresh_brain_label()
         self.video_cancel_render.hide()
         self.video_brief.setReadOnly(False)
@@ -7358,9 +7608,10 @@ class Window(QMainWindow):
         self.after_effects_timeline_button.setEnabled(ready and self.video_plan is not None)
 
     def stop(self):
-        if hasattr(self, 'live_reconnect_timer'):
-            self.live_reconnect_timer.stop()
+        if getattr(self, 'wake_overlay', None) is not None:
+            self.wake_overlay.hide()
         self.keep_desktop_control.setChecked(False)
+        self.selected_app_window = None
         self.desktop_control_active = False
         self.desktop_control_ticket = None
         if hasattr(self, 'desktop_control_status'):
@@ -7384,8 +7635,7 @@ class Window(QMainWindow):
         self.clear_suggested_plan()
         self.conversation_plan.cancel('Emergency Stop. Resume will not replay this plan.')
         self.cancel_launch_verification()
-        self.desktop_task_timer.stop()
-        self.desktop_pending = None
+        self.stop_pending_desktop_task('Emergency Stop.')
         if self.test_worker is not None:
             # The test PROCESS is stopped too, not just the assistant.
             self.test_worker.requestInterruption()
@@ -7549,16 +7799,16 @@ class Window(QMainWindow):
         self.request_exit()
 
     def closeEvent(self, event):
-        if hasattr(self, 'live_reconnect_timer'):
-            self.live_reconnect_timer.stop()
+        self.selected_app_window = None
+        if getattr(self, 'wake_overlay', None) is not None:
+            self.wake_overlay.hide()
         self.camera_toggle.setChecked(False)
         if self.live_voice is not None:
             self.live_voice.stop()
         self.conversation_plan.cancel('Window closed; remaining steps cancelled.')
         self.audio_test.stop()
         self.cancel_launch_verification()
-        self.desktop_task_timer.stop()
-        self.desktop_pending = None
+        self.stop_pending_desktop_task('Window closed.')
         if not self.close_when_done and self.editor.document().isModified():
             if not self.confirm(Action('discard_unsaved_editor_changes', self.filename.text())):
                 self.exit_requested = False

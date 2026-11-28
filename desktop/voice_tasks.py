@@ -53,6 +53,20 @@ def number(value):
     return None
 
 
+def parse_local_desktop_request(text):
+    """Use the same bounded PC command grammar for text and voice."""
+    task = parse_desktop_task(text)
+    if task is not None:
+        return task
+    normalized = ' '.join(addressed_request(text).casefold().split()).strip(' .,! ?।')
+    expression = MATH.fullmatch(normalized)
+    if expression:
+        left, right = (number(expression[field]) for field in ('left', 'right'))
+        if left is not None and right is not None:
+            return DesktopTask('Calculator', f'{left} {MATH_VERBS[expression["op"]]} {right}', True)
+    return None
+
+
 def local_voice_request(transcript, projects=()):
     """Return an existing approval or project route, or leave the speech as chat."""
     if not isinstance(transcript, str) or len(transcript) > 2400:
@@ -69,16 +83,11 @@ def local_voice_request(transcript, projects=()):
         if command is not None and command.kind in ('project_status', 'project_open', 'project_test'):
             return 'project', project_command
     try:
-        task = parse_desktop_task(text)
+        task = parse_local_desktop_request(text)
     except ValueError:
         return None
     if task is not None:
         return 'desktop', task
-    expression = MATH.fullmatch(normalized)
-    if expression:
-        left, right = (number(expression[field]) for field in ('left', 'right'))
-        if left is not None and right is not None:
-            return 'desktop', DesktopTask('Calculator', f'{left} {MATH_VERBS[expression["op"]]} {right}', True)
     app = parse_voice_command(text)
     if app:
         return 'launch', app

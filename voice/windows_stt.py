@@ -13,7 +13,7 @@ from pathlib import Path
 
 from voice.consent import VoiceConsent
 from voice.errors import VoiceUnavailable
-from voice.wake import VARIANTS, WakePhraseMatcher
+WAKE_PHRASE = "Hey Jarvis"
 
 #: System.Speech language identifiers for the languages JARVIS speaks.
 SPEECH_LANGUAGES = {
@@ -83,7 +83,6 @@ class WindowsSpeechRecognizer:
         except Exception:
             raise VoiceUnavailable('Windows speech recognition could not be started.') from None
         self._consent = consent if consent is not None else VoiceConsent()
-        self._matcher = WakePhraseMatcher()
         self._language = language
         self._engine = None
         self._engine_kind = None
@@ -110,8 +109,7 @@ class WindowsSpeechRecognizer:
             engine = SpeechRecognitionEngine(culture)
             if grammar_kind == 'wake':
                 choices = Choices()
-                for phrase in VARIANTS.get(self._language, VARIANTS['en']):
-                    choices.Add(phrase)
+                choices.Add(WAKE_PHRASE)
                 builder = GrammarBuilder()
                 builder.Culture = culture
                 builder.Append(choices)
@@ -173,11 +171,10 @@ class WindowsSpeechRecognizer:
         result = self._recognize(timeout_seconds)
         if result is None:
             return '', ''
-        transcript = str(result.Text)
-        match = self._matcher.match(transcript, self._language)
-        if not match.is_wake_call:
+        if (str(result.Text).strip().casefold() != WAKE_PHRASE.casefold()
+                or float(result.Confidence) < 0.80):
             return '', ''
-        return match.matched_phrase, self._matcher.extract_command(transcript) or ''
+        return WAKE_PHRASE, ''
 
     def stop(self) -> None:
         """Close the microphone and release the recogniser."""

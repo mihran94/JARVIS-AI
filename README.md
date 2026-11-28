@@ -5,7 +5,15 @@ task and approval backend. This checkout has its own desktop layout, artwork,
 data folder and Windows Credential Manager entries.
 
 Run `setup.cmd` once from this folder, then start `START_JARVIS_M.cmd`.
-Use **Live Voice** for Tamil and Tanglish conversation. Configure a Gemini
+For wake-only standby, enable **Allow the microphone** and **Hey Jarvis** in
+Voice settings. Windows listens locally for the exact English phrase “Hey Jarvis”
+using an installed English speech recognizer. Say it, wait for the floating M and the short local spoken cue,
+then speak one question in the selected command language. Only the question
+after waking can go to the configured chat provider. Mute closes the listener.
+Say “Jarvis app open pannu” or “Jarvis preview kaattu” after waking to show
+the main chat window. The floating M leaves the current app in focus.
+
+Choose **Live Voice** explicitly for a continuous Tamil or Tanglish conversation. Configure a Gemini
 key under **Settings → AI providers** and enable the microphone under **Voice**.
 While Live Voice is on, the app streams microphone audio to Gemini.
 
@@ -13,6 +21,41 @@ While Live Voice is on, the app streams microphone audio to Gemini.
 - **Projects** opens the saved-project settings from the same window.
 - Plain requests such as “Calculator-la 17 times 23 calculate pannu” prepare a
   desktop action in the chat. Check the approval card before any action is run.
+
+To save a calculation note, type or say “Jarvis, 17 times 23 calculate panni,
+result-a kanakku.txt-la save pannu”. Review the expression and the full path in
+Documents, then approve. JARVIS reads the Windows Calculator display, inserts
+the result prefixed with “விடை” into a blank Notepad editor, and verifies the
+editor contents. JARVIS exports those contents to a new UTF-8 text file and
+reads it back before offering **Open saved file**. Choose a fresh filename for
+each run. The open Notepad tab remains a separate draft.
+
+### Control an installed Windows app
+
+From JARVIS Chat or Live Voice, use these local commands:
+
+- `list installed apps` lists the Windows application catalog. Use its exact
+  display name in `open installed app CapCut` or `installed app CapCut open pannu`.
+- `list open windows` shows window titles and process names. Choose one in
+  `inspect app CapCut` or `CapCut-la controls kaattu`. If a process has multiple
+  windows, use the unique full window title. The Automation page also lets you
+  pick a window before inspecting it.
+- Use a published button or menu label in `CapCut-la Export click pannu`. For a
+  published editable field, use `in app CapCut, set Project name = My edit`.
+  The label must match your installed app. Use `id=...` in place of the label
+  when the app publishes an automation ID.
+
+For several actions in the same window, say `CapCut app select pannu`. After
+approval, JARVIS displays the window title and accessible controls. You can
+then say `controls kaattu`, `Export click pannu`, or type
+`set Project name = My edit`. Each action still shows its target for approval.
+Say `app release pannu` to finish. Starting another chat or using Emergency
+Stop also clears the selection.
+
+Review the app, control and proposed change in the approval dialog. Text edits
+are checked by reading the value back. For a click, inspect the updated window
+to confirm what the app did. Custom canvases, elevated windows and controls
+the app does not expose to Windows accessibility may be unavailable.
 
 The remaining documentation describes the inherited JARVIS AI features and
 older distributions.

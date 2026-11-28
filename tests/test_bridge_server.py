@@ -177,3 +177,19 @@ def test_jobs_can_only_be_read_or_cancelled_by_the_requesting_phone():
     request = signed_request(server, 'POST', path + '/cancel', nonce='cancel', key_id=second_key)
     assert server.handle(request).status == 404
     assert server.jobs.get(job['id']).state == 'QUEUED'
+
+
+def test_phone_wake_is_scoped_one_use_and_revocable():
+    from remote.protocol import wake_secret
+    wakes = []
+    server = make_server(wake=lambda: wakes.append(True) or True)
+    key = wake_secret(SECRET)
+    request = signed_request(server, 'POST', '/api/wake', secret=key)
+    assert server.handle(request).payload == {'queued': True}
+    assert server.handle(request).status == 403
+    assert server.handle(signed_request(server, 'GET', '/api/status', secret=key, nonce='two')).status == 403
+    assert server.handle(signed_request(server, 'POST', '/api/wake', body='open app',
+                                        secret=key, nonce='three')).status == 400
+    server.pairing.revoke(KEY_ID)
+    assert server.handle(signed_request(server, 'POST', '/api/wake', secret=key, nonce='four')).status == 403
+    assert wakes == [True]
