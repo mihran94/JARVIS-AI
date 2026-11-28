@@ -36,9 +36,9 @@
 
   <section class="panel" id="pairing">
     <h2>Connect your PC</h2>
-    <p class="hint">The PC shows a pairing code. Scan it, or paste the code as
-      text. The secret is held in this page's memory only: reloading the page
-      clears it, and it is never written to storage.</p>
+    <p class="hint">Scan the current QR in PC → Menu → Remote Control to connect automatically. If you reload without a remembered device, scan again.</p>
+    <label class="inline"><input id="rememberDevice" type="checkbox" checked> Remember this browser</label>
+    <p class="hint">Keeps a non-exportable signing key on this browser. Forget device removes it; you can also revoke access on the PC.</p>
     <label>Bridge URL
       <input id="url" type="url" inputmode="url" autocomplete="off" spellcheck="false"
              placeholder="https://pc.example.lan">
@@ -61,7 +61,7 @@
     </label>
     <div class="row">
       <button id="connect" class="primary">Connect</button>
-      <button id="disconnect" class="ghost">Forget secret</button>
+      <button id="disconnect" class="ghost">Forget device</button>
     </div>
     <button id="enableSiriWake" class="ghost">Set up Siri wake</button>
     <input type="url" id="siriLink" aria-label="Siri wake link" readonly hidden>
@@ -98,7 +98,7 @@
     </div>
     <div class="row voice-tools">
       <button id="listen" class="ghost">Listen</button>
-      <button id="speak" class="ghost">Speak answers</button>
+      <button id="speak" class="ghost">Play reply</button>
     </div>
     <details class="options"><summary>Voice &amp; AI options</summary><div class="row">      <label class="inline" for="voiceLanguage">Voice</label>
       <select id="voiceLanguage" aria-label="Language for the voice">

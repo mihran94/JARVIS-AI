@@ -146,6 +146,7 @@ export function speak(text, {
   synthesis = globalThis.speechSynthesis,
   lang = 'en-US',
   rate = 1,
+  onError = () => {},
 } = {}) {
   if (!synthesisSupported(synthesis)) {
     return false;
@@ -157,6 +158,7 @@ export function speak(text, {
   const utterance = new globalThis.SpeechSynthesisUtterance(text);
   utterance.lang = lang;
   utterance.rate = rate;
+  utterance.onerror = (event) => onError(event.error || 'unavailable');
   synthesis.speak(utterance);
   return true;
 }

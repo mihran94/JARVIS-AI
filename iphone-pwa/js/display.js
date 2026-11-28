@@ -1,6 +1,8 @@
 // One request at a time; leaving the view invalidates any pending frame.
 export class DesktopViewer {
-  constructor({ fetchFrame, showFrame, status, schedule = setTimeout, cancel = clearTimeout }) {
+  constructor({ fetchFrame, showFrame, status,
+    schedule = (callback, delay) => globalThis.setTimeout(callback, delay),
+    cancel = (timer) => globalThis.clearTimeout(timer) }) {
     Object.assign(this, { fetchFrame, showFrame, status, schedule, cancel });
     this.generation = 0;
     this.timer = null;

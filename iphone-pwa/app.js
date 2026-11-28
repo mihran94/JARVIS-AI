@@ -10,6 +10,7 @@
 
 import { BridgeClient, BridgeError, signCanonical } from './js/bridge.js';
 import { createNavigation } from './js/navigation.js';
+import { deviceRecord, deviceStorage } from './js/device.js';
 import { DesktopViewer } from './js/display.js';
 import { ChatTranscript, renderTranscript } from './js/chat.js';
 import { KINDS, Outbox, createIndexedDbStore } from './js/offline.js';
@@ -55,6 +56,7 @@ const state = {
 const transcriptElement = $('transcript');
 
 let navigation;
+const savedDevice = deviceStorage();
 const viewer = new DesktopViewer({
   fetchFrame: async () => {
     if (!state.client) throw new Error('Connect your PC first.');
@@ -118,11 +120,13 @@ function buildClient() {
   return new BridgeClient({ baseUrl: url, keyId: key, secret });
 }
 
-async function connect() {
+async function connect({ restoredClient } = {}) {
   try {
-    state.client = buildClient();
+    state.client = restoredClient || (state.client?.signingKey && !$('secret').value ? state.client : buildClient());
+    if (restoredClient) { $('url').value = restoredClient.baseUrl; $('key').value = restoredClient.keyId; }
   } catch (error) {
-    setStatus('pairStatus', error.message, 'error');
+    setStatus('pairStatus', 'Scan the current QR from PC → Menu → Remote Control, or paste its whole pairing code.', 'error');
+    navigation?.show('pairing');
     return;
   }
   connectionBadge('Connecting…');
@@ -131,6 +135,13 @@ async function connect() {
     const status = await state.client.status();
     setStatus('pairStatus', `Connected to ${status.hostname || 'the PC'}.`, 'ok');
     connectionBadge('Connected', true);
+    if ($('rememberDevice').checked && globalThis.indexedDB) {
+      try {
+        await savedDevice.write(await deviceRecord(state.client, location.origin));
+      } catch {
+        say('Connected for this page only. This browser could not remember the device.');
+      }
+    }
     navigation?.show('chatPanel');
     say('');
     showStatus(status);
@@ -154,7 +165,7 @@ async function enableSiriWake() {
       throw new Error('Connect in Safari on the PC’s HTTPS Phone Remote page first.');
     }
     await client.status();
-    const secret = await signCanonical('JARVIS/iphone/wake/v1', client.secret);
+    const secret = await signCanonical('JARVIS/iphone/wake/v1', client.signingKey || client.secret);
     if (state.client !== client) return;
     localStorage.setItem(WAKE_STORAGE, JSON.stringify({ keyId: client.keyId, secret }));
     const link = new URL(location.pathname, location.origin);
@@ -188,6 +199,7 @@ async function handleSiriWake() {
 }
 
 function forgetSecret() {
+  savedDevice.clear().catch(() => say('Could not clear remembered device. Revoke this browser on the PC.', 'error'));
   stopDisplay();
   connectionBadge('Not connected');
   navigation?.show('pairing');
@@ -197,7 +209,7 @@ function forgetSecret() {
   stopVoiceAndCamera();
   state.client = null;
   $('secret').value = '';
-  setStatus('pairStatus', 'The secret was cleared from this page.');
+  setStatus('pairStatus', 'This browser was disconnected and its saved connection removed.');
   stopWatching();
 }
 
@@ -329,9 +341,7 @@ async function sendMessage(text, { images } = {}) {
     drawChat();
     setStatus('chatStatus', `Answered by ${answer.provider || 'the PC'}.`, 'ok');
     if (state.speakAnswers) {
-      speak(answer.text || '', {
-        lang: chooseLanguage(answer.text || '', { current: chosenVoiceLanguage() }),
-      });
+      readReply(answer.text || '');
     }
     // The work is done, so a copy that waits in the queue must not be sent
     // a second time.
@@ -342,6 +352,13 @@ async function sendMessage(text, { images } = {}) {
     state.transcript.add('system', error.message);
     drawChat();
   }
+}
+
+function readReply(text) {
+  if (!speak(text, {
+    lang: chooseLanguage(text, { current: chosenVoiceLanguage() }),
+    onError: (error) => setStatus('chatStatus', `Voice playback: ${error}. Tap Play reply to try again.`, 'error'),
+  })) setStatus('chatStatus', 'Voice playback is unavailable in this browser. The reply is shown above.', 'error');
 }
 
 function cameraFrame(source, width, height) {
@@ -501,8 +518,8 @@ function toggleListening() {
     return;
   }
   try {
-      state.speakAnswers = true;
-    $('speak').textContent = 'Speaking on';
+    state.speakAnswers = true;
+    $('speak').textContent = 'Play reply';
     globalThis.speechSynthesis?.cancel();
     state.listening = startListening({
       lang: chosenVoiceLanguage(),
@@ -956,7 +973,7 @@ async function refreshAll() {
 function installListeners() {
   const picker = $('voiceLanguage');
   if (picker) {
-    picker.value = defaultLanguage();
+    picker.value = 'ta-IN';
   }
   $('enableSiriWake').addEventListener('click', enableSiriWake);
   window.addEventListener('hashchange', handleSiriWake);
@@ -1021,11 +1038,13 @@ function installListeners() {
     });
   }
   $('speak').addEventListener('click', () => {
-    state.speakAnswers = !state.speakAnswers;
-    $('speak').textContent = state.speakAnswers ? 'Speaking on' : 'Speak answers';
-    if (!synthesisSupported()) {
-      setStatus('chatStatus', 'This browser cannot speak.', 'error');
-    }
+    state.speakAnswers = true;
+    const answer = state.transcript.last('jarvis');
+    if (!answer) { setStatus('chatStatus', 'Ask a question first, then play the reply.'); return; }
+    readReply(answer.text);
+  });
+  $('rememberDevice').addEventListener('change', () => {
+    if (!$('rememberDevice').checked) savedDevice.clear().catch(() => {});
   });
   $('submitTask').addEventListener('click', submitTask);
   $('refreshJobs').addEventListener('click', refreshJobs);
@@ -1091,6 +1110,16 @@ async function start() {
   await handleSiriWake();
   await restoreOutbox();
   if (pairingLink && applyPairing(pairingLink)) await connect();
+  else if (globalThis.location?.protocol === 'https:') {
+    try {
+      const saved = await savedDevice.read();
+      if (saved && saved.baseUrl === location.origin) {
+        await connect({ restoredClient: new BridgeClient(saved) });
+      }
+    } catch {
+      setStatus('pairStatus', 'Scan the PC QR to reconnect this browser.', 'error');
+    }
+  }
   await flushOutbox();
   startFlushing();
   if ($('autoRefresh').checked) {
